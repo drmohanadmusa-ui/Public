@@ -162,6 +162,7 @@ tfoot td{font-weight:700;border-top:2px solid var(--line);border-bottom:none}
 .splash-progress-fill{height:100%;width:0%;background:linear-gradient(90deg, var(--accent), var(--accent2));border-radius:999px;transition:width .3s ease}
 .splash-bypass{margin-top:20px;background:var(--chip);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 16px;font-size:12.5px;cursor:pointer;opacity:0;transition:opacity .3s ease}
 .splash-bypass.show{opacity:1}
+.splash-version{position:absolute;bottom:calc(18px + env(safe-area-inset-bottom));font-size:11px;color:var(--muted);opacity:0;animation:splashFadeIn .5s ease .7s forwards}
 .cmdp-bg{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:10vh;animation:cmdpBgIn .22s ease forwards}
 @keyframes cmdpBgIn{from{background:rgba(0,0,0,0)}to{background:rgba(0,0,0,.45)}}
 .cmdp-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-pop);width:100%;max-width:560px;max-height:70vh;overflow:hidden;display:flex;flex-direction:column;animation:cmdpBoxIn .32s cubic-bezier(.2,.9,.3,1.2)}
@@ -312,6 +313,7 @@ main{padding:22px;max-width:var(--content-max-width);margin:0;min-height:100vh;f
   <div class="splash-progress-pct" id="splashProgressPct">0%</div>
   <div class="splash-progress-track"><div class="splash-progress-fill" id="splashProgressFill"></div></div>
   <button class="splash-bypass" id="splashBypassBtn" style="display:none" onclick="useCachedDataNow()">Use local copy for now</button>
+  <div class="splash-version" id="splashVersionTag"></div>
 </div>
 <div class="app-shell">
   <div class="mobile-topbar noprint">
@@ -344,12 +346,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.47.0';
+const APP_VERSION = '4.48.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.48.0', date:'2026-09-10', changes:[
+    'NEW: Settings → Balance Freshness \u2014 the Dashboard\u2019s Bank Accounts reconciled-date used to show green only on the exact day it was updated and red the very next day, with no way to change that. You can now set how many days it should stay green after updating (0 keeps the old same-day-only behaviour). Synced across every device, same as page order.',
+    'The loading screen now shows the app version at the bottom, matching what\u2019s already shown in Settings.',
+  ]},
   {version:'4.47.0', date:'2026-09-02', changes:[
     'Investments page: the per-owner breakdown under each position (name, percentage per owner) is now collapsed behind a \u2018Show N owners\u2019 toggle instead of always showing inline \u2014 the family coin import made this unreadable on positions with 8-10 owners. Expanding it now shows a full table per owner: percentage, units, cost, current value, and unrealised P/L, not just the percentage.',
   ]},
@@ -882,7 +888,7 @@ const CHANGELOG = [
     'Added an iPhone/iPad home-screen icon, so adding the site to your home screen shows a real icon instead of a blank screenshot.',
   ]},
 ];
-let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null}, forecastSnapshots:[], invRoboValueLog:[]};
+let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0}, forecastSnapshots:[], invRoboValueLog:[]};
 let jvDrafts = []; // local-only scratchpad of unfinished JVs — not synced to cloud
 function loadJVDrafts(){ try{ return JSON.parse(localStorage.getItem('jvDrafts_v1')||'[]'); }catch(e){ return []; } }
 function saveJVDraftsList(){ try{ safeSetItem('jvDrafts_v1', JSON.stringify(jvDrafts)); }catch(e){} }
@@ -954,6 +960,7 @@ function normalizeDataShape(D){
   if(!Array.isArray(D.invCashMovements)) D.invCashMovements = [];
   if(D.invSettings.reconStartDate===undefined) D.invSettings.reconStartDate = null;
   if(!D.uiPrefs || typeof D.uiPrefs!=='object') D.uiPrefs = {pageOrder:null};
+  if(D.uiPrefs.balanceStaleDays===undefined || D.uiPrefs.balanceStaleDays===null) D.uiPrefs.balanceStaleDays = 0;
   if(!Array.isArray(D.realEstateBuildings)) D.realEstateBuildings = [];
   if(!Array.isArray(D.forecastAccountRules)) D.forecastAccountRules = [];
   if(!Array.isArray(D.customForecastCategories)) D.customForecastCategories = [];
@@ -1328,6 +1335,8 @@ let splashBypassTimer = null;
 function showSplash(){
   const el = document.getElementById('splashScreen');
   if(el) el.classList.remove('hidden');
+  const vEl = document.getElementById('splashVersionTag');
+  if(vEl && !vEl.textContent) vEl.textContent = 'v'+APP_VERSION;
   const btn = document.getElementById('splashBypassBtn');
   if(btn) btn.classList.remove('show');
   updateSplashProgress(0);
@@ -1912,7 +1921,7 @@ async function fetchAllFromCloud(forceFullLedger){
   if(!invVal.error){ D.invValuations = invVal.data.map(v=>({id:v.id, positionId:v.position_id, date:v.entry_date, price:Number(v.price)||0, updated_at:v.updated_at||null})); }
   if(!invCash.error){ D.invCashMovements = invCash.data.map(m=>({id:m.id, platformId:m.platform_id, date:m.entry_date, kind:m.kind||'deposit', usdAmount:Number(m.usd_amount)||0, toPlatformId:m.to_platform_id||null, feeUsd:Number(m.fee_usd)||0, capitalUsd:Number(m.capital_usd)||0, profitUsd:Number(m.profit_usd)||0, owners:m.owners||[], note:m.note||'', updated_at:m.updated_at||null})); }
   if(!invSet.error && invSet.data.length){ D.invSettings = {fxUsdSar: Number(invSet.data[0].fx_usd_sar)||3.75, mgmtFeePct: Number(invSet.data[0].mgmt_fee_pct)||0, reconStartDate: invSet.data[0].recon_start_date||null, updated_at: invSet.data[0].updated_at||null}; }
-  if(!uiPrefs.error && uiPrefs.data.length){ D.uiPrefs = {pageOrder: Array.isArray(uiPrefs.data[0].page_order)? uiPrefs.data[0].page_order : null, updated_at: uiPrefs.data[0].updated_at||null}; }
+  if(!uiPrefs.error && uiPrefs.data.length){ D.uiPrefs = {pageOrder: Array.isArray(uiPrefs.data[0].page_order)? uiPrefs.data[0].page_order : null, balanceStaleDays: Number(uiPrefs.data[0].balance_stale_days)||0, updated_at: uiPrefs.data[0].updated_at||null}; }
   if(!fcSnaps.error){ D.forecastSnapshots = fcSnaps.data.map(s=>({id:s.id, anchorMonth:s.anchor_month, takenAt:s.taken_at, kind:s.kind||'auto', months:Array.isArray(s.months)?s.months:[], signFlips:(s.sign_flips&&typeof s.sign_flips==='object')?s.sign_flips:{}, updated_at:s.updated_at||null})); }
   if(!roboLog.error){ D.invRoboValueLog = roboLog.data.map(r=>({id:r.id, platformId:r.platform_id, date:r.entry_date, value:Number(r.value)||0, updated_at:r.updated_at||null})); }
   syncCustomForecastCategories();
@@ -2019,6 +2028,30 @@ async function savePageOrder(ids){
   D.uiPrefs.updated_at = nowISO();
   await syncWrite('pd_ui_prefs','upsert',{id:1, page_order:ids}, base);
   persistLocal();
+}
+// Bank balance staleness grace period: how many days after a Statement Balance's reconciled
+// date it's still shown in green on the Dashboard before flipping to red. SYNCED (stored in
+// pd_ui_prefs) so it reads the same on every device, same reasoning as page order above.
+function getBalanceStaleDays(){
+  const v = Number((D.uiPrefs||{}).balanceStaleDays);
+  return (Number.isFinite(v) && v>=0)? v : 0;
+}
+async function saveBalanceStaleDays(days){
+  D.uiPrefs = D.uiPrefs || {};
+  const base = D.uiPrefs.updated_at||null;
+  D.uiPrefs.balanceStaleDays = days;
+  D.uiPrefs.updated_at = nowISO();
+  await syncWrite('pd_ui_prefs','upsert',{id:1, balance_stale_days:days}, base);
+  persistLocal();
+}
+async function saveBalanceStaleDaysFromInput(){
+  const raw = document.getElementById('balanceStaleDaysInput').value;
+  const v = Math.round(Number(raw));
+  if(raw===''||!Number.isFinite(v)||v<0||v>365){ toast('Enter a whole number of days between 0 and 365', true); return; }
+  await saveBalanceStaleDays(v);
+  toast('Balance Freshness saved ✓');
+  renderSettings();
+  if(screen==='dashboard') renderDashboard();
 }
 /* ============================= LOCAL STORAGE EXPLORER =============================
    localStorage is capped at roughly 5 MB PER ORIGIN — shared by every app served from the same
@@ -2486,9 +2519,10 @@ create table if not exists pd_inv_settings (
 -- page_order is a jsonb array of screen ids, e.g. ["dashboard","ledger","budget"].
 -- Synced (rather than per-device) so the sidebar reads the same everywhere.
 create table if not exists pd_ui_prefs (
-  id          bigint primary key,
-  page_order  jsonb,
-  updated_at  timestamptz default now()
+  id                 bigint primary key,
+  page_order         jsonb,
+  balance_stale_days integer default 0,
+  updated_at         timestamptz default now()
 );
 
 -- anchor_month is the month the snapshot's horizon starts from (e.g. '2026-09' — captured when
@@ -4064,7 +4098,8 @@ function renderDashboard(){
         const variance = hasStmt ? Number(a.stmt_balance) - ledgerBal : null;
         const reconciled = hasStmt && Math.abs(variance)<0.005;
         const nextId = bankAccs[i+1]? bankAccs[i+1].id : null;
-        const reconciledToday = reconciled && a.stmt_date===todayStr();
+        const daysSinceStmt = a.stmt_date? daysBetweenDates(a.stmt_date, todayStr()) : null;
+        const reconciledFresh = reconciled && daysSinceStmt!==null && daysSinceStmt<=getBalanceStaleDays();
         return `<tr>
           <td class="mono click" style="position:sticky;left:0;z-index:1;background:var(--panel)" onclick="openStatement(${a.id})">${a.id}</td>
           <td class="click" style="position:sticky;left:52px;z-index:1;background:var(--panel)" onclick="openStatement(${a.id})">${esc(accShort(a.id))}${isCC?' <span class="badge">credit card</span>':''}</td>
@@ -4074,7 +4109,7 @@ function renderDashboard(){
             onfocus="this.value = this.dataset.raw"
             onblur="this.value = this.dataset.raw? fmt2(this.dataset.raw) : ''"
             onkeydown="if(event.key==='Enter'){ event.preventDefault(); saveStmtBalance(${a.id}, this.value, ${nextId||'null'}); }">`}</td>
-          <td class="num mono">${!hasStmt? '<span class="mut">—</span>' : (reconciled? `<span style="font-weight:600;color:${reconciledToday?'var(--green)':'var(--red)'}">Reconciled – ${fmtDateShort(a.stmt_date)}</span>` : `<span style="cursor:pointer;text-decoration:underline;color:var(--red)" onclick="startReconcile(${a.id})">${money(variance)}</span>`)}</td>
+          <td class="num mono">${!hasStmt? '<span class="mut">—</span>' : (reconciled? `<span style="font-weight:600;color:${reconciledFresh?'var(--green)':'var(--red)'}">Reconciled – ${fmtDateShort(a.stmt_date)}</span>` : `<span style="cursor:pointer;text-decoration:underline;color:var(--red)" onclick="startReconcile(${a.id})">${money(variance)}</span>`)}</td>
           </tr>`;
       }).join('') || '<tr><td colspan="5" class="empty">No bank accounts found</td></tr>'}</tbody>
       <tfoot><tr><td colspan="2" style="position:sticky;left:0;z-index:1;background:var(--panel)">Total</td><td class="num mono">${absMoney(bankTotal)}</td>
@@ -12032,6 +12067,17 @@ function renderSettings(){
         </div>
         <div class="mut" style="font-size:11px;margin-top:10px">Currently: flag anything more than <span class="mono">${getDriftSettings().thresholdPct}%</span> off for <span class="mono">${getDriftSettings().minMonths}</span> consecutive month(s). Kept locally on this device only, not synced.</div>
       </div>`},
+    balancefreshness: {label:'🏦 Balance Freshness', html: `
+      <div class="panel">
+        <h3>🏦 Balance Freshness</h3>
+        <div class="mut" style="font-size:12.5px;margin-bottom:14px">Controls how long a reconciled bank balance on the Dashboard stays shown in green before it flips to red, based on days elapsed since its Statement Balance date. Synced across every device.</div>
+        <label class="fl">Show green for</label>
+        <input type="number" id="balanceStaleDaysInput" min="0" max="365" step="1" value="${getBalanceStaleDays()}" style="margin-bottom:10px;width:100px"> day(s) after updating
+        <div class="row" style="margin-top:6px">
+          <button class="btn pri sm" onclick="saveBalanceStaleDaysFromInput()">Save</button>
+        </div>
+        <div class="mut" style="font-size:11px;margin-top:10px">Currently: green for <span class="mono">${getBalanceStaleDays()}</span> day(s) after the Statement Balance date, red after that. <span class="mono">0</span> means only the exact day it was updated.</div>
+      </div>`},
     gridexport: {label:'📅 Grid & Export End Month', html: `
       <div class="panel">
         <h3>📅 Grid & Export End Month</h3>
@@ -12301,7 +12347,7 @@ async function restoreFromBackup(parsed){
   if((D.invValuations||[]).length) await insertWithRetry('pd_inv_valuations', D.invValuations.map(v=>({id:v.id, position_id:v.positionId, entry_date:v.date, price:v.price})));
   if((D.invCashMovements||[]).length) await insertWithRetry('pd_inv_cash_movements', D.invCashMovements.map(m=>({id:m.id, platform_id:m.platformId, entry_date:m.date, kind:m.kind, usd_amount:Number(m.usdAmount)||0, to_platform_id:m.toPlatformId||null, fee_usd:Number(m.feeUsd)||0, capital_usd:Number(m.capitalUsd)||0, profit_usd:Number(m.profitUsd)||0, owners:m.owners||[], note:m.note||''})));
   if(D.invSettings && D.invSettings.fxUsdSar) await insertWithRetry('pd_inv_settings', [{id:1, fx_usd_sar:D.invSettings.fxUsdSar, mgmt_fee_pct:getInvMgmtFeePct(), recon_start_date:(D.invSettings||{}).reconStartDate||null}]);
-  if(D.uiPrefs && D.uiPrefs.pageOrder) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder}]);
+  if(D.uiPrefs && (D.uiPrefs.pageOrder || D.uiPrefs.balanceStaleDays)) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder||null, balance_stale_days:getBalanceStaleDays()}]);
   if((D.forecastSnapshots||[]).length) await insertWithRetry('pd_forecast_snapshots', D.forecastSnapshots.map(s=>({id:s.id, anchor_month:s.anchorMonth, taken_at:s.takenAt, kind:s.kind||'auto', months:s.months||[], sign_flips:s.signFlips||{}})));
   if((D.invRoboValueLog||[]).length) await insertWithRetry('pd_inv_robo_value_log', D.invRoboValueLog.map(r=>({id:r.id, platform_id:r.platformId, entry_date:r.date, value:Number(r.value)||0})));
   bump('Restoring Investments');
