@@ -2147,7 +2147,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.45.1';
+const APP_VERSION = '4.46.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2155,6 +2155,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.46.0', changes: [
+    'No SQL migration needed — front-end only.',
+    'BODY MAP: fixed low contrast — sets logged but still under your weekly band were rendering at ~0.25\u20130.32 opacity, barely different from zero logged sets. Raised the floor so any logged volume is immediately, clearly distinguishable from an untouched muscle, not just once you\u2019re near the top of the band. Outlines darkened and thickened too (were a pale tan that nearly matched the paper background).',
+    'BODY MAP: the lats were roughly 3x the area of the equivalent front pecs, dominating the whole back view. Resized to a proportionate scale so the traps diamond reads as clearly dominant above them, matching real anatomy better.',
+    'PRIVACY: removed a second hardcoded personal detail — \'4.Madinah\' (a real city) was baked into the app\u2019s first-run location default in two places, plus a color mapping keyed to it. Replaced with a generic \u2018Other\u2019, and dropped \u2018Lamees\u2019 from the same first-run silo default (the actual Lamees category used by real synced data is untouched \u2014 this only affected what a brand-new, never-synced install starts with).',
+    'Default locations no longer carry a numeric prefix (\'1.Office\' \u2192 \'Office\', etc.) \u2014 display order was already coming from the array\u2019s own position, not the prefix, so this was decorative text with no function.',
+    'EXERCISE LIBRARY: exercises with no upcoming plan (nothing staged via Plan Day / +Add Exercise for today or a future date) AND no logged history at all now show an \u2018Unused\u2019 badge \u2014 a candidate to remove or start using. An exercise that\u2019s either planned OR has past log history is left alone; only ones matching neither are flagged.',
+  ]},
   { v:'4.45.1', changes: [
     'No SQL migration needed — front-end only.',
     'PRIVACY: removed the hardcoded first-run seed data (an early real task/list export used as demo content on a brand-new install with no local cache and no sync configured yet). It included personal details — family names, health/medication reminders, financial account references, and a phone number — that had no reason to keep shipping inside the file. A fresh install now starts empty instead of pre-filled with demo tasks; anyone syncing to existing data is unaffected.',
@@ -2755,11 +2763,10 @@ const DEFAULT_SETTINGS_EXTRAS = {
     'Lamees': '#C1443D',
   },
   locationColors: {
-    '1.Office': '#5C7999',
-    '2.Errand': '#B9862F',
-    '3.Home': '#4C7A3D',
-    '4.Madinah': '#A0527A',
-    '5.Last': '#3A3F47',
+    'Office': '#5C7999',
+    'Errand': '#B9862F',
+    'Home': '#4C7A3D',
+    'Other': '#A0527A',
   },
   hiddenPages: [],
   pageOrder: ['dashboard','overdue','tasks','calendar','week','lists','health','training','recipes','progress','settings'],
@@ -3330,8 +3337,8 @@ async function loadSettingsOnly(){
       backfillSettingsDefaults();
     } else {
       state.settings = Object.assign({
-        locations: ['1.Office','2.Errand','3.Home','4.Madinah','5.Last'],
-        silos: ['Financial','Work','Personal Tasks','Self Development','Career Development','Home Maintenance','Lamees'],
+        locations: ['Office','Errand','Home','Other'],
+        silos: ['Financial','Work','Personal Tasks','Self Development','Career Development','Home Maintenance'],
         lastActiveDate: todayStr(),
         sync: null,
       }, DEFAULT_SETTINGS_EXTRAS);
@@ -9683,8 +9690,14 @@ function muscleVolumeColour(sets,band){
 }
 function muscleVolumeOpacity(sets,band){
   const {max}=band||MUSCLE_BAND_DEFAULT;
+  // v4.46.0: was a 0.25 floor scaling up to just 0.65 — a couple of early-week
+  // sets barely nudged past "inactive," so the whole map read as faint outlines
+  // until a muscle was nearly at its full weekly band. Raised so ANY logged
+  // volume is clearly distinguishable from zero at a glance, which is the
+  // actual point of a heat map — 0 sets stays muted, 1+ jumps straight to a
+  // clearly-visible baseline and climbs to fully solid at the top of the band.
   if(!sets) return 0.15;
-  return 0.25+Math.min(0.65,(sets/max)*0.65);
+  return 0.55+Math.min(0.45,(sets/max)*0.45);
 }
 function renderWeeklyVolumePanel(){
   const vol=computeWeeklyVolumeByMuscle();
@@ -9707,47 +9720,47 @@ function renderWeeklyVolumePanel(){
                just better-shaped paths). cx=70 -->
           <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
           <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
-          <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders: ${vol.shoulders||0} sets</title></path>
-          <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders</title></path>
-          <path d="M 70 44 C 62 42, 52 45, 50 54 C 49 62, 56 68, 65 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('chest')"><title>Chest: ${vol.chest||0} sets</title></path>
-          <path d="M 70 44 C 78 42, 88 45, 90 54 C 91 62, 84 68, 75 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('chest')"><title>Chest</title></path>
+          <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders: ${vol.shoulders||0} sets</title></path>
+          <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders</title></path>
+          <path d="M 70 44 C 62 42, 52 45, 50 54 C 49 62, 56 68, 65 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('chest')"><title>Chest: ${vol.chest||0} sets</title></path>
+          <path d="M 70 44 C 78 42, 88 45, 90 54 C 91 62, 84 68, 75 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('chest')"><title>Chest</title></path>
           <g onclick="filterExercisesByMuscle('abs')" style="cursor:pointer;">
             <title>Abs: ${vol.abs||0} sets</title>
-            <rect x="61" y="69" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--line)" stroke-width="0.8"/>
-            <rect x="71" y="69" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--line)" stroke-width="0.8"/>
-            <rect x="61" y="80" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--line)" stroke-width="0.8"/>
-            <rect x="71" y="80" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--line)" stroke-width="0.8"/>
-            <rect x="61" y="91" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--line)" stroke-width="0.8"/>
-            <rect x="71" y="91" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--line)" stroke-width="0.8"/>
+            <rect x="61" y="69" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="71" y="69" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="61" y="80" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="71" y="80" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="61" y="91" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="71" y="91" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1.1"/>
           </g>
-          <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('biceps')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('biceps')"><title>Biceps: ${vol.biceps||0} sets</title></path>
-          <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('biceps')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('biceps')"><title>Biceps</title></path>
-          <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('forearms')"><title>Forearms: ${vol.forearms||0} sets</title></path>
-          <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" style="${fs('forearms')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
-          <path d="M 52 102 C 46 108, 44 130, 46 150 C 47 158, 62 159, 63 150 C 65 130, 62 110, 58 102 Z" style="${fs('quads')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('quads')"><title>Quads: ${vol.quads||0} sets</title></path>
-          <path d="M 88 102 C 94 108, 96 130, 94 150 C 93 158, 78 159, 77 150 C 75 130, 78 110, 82 102 Z" style="${fs('quads')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('quads')"><title>Quads</title></path>
-          <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" style="${fs('calves')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('calves')"><title>Calves: ${vol.calves||0} sets</title></path>
-          <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" style="${fs('calves')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
+          <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('biceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('biceps')"><title>Biceps: ${vol.biceps||0} sets</title></path>
+          <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('biceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('biceps')"><title>Biceps</title></path>
+          <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms: ${vol.forearms||0} sets</title></path>
+          <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
+          <path d="M 52 102 C 46 108, 44 130, 46 150 C 47 158, 62 159, 63 150 C 65 130, 62 110, 58 102 Z" style="${fs('quads')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('quads')"><title>Quads: ${vol.quads||0} sets</title></path>
+          <path d="M 88 102 C 94 108, 96 130, 94 150 C 93 158, 78 159, 77 150 C 75 130, 78 110, 82 102 Z" style="${fs('quads')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('quads')"><title>Quads</title></path>
+          <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves: ${vol.calves||0} sets</title></path>
+          <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
           <text x="70" y="215" text-anchor="middle" font-size="9" fill="var(--ink-soft)">FRONT</text>
           <!-- BACK (offset +150) -->
           <g transform="translate(150,0)">
             <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
             <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
-            <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
-            <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
-            <path d="M 66 58 C 54 60, 42 68, 40 84 C 39 96, 50 102, 59 97 C 65 93, 67 76, 66 58 Z" style="${fs('back')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('back')"><title>Back: ${vol.back||0} sets</title></path>
-            <path d="M 74 58 C 86 60, 98 68, 100 84 C 101 96, 90 102, 81 97 C 75 93, 73 76, 74 58 Z" style="${fs('back')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('back')"><title>Back (lats)</title></path>
-            <path d="M 70 34 L 52 50 L 70 60 L 88 50 Z" style="${fs('back')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('back')"><title>Back (traps)</title></path>
-            <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('triceps')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('triceps')"><title>Triceps: ${vol.triceps||0} sets</title></path>
-            <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('triceps')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('triceps')"><title>Triceps</title></path>
-            <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
-            <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" style="${fs('forearms')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
-            <path d="M 55 98 C 47 100, 44 110, 48 118 C 52 124, 65 123, 66 114 C 67 105, 62 99, 55 98 Z" style="${fs('glutes')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('glutes')"><title>Glutes: ${vol.glutes||0} sets</title></path>
-            <path d="M 85 98 C 93 100, 96 110, 92 118 C 88 124, 75 123, 74 114 C 73 105, 78 99, 85 98 Z" style="${fs('glutes')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('glutes')"><title>Glutes</title></path>
-            <path d="M 51 122 C 46 128, 45 142, 48 155 C 50 161, 62 161, 62 152 C 63 140, 59 128, 55 122 Z" style="${fs('hamstrings')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('hamstrings')"><title>Hamstrings: ${vol.hamstrings||0} sets</title></path>
-            <path d="M 89 122 C 94 128, 95 142, 92 155 C 90 161, 78 161, 78 152 C 77 140, 81 128, 85 122 Z" style="${fs('hamstrings')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('hamstrings')"><title>Hamstrings</title></path>
-            <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" style="${fs('calves')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
-            <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" style="${fs('calves')}" stroke="var(--line)" stroke-width="0.8" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
+            <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
+            <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
+            <path d="M 68 56 C 60 57, 52 63, 51 74 C 50 83, 58 88, 64 84 C 68 81, 69 68, 68 56 Z" style="${fs('back')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('back')"><title>Back: ${vol.back||0} sets</title></path>
+            <path d="M 72 56 C 80 57, 88 63, 89 74 C 90 83, 82 88, 76 84 C 72 81, 71 68, 72 56 Z" style="${fs('back')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('back')"><title>Back (lats)</title></path>
+            <path d="M 70 34 L 52 50 L 70 60 L 88 50 Z" style="${fs('back')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('back')"><title>Back (traps)</title></path>
+            <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('triceps')"><title>Triceps: ${vol.triceps||0} sets</title></path>
+            <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('triceps')"><title>Triceps</title></path>
+            <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
+            <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
+            <path d="M 55 98 C 47 100, 44 110, 48 118 C 52 124, 65 123, 66 114 C 67 105, 62 99, 55 98 Z" style="${fs('glutes')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('glutes')"><title>Glutes: ${vol.glutes||0} sets</title></path>
+            <path d="M 85 98 C 93 100, 96 110, 92 118 C 88 124, 75 123, 74 114 C 73 105, 78 99, 85 98 Z" style="${fs('glutes')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('glutes')"><title>Glutes</title></path>
+            <path d="M 51 122 C 46 128, 45 142, 48 155 C 50 161, 62 161, 62 152 C 63 140, 59 128, 55 122 Z" style="${fs('hamstrings')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('hamstrings')"><title>Hamstrings: ${vol.hamstrings||0} sets</title></path>
+            <path d="M 89 122 C 94 128, 95 142, 92 155 C 90 161, 78 161, 78 152 C 77 140, 81 128, 85 122 Z" style="${fs('hamstrings')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('hamstrings')"><title>Hamstrings</title></path>
+            <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
+            <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
             <text x="70" y="215" text-anchor="middle" font-size="9" fill="var(--ink-soft)">BACK</text>
           </g>
         </svg>
@@ -10689,6 +10702,23 @@ async function deleteTrainingResource(id){
 }
 
 /* ---------- Subpage: Exercise Library (alphabetical) ---------- */
+/* v4.46.0: flags an exercise that has neither a future plan nor any logged
+   history — a genuine "you can safely decide to remove or start using this"
+   signal, as opposed to either half alone (logged-but-not-currently-planned
+   is just an exercise you've paused; planned-but-not-yet-logged is one you
+   just added — neither of those means "dead weight" on its own). */
+function exerciseIsUnused(ex){
+  const today = todayStr();
+  const pending = state.trainingPendingAdds || {};
+  const hasFuturePlan = Object.keys(pending).some(date=>
+    date >= today && (pending[date]||[]).includes(ex.id)
+  );
+  if(hasFuturePlan) return false;
+  const hasLoggedSets = (state.training.sets||[]).some(s=>s.exerciseId===ex.id);
+  if(hasLoggedSets) return false;
+  const hasLegacyLogs = (state.training.logs||[]).some(l=>l.exerciseId===ex.id);
+  return !hasLegacyLogs;
+}
 function renderTrainingExercisesSubpage(){
   const tagFilter = state.exerciseTagFilter || 'all';
   const mgFilter = state.muscleGroupFilter || null;
@@ -10729,6 +10759,7 @@ function renderTrainingExercisesSubpage(){
             <span class="metric-manage-name">
               ${escapeHtml(ex.name)}${ex.category==='walking' ? ' <span class="page-sub" style="font-size:10px; text-transform:uppercase; letter-spacing:0.03em; border:1px solid var(--line); border-radius:4px; padding:1px 5px; margin-left:4px;">Walking</span>' : ''}
               ${ex.muscleGroup ? `<span class="page-sub" style="font-size:10px; background:var(--teal-dim,color-mix(in srgb,var(--teal) 15%,var(--paper))); border:1px solid var(--teal); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--ink);">${ex.muscleGroup}</span>` : ''}
+              ${exerciseIsUnused(ex) ? `<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--flag,#D95B5B) 12%,var(--paper)); border:1px solid var(--flag,#D95B5B); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--flag,#D95B5B);" title="Not in any upcoming plan and never logged — a candidate to remove or start using">Unused</span>` : ''}
               ${(ex.tagIds||[]).map(tid=>{ const t = tags.find(x=>x.id===tid); return t ? `<span class="page-sub" style="font-size:10px; background:var(--paper-dim); border-radius:4px; padding:1px 6px; margin-left:4px;">${escapeHtml(t.name)}</span>` : ''; }).join('')}
             </span>
             ${exVideoUrls(ex).length ? (exVideoUrls(ex).length===1
@@ -14617,8 +14648,8 @@ async function forgetRememberedUnlock(){
 // and every view that reads them would crash on next load.
 function completeSettingsObject(partial){
   const base = Object.assign({
-    locations: ['1.Office','2.Errand','3.Home','4.Madinah','5.Last'],
-    silos: ['Financial','Work','Personal Tasks','Self Development','Career Development','Home Maintenance','Lamees'],
+    locations: ['Office','Errand','Home','Other'],
+    silos: ['Financial','Work','Personal Tasks','Self Development','Career Development','Home Maintenance'],
     lastActiveDate: todayStr(),
     sync: null,
   }, DEFAULT_SETTINGS_EXTRAS, partial||{});
