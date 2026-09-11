@@ -2147,7 +2147,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.46.0';
+const APP_VERSION = '4.46.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2155,6 +2155,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.46.1', changes: [
+    'No SQL migration needed for this fix itself — front-end only. If you are seeing "training_exercises upsert failed... could not find the \'lift_type\' column", you still need to run v4.45.0\'s migration (Settings → Cloud Sync → Copy SQL) — this release makes that failure visible and understandable, it does not replace running the SQL.',
+    'FIXED: sync errors caused by a missing database column/table (e.g. a SQL migration not yet run) now show a clear, actionable message instead of raw server JSON — and critically, that message is now the badge\u2019s VISIBLE text, not just its hover tooltip, since tooltips don\u2019t exist on touch/mobile where this is mostly seen. Previously the only visible indicator was a generic "Sync pending" label with the real explanation buried in a tooltip nobody on mobile could ever see.',
+    'Root cause note: since training_exercises is the first table pushed in each training sync, a schema mismatch there blocked every table after it (sessions, calendar, logs, sets, resources) on every sync attempt \u2014 not just exercises. No data was lost (local storage always saves independently of the Supabase push), but nothing in training had been syncing until the missing column was added. Running the pending SQL migration unblocks all of it at once; the next sync retries the full sequence.',
+  ]},
   { v:'4.46.0', changes: [
     'No SQL migration needed — front-end only.',
     'BODY MAP: fixed low contrast — sets logged but still under your weekly band were rendering at ~0.25\u20130.32 opacity, barely different from zero logged sets. Raised the floor so any logged volume is immediately, clearly distinguishable from an untouched muscle, not just once you\u2019re near the top of the band. Outlines darkened and thickened too (were a pale tan that nearly matched the paper background).',
@@ -6298,6 +6303,21 @@ function setColorTheme(theme){
   renderMain(); // so the swatch "selected" indicator updates immediately, not just the live CSS variables
 }
 
+/* Translates a raw Supabase/PostgREST error into something the person can
+   actually act on. PGRST204/205 ("could not find the X column/table") mean
+   exactly one thing in practice: a SQL migration hasn't been run yet against
+   this Supabase project. That's a fixable, known action — not a transient
+   network blip — so it gets pointed at the fix directly rather than shown as
+   raw JSON. Anything else falls through unchanged; this only translates the
+   pattern it's confident about. */
+function friendlySyncError(raw){
+  if(!raw) return 'Changes are waiting to sync';
+  const col = raw.match(/Could not find the '([^']+)' column of '([^']+)' in the schema cache/);
+  if(col) return `Database is missing a recent update (${col[2]}.${col[1]}) — Settings → Cloud Sync → Copy SQL, run it in Supabase, then tap to retry`;
+  const tbl = raw.match(/Could not find the table '([^']+)' in the schema cache/);
+  if(tbl) return `Database is missing a table (${tbl[1]}) — Settings → Cloud Sync → Copy SQL, run it in Supabase, then tap to retry`;
+  return raw;
+}
 function syncBadgeHtml(){
   if(!syncConfigured()){
     return `<div class="sync-badge off" title="Cross-device sync isn't set up">
@@ -6313,8 +6333,15 @@ function syncBadgeHtml(){
     </div>`;
   }
   if(m.status === 'error' || m.dirty){
-    return `<div class="sync-badge error" title="${escapeHtml(m.lastError||'Changes are waiting to sync')}" onclick="retrySync()">
-      <span class="sync-badge-dot"></span>Sync pending — retry
+    const friendly = friendlySyncError(m.lastError);
+    // Schema-mismatch errors get their own visible label, not just a hover
+    // tooltip — tooltips don't exist on touch/mobile, which is most of where
+    // this gets seen, so a message only reachable by hovering is effectively
+    // invisible there. Everything else keeps the generic label; the full
+    // message is still in the tooltip for anyone on desktop who wants it.
+    const isSchemaIssue = /^Database is missing/.test(friendly);
+    return `<div class="sync-badge error" title="${escapeHtml(friendly)}" onclick="retrySync()">
+      <span class="sync-badge-dot"></span>${isSchemaIssue ? 'DB needs SQL update — tap' : 'Sync pending — retry'}
     </div>`;
   }
   return `<div class="sync-badge on" title="Last synced ${relTime}">
