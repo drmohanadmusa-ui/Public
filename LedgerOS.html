@@ -346,12 +346,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.48.0';
+const APP_VERSION = '4.49.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.49.0', date:'2026-09-12', changes:[
+    'NEW: P&L \u2192 Account Budget Chart \u2014 pick any expense account that has a Budget, Provisions plan, or Smart Rule, and any year, to see a bar chart of Budget vs Actual per month, a line chart of the cumulative running totals across the year, and the remaining budget left for the year (full-year budget minus actual-to-date).',
+  ]},
   {version:'4.48.0', date:'2026-09-10', changes:[
     'NEW: Settings → Balance Freshness \u2014 the Dashboard\u2019s Bank Accounts reconciled-date used to show green only on the exact day it was updated and red the very next day, with no way to change that. You can now set how many days it should stay green after updating (0 keeps the old same-day-only behaviour). Synced across every device, same as page order.',
     'The loading screen now shows the app version at the bottom, matching what\u2019s already shown in Settings.',
@@ -6207,6 +6210,12 @@ async function importBudgetGridCSV(rows){
 /* ============================= P&L ============================= */
 let pnlFrom = todayStr().slice(0,8)+'01', pnlTo = todayStr();
 let pnlPreset = 'month', pnlSpecificMonth = todayStr().slice(0,7), pnlYear = todayStr().slice(0,4);
+// Account Budget Chart: a sub-page of P&L (not a top-level nav entry), same pattern as the
+// Investments → Reconciliation sub-page (an internal view flag the page's own render function
+// checks and delegates on, rather than a separate SCREENS entry).
+let pnlView = 'main';
+let acctChartAccId = null;
+let acctChartYear = todayStr().slice(0,4);
 function dataYears(){
   const ys = new Set(D.ledger.map(l=>(l.date||'').slice(0,4)).filter(Boolean));
   return [...ys].sort();
@@ -6264,6 +6273,7 @@ function pnlBudgetForAccountInRange(accId, fromDate, toDate){
 // convention, which is exactly the bug this replaces.
 function pnlVarianceMagnitude(budget, actual){ return Math.abs(budget) - Math.abs(actual); }
 function renderPnL(){
+  if(pnlView==='acctchart'){ renderAcctBudgetChartPage(); return; }
   beginForecastFastPath();
   try{
   // ---- Income: shown positive, grouped by category with subtotals ----
@@ -6331,6 +6341,9 @@ function renderPnL(){
         ${pnlPreset==='custom'? `<div style="width:170px"><label class="fl">From</label><input type="date" value="${pnlFrom}" onchange="pnlFrom=this.value; renderPnL()"></div><div style="width:170px"><label class="fl">To</label><input type="date" value="${pnlTo}" onchange="pnlTo=this.value; renderPnL()"></div>`:''}
         <div class="mut" style="align-self:center;margin-left:auto">${esc(pnlFrom)} → ${esc(pnlTo)}</div>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost sm" onclick="openAcctBudgetChart()">📊 Account Budget Chart</button>
+      </div>
     </div>
     <div class="cards">
       <div class="kpi"><div class="l">Total Income</div><div class="v g">${money(incTotal)}</div></div>
@@ -6358,6 +6371,139 @@ function viewPnLAccountTransactions(accId){
     <tbody>${lines.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono">${esc(l.date)}</td><td class="mono">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No transactions in this period</td></tr>'}</tbody>
     <tfoot><tr><td colspan="3">Total</td><td class="num mono ${moneyClass(total)}">${money(total)}</td></tr></tfoot></table>
     <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
+}
+
+/* ============================= ACCOUNT BUDGET CHART (P&L sub-page) ============================= */
+function openAcctBudgetChart(){
+  if(!acctChartAccId){
+    const opts = accountsWithBudgetFigures();
+    if(opts.length) acctChartAccId = opts[0].id;
+  }
+  pnlView = 'acctchart';
+  renderPnL();
+}
+function closeAcctBudgetChart(){ pnlView = 'main'; renderPnL(); }
+// "Accounts with Budget figures": expense accounts (start with 6) that actually have a plan
+// somewhere — the legacy D.budget table, a Provisions line, or a Smart Rule — so the picker isn't
+// cluttered with every expense account regardless of whether it's ever been budgeted.
+function accountsWithBudgetFigures(){
+  return D.accounts.filter(a=>
+    firstDigit(a.id)===6 && a.status!=='Deleted' &&
+    ( (D.budget||[]).some(b=>b.acc===a.id) ||
+      (D.provisionGroups||[]).some(pg=>(pg.lines||[]).some(l=>l.acc===a.id)) ||
+      (D.forecastAccountRules||[]).some(r=>r.account===a.id) )
+  ).sort((a,b)=>a.id-b.id);
+}
+// Years actually present in the ledger, plus the current year always available even with zero
+// activity yet — reuses dataYears() (the same source the "Specific year…" P&L preset uses) rather
+// than re-deriving a year list from scratch.
+function acctBudgetChartYears(){
+  const ys = new Set(dataYears());
+  ys.add(todayStr().slice(0,4));
+  return [...ys].sort().reverse();
+}
+function selectAcctBudgetChartAccount(v){ acctChartAccId = v? Number(v) : null; renderPnL(); }
+function selectAcctBudgetChartYear(v){ acctChartYear = v; renderPnL(); }
+const ACCT_BUDGET_CHART_MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function computeAcctBudgetChartData(accId, year){
+  const acc = ACC_BY_ID[accId];
+  const todayYm = todayStr().slice(0,7);
+  const months = ACCT_BUDGET_CHART_MONTH_LABELS.map((_,i)=> year+'-'+String(i+1).padStart(2,'0'));
+  let budgetVals;
+  try{
+    beginForecastFastPath();
+    // Pass each month as its own "current month" too — computeForecastCell otherwise treats any
+    // month before the real current month as closed history and collapses its plan into actual,
+    // which is correct for the Forecast Grid but wrong here: a past year (or an earlier month of
+    // the current year) still needs its ORIGINAL plan for the Budget bar, exactly the same
+    // reasoning documented for the Month End Accrual JV fix.
+    budgetVals = months.map(mk => acc? (computeForecastCell(acc, mk, mk).plan || 0) : 0);
+  } finally { endForecastFastPath(); }
+  // Confirmed: months later than today show Actual as 0 / flat, rather than omitting the bar
+  // entirely — which also naturally makes the cumulative Actual line flatten out once it passes
+  // the current month, with no extra logic needed for that.
+  const actualVals = months.map(mk => mk<=todayYm ? sumAcc(l=>l.acc===accId, ...monthRange(mk)) : 0);
+  const cumBudget = [], cumActual = [];
+  months.forEach((mk,i)=>{
+    cumBudget.push((cumBudget[i-1]||0) + budgetVals[i]);
+    cumActual.push((cumActual[i-1]||0) + actualVals[i]);
+  });
+  const totalBudget = budgetVals.reduce((s,v)=>s+v,0);
+  const totalActual = actualVals.reduce((s,v)=>s+v,0);
+  // Confirmed definition: full-year budget minus actual-to-date. Uses the same sign-convention-
+  // safe magnitude subtraction as every other Budget vs Actual comparison on the P&L page
+  // (pnlVarianceMagnitude), so it reads correctly regardless of whether this account happens to
+  // store expenses as positive or negative amounts.
+  const remaining = pnlVarianceMagnitude(totalBudget, totalActual);
+  return {months, budgetVals, actualVals, cumBudget, cumActual, totalBudget, totalActual, remaining};
+}
+function renderAcctBudgetChartPage(){
+  const opts = accountsWithBudgetFigures();
+  if(acctChartAccId && !opts.some(a=>a.id===acctChartAccId)) acctChartAccId = null;
+  if(!acctChartAccId && opts.length) acctChartAccId = opts[0].id;
+  const years = acctBudgetChartYears();
+  if(!years.includes(acctChartYear)) acctChartYear = years[0];
+  const data = acctChartAccId ? computeAcctBudgetChartData(acctChartAccId, acctChartYear) : null;
+  document.getElementById('app').innerHTML = `
+    <div class="panel noprint">
+      <div class="row">
+        <button class="btn ghost sm" onclick="closeAcctBudgetChart()">◂ Back to P&amp;L</button>
+        <div style="width:280px"><label class="fl">Account</label>
+          <select onchange="selectAcctBudgetChartAccount(this.value)" ${!opts.length?'disabled':''}>
+            ${opts.length? opts.map(a=>`<option value="${a.id}" ${a.id===acctChartAccId?'selected':''}>${a.id} - ${esc(accShort(a.id))}</option>`).join('') : '<option value="">No budgeted accounts found</option>'}
+          </select>
+        </div>
+        <div style="width:120px"><label class="fl">Year</label>
+          <select onchange="selectAcctBudgetChartYear(this.value)">
+            ${years.map(y=>`<option value="${y}" ${y===acctChartYear?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>
+    ${!data? `<div class="panel"><div class="empty">No expense accounts with a budget, Provisions plan, or Smart Rule were found.</div></div>` : `
+    <div class="cards">
+      <div class="kpi"><div class="l">Full-Year Budget</div><div class="v">${money(data.totalBudget)}</div></div>
+      <div class="kpi"><div class="l">Actual to Date</div><div class="v">${money(data.totalActual)}</div></div>
+      <div class="kpi"><div class="l">Remaining Budget for the Year</div><div class="v ${moneyClass(data.remaining)}">${money(data.remaining)}</div></div>
+    </div>
+    <div class="panel"><h3>Monthly Budget vs Actual — ${esc(accShort(acctChartAccId))} (${acctChartYear})</h3>
+      <div style="height:320px"><canvas id="acctBudgetBarChart"></canvas></div>
+    </div>
+    <div class="panel"><h3>Cumulative Budget vs Actual</h3>
+      <div style="height:320px"><canvas id="acctBudgetCumChart"></canvas></div>
+    </div>`}`;
+  if(data) drawAcctBudgetChart(data);
+}
+let _acctBudgetCharts = [];
+function drawAcctBudgetChart(data){
+  _acctBudgetCharts.forEach(ch=>{ try{ ch.destroy(); }catch(e){} });
+  _acctBudgetCharts = [];
+  if(typeof Chart==='undefined') return;
+  const css = getComputedStyle(document.documentElement);
+  const grid = (css.getPropertyValue('--line')||'#ddd').trim();
+  const text = (css.getPropertyValue('--muted')||'#888').trim();
+  const barEl = document.getElementById('acctBudgetBarChart');
+  if(barEl){
+    _acctBudgetCharts.push(new Chart(barEl, {type:'bar', data:{
+      labels: ACCT_BUDGET_CHART_MONTH_LABELS,
+      datasets:[
+        {label:'Budget', data:data.budgetVals, backgroundColor:'#8a93a6'},
+        {label:'Actual', data:data.actualVals, backgroundColor:'#4f8cff'},
+      ]}, options:{responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{labels:{color:text}}},
+        scales:{x:{ticks:{color:text},grid:{color:grid}}, y:{ticks:{color:text},grid:{color:grid}}}}}));
+  }
+  const cumEl = document.getElementById('acctBudgetCumChart');
+  if(cumEl){
+    _acctBudgetCharts.push(new Chart(cumEl, {type:'line', data:{
+      labels: ACCT_BUDGET_CHART_MONTH_LABELS,
+      datasets:[
+        {label:'Cumulative Budget', data:data.cumBudget, borderColor:'#8a93a6', backgroundColor:'rgba(138,147,166,0.12)', fill:true, tension:0.2, pointRadius:2},
+        {label:'Cumulative Actual', data:data.cumActual, borderColor:'#4f8cff', backgroundColor:'rgba(79,140,255,0.12)', fill:true, tension:0.2, pointRadius:2},
+      ]}, options:{responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{labels:{color:text}}},
+        scales:{x:{ticks:{color:text},grid:{color:grid}}, y:{ticks:{color:text},grid:{color:grid}}}}}));
+  }
 }
 
 /* ============================= PROVISIONS (recurring provision planner) ============================= */
