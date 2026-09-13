@@ -121,7 +121,7 @@ body{
 }
 ::selection{background:var(--brass); color:#fff;}
 
-button{font-family:inherit; cursor:pointer;}
+button{font-family:inherit; cursor:pointer; touch-action:manipulation;}
 input,select,textarea{font-family:inherit;}
 
 ::-webkit-scrollbar{width:10px; height:10px;}
@@ -949,6 +949,28 @@ body.dark-mode .notebook-page{background-image:repeating-linear-gradient(to bott
 @media (max-width: 760px){
   .lists-layout{flex-direction:column;}
   .lists-toc{width:100%;}
+  /* v4.49.0: opening a list used to just append its content below the list-of-
+     lists sidebar, so you had to scroll down the whole page to read it.
+     Now it's hidden until picked, then shown as a floating modal on top. */
+  .notebook-page{display:none;}
+  .notebook-page.mobile-modal-open{
+    display:block; position:fixed; z-index:250;
+    top:8vh; left:16px; right:16px; bottom:8vh;
+    padding:20px; overflow-y:auto; box-sizing:border-box; box-shadow:var(--shadow-pop);
+  }
+  .notebook-page.mobile-modal-open::before{display:none;} /* the ruled-paper left margin line is a full-width-page decoration, doesn't fit a narrow modal */
+  /* Same header-squeeze fix as the pinned-list panel: title + action buttons
+     don't fit on one line in a narrow modal, so wrap the buttons below. */
+  .notebook-page.mobile-modal-open .notebook-header{flex-wrap:wrap; row-gap:8px; padding-left:0;}
+  .notebook-page.mobile-modal-open .notebook-header h3{min-width:0; overflow-wrap:break-word; padding-right:34px;} /* clear the close button */
+  .notebook-page.mobile-modal-open .notebook-header > span{flex:1 0 100%; flex-wrap:wrap; row-gap:6px; justify-content:flex-start;}
+  .notebook-page.mobile-modal-open > .page-sub{padding-left:0;}
+  .mobile-list-modal-backdrop{position:fixed; inset:0; z-index:249; background:rgba(0,0,0,0.4);}
+  .mobile-list-modal-close{
+    position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%;
+    border:1px solid var(--line); background:var(--paper-raised); color:var(--ink);
+    font-size:15px; display:flex; align-items:center; justify-content:center; z-index:1;
+  }
 }
 
 .pin-list-btn{
@@ -2161,7 +2183,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.48.1';
+const APP_VERSION = '4.49.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2169,6 +2191,12 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.49.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'MOBILE: swipe from the left edge of the screen to open the pages menu (in addition to the existing hamburger tap). Only tracks touches starting within ~24px of the left edge and only while the drawer is closed, so it doesn\u2019t interfere with ordinary taps or vertical scrolling elsewhere. Note: this shares screen real estate with iOS Safari\u2019s own edge-swipe-back gesture on pages with browser history \u2014 a platform-level overlap, not a bug in this feature.',
+    'MOBILE: opening a list from the Lists page now shows its contents as a floating modal (tap \u2715 or the backdrop to close) instead of appending them below the list-of-lists sidebar, which used to require scrolling down the whole page to read them. Desktop\u2019s side-by-side layout is unchanged.',
+    'MOBILE FIX: list items and task checkboxes required two taps to mark complete on iPhone Safari \u2014 the first tap only registered a hover-style state, the second actually toggled it. Added touch-action:manipulation to all buttons app-wide, which is the standard fix for this class of WebKit tap-delay behavior. Affects every button in the app, not just checkboxes.',
+  ]},
   { v:'4.48.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'PINNED LIST PANEL: fixed the floating side panel being horizontally scrollable whenever a list was pinned \u2014 the header\u2019s title and its row of action buttons (rename, pin, uncheck, clear, export, delete) were fighting for space on one line in the 340px-wide panel and overflowing sideways, regardless of the list\u2019s name length. The button row now wraps onto its own line under the title instead. Also dropped a 52px left-indent on the header that was meant for the full-width Lists page\u2019s ruled-paper margin line (which the floating panel doesn\u2019t have) \u2014 it was just wasted space making the squeeze worse in the panel. The main Lists page itself is untouched.',
@@ -2897,6 +2925,7 @@ const state = {
   dashboardFilter: 'Today', // Today | Next7 | Next30 | Custom
   locationFilter: 'All',
   mobileNavOpen: false,
+  mobileListModalOpen: false, // mobile-only: whether the selected list's content is showing as a floating modal
   groupByLocation: true, // always defaults on each load, per user preference — not persisted
   selectedListId: null,
   calMonthCursor: null, // {year, month}
@@ -6342,6 +6371,40 @@ function closeMobileNav(){
   state.mobileNavOpen = false;
   render();
 }
+function openMobileNav(){
+  if(state.mobileNavOpen) return;
+  state.mobileNavOpen = true;
+  render();
+}
+/* v4.49.0: edge-swipe to open the mobile pages drawer. Only starts tracking a
+   touch that begins within EDGE_ZONE px of the left screen edge (so it
+   doesn't hijack ordinary taps/scrolls anywhere else on the page), only on
+   mobile widths, and only while the drawer is closed. A mostly-vertical drag
+   is treated as a scroll and abandoned immediately rather than fighting it.
+   Note: iOS Safari's own edge-swipe-back gesture lives in the same screen
+   region, so on pages with real back-navigation history this can feel like
+   it's competing with the system gesture — a known platform-level overlap,
+   not a bug in this handler. */
+(function initMobileNavEdgeSwipe(){
+  const EDGE_ZONE = 24, OPEN_THRESHOLD = 60;
+  let startX = null, startY = null, tracking = false;
+  document.addEventListener('touchstart', (e)=>{
+    tracking = false;
+    if(window.innerWidth > 760 || state.mobileNavOpen) return;
+    const t = e.touches[0];
+    if(!t || t.clientX > EDGE_ZONE) return;
+    startX = t.clientX; startY = t.clientY; tracking = true;
+  }, { passive:true });
+  document.addEventListener('touchmove', (e)=>{
+    if(!tracking) return;
+    const t = e.touches[0];
+    if(!t) return;
+    const dx = t.clientX - startX, dy = t.clientY - startY;
+    if(Math.abs(dy) > Math.abs(dx)){ tracking = false; return; } // vertical scroll, not this gesture
+    if(dx > OPEN_THRESHOLD){ tracking = false; openMobileNav(); }
+  }, { passive:true });
+  document.addEventListener('touchend', ()=>{ tracking = false; }, { passive:true });
+})();
 function applyContentWidthClass(){
   const el = document.getElementById('mainContent');
   if(!el) return;
@@ -6530,6 +6593,7 @@ function setView(v){
   // caller remembering to chain closeMobileNav() afterward.
   const wasDrawerOpen = state.mobileNavOpen;
   state.mobileNavOpen = false;
+  state.mobileListModalOpen = false; // leaving the page a list modal belongs to should close it, not leave it floating over the new page
   if(v !== 'tasks'){ state.batchSelectMode = false; state.selectedTaskIds = new Set(); }
   if(wasDrawerOpen){
     // Full render: rebuilds the drawer/top-bar too, so it actually disappears.
@@ -7925,7 +7989,9 @@ function renderListsView(){
       <div class="lists-toc">
         ${sidebarContent}
       </div>
-      <div class="notebook-page">
+      ${active && state.mobileListModalOpen ? `<div class="mobile-list-modal-backdrop" onclick="closeListModal()"></div>` : ''}
+      <div class="notebook-page ${active && state.mobileListModalOpen ? 'mobile-modal-open' : ''}">
+        ${active && state.mobileListModalOpen ? `<button class="mobile-list-modal-close" onclick="closeListModal()" aria-label="Close">✕</button>` : ''}
         ${active ? renderNotebookPage(active) : `<div class="empty-state"><span class="glyph">☺</span>Pick a list on the left, or create a new one.</div>`}
       </div>
     </div>
@@ -7941,6 +8007,11 @@ function jumpToListFolderSettings(){
 }
 function selectList(listId){
   state.selectedListId = listId;
+  state.mobileListModalOpen = true; // no visual effect on desktop — the CSS modal treatment only applies under the mobile breakpoint
+  renderMain();
+}
+function closeListModal(){
+  state.mobileListModalOpen = false;
   renderMain();
 }
 
