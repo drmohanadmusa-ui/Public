@@ -346,12 +346,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.49.0';
+const APP_VERSION = '4.50.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.50.0', date:'2026-09-13', changes:[
+    'P&L → each budgeted expense account line now carries a small 📊 link that jumps straight into the Account Budget Chart for that specific account, instead of opening the chart and having to pick it again from the dropdown. Only shown for accounts the chart itself would actually accept (a Budget, Provisions plan, or Smart Rule).',
+  ]},
   {version:'4.49.0', date:'2026-09-12', changes:[
     'NEW: P&L \u2192 Account Budget Chart \u2014 pick any expense account that has a Budget, Provisions plan, or Smart Rule, and any year, to see a bar chart of Budget vs Actual per month, a line chart of the cumulative running totals across the year, and the remaining budget left for the year (full-year budget minus actual-to-date).',
   ]},
@@ -6298,6 +6301,10 @@ function renderPnL(){
   });
   const expCats = Object.keys(expByCat).sort((x,y)=> Math.min(...expByCat[x].map(i=>i.a.id)) - Math.min(...expByCat[y].map(i=>i.a.id)));
   let expTotal = 0, expBudgetTotal = 0;
+  // Restricts the 📊 chart-link icon to accounts the chart page itself would actually accept —
+  // same set the chart's own account picker uses, so the link never lands on a "no budgeted
+  // accounts" empty state for an account that was never budgeted.
+  const budgetedAccIds = new Set(accountsWithBudgetFigures().map(a=>a.id));
   const expCatData = expCats.map(cat=>{
     const items = expByCat[cat].sort((a,b)=>a.a.id-b.a.id);
     const catTotal = items.reduce((s,i)=>s+i.actual,0), catBudget = items.reduce((s,i)=>s+i.budget,0);
@@ -6310,7 +6317,7 @@ function renderPnL(){
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
     return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
-      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
+      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
   // Net Result is always Income minus the magnitude of Expenses — matching standard P&L
@@ -6374,8 +6381,14 @@ function viewPnLAccountTransactions(accId){
 }
 
 /* ============================= ACCOUNT BUDGET CHART (P&L sub-page) ============================= */
-function openAcctBudgetChart(){
-  if(!acctChartAccId){
+function openAcctBudgetChart(accId){
+  if(accId){
+    // Jumping in for a specific account (e.g. the 📊 link on a P&L expense row). Validity against
+    // accountsWithBudgetFigures() is checked by renderAcctBudgetChartPage() itself, which already
+    // falls back to the first available option if this id turns out not to qualify — no need to
+    // duplicate that guard here.
+    acctChartAccId = accId;
+  } else if(!acctChartAccId){
     const opts = accountsWithBudgetFigures();
     if(opts.length) acctChartAccId = opts[0].id;
   }
