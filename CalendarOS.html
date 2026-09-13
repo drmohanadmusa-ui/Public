@@ -961,10 +961,24 @@ body.dark-mode .notebook-page{background-image:repeating-linear-gradient(to bott
 #pinnedListPanel{
   position:fixed; top:0; right:0; height:100vh; width:340px; z-index:60;
   background:var(--paper-raised); border-left:1px solid var(--line); box-shadow:var(--shadow-pop);
-  padding:20px 20px 20px; overflow-y:auto; box-sizing:border-box;
+  padding:20px 20px 20px; overflow-y:auto; overflow-x:hidden; box-sizing:border-box;
   transform:translateX(100%); transition:transform 0.28s cubic-bezier(.32,.72,0,1);
 }
 #pinnedListPanel.open{transform:translateX(0);}
+/* The floating panel is much narrower than the full Lists page, so the
+   notebook header's title + action-button row (rename/pin/uncheck/clear/
+   export/delete) never fit side by side here — force the buttons onto
+   their own row instead of letting them squeeze the title and overflow
+   sideways. Scoped to #pinnedListPanel only; the main Lists page keeps
+   its original single-line header. */
+#pinnedListPanel .notebook-header{
+  flex-wrap:wrap; row-gap:8px; padding-left:0; /* the 52px indent was for the
+    full-page ruled-paper margin line, which this panel doesn't render */
+}
+#pinnedListPanel .notebook-header h3{min-width:0; overflow-wrap:break-word;}
+#pinnedListPanel .notebook-header > span{
+  flex:1 0 100%; flex-wrap:wrap; row-gap:6px; justify-content:flex-start;
+}
 .pinned-panel-close{
   position:absolute; top:14px; right:14px; background:transparent; border:none; font-size:16px;
   color:var(--slate-light); cursor:pointer; width:26px; height:26px; border-radius:6px;
@@ -2147,7 +2161,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.48.0';
+const APP_VERSION = '4.48.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2155,6 +2169,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.48.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'PINNED LIST PANEL: fixed the floating side panel being horizontally scrollable whenever a list was pinned \u2014 the header\u2019s title and its row of action buttons (rename, pin, uncheck, clear, export, delete) were fighting for space on one line in the 340px-wide panel and overflowing sideways, regardless of the list\u2019s name length. The button row now wraps onto its own line under the title instead. Also dropped a 52px left-indent on the header that was meant for the full-width Lists page\u2019s ruled-paper margin line (which the floating panel doesn\u2019t have) \u2014 it was just wasted space making the squeeze worse in the panel. The main Lists page itself is untouched.',
+  ]},
   { v:'4.48.0', changes: [
     '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds seat_setting on training_exercises and training_failure_plan on app_settings. Both additive/idempotent, safe to run anytime.',
     'BODY MAP: fixed the head/neck outline still using the old pale stroke color from before last session\u2019s contrast pass \u2014 now matches the darkened muscle-region outlines.',
