@@ -2147,7 +2147,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.47.0';
+const APP_VERSION = '4.48.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2155,6 +2155,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.48.0', changes: [
+    '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds seat_setting on training_exercises and training_failure_plan on app_settings. Both additive/idempotent, safe to run anytime.',
+    'BODY MAP: fixed the head/neck outline still using the old pale stroke color from before last session\u2019s contrast pass \u2014 now matches the darkened muscle-region outlines.',
+    'WEEKLY VOLUME: fixed low-contrast numbers in the Muscle/Sets legend list \u2014 they were using the same colors as the tiny fill swatches next to them, which read fine as a small color chip but were genuinely hard to read as actual text (especially the zero-sets state, which used a barely-there background tint as a text color). Now uses a separate, darker set of colors specifically for the numbers.',
+    'COLLAPSIBLE EXERCISES: once every working set in an exercise is marked done, its card now collapses to a one-line summary (name, set count, tap to expand) instead of staying fully expanded for the rest of the session \u2014 keeps a long training day from turning into an endless scroll. Found and fixed a real bug while building this: saving while a card was collapsed was reading its notes field via a DOM lookup that returns nothing for a collapsed card, which would have silently wiped existing notes to empty. Now only overwrites a field on save when its input actually exists in the current render.',
+    'SEAT / MACHINE SETTING: new field per exercise for recording your seat/pin position for consistency between sessions \u2014 shown right next to the exercise name when logging. Free text, since not every machine\u2019s adjustment is a plain number.',
+    'FAILURE-DAY SCHEDULING: the app now automatically flags one isolation exercise per session to push its last set to true failure, based on current research \u2014 restricted to isolation/machine exercises only (not free-weight compounds, where form breakdown at failure is a real injury path), requires at least 3 prior logged sessions with that exercise first, and respects a 12-day per-exercise cooldown so it lands roughly every 1-2 weeks rather than constantly. Shown as a clear banner on the chosen exercise\u2019s card; decided once per date and remembered, not recomputed on every visit.',
+  ]},
   { v:'4.47.0', changes: [
     '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds muscle_groups (jsonb array) on training_exercises. Additive/idempotent, safe to run anytime — the old muscle_group column is left in place untouched, not migrated in the database (the app migrates it automatically on read; see below).',
     'MUSCLE GROUPS: an exercise can now target more than one muscle group — a bench press can be tagged Chest AND Triceps AND Shoulders, for example. The Add/Edit Exercise modal\u2019s muscle group field is now a multi-select pill row instead of a single dropdown. A set counts fully toward EACH group an exercise targets (not split fractionally) in both the weekly body map and the 8-week volume trend.',
@@ -4007,6 +4015,7 @@ function trainingExerciseToRow(ex){
   return { pin:s.pin, id:ex.id, name:ex.name, video_url:urls[0]||null, video_urls:urls,
            notes:ex.notes||'', category:ex.category||'strength', tag_ids: ex.tagIds||[],
            muscle_groups: exMuscleGroups(ex), rest_sec: ex.restSec||null, lift_type: ex.liftType||null,
+           seat_setting: ex.seatSetting||null,
            updated_at:new Date().toISOString() };
 }
 function rowToTrainingExercise(r){
@@ -4020,7 +4029,8 @@ function rowToTrainingExercise(r){
   return { id:r.id, name:r.name, videoUrl:list[0]||'', videoUrls:list, notes:r.notes||'',
            category:r.category||'strength', tagIds: r.tag_ids||[],
            muscleGroups: Array.isArray(r.muscle_groups) ? r.muscle_groups : [],
-           muscleGroup: r.muscle_group||null, restSec: r.rest_sec||null, liftType: r.lift_type||null };
+           muscleGroup: r.muscle_group||null, restSec: r.rest_sec||null, liftType: r.lift_type||null,
+           seatSetting: r.seat_setting||null };
 }
 function trainingSessionToRow(sess){
   const s = state.settings.sync;
@@ -4212,7 +4222,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -4509,6 +4519,14 @@ async function pullFromSupabase(onProgress){
       }
       if(settingsRows[0].muscle_band && typeof settingsRows[0].muscle_band==='object'){
         state.settings.muscleBand = settingsRows[0].muscle_band;
+      }
+      // Merged the same way as training_suggestions just above — whichever
+      // device already decided a date's failure-day plan keeps that
+      // decision everywhere, rather than each device deciding independently.
+      if(settingsRows[0].training_failure_plan && typeof settingsRows[0].training_failure_plan==='object'){
+        state.settings.trainingFailurePlan = Object.assign(
+          state.settings.trainingFailurePlan||{}, settingsRows[0].training_failure_plan
+        );
       }
       // Whichever device confirmed a later day wins — this is what makes
       // "start a new day on one device" actually show up on the others,
@@ -5096,7 +5114,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null }], 'pin'),
     ]);
   }
 }
@@ -9061,6 +9079,75 @@ function getTrainingCalEntry(date){
 function getTrainingSessionById(id){
   return state.training.sessions.find(s=>s.id===id) || null;
 }
+/* v4.48.0: automatic "push your last set to failure" day scheduling.
+
+   Research summary (evidence-based fitness sources, checked before building
+   this): occasional failure sets ARE useful for exactly the calibration
+   purpose intended here — periodically confirming your RIR estimate matches
+   reality — but shouldn't be constant. Guidance converges on roughly every
+   1-2 weeks per exercise for someone already training with real volume, and
+   consistently recommends restricting this to machine/isolation exercises
+   specifically: a fixed movement path is much safer to grind to failure on
+   than a loaded free-weight compound, where form breakdown at the limit is
+   a real injury path. Both of those are encoded below: liftType==='isolation'
+   only, and a 12-day per-exercise cooldown (comfortably within the 1-2 week
+   range, naturally landing roughly every-other-occurrence on a 5-day PPL
+   split without hand-tuning per exercise).
+
+   Also requires some established history with an exercise (3+ prior logged
+   sessions) before it's ever eligible — pushing to failure on a movement
+   you've never done is exactly the "beginners shouldn't" case the same
+   research is unanimous about. */
+const FAILURE_DAY_MIN_HISTORY_SESSIONS = 3;
+const FAILURE_DAY_COOLDOWN_DAYS = 12;
+
+function countLoggedSessionsForExercise(exId, beforeDate){
+  const dates = new Set();
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId===exId && s.done && !s.isWarmup && s.date<beforeDate) dates.add(s.date);
+  });
+  return dates.size;
+}
+function daysSinceLastFailureSet(exId, beforeDate){
+  let lastDate = null;
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId===exId && s.toFailure && s.done && s.date<beforeDate){
+      if(!lastDate || s.date>lastDate) lastDate = s.date;
+    }
+  });
+  if(!lastDate) return Infinity; // never taken to failure — always eligible, subject to the history gate above
+  const [y1,m1,d1] = lastDate.split('-').map(Number);
+  const [y2,m2,d2] = beforeDate.split('-').map(Number);
+  return Math.round((Date.UTC(y2,m2-1,d2) - Date.UTC(y1,m1-1,d1)) / 86400000);
+}
+/* Picks at most ONE exercise from today's staged list to flag for a
+   failure-focused last set, or null if nothing is eligible yet. Prefers
+   whichever eligible candidate has gone longest without one — "most due"
+   — rather than always picking the same exercise once it clears the
+   cooldown. */
+function pickFailureExerciseForDay(date, stagedExerciseIds){
+  const candidates = (stagedExerciseIds||[])
+    .map(id=>getTrainingExerciseById(id))
+    .filter(ex=> ex && ex.liftType==='isolation')
+    .filter(ex=> countLoggedSessionsForExercise(ex.id, date) >= FAILURE_DAY_MIN_HISTORY_SESSIONS)
+    .map(ex=> ({ ex, daysSince: daysSinceLastFailureSet(ex.id, date) }))
+    .filter(c=> c.daysSince >= FAILURE_DAY_COOLDOWN_DAYS);
+  if(!candidates.length) return null;
+  candidates.sort((a,b)=> b.daysSince - a.daysSince);
+  return candidates[0].ex.id;
+}
+/* Ensures today's (or a future day's) failure-exercise decision is made
+   exactly once and then remembered — state.settings.trainingFailurePlan[date]
+   is absent until decided, then holds either the chosen exerciseId or null
+   ("decided: none eligible today"). Never runs for a past date being
+   reviewed after the fact. */
+function ensureFailureDayPlanned(date, stagedExerciseIds){
+  if(!state.settings.trainingFailurePlan) state.settings.trainingFailurePlan = {};
+  if(date < todayStr()) return;
+  if(date in state.settings.trainingFailurePlan) return;
+  state.settings.trainingFailurePlan[date] = pickFailureExerciseForDay(date, stagedExerciseIds);
+  saveSettings();
+}
 function getTrainingExerciseById(id){
   return state.training.exercises.find(e=>e.id===id) || null;
 }
@@ -9391,6 +9478,17 @@ function announceRestoredTrainingDrafts(){
   trainingDraftsRestored = 0;
   setTimeout(()=> showToast(`Restored unsaved training entry for ${n} exercise${n===1?'':'s'} — remember to Save`), 900);
 }
+/* Manual override for the auto-collapse-when-complete behavior in
+   renderTrainingExerciseLogRow(). Session-local only (not synced, not
+   persisted across a reload) — the derived "complete" state from actual set
+   data is what decides the default every time the page is freshly rendered. */
+function toggleTrainingRowExpanded(date, exId){
+  if(!state.trainingRowExpanded) state.trainingRowExpanded = {};
+  const key = `${date}::${exId}`;
+  if(state.trainingRowExpanded[key]) delete state.trainingRowExpanded[key];
+  else state.trainingRowExpanded[key] = true;
+  renderMain();
+}
 function renderTrainingExerciseLogRow(date, block, index){
   const isSessionLevel = !!block.__sessionLevel;
   const ex = isSessionLevel ? null : getTrainingExerciseById(block.exerciseId);
@@ -9409,6 +9507,38 @@ function renderTrainingExerciseLogRow(date, block, index){
   const prevE1RM = !isSessionLevel && !isWalking ? bestE1RMForExercise(block.exerciseId, date) : null;
   const curE1RM = sets.length ? epley1RM(sets) : null;
   const isPR = curE1RM && prevE1RM && curE1RM > prevE1RM;
+  const e1RMDisplay = curE1RM ? `e1RM ~${Math.round(curE1RM)}kg${isPR?' 🏆 PR':''}` : '';
+
+  // v4.48.0: collapsible completed exercises — once every working set is
+  // ticked done, collapse this card to a one-line summary so a long session
+  // doesn't keep growing the page as you work through it. Walking exercises
+  // (a toggle, not a set list) aren't included — "complete" doesn't mean the
+  // same thing for them. Collapsed is the DERIVED default from actual set
+  // data (so it's correct again after a reload, not just this session) —
+  // the person can always tap to force it open, which is remembered only
+  // for this browser session, not synced.
+  const workingSetsEarly = !isSessionLevel && !isWalking ? sets.filter(s=>!s.isWarmup) : [];
+  const doneSetsEarly = workingSetsEarly.filter(s=>s.done).length;
+  const isRowComplete = !isSessionLevel && !isWalking && workingSetsEarly.length>0 && doneSetsEarly===workingSetsEarly.length;
+  const expandKey = `${date}::${block.exerciseId}`;
+  const forcedOpen = state.trainingRowExpanded && state.trainingRowExpanded[expandKey];
+  if(isRowComplete && !forcedOpen){
+    return `
+    <div class="card" style="padding:10px 14px; margin-bottom:10px; background:var(--paper-dim); cursor:pointer;"
+      data-exercise-id="${escapeHtml(block.exerciseId)}" data-row-id="${rowId}"
+      onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <span style="color:var(--teal); font-size:13px; flex-shrink:0;">✓</span>
+          <b style="font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(title)}</b>
+        </span>
+        <span style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          <span class="page-sub" style="font-size:11px;">${doneSetsEarly}/${workingSetsEarly.length} sets${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>
+          <span class="page-sub" style="font-size:10px;">▾ tap to expand</span>
+        </span>
+      </div>
+    </div>`;
+  }
 
   // Last session carry-forward (first working set weight and reps, for quick reference)
   const lastWorking = lastSets.filter(s=>!s.isWarmup);
@@ -9476,10 +9606,11 @@ function renderTrainingExerciseLogRow(date, block, index){
   }).join('');
 
   // Session target from the block (populated when a planned session is assigned)
-  // Aggregate for display — must be computed before the target comparison below
-  const workingSets = sets.filter(s=>!s.isWarmup);
-  const doneSets = workingSets.filter(s=>s.done).length;
-  const e1RMDisplay = curE1RM ? `e1RM ~${Math.round(curE1RM)}kg${isPR?' 🏆 PR':''}` : '';
+  // workingSets/doneSets/e1RMDisplay already computed above (used by the
+  // collapsed-row check too, for session-level and walking rows this branch
+  // is unreachable so aliasing to the early values is safe here).
+  const workingSets = workingSetsEarly;
+  const doneSets = doneSetsEarly;
 
   // Session target from the block (populated when a planned session is assigned)
   const targetSets = block.sets || null;
@@ -9498,7 +9629,10 @@ function renderTrainingExerciseLogRow(date, block, index){
   return `
     <div class="card" style="padding:12px 14px; margin-bottom:10px; background:var(--paper-dim);" data-exercise-id="${escapeHtml(block.exerciseId)}" data-row-id="${rowId}">
       <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap;">
-        <b>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
+        <span style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <b>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
+          ${ex && ex.seatSetting ? `<span class="page-sub" style="font-size:10.5px; background:var(--paper-dim); border-radius:4px; padding:1px 7px;" title="Seat/machine setting — dial the machine to this before your first set">⚙ Seat ${escapeHtml(ex.seatSetting)}</span>` : ''}
+        </span>
         <span style="display:flex; align-items:center; gap:8px;">
           ${sets.length ? `<span class="page-sub" style="font-size:11px;">${doneSets}/${workingSets.length} sets done${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>` : ''}
           <button class="icon-btn train-remove-btn" title="Remove from this day" onclick="removeExerciseFromDay('${date}','${escapeHtml(block.exerciseId)}')">✕</button>
@@ -9506,6 +9640,10 @@ function renderTrainingExerciseLogRow(date, block, index){
       </div>
 
       ${ex && (ex.notes||'').trim() ? `<div class="page-sub" style="margin-top:2px;font-size:11.5px;">${escapeHtml(ex.notes)}</div>` : ''}
+
+      ${!isSessionLevel && !isWalking && (state.settings.trainingFailurePlan||{})[date]===block.exerciseId ? `<div class="suggestion-box" style="border-color:var(--flag,#D95B5B);">
+        🔥 <b>Failure day:</b> push your <b>last set</b> of this exercise to true failure — isolation movement, established history, ~${FAILURE_DAY_COOLDOWN_DAYS} days since your last one. Log it with the F pill so it's recorded.
+      </div>` : ''}
 
       ${hasTarget ? `<div class="target-badge ${targetMet?'target-badge-met':''}">
         🎯 Target: ${escapeHtml(targetLabel)}
@@ -9758,6 +9896,19 @@ function muscleVolumeOpacity(sets,band){
   if(!sets) return 0.15;
   return 0.55+Math.min(0.45,(sets/max)*0.45);
 }
+/* Colors above are tuned for small fill swatches/SVG shapes, where a pale or
+   light color still reads fine against an outline. As TEXT (a number in the
+   legend list) the same values are a real contrast problem — 'var(--paper-dim)'
+   in particular is meant to be a barely-there fill, not a readable text
+   color, and the amber is on the light side too. This is the same value set,
+   darkened specifically for text use. */
+function muscleVolumeTextColour(sets,band){
+  const {min,max}=band||MUSCLE_BAND_DEFAULT;
+  if(!sets) return 'var(--ink-soft)';
+  if(sets<min) return '#8A6416';
+  if(sets>max) return '#A83D3D';
+  return 'var(--teal)';
+}
 function renderWeeklyVolumePanel(){
   const vol=computeWeeklyVolumeByMuscle();
   const band=state.settings.muscleBand||MUSCLE_BAND_DEFAULT;
@@ -9777,8 +9928,8 @@ function renderWeeklyVolumePanel(){
           <!-- FRONT (v4.45.0: anatomically-shaped regions, replacing the plain
                ellipses/rects — same fs()/onclick()/title wiring as before,
                just better-shaped paths). cx=70 -->
-          <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
-          <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
+          <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+          <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
           <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders: ${vol.shoulders||0} sets</title></path>
           <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders</title></path>
           <path d="M 70 44 C 62 42, 52 45, 50 54 C 49 62, 56 68, 65 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('chest')"><title>Chest: ${vol.chest||0} sets</title></path>
@@ -9803,8 +9954,8 @@ function renderWeeklyVolumePanel(){
           <text x="70" y="215" text-anchor="middle" font-size="9" fill="var(--ink-soft)">FRONT</text>
           <!-- BACK (offset +150) -->
           <g transform="translate(150,0)">
-            <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
-            <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--line)" stroke-width="1"/>
+            <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
             <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
             <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
             <path d="M 68 56 C 60 57, 52 63, 51 74 C 50 83, 58 88, 64 84 C 68 81, 69 68, 68 56 Z" style="${fs('lats')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('lats')"><title>Lats: ${vol.lats||0} sets</title></path>
@@ -9834,11 +9985,11 @@ function renderWeeklyVolumePanel(){
           <span style="flex:1;">Muscle</span><span style="width:38px;text-align:right;">Sets</span>
         </div>
         ${MUSCLE_GROUPS.map(mg=>{
-          const sets=vol[mg]||0; const colour=muscleVolumeColour(sets,band);
+          const sets=vol[mg]||0; const colour=muscleVolumeColour(sets,band); const textColour=muscleVolumeTextColour(sets,band);
           return `<div onclick="filterExercisesByMuscle('${mg}')" style="display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:6px;cursor:pointer;" onmouseover="this.style.background='var(--paper-dim)'" onmouseout="this.style.background=''">
             <span style="width:8px;height:8px;border-radius:2px;background:${colour};flex-shrink:0;"></span>
             <span style="flex:1;font-size:13px;">${LABELS[mg]||mg}</span>
-            <span style="width:38px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${colour};">${sets||'—'}</span>
+            <span style="width:38px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${textColour};">${sets||'—'}</span>
           </div>`;
         }).join('')}
         ${unmapped.length?`<div class="page-sub" style="margin-top:8px;font-size:11.5px;">⚠ ${unmapped.length} exercise${unmapped.length===1?'':'s'} with no muscle group — set it in Exercise Library.</div>`:''}
@@ -9909,6 +10060,7 @@ function renderTrainingDayCard(date){
     }
   }
   const exerciseIds = getTrainingDayExerciseIds(date);
+  if(exerciseIds.length) ensureFailureDayPlanned(date, exerciseIds);
   const agg = computeDayAggregateV2(date);
   const fullyLogged = isTrainingDayFullyLoggedV2(date);
   // Look up the session assigned to this date so each exercise row can show
@@ -10057,16 +10209,18 @@ async function saveTrainingDayLogs(date){
   rowEls.forEach(rowEl=>{
     const rowId = rowEl.dataset.rowId;
     const exerciseId = rowEl.dataset.exerciseId;
+    // v4.48.0: a collapsed (completed) row renders none of these fields at
+    // all — document.getElementById finds nothing, which must NOT be read
+    // as "the person cleared this field." Only overwrite a field when its
+    // element actually exists (i.e. the row was expanded this render);
+    // otherwise leave whatever was already saved untouched. Before this
+    // guard, saving while a row was collapsed would have silently wiped its
+    // notes to an empty string.
     const notesEl = document.getElementById(`${rowId}_notes`);
-    const notes = notesEl ? notesEl.value.trim() : '';
     const distanceEl = document.getElementById(`${rowId}_distanceKm`);
-    const distanceKm = distanceEl && distanceEl.value !== '' ? Number(distanceEl.value) : null;
     const durationEl = document.getElementById(`${rowId}_durationMin`);
-    const durationMin = durationEl && durationEl.value !== '' ? Number(durationEl.value) : null;
     const hrEl = document.getElementById(`${rowId}_avgHeartRate`);
-    const avgHeartRate = hrEl && hrEl.value !== '' ? Number(hrEl.value) : null;
     const calEl = document.getElementById(`${rowId}_calories`);
-    const calories = calEl && calEl.value !== '' ? Number(calEl.value) : null;
 
     // The per-set rows already live in state.training.sets from the live
     // toggleSetDone / updateSetField handlers. Derive the summary-level
@@ -10083,11 +10237,11 @@ async function saveTrainingDayLogs(date){
       state.training.logs.push(log);
     }
     log.completed = completed;
-    log.notes = notes;
-    log.distanceKm = distanceKm;
-    log.durationMin = durationMin;
-    log.avgHeartRate = avgHeartRate;
-    log.calories = calories;
+    if(notesEl) log.notes = notesEl.value.trim();
+    if(distanceEl) log.distanceKm = distanceEl.value !== '' ? Number(distanceEl.value) : null;
+    if(durationEl) log.durationMin = durationEl.value !== '' ? Number(durationEl.value) : null;
+    if(hrEl) log.avgHeartRate = hrEl.value !== '' ? Number(hrEl.value) : null;
+    if(calEl) log.calories = calEl.value !== '' ? Number(calEl.value) : null;
     log.loggedAt = new Date().toISOString();
 
     // Denormalise a summary from sets for backward compat and the history modal.
@@ -12423,6 +12577,11 @@ function openAddExerciseModal(addToDayDate){
         <input type="number" id="newExRestSec" min="30" max="600" step="5" placeholder="e.g. 90" style="width:100px;">
       </div>
       <div class="field">
+        <label>Seat / Machine Setting <span class="page-sub" style="font-weight:400;">— for consistency between sessions</span></label>
+        <input type="text" id="newExSeatSetting" maxlength="20" placeholder="e.g. 5" style="width:100px;">
+        <div class="page-sub" style="margin-top:4px;">Whatever your machine's seat/pin position is once you've dialed it in — shown on the log so you set up the same way every time.</div>
+      </div>
+      <div class="field">
         <label>Video URLs (optional)</label>
         <textarea id="newExVideo" rows="3" placeholder="One URL per line"></textarea>
         <div class="page-sub" style="margin-top:4px;">One per line. With more than one, the ▶ button opens a list to pick from.</div>
@@ -12454,7 +12613,9 @@ async function submitAddExercise(){
   const liftType = liftTypeBtn && liftTypeBtn.dataset.val ? liftTypeBtn.dataset.val : null;
   const rsEl = document.getElementById('newExRestSec');
   const restSec = rsEl && rsEl.value !== '' ? Number(rsEl.value) : null;
-  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroups, restSec, liftType };
+  const seatEl = document.getElementById('newExSeatSetting');
+  const seatSetting = seatEl && seatEl.value.trim() !== '' ? seatEl.value.trim() : null;
+  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroups, restSec, liftType, seatSetting };
   const overlay = document.getElementById('addExerciseOverlay');
   // Read the context flag BEFORE removing the overlay that carries it.
   const addToDay = overlay ? (overlay.dataset.addToDay || '') : '';
@@ -12513,6 +12674,11 @@ function openEditExerciseModal(id){
         <input type="number" id="editExRestSec" min="30" max="600" step="5" placeholder="e.g. 90" value="${ex.restSec||''}" style="width:100px;">
       </div>
       <div class="field">
+        <label>Seat / Machine Setting <span class="page-sub" style="font-weight:400;">— for consistency between sessions</span></label>
+        <input type="text" id="editExSeatSetting" maxlength="20" placeholder="e.g. 5" value="${escapeHtml(ex.seatSetting||'')}" style="width:100px;">
+        <div class="page-sub" style="margin-top:4px;">Whatever your machine's seat/pin position is once you've dialed it in — shown on the log so you set up the same way every time.</div>
+      </div>
+      <div class="field">
         <label>Video URLs (optional)</label>
         <textarea id="editExVideo" rows="3" placeholder="One URL per line">${escapeHtml(exVideoUrls(ex).join('\n'))}</textarea>
         <div class="page-sub" style="margin-top:4px;">One per line. With more than one, the ▶ button opens a list to pick from.</div>
@@ -12552,6 +12718,8 @@ async function submitEditExercise(id){
   ex.liftType = liftTypeBtn && liftTypeBtn.dataset.val ? liftTypeBtn.dataset.val : null;
   const rsEl = document.getElementById('editExRestSec');
   if(rsEl) ex.restSec = rsEl.value !== '' ? Number(rsEl.value) : null;
+  const seatEl = document.getElementById('editExSeatSetting');
+  if(seatEl) ex.seatSetting = seatEl.value.trim() !== '' ? seatEl.value.trim() : null;
   await saveTraining();
   const overlay = document.getElementById('editExerciseOverlay');
   if(overlay) overlay.remove();
@@ -13116,6 +13284,17 @@ create table if not exists training_resources (
   created_at timestamptz default now(), updated_at timestamptz default now(),
   primary key (pin, id)
 );
+
+-- v4.48.0: fixed seat/machine setting per exercise, for consistency between
+-- sessions on the same equipment. Free text (not a number) since not every
+-- machine's adjustment is a plain number.
+alter table training_exercises add column if not exists seat_setting text;
+
+-- v4.48.0: which exercise (if any) is flagged to push its last set to
+-- failure on a given date — { [date]: exerciseId | null }. Decided once per
+-- date and remembered (null means "decided: nothing eligible that day"),
+-- not recomputed every time the day is opened.
+alter table app_settings add column if not exists training_failure_plan jsonb default '{}';
 
 -- v4.47.0: exercises can target more than one muscle group. Additive and
 -- non-destructive — the old muscle_group (singular) column is left in place,
