@@ -2183,7 +2183,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.50.2';
+const APP_VERSION = '4.50.3';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2191,6 +2191,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.50.3', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'REVIEW PACK: the plan the AI returns now gets one uniquely-named, uniquely-ID\u2019d session per calendar day instead of reusable named templates (e.g. "Push A" repeated across several days). Sessions still exist in the app\u2014the schema still needs a sessionId per calendar date\u2014but the prompt now tells the AI not to repeat a session name across the two-week plan. Reused names were exactly what caused the Review Import screen to ask for a manual decision on every repeat: the app matches an imported session to an existing one by exact name match, so a name used more than once reads as "is this the same session as before?" and stops to ask. Each day\u2019s session is now planned individually and imports cleanly without that prompt.',
+  ]},
   { v:'4.50.2', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'REVIEW PACK: the periodic push-to-failure tests (auto-scheduled roughly every 12 days on an isolation exercise) are now pulled into their own failureTests field in the data pack \u2014 date, exercise, reps/weight achieved, and the exercise\u2019s current target rep range \u2014 instead of being left buried inside the per-day session detail. The prompt now explicitly tells the AI to treat a failure set that came in well above or below that range as the strongest available signal for recalibrating that exercise\u2019s working weight, and to reflect it in the two-week plan it returns. Also notes that the app keeps scheduling these tests on its own regardless of what the AI\u2019s plan contains \u2014 nothing needed there.',
@@ -11923,6 +11927,7 @@ RULES for the plan:
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Schedule training days on the next 14 calendar days starting from ${pack.reviewPeriod.to}, skipping the two rest days of the week that fit best (based on my adherence pattern from the data).
 - Each session block should have realistic set counts for a 40–50 minute session.
+- One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") and a unique "name" that isn't shared by any other session in this plan, even if two days end up training similar muscle groups with similar exercises. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
 - Output the import JSON in a single code block. Nothing else in that code block — no comments inside the JSON, valid JSON only.`;
 
   navigator.clipboard.writeText(prompt)
