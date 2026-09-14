@@ -2183,7 +2183,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.49.0';
+const APP_VERSION = '4.50.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2191,6 +2191,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.50.0', changes: [
+    '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds muscle_groups_secondary (jsonb array) on training_exercises. Additive/idempotent, safe to run anytime — the existing muscle_groups column is untouched and keeps meaning "primary" exactly as before, so nothing already synced needs fixing up.',
+    'EXERCISE LIBRARY: removed the separate ✎ edit button and the ▶ Video quick-link — tap anywhere on an exercise row to open Edit (video URLs are still managed there, just not surfaced as a one-tap link from the row). ✕ delete stays put and no longer triggers edit when tapped.',
+    'MUSCLE GROUPS: split "Back" into Traps (the diamond region — same shape, renamed to what it\u2019s always anatomically been) and a new Lower Back region on the body map, matching a gym machine placard\u2019s muscle diagram. Also added Neck as a real tracked muscle group \u2014 the neck outline on the body map was purely decorative before this, not wired to anything. Existing exercises tagged "Back" read correctly as "Traps" automatically (no data was rewritten) and get relabeled for real the next time that exercise is edited and saved.',
+    'PRIMARY / SECONDARY MUSCLES: every exercise can now mark Primary muscles (main target, full credit toward the weekly volume band) separately from Secondary muscles (assisted/indirect, half credit) \u2014 e.g. a bench press: Chest primary, Triceps + Shoulders secondary. Fractional-credit approach, the same rule of thumb volume-landmark frameworks like RP use for direct vs indirect sets. The two are mutually exclusive per muscle in the Add/Edit Exercise modal \u2014 picking a muscle as Primary clears it from Secondary and vice versa. Existing exercises\u2019 muscle groups are read entirely as Primary until next edited.',
+    'TRAINING LOG: picking any RIR value, F (failure), or W (warm-up) on a set now marks it done automatically (starts the rest timer) \u2014 and clearing it back to "none set" un-marks it. The separate done-tap circle still works on its own if you want to mark a set done without recording RIR/F/W.',
+    'TRAINING LOG: the "auto-collapse once every set is logged" behavior (v4.48.0) is removed \u2014 reported as inconsistent in practice. Collapsing an exercise card is now purely manual via a ▾ button in its header; cards default to expanded. Collapsed/expanded state is remembered only for the current browser session, same as the override it replaces.',
+  ]},
   { v:'4.49.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'MOBILE: swipe from the left edge of the screen to open the pages menu (in addition to the existing hamburger tap). Only tracks touches starting within ~24px of the left edge and only while the drawer is closed, so it doesn\u2019t interfere with ordinary taps or vertical scrolling elsewhere. Note: this shares screen real estate with iOS Safari\u2019s own edge-swipe-back gesture on pages with browser history \u2014 a platform-level overlap, not a bug in this feature.',
@@ -4054,14 +4062,15 @@ function rowToRating(row){
 function trainingExerciseToRow(ex){
   const s = state.settings.sync;
   const urls = exVideoUrls(ex);
-  // v4.47.0: writes ONLY the new muscle_groups array — muscle_group (old,
-  // singular) is left alone rather than kept in sync, same treatment as the
-  // exercise-tags removal in v4.43.0. Nothing reads it anymore (see
-  // exMuscleGroups() below), and rowToTrainingExercise() still falls back to
-  // it for rows written before this version, so it's safe to just stop.
+  // v4.50.0: muscle_groups now holds PRIMARY muscles specifically (same
+  // column, same meaning it always had before primary/secondary existed —
+  // every pre-existing row already reads correctly as "primary" via
+  // exMuscleGroups()'s fallback). Secondary muscles go in the new
+  // muscle_groups_secondary column.
   return { pin:s.pin, id:ex.id, name:ex.name, video_url:urls[0]||null, video_urls:urls,
            notes:ex.notes||'', category:ex.category||'strength', tag_ids: ex.tagIds||[],
-           muscle_groups: exMuscleGroups(ex), rest_sec: ex.restSec||null, lift_type: ex.liftType||null,
+           muscle_groups: exMuscleGroups(ex,'primary'), muscle_groups_secondary: exMuscleGroups(ex,'secondary'),
+           rest_sec: ex.restSec||null, lift_type: ex.liftType||null,
            seat_setting: ex.seatSetting||null,
            updated_at:new Date().toISOString() };
 }
@@ -4072,9 +4081,11 @@ function rowToTrainingExercise(r){
   // muscleGroup (singular) is still populated here, from the old column,
   // purely so a row synced before this version (muscle_groups empty/absent)
   // still reads correctly via exMuscleGroups()'s fallback — see that
-  // function's comment. New rows populate muscle_groups directly instead.
+  // function's comment. New rows populate muscleGroupsPrimary directly instead.
   return { id:r.id, name:r.name, videoUrl:list[0]||'', videoUrls:list, notes:r.notes||'',
            category:r.category||'strength', tagIds: r.tag_ids||[],
+           muscleGroupsPrimary: Array.isArray(r.muscle_groups) ? r.muscle_groups : [],
+           muscleGroupsSecondary: Array.isArray(r.muscle_groups_secondary) ? r.muscle_groups_secondary : [],
            muscleGroups: Array.isArray(r.muscle_groups) ? r.muscle_groups : [],
            muscleGroup: r.muscle_group||null, restSec: r.rest_sec||null, liftType: r.lift_type||null,
            seatSetting: r.seat_setting||null };
@@ -5729,13 +5740,10 @@ function weeklyVolumeHistory(nWeeks){
       .filter(s=> s.date>=weekStart && s.date<=weekEnd && !s.isWarmup && s.done)
       .forEach(s=>{
         const ex = getTrainingExerciseById(s.exerciseId);
-        // v4.47.0: an exercise can target several muscle groups now — a set
-        // credits its FULL count toward each one, not a fractional split.
-        // Matches how the current-week body map (computeWeeklyVolumeByMuscle)
-        // already does it, and how most lifters actually think about a
-        // compound set: a row is a full back set AND a full biceps set, not
-        // half of each.
-        exMuscleGroups(ex).forEach(mg=>{ vol[mg] = (vol[mg]||0)+1; });
+        // v4.50.0: primary muscles get full credit, secondary get half —
+        // see exMuscleGroupCredits(). Matches how the current-week body map
+        // (computeWeeklyVolumeByMuscle) computes it.
+        Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ vol[mg] = (vol[mg]||0)+credit; });
       });
     weeks.push({ label, weekStart, weekEnd, vol });
   }
@@ -8957,9 +8965,19 @@ async function deleteMetricDef(metricId){
    ============================================================ */
 
 const MUSCLE_GROUPS = [
-  'chest','back','lats','shoulders','biceps','triceps','quads','hamstrings',
-  'glutes','calves','abs','forearms',
+  'chest','traps','lats','lower_back','neck','shoulders','biceps','triceps',
+  'quads','hamstrings','glutes','calves','abs','forearms',
 ];
+/* v4.50.0: was 3 separate copies of this label map scattered across the
+   Exercise Library row, the body map, and the Add/Edit pill picker — all had
+   to be edited in lockstep by hand every time a muscle group was added or
+   renamed (exactly the kind of thing that silently drifts). One shared
+   constant now. */
+const MUSCLE_GROUP_LABELS = {
+  chest:'Chest', traps:'Traps', lats:'Lats', lower_back:'Lower Back', neck:'Neck',
+  shoulders:'Shoulders', biceps:'Biceps', triceps:'Triceps', quads:'Quads',
+  hamstrings:'Hamstrings', glutes:'Glutes', calves:'Calves', abs:'Abs', forearms:'Forearms',
+};
 
 function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
   if(!lastSets || !lastSets.length) return null;
@@ -9063,11 +9081,37 @@ function stopRestTimer(){
   _restTimerEnd=null;_restTimerExId=null;
   const el=document.getElementById('restTimerDisplay');if(el)el.innerHTML='';
 }
-function exMuscleGroups(ex){
+function exMuscleGroups(ex, mode){
   if(!ex) return [];
-  if(Array.isArray(ex.muscleGroups) && ex.muscleGroups.length) return ex.muscleGroups;
-  if(ex.muscleGroup) return [ex.muscleGroup];
-  return [];
+  // v4.50.0: primary/secondary split, credited differently toward weekly
+  // volume (see exMuscleGroupCredits below). Old flat muscleGroups/muscleGroup
+  // data is read entirely as "primary" — nothing that was already set needs
+  // to be touched, same non-destructive fallback this function has always
+  // used for older field shapes (see the muscleGroup-singular handling this
+  // replaced). 'back' is remapped to 'traps' here too, for the same reason —
+  // that diamond region always meant traps specifically, so existing
+  // exercises just read correctly under the new name until next edited,
+  // rather than needing a one-time data rewrite.
+  const remapBack = (arr)=> arr.map(mg=> mg==='back' ? 'traps' : mg);
+  const primary = remapBack((Array.isArray(ex.muscleGroupsPrimary) && ex.muscleGroupsPrimary.length) ? ex.muscleGroupsPrimary
+    : (Array.isArray(ex.muscleGroups) && ex.muscleGroups.length) ? ex.muscleGroups
+    : (ex.muscleGroup ? [ex.muscleGroup] : []));
+  const secondary = remapBack(Array.isArray(ex.muscleGroupsSecondary) ? ex.muscleGroupsSecondary : []);
+  if(mode==='primary') return primary;
+  if(mode==='secondary') return secondary;
+  return [...new Set([...primary, ...secondary])]; // default: union, for call sites that just need "does this touch this muscle at all"
+}
+/* Full credit (1) for each primary muscle a set touches, half credit (0.5)
+   for secondary — the "fractional credit" approach: a compound lift's
+   secondary muscles get real but reduced credit toward their weekly band,
+   rather than either counting fully (overstates indirect stimulus) or not
+   counting at all (undercounts it). If a muscle somehow ends up in both
+   lists, primary's full credit wins rather than double-counting. */
+function exMuscleGroupCredits(ex){
+  const credits = {};
+  exMuscleGroups(ex,'primary').forEach(mg=>{ credits[mg]=1; });
+  exMuscleGroups(ex,'secondary').forEach(mg=>{ if(credits[mg]===undefined) credits[mg]=0.5; });
+  return credits;
 }
 function defaultRestSec(ex){
   // Lowered in v4.44.0: 120/90 felt too long in practice. 90s (compound) /
@@ -9087,7 +9131,7 @@ function defaultRestSec(ex){
   if(ex.restSec) return Number(ex.restSec);
   if(ex.liftType === 'compound') return 90;
   if(ex.liftType === 'isolation') return 60;
-  const compound=['chest','back','lats','shoulders','quads','hamstrings','glutes'];
+  const compound=['chest','traps','lats','shoulders','quads','hamstrings','glutes'];
   return exMuscleGroups(ex).some(mg=>compound.includes(mg)) ? 90 : 60;
 }
 function rirColour(rir){
@@ -9567,15 +9611,17 @@ function announceRestoredTrainingDrafts(){
   trainingDraftsRestored = 0;
   setTimeout(()=> showToast(`Restored unsaved training entry for ${n} exercise${n===1?'':'s'} — remember to Save`), 900);
 }
-/* Manual override for the auto-collapse-when-complete behavior in
-   renderTrainingExerciseLogRow(). Session-local only (not synced, not
-   persisted across a reload) — the derived "complete" state from actual set
-   data is what decides the default every time the page is freshly rendered. */
+/* v4.50.0: was auto-derived from "every working set logged" (v4.48.0), with
+   a manual override to force it back open. Reported as inconsistent in
+   practice, so this is now purely manual — expanded by default, collapsed
+   only when you tap to collapse it, regardless of how many sets are done.
+   Session-local only (not synced, not persisted across a reload), same as
+   the override it replaces. */
 function toggleTrainingRowExpanded(date, exId){
-  if(!state.trainingRowExpanded) state.trainingRowExpanded = {};
+  if(!state.trainingRowCollapsed) state.trainingRowCollapsed = {};
   const key = `${date}::${exId}`;
-  if(state.trainingRowExpanded[key]) delete state.trainingRowExpanded[key];
-  else state.trainingRowExpanded[key] = true;
+  if(state.trainingRowCollapsed[key]) delete state.trainingRowCollapsed[key];
+  else state.trainingRowCollapsed[key] = true;
   renderMain();
 }
 function renderTrainingExerciseLogRow(date, block, index){
@@ -9598,20 +9644,14 @@ function renderTrainingExerciseLogRow(date, block, index){
   const isPR = curE1RM && prevE1RM && curE1RM > prevE1RM;
   const e1RMDisplay = curE1RM ? `e1RM ~${Math.round(curE1RM)}kg${isPR?' 🏆 PR':''}` : '';
 
-  // v4.48.0: collapsible completed exercises — once every working set is
-  // ticked done, collapse this card to a one-line summary so a long session
-  // doesn't keep growing the page as you work through it. Walking exercises
-  // (a toggle, not a set list) aren't included — "complete" doesn't mean the
-  // same thing for them. Collapsed is the DERIVED default from actual set
-  // data (so it's correct again after a reload, not just this session) —
-  // the person can always tap to force it open, which is remembered only
-  // for this browser session, not synced.
+  // v4.50.0: collapse is now purely manual (see toggleTrainingRowExpanded) —
+  // doneSetsEarly/workingSetsEarly are still computed here only to show the
+  // "N/M sets" summary on the collapsed card, not to decide collapse itself.
   const workingSetsEarly = !isSessionLevel && !isWalking ? sets.filter(s=>!s.isWarmup) : [];
   const doneSetsEarly = workingSetsEarly.filter(s=>s.done).length;
-  const isRowComplete = !isSessionLevel && !isWalking && workingSetsEarly.length>0 && doneSetsEarly===workingSetsEarly.length;
   const expandKey = `${date}::${block.exerciseId}`;
-  const forcedOpen = state.trainingRowExpanded && state.trainingRowExpanded[expandKey];
-  if(isRowComplete && !forcedOpen){
+  const manuallyCollapsed = !isSessionLevel && !isWalking && state.trainingRowCollapsed && state.trainingRowCollapsed[expandKey];
+  if(manuallyCollapsed){
     return `
     <div class="card" style="padding:10px 14px; margin-bottom:10px; background:var(--paper-dim); cursor:pointer;"
       data-exercise-id="${escapeHtml(block.exerciseId)}" data-row-id="${rowId}"
@@ -9723,7 +9763,8 @@ function renderTrainingExerciseLogRow(date, block, index){
           ${ex && ex.seatSetting ? `<span class="page-sub" style="font-size:10.5px; background:var(--paper-dim); border-radius:4px; padding:1px 7px;" title="Seat/machine setting — dial the machine to this before your first set">⚙ Seat ${escapeHtml(ex.seatSetting)}</span>` : ''}
         </span>
         <span style="display:flex; align-items:center; gap:8px;">
-          ${sets.length ? `<span class="page-sub" style="font-size:11px;">${doneSets}/${workingSets.length} sets done${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>` : ''}
+          ${sets.length ? `<span class="page-sub" id="setsDoneLabel_${rowId}" style="font-size:11px;">${doneSets}/${workingSets.length} sets done${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>` : ''}
+          ${!isSessionLevel && !isWalking ? `<button class="icon-btn" title="Collapse this exercise" onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')">▾</button>` : ''}
           <button class="icon-btn train-remove-btn" title="Remove from this day" onclick="removeExerciseFromDay('${date}','${escapeHtml(block.exerciseId)}')">✕</button>
         </span>
       </div>
@@ -9906,6 +9947,7 @@ function setSetMode(date, exId, setNo, mode, rirValue){
   if(!state.training.sets) state.training.sets=[];
   const s = state.training.sets.find(s=>s.date===date&&s.exerciseId===exId&&s.setNo===setNo);
   if(!s) return;
+  const wasDone = !!s.done;
   if(mode==='rir'){
     s.rir = (s.rir===rirValue) ? null : rirValue;
     if(s.rir!==null){ s.toFailure=false; s.isWarmup=false; }
@@ -9916,9 +9958,52 @@ function setSetMode(date, exId, setNo, mode, rirValue){
     s.isWarmup = !s.isWarmup;
     if(s.isWarmup){ s.rir=null; s.toFailure=false; }
   }
+  // v4.50.0: picking any RIR/F/W value now marks the set done automatically,
+  // and clearing it back to "none set" un-marks it — logging a value IS
+  // finishing the set, so the separate done-tap was a redundant extra step.
+  // The done-tap button (toggleSetDone) still works independently, in case
+  // someone wants to mark a set done without recording RIR/F/W.
+  const hasSelection = s.rir!==null || s.toFailure || s.isWarmup;
+  const doneChanged = hasSelection !== wasDone;
+  if(doneChanged){
+    s.done = hasSelection;
+    s.loggedAt = s.done ? new Date().toISOString() : null;
+    const ex = getTrainingExerciseById(exId);
+    if(s.done) startRestTimer(defaultRestSec(ex)||90, exId);
+    else stopRestTimer();
+  }
   scheduleTrainingDraftSave();
+  // Deliberately NOT a full renderMain() — RIR/F/W is tapped many times in a
+  // row while working through a session, and re-rendering the whole page
+  // every time was the exact thing v4.44.0 fixed. Patch just the pieces that
+  // can actually change: this button group, and — only when doneChanged —
+  // the set's tick button/row and this exercise's "N/M sets done" label.
   const group = document.querySelector(`[data-setmode="${CSS.escape(date)}::${CSS.escape(exId)}::${setNo}"]`);
   if(group) group.innerHTML = setModeGroupHtml(date, exId, s);
+  if(doneChanged && group){
+    const row = group.closest('.set-row');
+    if(row){
+      row.classList.toggle('set-row-done', s.done);
+      const tick = row.querySelector('.set-tick');
+      if(tick){
+        tick.classList.toggle('set-tick-done', s.done);
+        tick.textContent = s.done ? '✓' : String(setNo);
+        tick.title = s.done ? 'Unmark done' : 'Mark set done + start rest timer';
+      }
+    }
+    const card = group.closest('[data-row-id]');
+    const label = card ? card.querySelector(`#setsDoneLabel_${card.dataset.rowId}`) : null;
+    if(card && label){
+      const allSets = getSetsForExercise(date, exId);
+      const workingSets = allSets.filter(s2=>!s2.isWarmup);
+      const doneSets = workingSets.filter(s2=>s2.done).length;
+      const curE1RM = allSets.length ? epley1RM(allSets) : null;
+      const prevE1RM = bestE1RMForExercise(exId, date);
+      const isPR = curE1RM && prevE1RM && curE1RM > prevE1RM;
+      const e1RMDisplay = curE1RM ? ` · e1RM ~${Math.round(curE1RM)}kg${isPR?' 🏆 PR':''}` : '';
+      label.textContent = `${doneSets}/${workingSets.length} sets done${e1RMDisplay}`;
+    }
+  }
   updateTrainingDayAggPreview();
 }
 function updateSetField(date, exId, setNo, field, value){
@@ -9961,9 +10046,8 @@ function computeWeeklyVolumeByMuscle(){
   const vol = {};
   hard.forEach(s=>{
     const ex = getTrainingExerciseById(s.exerciseId);
-    // v4.47.0: credit every muscle group the exercise targets, not just one
-    // (see the matching comment on the 8-week trend version above).
-    exMuscleGroups(ex).forEach(mg=>{ vol[mg] = (vol[mg]||0)+1; });
+    // v4.50.0: primary/secondary fractional credit — see exMuscleGroupCredits().
+    Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ vol[mg] = (vol[mg]||0)+credit; });
   });
   return vol;
 }
@@ -10001,7 +10085,7 @@ function muscleVolumeTextColour(sets,band){
 function renderWeeklyVolumePanel(){
   const vol=computeWeeklyVolumeByMuscle();
   const band=state.settings.muscleBand||MUSCLE_BAND_DEFAULT;
-  const LABELS={chest:'Chest',back:'Back',lats:'Lats',shoulders:'Shoulders',biceps:'Biceps',triceps:'Triceps',quads:'Quads',hamstrings:'Hamstrings',glutes:'Glutes',calves:'Calves',abs:'Abs',forearms:'Forearms'};
+  const LABELS = MUSCLE_GROUP_LABELS;
   const fs=(mg)=>`fill:${muscleVolumeColour(vol[mg]||0,band)};fill-opacity:${muscleVolumeOpacity(vol[mg]||0,band)};cursor:pointer;`;
   const unmapped=state.training.exercises.filter(e=>e.category==='strength'&&!exMuscleGroups(e).length);
   return `
@@ -10018,7 +10102,7 @@ function renderWeeklyVolumePanel(){
                ellipses/rects — same fs()/onclick()/title wiring as before,
                just better-shaped paths). cx=70 -->
           <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
-          <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+          <rect x="65" y="24" width="10" height="9" style="${fs('neck')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('neck')"><title>Neck: ${vol.neck||0} sets</title></rect>
           <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders: ${vol.shoulders||0} sets</title></path>
           <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders</title></path>
           <path d="M 70 44 C 62 42, 52 45, 50 54 C 49 62, 56 68, 65 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('chest')"><title>Chest: ${vol.chest||0} sets</title></path>
@@ -10044,12 +10128,13 @@ function renderWeeklyVolumePanel(){
           <!-- BACK (offset +150) -->
           <g transform="translate(150,0)">
             <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
-            <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <rect x="65" y="24" width="10" height="9" style="${fs('neck')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('neck')"><title>Neck: ${vol.neck||0} sets</title></rect>
             <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
             <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
             <path d="M 68 56 C 60 57, 52 63, 51 74 C 50 83, 58 88, 64 84 C 68 81, 69 68, 68 56 Z" style="${fs('lats')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('lats')"><title>Lats: ${vol.lats||0} sets</title></path>
             <path d="M 72 56 C 80 57, 88 63, 89 74 C 90 83, 82 88, 76 84 C 72 81, 71 68, 72 56 Z" style="${fs('lats')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('lats')"><title>Lats</title></path>
-            <path d="M 70 34 L 52 50 L 70 60 L 88 50 Z" style="${fs('back')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('back')"><title>Back: ${vol.back||0} sets (traps)</title></path>
+            <path d="M 70 34 L 52 50 L 70 60 L 88 50 Z" style="${fs('traps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('traps')"><title>Traps: ${vol.traps||0} sets</title></path>
+            <path d="M 70 84 L 60 91 L 70 99 L 80 91 Z" style="${fs('lower_back')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('lower_back')"><title>Lower Back: ${vol.lower_back||0} sets</title></path>
             <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('triceps')"><title>Triceps: ${vol.triceps||0} sets</title></path>
             <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('triceps')"><title>Triceps</title></path>
             <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
@@ -11035,7 +11120,7 @@ function renderTrainingExercisesSubpage(){
     : afterMg.filter(ex=>(ex.tagIds||[]).includes(tagFilter));
   const tags = state.settings.exerciseTags || [];
   const untaggedCount = afterMg.filter(isUntagged).length;
-  const LABELS={chest:'Chest',back:'Back',lats:'Lats',shoulders:'Shoulders',biceps:'Biceps',triceps:'Triceps',quads:'Quads',hamstrings:'Hamstrings',glutes:'Glutes',calves:'Calves',abs:'Abs',forearms:'Forearms'};
+  const LABELS = MUSCLE_GROUP_LABELS;
   return `
     <div class="section">
       <div class="section-head">
@@ -11057,18 +11142,14 @@ function renderTrainingExercisesSubpage(){
       ${(tags.length || untaggedCount) ? `` : ''}
       <div class="card" style="padding:4px 16px;">
         ${sorted.length ? sorted.map(ex=>`
-          <div class="metric-manage-row">
+          <div class="metric-manage-row" style="cursor:pointer;" onclick="openEditExerciseModal('${ex.id}')">
             <span class="metric-manage-name">
               ${escapeHtml(ex.name)}${ex.category==='walking' ? ' <span class="page-sub" style="font-size:10px; text-transform:uppercase; letter-spacing:0.03em; border:1px solid var(--line); border-radius:4px; padding:1px 5px; margin-left:4px;">Walking</span>' : ''}
               ${exMuscleGroups(ex).map(mg=>`<span class="page-sub" style="font-size:10px; background:var(--teal-dim,color-mix(in srgb,var(--teal) 15%,var(--paper))); border:1px solid var(--teal); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--ink);">${mg}</span>`).join('')}
               ${exerciseIsUnused(ex) ? `<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--flag,#D95B5B) 12%,var(--paper)); border:1px solid var(--flag,#D95B5B); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--flag,#D95B5B);" title="Not in any upcoming plan and never logged — a candidate to remove or start using">Unused</span>` : ''}
               ${(ex.tagIds||[]).map(tid=>{ const t = tags.find(x=>x.id===tid); return t ? `<span class="page-sub" style="font-size:10px; background:var(--paper-dim); border-radius:4px; padding:1px 6px; margin-left:4px;">${escapeHtml(t.name)}</span>` : ''; }).join('')}
             </span>
-            ${exVideoUrls(ex).length ? (exVideoUrls(ex).length===1
-              ? `<a class="btn ghost sm" href="${escapeHtml(exVideoUrls(ex)[0])}" target="_blank" rel="noopener">▶ Video</a>`
-              : `<button class="btn ghost sm" onclick="openExerciseVideoPicker('${ex.id}')">▶ Videos (${exVideoUrls(ex).length})</button>`) : ''}
-            <button class="icon-btn" title="Edit" onclick="openEditExerciseModal('${ex.id}')">✎</button>
-            <button class="icon-btn" title="Delete" onclick="deleteTrainingExercise('${ex.id}')">✕</button>
+            <button class="icon-btn" title="Delete" onclick="event.stopPropagation(); deleteTrainingExercise('${ex.id}')">✕</button>
           </div>
         `).join('') : `<div class="page-sub" style="padding:10px 0;">${tagFilter==='all' ? 'No exercises yet — add one with "+ Add Exercise", or import a plan.' : 'No exercises with this tag.'}</div>`}
       </div>
@@ -12609,22 +12690,26 @@ function openExerciseVideoPicker(exId){
    actually works on a phone, matching the pill pattern already used
    elsewhere in these same modals (Category, Lift Type). */
 function muscleGroupPillsHtml(containerId, currentArray){
-  const LABELS = {
-    chest:'Chest', back:'Back', lats:'Lats', shoulders:'Shoulders',
-    biceps:'Biceps', triceps:'Triceps', quads:'Quads',
-    hamstrings:'Hamstrings', glutes:'Glutes', calves:'Calves',
-    abs:'Abs', forearms:'Forearms',
-  };
   const current = currentArray||[];
   return `<div class="radio-pills" id="${containerId}" style="flex-wrap:wrap;">
-    ${MUSCLE_GROUPS.map(mg=>`<button type="button" class="radio-pill ${current.includes(mg)?'active':''}" data-val="${mg}" onclick="toggleMuscleGroupPill('${containerId}', this)">${LABELS[mg]||mg}</button>`).join('')}
+    ${MUSCLE_GROUPS.map(mg=>`<button type="button" class="radio-pill ${current.includes(mg)?'active':''}" data-val="${mg}" onclick="toggleMuscleGroupPill('${containerId}', this)">${MUSCLE_GROUP_LABELS[mg]||mg}</button>`).join('')}
   </div>`;
 }
 /* Independent toggle — deliberately NOT pickExCategoryUI, which is
    single-select-exclusive (used for Category and Lift Type in these same
-   modals). Each muscle group pill toggles on its own. */
+   modals). Each muscle group pill toggles on its own.
+   v4.50.0: Primary and Secondary are now two separate pill rows for the same
+   exercise. A muscle only makes sense as one or the other, so selecting it
+   in one row clears the same muscle in the other — relies on the two
+   container ids differing only by the literal substring "Primary"/"Secondary". */
 function toggleMuscleGroupPill(containerId, btn){
   btn.classList.toggle('active');
+  if(!btn.classList.contains('active')) return;
+  const otherId = containerId.includes('Primary') ? containerId.replace('Primary','Secondary')
+    : containerId.includes('Secondary') ? containerId.replace('Secondary','Primary') : null;
+  if(!otherId) return;
+  const other = document.querySelector(`#${otherId} .radio-pill[data-val="${btn.dataset.val}"]`);
+  if(other) other.classList.remove('active');
 }
 function readMuscleGroupPills(containerId){
   return Array.from(document.querySelectorAll(`#${containerId} .radio-pill.active`)).map(b=>b.dataset.val);
@@ -12649,9 +12734,12 @@ function openAddExerciseModal(addToDayDate){
         <div class="page-sub" style="margin-top:4px;">Walking exercises get distance/time/heart rate/speed/calories fields when logged, instead of sets/reps/weight.</div>
       </div>
       <div class="field">
-        <label>Muscle Groups <span class="page-sub" style="font-weight:400;">— pick all that apply</span></label>
-        ${muscleGroupPillsHtml('newExMuscleGroupPills', [])}
-        <div class="page-sub" style="margin-top:4px;">Used for rest-timer defaults and the weekly volume map. A set counts fully toward each group picked, not split between them.</div>
+        <label>Primary Muscles <span class="page-sub" style="font-weight:400;">— main muscles this exercise targets, full credit toward the weekly volume band</span></label>
+        ${muscleGroupPillsHtml('newExMuscleGroupPillsPrimary', [])}
+      </div>
+      <div class="field">
+        <label>Secondary Muscles <span class="page-sub" style="font-weight:400;">— assisted/indirect, half credit toward the weekly volume band</span></label>
+        ${muscleGroupPillsHtml('newExMuscleGroupPillsSecondary', [])}
       </div>
       <div class="field">
         <label>Lift Type <span class="page-sub" style="font-weight:400;">— sets the rest-timer default (a fly is isolation even though it's a chest exercise)</span></label>
@@ -12697,14 +12785,15 @@ async function submitAddExercise(){
   const categoryBtn = document.querySelector('#newExCategoryPills .radio-pill.active');
   const category = categoryBtn ? categoryBtn.dataset.val : 'strength';
   const tagIds = [];
-  const muscleGroups = readMuscleGroupPills('newExMuscleGroupPills');
+  const muscleGroupsPrimary = readMuscleGroupPills('newExMuscleGroupPillsPrimary');
+  const muscleGroupsSecondary = readMuscleGroupPills('newExMuscleGroupPillsSecondary');
   const liftTypeBtn = document.querySelector('#newExLiftTypePills .radio-pill.active');
   const liftType = liftTypeBtn && liftTypeBtn.dataset.val ? liftTypeBtn.dataset.val : null;
   const rsEl = document.getElementById('newExRestSec');
   const restSec = rsEl && rsEl.value !== '' ? Number(rsEl.value) : null;
   const seatEl = document.getElementById('newExSeatSetting');
   const seatSetting = seatEl && seatEl.value.trim() !== '' ? seatEl.value.trim() : null;
-  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroups, restSec, liftType, seatSetting };
+  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroupsPrimary, muscleGroupsSecondary, restSec, liftType, seatSetting };
   const overlay = document.getElementById('addExerciseOverlay');
   // Read the context flag BEFORE removing the overlay that carries it.
   const addToDay = overlay ? (overlay.dataset.addToDay || '') : '';
@@ -12746,9 +12835,12 @@ function openEditExerciseModal(id){
         <div class="page-sub" style="margin-top:4px;">Walking exercises get distance/time/heart rate/speed/calories fields when logged, instead of sets/reps/weight.</div>
       </div>
       <div class="field">
-        <label>Muscle Groups <span class="page-sub" style="font-weight:400;">— pick all that apply</span></label>
-        ${muscleGroupPillsHtml('editExMuscleGroupPills', exMuscleGroups(ex))}
-        <div class="page-sub" style="margin-top:4px;">Used for rest-timer defaults and the weekly volume map. A set counts fully toward each group picked, not split between them.</div>
+        <label>Primary Muscles <span class="page-sub" style="font-weight:400;">— main muscles this exercise targets, full credit toward the weekly volume band</span></label>
+        ${muscleGroupPillsHtml('editExMuscleGroupPillsPrimary', exMuscleGroups(ex,'primary'))}
+      </div>
+      <div class="field">
+        <label>Secondary Muscles <span class="page-sub" style="font-weight:400;">— assisted/indirect, half credit toward the weekly volume band</span></label>
+        ${muscleGroupPillsHtml('editExMuscleGroupPillsSecondary', exMuscleGroups(ex,'secondary'))}
       </div>
       <div class="field">
         <label>Lift Type <span class="page-sub" style="font-weight:400;">— sets the rest-timer default (a fly is isolation even though it's a chest exercise)</span></label>
@@ -12795,13 +12887,13 @@ async function submitEditExercise(id){
   const categoryBtn = document.querySelector('#editExCategoryPills .radio-pill.active');
   ex.category = categoryBtn ? categoryBtn.dataset.val : 'strength';
   ex.tagIds = [];
-  // v4.47.0: this is the migration moment for THIS exercise — the pills are
-  // now authoritative, so the old singular field is cleared rather than left
-  // stale. Otherwise exMuscleGroups()'s fallback-to-old-field logic would
-  // wrongly resurrect a stale value if the person deliberately unchecked
-  // every pill (muscleGroups: [] is empty, but the old field could still
-  // hold something, and an empty array shouldn't fall back to it).
-  ex.muscleGroups = readMuscleGroupPills('editExMuscleGroupPills');
+  // v4.50.0: this is the migration moment for THIS exercise — the pills are
+  // now authoritative for primary/secondary, so the old flat/singular fields
+  // are cleared rather than left stale (an empty array here shouldn't fall
+  // back to a leftover old-shape value — see exMuscleGroups()'s comment).
+  ex.muscleGroupsPrimary = readMuscleGroupPills('editExMuscleGroupPillsPrimary');
+  ex.muscleGroupsSecondary = readMuscleGroupPills('editExMuscleGroupPillsSecondary');
+  ex.muscleGroups = null;
   ex.muscleGroup = null;
   const liftTypeBtn = document.querySelector('#editExLiftTypePills .radio-pill.active');
   ex.liftType = liftTypeBtn && liftTypeBtn.dataset.val ? liftTypeBtn.dataset.val : null;
@@ -13389,6 +13481,7 @@ alter table app_settings add column if not exists training_failure_plan jsonb de
 -- non-destructive — the old muscle_group (singular) column is left in place,
 -- untouched, purely as a fallback for rows written before this version.
 alter table training_exercises add column if not exists muscle_groups jsonb default '[]';
+alter table training_exercises add column if not exists muscle_groups_secondary jsonb default '[]';
 
 -- v4.45.0: Explicit lift type (compound/isolation) per exercise, used to
 -- pick the rest-timer default. Overrides the muscle-group guess when set —
