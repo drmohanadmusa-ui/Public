@@ -2183,7 +2183,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.50.0';
+const APP_VERSION = '4.50.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2191,6 +2191,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.50.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIXED (Health Log): pressing Tab right after typing a new value into a number/text metric (Weight, Fiber, Protein, etc.) sent focus to the top of the page instead of the next field. Root cause: saving a metric value re-rendered the entire page, and because that save is async, the re-render could land AFTER the browser had already started moving focus to the next input on Tab \u2014 destroying the very element focus was headed for. Tabbing through fields that already had a value (no change to save) was unaffected, which is why it looked inconsistent. Saving a metric no longer rebuilds the page: only today\u2019s History table row gets patched (and, for Yes/No metrics, that metric\u2019s own button state) \u2014 the input you\u2019re typing into is never touched, so Tab now always lands where it should.',
+  ]},
   { v:'4.50.0', changes: [
     '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds muscle_groups_secondary (jsonb array) on training_exercises. Additive/idempotent, safe to run anytime — the existing muscle_groups column is untouched and keeps meaning "primary" exactly as before, so nothing already synced needs fixing up.',
     'EXERCISE LIBRARY: removed the separate ✎ edit button and the ▶ Video quick-link — tap anywhere on an exercise row to open Edit (video URLs are still managed there, just not surfaced as a one-tap link from the row). ✕ delete stays put and no longer triggers edit when tapped.',
@@ -8775,7 +8779,7 @@ function renderHealthView(){
           </tr></thead>
           <tbody>
             ${history.map(h=>`
-              <tr class="${h.date===viewDate?'log-row-active':''}">
+              <tr class="${h.date===viewDate?'log-row-active':''}" data-history-date="${h.date}">
                 <td onclick="setHealthViewDate('${h.date}')" style="cursor:pointer;">${humanDate(h.date)}</td>
                 ${sortedMetrics.map(m=>`<td onclick="setHealthViewDate('${h.date}')" style="cursor:pointer;">${formatMetricValue(m, getMetricValue(h,m))}</td>`).join('')}
                 <td><button class="icon-btn" title="Delete this day's entry" onclick="event.stopPropagation(); deleteHealthDay('${h.date}')">✕</button></td>
@@ -8848,7 +8852,36 @@ async function setMetricValue(metricId, value){
   else v = value;
   setMetricValueOnEntry(entry, m, v);
   await saveHealth();
-  renderMain();
+  // Number/text metric inputs fire this from onchange (on blur) — this
+  // function is async, so a full renderMain() here can land AFTER the
+  // browser already started moving focus to the next field on Tab,
+  // destroying the element focus was about to land on and dropping it to
+  // the top of the page. Patch only what actually needs the new value:
+  // yesno buttons' active state (still safe to fully rebuild — those are
+  // click-triggered, no Tab/blur race) and today's History row. The
+  // number/text input itself already shows what was just typed, so it
+  // doesn't need touching at all.
+  if(m.type==='yesno'){
+    const grid = document.querySelector('.health-grid');
+    const visibleMetrics = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).filter(x=>x.visible!==false);
+    const idx = visibleMetrics.findIndex(x=>x.id===metricId);
+    const card = grid ? grid.querySelectorAll('.health-input-card')[idx] : null;
+    if(card) card.outerHTML = renderMetricCard(m, entry);
+  }
+  const row = document.querySelector(`[data-history-date="${CSS.escape(state.healthViewDate)}"]`);
+  if(row){
+    const sortedMetrics = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+    const cells = row.querySelectorAll('td');
+    sortedMetrics.forEach((mm,i)=>{
+      const cell = cells[i+1]; // cell 0 is the date column
+      if(cell) cell.textContent = formatMetricValue(mm, getMetricValue(entry, mm));
+    });
+  } else {
+    // First entry ever for this date (or a date outside the 30-day History
+    // window) — there's no row to patch, so a full render is unavoidable
+    // this once to create it.
+    renderMain();
+  }
 }
 async function toggleMetricVisible(metricId){
   const m = state.healthMetricDefs.find(x=>x.id===metricId);
