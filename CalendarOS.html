@@ -2183,7 +2183,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.50.1';
+const APP_VERSION = '4.50.2';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2191,6 +2191,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.50.2', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'REVIEW PACK: the periodic push-to-failure tests (auto-scheduled roughly every 12 days on an isolation exercise) are now pulled into their own failureTests field in the data pack \u2014 date, exercise, reps/weight achieved, and the exercise\u2019s current target rep range \u2014 instead of being left buried inside the per-day session detail. The prompt now explicitly tells the AI to treat a failure set that came in well above or below that range as the strongest available signal for recalibrating that exercise\u2019s working weight, and to reflect it in the two-week plan it returns. Also notes that the app keeps scheduling these tests on its own regardless of what the AI\u2019s plan contains \u2014 nothing needed there.',
+  ]},
   { v:'4.50.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIXED (Health Log): pressing Tab right after typing a new value into a number/text metric (Weight, Fiber, Protein, etc.) sent focus to the top of the page instead of the next field. Root cause: saving a metric value re-rendered the entire page, and because that save is async, the re-render could land AFTER the browser had already started moving focus to the next input on Tab \u2014 destroying the very element focus was headed for. Tabbing through fields that already had a value (no change to save) was unaffected, which is why it looked inconsistent. Saving a metric no longer rebuilds the page: only today\u2019s History table row gets patched (and, for Yes/No metrics, that metric\u2019s own button state) \u2014 the input you\u2019re typing into is never touched, so Tab now always lands where it should.',
@@ -11810,6 +11814,26 @@ function buildTrainingReviewPack(){
       return { date, exercise: ex?ex.name:exId, ...v };
     });
 
+  // --- Failure-test results (calibration signal) ---
+  // The app auto-schedules one isolation exercise's last set as a true-failure
+  // test roughly every FAILURE_DAY_COOLDOWN_DAYS — pulled out separately here,
+  // rather than left buried in sessionDetail, so the AI can't miss them: a
+  // failure set that logged well above/below the exercise's current rep range
+  // is the strongest signal available for whether its working weight needs
+  // to move, stronger than a normal RIR-based set.
+  const failureTests = recentSets
+    .filter(s=> s.toFailure)
+    .sort((a,b)=> a.date<b.date?-1:1)
+    .map(s=>{
+      const ex = getTrainingExerciseById(s.exerciseId);
+      const block = state.training.sessions.flatMap(sess=>sess.blocks||[]).find(b=>b.exerciseId===s.exerciseId);
+      return {
+        date: s.date, exercise: ex?ex.name:s.exerciseId,
+        reps: s.reps, weightKg: s.weightKg,
+        currentTargetRepRange: block ? block.reps : null,
+      };
+    });
+
   // --- Body metrics from Health Log (last 14 days) ---
   const bodyMetrics = state.health
     .filter(h=> h.date >= sinceDate && (h.weight||h.water||h.calDeficit))
@@ -11837,6 +11861,7 @@ function buildTrainingReviewPack(){
     adherence,
     weeklyVolumeByMuscle: volumeByMuscle,
     sessionDetail: sessions,
+    failureTests,
     currentSuggestions: upcomingSuggestions,
     currentPlan: plan,
   };
@@ -11872,7 +11897,9 @@ WHAT I NEED FROM YOU:
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
-3. **Two-week plan as a CalendarOS import file.** This is the most important output. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
+3. **Failure-test calibration.** My app automatically schedules one isolation exercise's last set as a true push-to-failure test roughly every 12 days — see \`failureTests\` in the data pack. This is the strongest signal available for whether an exercise's working weight is right: if a failure set logged well above its \`currentTargetRepRange\`, the working weight is too light and should increase; well below it, ease back. Call out any exercise where this happened, and reflect it directly in the weights/rep ranges you recommend for that exercise below. (The app keeps scheduling these failure tests on its own in future sessions regardless of what's in the imported plan — you don't need to add anything to make that happen, just use the results already collected.)
+
+4. **Two-week plan as a CalendarOS import file.** This is the most important output. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
 
 The JSON must follow this exact schema (the same format the app already accepts via Paste & Import):
 \`\`\`
