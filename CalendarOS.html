@@ -2183,7 +2183,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.50.3';
+const APP_VERSION = '4.50.4';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2191,6 +2191,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.50.4', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'Removed the green \ud83d\udca1 Suggestion box from the training exercise card entirely \u2014 both the live double-progression suggestion and its "Last time: Xkg \u00d7 Y reps" fallback. (The underlying computation still runs and still feeds the Review Pack\u2019s currentSuggestions \u2014 only the on-card display is gone. The \ud83d\udd25 Failure day banner is a separate thing and is untouched.)',
+    'Log History table: replaced the Difficulty column (legacy 1\u20135 scale, shows "\u2014" for every log created since the move to RIR \u2014 which by now is effectively all of them) with an RIR / F column showing each working set\u2019s actual RIR value or F for a set pushed to failure, colour-graded the same way RIR already is during logging. Warmup sets are excluded, same as everywhere else in the app that counts "working sets."',
+  ]},
   { v:'4.50.3', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'REVIEW PACK: the plan the AI returns now gets one uniquely-named, uniquely-ID\u2019d session per calendar day instead of reusable named templates (e.g. "Push A" repeated across several days). Sessions still exist in the app\u2014the schema still needs a sessionId per calendar date\u2014but the prompt now tells the AI not to repeat a session name across the two-week plan. Reused names were exactly what caused the Review Import screen to ask for a manual decision on every repeat: the app matches an imported session to an existing one by exact name match, so a name used more than once reads as "is this the same session as before?" and stops to ask. Each day\u2019s session is now planned individually and imports cleanly without that prompt.',
@@ -9679,7 +9684,6 @@ function renderTrainingExerciseLogRow(date, block, index){
   // Per-set data — new in v4.40.0
   const sets = !isSessionLevel && !isWalking ? getSetsForExercise(date, block.exerciseId) : [];
   const lastSets = !isSessionLevel && !isWalking ? getLastSetsForExercise(block.exerciseId, date) : [];
-  const suggestion = !isSessionLevel && !isWalking ? getTrainingSuggestion(date, block.exerciseId) : null;
   const prevE1RM = !isSessionLevel && !isWalking ? bestE1RMForExercise(block.exerciseId, date) : null;
   const curE1RM = sets.length ? epley1RM(sets) : null;
   const isPR = curE1RM && prevE1RM && curE1RM > prevE1RM;
@@ -9820,13 +9824,6 @@ function renderTrainingExerciseLogRow(date, block, index){
         🎯 Target: ${escapeHtml(targetLabel)}
         ${workingSets.length && targetSets ? ` · <span style="font-weight:600;color:${targetMet?'var(--teal)':'var(--ink-soft)'};">${workingSets.length}/${targetSets} sets logged</span>` : ''}
       </div>` : ''}
-
-      ${suggestion ? `<div class="suggestion-box">
-        💡 <b>Suggestion:</b> ${escapeHtml(suggestion.basis)}
-        ${suggestion.suggestedWeightKg ? ` — try <b>${suggestion.suggestedWeightKg}kg</b>` : ''}
-      </div>` : (lastRef && !sets.length ? `<div class="suggestion-box" style="opacity:0.75;">
-        Last time: ${lastRef.weightKg||'?'}kg × ${lastRef.reps||'?'} reps${lastRef.rir!=null?` (RIR ${lastRef.rir})`:''}
-      </div>` : '')}
 
       ${ex ? `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:4px;">
         ${exVideoUrls(ex).length ? (exVideoUrls(ex).length===1
@@ -10918,7 +10915,7 @@ function renderTrainingHistorySubpage(){
               </div>
             </div>
             <table class="log-table" style="margin-top:8px;">
-              <thead><tr><th>Exercise</th><th>Completed</th><th>Sets / Reps / Weight or Walking Stats</th><th>Difficulty</th><th>Notes</th><th></th></tr></thead>
+              <thead><tr><th>Exercise</th><th>Completed</th><th>Sets / Reps / Weight or Walking Stats</th><th title="RIR (reps in reserve) per set, or F for a set pushed to failure">RIR / F</th><th>Notes</th><th></th></tr></thead>
               <tbody>
                 ${logs.map(l=>{
                   const isSessionLevel = l.exerciseId === TRAINING_SESSION_LEVEL_ID;
@@ -10946,7 +10943,7 @@ function renderTrainingHistorySubpage(){
                     <td>${name}</td>
                     <td>${l.completed?'✓':'—'}</td>
                     <td>${statsCell}</td>
-                    <td>${l.difficulty===null||l.difficulty===undefined?'—':difficultyBadge(l.difficulty)}</td>
+                    <td>${isWalking||isSessionLevel ? '—' : trainingSetMarkersCell(date, l.exerciseId)}</td>
                     <td style="max-width:240px; white-space:normal;">${escapeHtml(l.notes||'')}</td>
                     <td><button class="icon-btn" title="Delete" onclick="deleteTrainingExerciseLog('${date}','${escapeHtml(l.exerciseId)}')">✕</button></td>
                   </tr>`;
@@ -12607,6 +12604,21 @@ function difficultyTextColor(bg){
   return contrast(L, 1) >= contrast(L, 0.0116) ? '#FFFFFF' : '#1A1A1A';
 }
 
+/* v4.50.x: replaces the old Difficulty column in the Log History table with
+   a compact RIR/F/W readout per set, matching the framework actually in use
+   now (see RIR replacing Difficulty 1-5, above) — Difficulty is legacy-only
+   and reads "—" for every log created since that transition, which is all
+   of them at this point for anyone who's been on RIR a while. Warmup sets
+   are excluded, same as everywhere else "working sets" is meant. */
+function trainingSetMarkersCell(date, exerciseId){
+  const sets = getSetsForExercise(date, exerciseId).filter(s=>!s.isWarmup);
+  if(!sets.length) return '—';
+  return sets.map(s=>{
+    if(s.toFailure) return `<span style="color:var(--red);font-weight:600;" title="Set ${s.setNo}: pushed to failure">F</span>`;
+    if(s.rir!=null) return `<span style="color:${rirColour(s.rir)};font-weight:600;" title="Set ${s.setNo}: RIR ${s.rir}">${s.rir}</span>`;
+    return `<span style="color:var(--ink-soft);" title="Set ${s.setNo}: not recorded">–</span>`;
+  }).join(' · ');
+}
 function difficultyBadge(v, opts){
   const n = Number(v);
   if(!isFinite(n)) return '';
