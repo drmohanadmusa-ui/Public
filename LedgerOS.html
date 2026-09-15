@@ -346,12 +346,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.50.0';
+const APP_VERSION = '4.51.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.51.0', date:'2026-09-13', changes:[
+    'Account Budget Chart → clicking an Actual bar in the monthly Budget vs Actual chart now opens that month\'s real transactions in a window, same list style as the P&L drill-down. Budget bars aren\'t clickable (nothing real behind them), and a future flat-zero month still opens honestly to a "no transactions" state rather than doing nothing.',
+  ]},
   {version:'4.50.0', date:'2026-09-13', changes:[
     'P&L → each budgeted expense account line now carries a small 📊 link that jumps straight into the Account Budget Chart for that specific account, instead of opening the chart and having to pick it again from the dropdown. Only shown for accounts the chart itself would actually accept (a Budget, Provisions plan, or Smart Rule).',
   ]},
@@ -6418,6 +6421,17 @@ function acctBudgetChartYears(){
 function selectAcctBudgetChartAccount(v){ acctChartAccId = v? Number(v) : null; renderPnL(); }
 function selectAcctBudgetChartYear(v){ acctChartYear = v; renderPnL(); }
 const ACCT_BUDGET_CHART_MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function viewAcctBudgetChartMonthTransactions(accId, monthKey){
+  const lines = D.ledger.filter(l=>l.acc===accId && monthOf(l.date)===monthKey).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const total = lines.reduce((s,l)=>s+Number(l.amt),0);
+  showModal(`
+    <h3>${accId} — ${esc(accShort(accId))}</h3>
+    <div class="mut" style="font-size:12px;margin-bottom:10px">Transactions in ${esc(monthLabel(monthKey))}</div>
+    <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th></tr></thead>
+    <tbody>${lines.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono">${esc(l.date)}</td><td class="mono">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No transactions this month</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="num mono ${moneyClass(total)}">${money(total)}</td></tr></tfoot></table>
+    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
+}
 function computeAcctBudgetChartData(accId, year){
   const acc = ACC_BY_ID[accId];
   const todayYm = todayStr().slice(0,7);
@@ -6487,6 +6501,13 @@ function renderAcctBudgetChartPage(){
     </div>`}`;
   if(data) drawAcctBudgetChart(data);
 }
+function acctBudgetBarChartClickHandler(elements, months, accId){
+  if(!elements || !elements.length) return;
+  const el = elements[0];
+  if(el.datasetIndex!==1) return; // only the Actual bar has real transactions to drill into
+  const monthKey = months[el.index];
+  if(monthKey) viewAcctBudgetChartMonthTransactions(accId, monthKey);
+}
 let _acctBudgetCharts = [];
 function drawAcctBudgetChart(data){
   _acctBudgetCharts.forEach(ch=>{ try{ ch.destroy(); }catch(e){} });
@@ -6504,6 +6525,14 @@ function drawAcctBudgetChart(data){
         {label:'Actual', data:data.actualVals, backgroundColor:'#4f8cff'},
       ]}, options:{responsive:true, maintainAspectRatio:false,
         plugins:{legend:{labels:{color:text}}},
+        // Only the Actual bar (datasetIndex 1) has real transactions behind it — Budget is a
+        // planned figure with nothing to drill into. A future month's Actual bar (flat at 0, per
+        // the confirmed behavior) still opens the modal — it just shows an honest empty state
+        // rather than pretending there's nothing to click. Delegates to a standalone, directly
+        // testable function rather than inline logic, since Chart.js itself never initializes in
+        // the Node/JSDOM test harness (no CDN script loaded there).
+        onClick:(evt, elements)=>acctBudgetBarChartClickHandler(elements, data.months, acctChartAccId),
+        onHover:(evt, elements)=>{ evt.native.target.style.cursor = (elements.length && elements[0].datasetIndex===1)? 'pointer' : 'default'; },
         scales:{x:{ticks:{color:text},grid:{color:grid}}, y:{ticks:{color:text},grid:{color:grid}}}}}));
   }
   const cumEl = document.getElementById('acctBudgetCumChart');
