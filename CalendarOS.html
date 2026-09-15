@@ -971,6 +971,11 @@ body.dark-mode .notebook-page{background-image:repeating-linear-gradient(to bott
     border:1px solid var(--line); background:var(--paper-raised); color:var(--ink);
     font-size:15px; display:flex; align-items:center; justify-content:center; z-index:1;
   }
+  /* v4.50.x: the exercise card's ▾ collapse and ✕ remove-from-day buttons sit
+     right next to each other — fine with a mouse, but an easy mis-tap target
+     on a phone where the row of buttons packs into less width. Push delete
+     further away on mobile specifically; desktop spacing is unaffected. */
+  .train-remove-btn{margin-left:14px;}
 }
 
 .pin-list-btn{
@@ -2183,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.50.4';
+const APP_VERSION = '4.51.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2191,6 +2196,15 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.51.0', changes: [
+    '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds training_goals (jsonb) on app_settings. Additive/idempotent.',
+    'REVIEW PACK: exercise library now sends primaryMuscles/secondaryMuscles separately (was one merged list) and the AI is told to prefer an exercise\u2019s primary target over a secondary one when picking exercises for a muscle group.',
+    'REVIEW PACK: new Training Goals prompt, shown every time you tap Copy Review Pack \u2014 pick priority muscle groups (pills, mutually exclusive from nothing else, just a plain multi-select) and add free-text notes; saved and synced, pre-filled next time so it\u2019s a quick confirm/update rather than starting over. Priority muscles get told to the AI as needing a higher weekly volume target AND more training days across the two-week plan than the rest \u2014 frequency, not just added sets.',
+    'REVIEW PACK: fixed a real bug \u2014 bodyMetrics only checked 3 core fields (weight/water/deficit) to decide whether to include a day at all, so a day logged with only custom metrics (Fiber, Protein, Calories, etc \u2014 which turns out to be most days) was silently dropped from the pack entirely. Now pulls every metric you track, core and custom, by its actual name, and includes a day whenever anything on it has a value. The prompt now also explicitly asks the AI to cross-reference this against training performance \u2014 protein trending low against training volume, a stall lining up with a run of poor logging, that kind of thing.',
+    'Removed the green \ud83d\udca1 Suggestion box and its "Last time" fallback from the training exercise card, and the mobile-only extra gap before the delete (\u2715) button, and a missing confirmation on deleting a not-yet-saved exercise from a day (the already-saved path already had one) \u2014 carried over from the previous release, listed here since they shipped together.',
+    'TRAINING LOG: opening a planned day now pre-fills its sets automatically \u2014 a warm-up set at 60% of the AI-suggested weight (the useful midpoint of a 50\u201370% warm-up), plus every working set at the suggested weight and the bottom of the target rep range, so logging becomes "pick RIR/F/W per set" instead of typing sets from scratch. Only ever runs once per exercise, the moment it has zero sets \u2014 it never touches an exercise that already has any sets, logged or still in progress, so it can\u2019t overwrite anything. Exercises with no plan for that day (added ad-hoc via "+ Add Exercise") are unaffected and keep the manual flow.',
+    'TRAINING LOG: removed the "+ Warm-up" and "Same as last set" buttons \u2014 warm-ups are now handled by the auto-fill above, and "+ Set" (the one button left) now copies the literal previous set logged THIS session when there is one (previously it always preferred the same-position set from your last session, even over today\u2019s own last set) \u2014 falling back to that last-session carry-forward only for the very first set of the day, when there\u2019s nothing yet to copy from today.',
+  ]},
   { v:'4.50.4', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'Removed the green \ud83d\udca1 Suggestion box from the training exercise card entirely \u2014 both the live double-progression suggestion and its "Last time: Xkg \u00d7 Y reps" fallback. (The underlying computation still runs and still feeds the Review Pack\u2019s currentSuggestions \u2014 only the on-card display is gone. The \ud83d\udd25 Failure day banner is a separate thing and is untouched.)',
@@ -4297,7 +4311,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -4602,6 +4616,14 @@ async function pullFromSupabase(onProgress){
         state.settings.trainingFailurePlan = Object.assign(
           state.settings.trainingFailurePlan||{}, settingsRows[0].training_failure_plan
         );
+      }
+      // Straight overwrite, not a merge — unlike training_suggestions/
+      // training_failure_plan above, this isn't per-date data accumulating
+      // from multiple devices; it's one current statement of intent, and
+      // whichever device saved it last (via the Review Pack goals prompt) is
+      // the one that should win everywhere.
+      if(settingsRows[0].training_goals && typeof settingsRows[0].training_goals==='object'){
+        state.settings.trainingGoals = settingsRows[0].training_goals;
       }
       // Whichever device confirmed a later day wins — this is what makes
       // "start a new day on one device" actually show up on the others,
@@ -5189,7 +5211,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null }], 'pin'),
     ]);
   }
 }
@@ -9327,8 +9349,61 @@ function ensureFailureDayPlanned(date, stagedExerciseIds){
   state.settings.trainingFailurePlan[date] = pickFailureExerciseForDay(date, stagedExerciseIds);
   saveSettings();
 }
+/* v4.50.x: pre-fills a day's sets from its planned session the moment the
+   day is opened, so logging becomes "pick RIR/F/W per set" rather than
+   typing sets/reps/weight from scratch every time.
+   Per-exercise, not per-day: only touches an exercise that (a) has a real
+   session block for today — ad-hoc exercises added via "+ Add Exercise"
+   have no block to fill from and keep the manual "+ Set" flow — and (b)
+   currently has ZERO sets. That second check is the entire safety
+   mechanism: it never overwrites a set that's already there, logged or
+   still in progress, and it's naturally idempotent (nothing left to do
+   once sets exist), so no extra "have I already run for this date"
+   bookkeeping is needed the way the failure-day plan above needs one.
+   Warm-up is one set at 60% of the suggested weight — the midpoint of the
+   50-70% range that's actually useful as a warm-up rather than a max test —
+   only added when a suggested weight is actually available to compute it
+   from; working sets default to the bottom of the target rep range, which
+   is the one number a double-progression scheme actually needs going in. */
+function ensureSetsAutoFilled(date, exerciseIds, session){
+  if(!session || !session.blocks) return;
+  (exerciseIds||[]).forEach(exId=>{
+    const ex = getTrainingExerciseById(exId);
+    if(!ex || ex.category==='walking') return;
+    const block = session.blocks.find(b=>b.exerciseId===exId);
+    if(!block || !block.sets) return;
+    if(getSetsForExercise(date, exId).length) return;
+    const suggestedWeightKg = parseSuggestedWeightKg(block.notes);
+    const repsMin = block.reps ? (parseInt(String(block.reps).split('-')[0])||null) : null;
+    let setNo = 1;
+    if(suggestedWeightKg!=null){
+      upsertTrainingSet({
+        date, exerciseId:exId, setNo:setNo++,
+        reps:10, weightKg: Math.round(suggestedWeightKg*0.6*10)/10,
+        done:false, rir:null, toFailure:false, isWarmup:true,
+        restTakenSec:null, loggedAt:null,
+      });
+    }
+    for(let i=0;i<Number(block.sets);i++){
+      upsertTrainingSet({
+        date, exerciseId:exId, setNo:setNo++,
+        reps:repsMin, weightKg:suggestedWeightKg,
+        done:false, rir:null, toFailure:false, isWarmup:false,
+        restTakenSec:null, loggedAt:null,
+      });
+    }
+    scheduleTrainingDraftSave();
+  });
+}
 function getTrainingExerciseById(id){
   return state.training.exercises.find(e=>e.id===id) || null;
+}
+// Shared by the target-badge display and ensureSetsAutoFilled — the AI (or
+// you, manually) writes this into a session block's notes as plain text;
+// this is the one place that knows how to get the number back out of it.
+function parseSuggestedWeightKg(blockNotes){
+  const m = (blockNotes||'').match(/suggested starting weight:\s*([\d.]+)\s*kg/i);
+  return m ? Number(m[1]) : null;
 }
 function getTrainingLogsForDate(date){
   return state.training.logs.filter(l=>l.date===date);
@@ -9479,7 +9554,7 @@ function renderTrainingView(){
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn secondary sm" onclick="exportTrainingJson()">Export</button>
-        <button class="btn brass sm" onclick="copyTrainingReviewPack()" title="Bundle last 2 weeks of data + prompt for an AI review — paste result into Paste &amp; Import">📋 Copy Review Pack</button>
+        <button class="btn brass sm" onclick="openTrainingGoalsModal()" title="Confirm your training goals, then bundle last 2 weeks of data + prompt for an AI review — paste result into Paste &amp; Import">📋 Copy Review Pack</button>
         <button class="btn secondary sm" onclick="openTrainingPasteImportModal()">Paste &amp; Import</button>
         <label class="btn secondary sm" style="cursor:pointer;">
           Import File
@@ -9790,8 +9865,7 @@ function renderTrainingExerciseLogRow(date, block, index){
   const targetSets = block.sets || null;
   const targetReps = block.reps || null;
   const blockNotes = (block.notes||'').trim();
-  const suggestedWeightMatch = blockNotes.match(/suggested starting weight:\s*([\d.]+)\s*kg/i);
-  const suggestedWeightKg = suggestedWeightMatch ? Number(suggestedWeightMatch[1]) : null;
+  const suggestedWeightKg = parseSuggestedWeightKg(blockNotes);
   const hasTarget = !!(targetSets || targetReps);
   const targetLabel = [
     targetSets ? `${targetSets} sets` : null,
@@ -9838,8 +9912,6 @@ function renderTrainingExerciseLogRow(date, block, index){
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
         <button type="button" class="btn secondary sm" onclick="addSet('${date}','${escapeHtml(block.exerciseId)}')">+ Set</button>
-        ${sets.length ? `<button type="button" class="btn ghost sm" onclick="addSetLikeLastSet('${date}','${escapeHtml(block.exerciseId)}')">Same as last set</button>` : ''}
-        ${!isWalking && sets.length ? `<button type="button" class="btn ghost sm" onclick="addWarmupSet('${date}','${escapeHtml(block.exerciseId)}')">+ Warm-up</button>` : ''}
       </div>
 
       ${isWalking ? `
@@ -9895,45 +9967,26 @@ function addSet(date, exId){
   if(!state.training.sets) state.training.sets=[];
   const existing = getSetsForExercise(date, exId);
   const last = existing[existing.length-1];
-  const lastSets = getLastSetsForExercise(exId, date);
-  const lastWorking = lastSets.filter(s=>!s.isWarmup);
   const setNo = existing.length+1;
-  const matchingLast = lastWorking[existing.filter(s=>!s.isWarmup).length]; // same position from last time
+  // v4.50.x: previously always preferred the same-position set from last
+  // session over this session's own previous set, even when one existed —
+  // now prefers today's literal previous set when there is one (the
+  // specific behavior asked for), and only falls back to last session's
+  // matching-position set for the very first tap of the day, when there's
+  // no "previous set this session" yet to copy — that fallback is the
+  // carry-forward feature, still valuable and not something to drop.
+  let reps=null, weightKg=null;
+  if(last){
+    reps = last.reps; weightKg = last.weightKg;
+  } else {
+    const lastWorking = getLastSetsForExercise(exId, date).filter(s=>!s.isWarmup);
+    const matchingLast = lastWorking[existing.filter(s=>!s.isWarmup).length];
+    if(matchingLast){ reps = matchingLast.reps; weightKg = matchingLast.weightKg; }
+  }
   upsertTrainingSet({
     date, exerciseId:exId, setNo,
-    reps: matchingLast ? matchingLast.reps : (last ? last.reps : null),
-    weightKg: matchingLast ? matchingLast.weightKg : (last ? last.weightKg : null),
+    reps, weightKg,
     done:false, rir:null, toFailure:false, isWarmup:false,
-    restTakenSec:null, loggedAt:null,
-  });
-  scheduleTrainingDraftSave();
-  renderMain();
-}
-
-function addSetLikeLastSet(date, exId){
-  const existing = getSetsForExercise(date, exId);
-  if(!existing.length){ addSet(date, exId); return; }
-  const last = existing[existing.length-1];
-  const setNo = existing.length+1;
-  upsertTrainingSet({...last, setNo, done:false, restTakenSec:null, loggedAt:null});
-  scheduleTrainingDraftSave();
-  renderMain();
-}
-
-function addWarmupSet(date, exId){
-  const existing = getSetsForExercise(date, exId);
-  // Insert as set 0.x — use a fractional that sorts before 1.
-  // Simpler: re-number all existing, prepend new warmup as setNo 1.
-  const warmupCount = existing.filter(s=>s.isWarmup).length;
-  // Shift all existing sets up by 1.
-  existing.forEach(s=>{ s.setNo += 1; });
-  const lastSets = getLastSetsForExercise(exId, date);
-  const lastWarmup = (lastSets||[]).filter(s=>s.isWarmup)[warmupCount];
-  upsertTrainingSet({
-    date, exerciseId:exId, setNo:1,
-    reps: lastWarmup ? lastWarmup.reps : 10,
-    weightKg: lastWarmup ? lastWarmup.weightKg : null,
-    done:false, rir:null, toFailure:false, isWarmup:true,
     restTakenSec:null, loggedAt:null,
   });
   scheduleTrainingDraftSave();
@@ -10273,12 +10326,13 @@ function renderTrainingDayCard(date){
   }
   const exerciseIds = getTrainingDayExerciseIds(date);
   if(exerciseIds.length) ensureFailureDayPlanned(date, exerciseIds);
+  const cal = getTrainingCalEntry(date);
+  const session = cal ? getTrainingSessionById(cal.sessionId) : null;
+  if(exerciseIds.length && session) ensureSetsAutoFilled(date, exerciseIds, session);
   const agg = computeDayAggregateV2(date);
   const fullyLogged = isTrainingDayFullyLoggedV2(date);
   // Look up the session assigned to this date so each exercise row can show
   // its target (sets × rep range and suggested weight from the block notes).
-  const cal = getTrainingCalEntry(date);
-  const session = cal ? getTrainingSessionById(cal.sessionId) : null;
   const sessionBlockMap = {};
   if(session && session.blocks){
     session.blocks.forEach(b=>{ if(b.exerciseId) sessionBlockMap[b.exerciseId]=b; });
@@ -10508,6 +10562,7 @@ async function removeExerciseFromDay(date, exerciseId){
   // the row.
   const pending = state.trainingPendingAdds[date] || [];
   if(pending.includes(exerciseId)){
+    if(!confirm('Are you sure?')) return;
     state.trainingPendingAdds[date] = pending.filter(id=>id!==exerciseId);
     delete state.trainingDraftValues[trainingDraftKey(date, exerciseId)];
     flushTrainingDrafts();
@@ -11836,10 +11891,27 @@ function buildTrainingReviewPack(){
     });
 
   // --- Body metrics from Health Log (last 14 days) ---
+  // v4.5x fix: was checking only the 3 CORE fields (weight/water/calDeficit)
+  // to decide whether to include a day at all — a day logged with only
+  // custom metrics (Fiber, Protein, Calories, etc, which most days actually
+  // are) was silently dropped from the pack entirely, and even on days that
+  // did pass that check, the custom metrics themselves were never included.
+  // Now includes every defined metric (core and custom) by its real name —
+  // self-describing JSON, no separate legend needed for the AI to read it —
+  // and a day is included whenever ANY metric on it has a value.
   const bodyMetrics = state.health
-    .filter(h=> h.date >= sinceDate && (h.weight||h.water||h.calDeficit))
-    .sort((a,b)=>a.date<b.date?-1:1)
-    .map(h=>({ date:h.date, weightKg:h.weight||null, waterMl:h.water||null, calDeficit:h.calDeficit||null }));
+    .filter(h=> h.date >= sinceDate)
+    .map(h=>{
+      const values = {};
+      state.healthMetricDefs.forEach(m=>{
+        const v = getMetricValue(h,m);
+        if(v===null || v===undefined || v==='') return;
+        values[m.name] = m.unit ? `${v} ${m.unit}` : v;
+      });
+      return { date:h.date, values };
+    })
+    .filter(h=> Object.keys(h.values).length)
+    .sort((a,b)=>a.date<b.date?-1:1);
 
   // --- Adherence ---
   const calendarDates = state.training.calendar.filter(c=>c.date>=sinceDate&&c.date<=today);
@@ -11868,6 +11940,42 @@ function buildTrainingReviewPack(){
   };
 }
 
+function openTrainingGoalsModal(){
+  const g = state.settings.trainingGoals || { notes:'', priorityMuscles:[] };
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'trainingGoalsOverlay';
+  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:560px;">
+      <h3>Training Goals</h3>
+      <div class="page-sub" style="margin-bottom:10px;">Shown every time you generate a Review Pack, so the plan always reflects what you actually want right now — update anything that's changed, or leave as-is.</div>
+      <div class="field">
+        <label>Priority muscle groups <span class="page-sub" style="font-weight:400;">— these get a higher weekly volume target and get trained across more days in the plan than the rest</span></label>
+        ${muscleGroupPillsHtml('trainingGoalsPriorityPills', g.priorityMuscles||[])}
+      </div>
+      <div class="field">
+        <label>Notes <span class="page-sub" style="font-weight:400;">— anything else the AI should know about your goals</span></label>
+        <textarea id="trainingGoalsNotes" rows="3" placeholder="e.g. want a bigger upper body and back width, keep legs at maintenance">${escapeHtml(g.notes||'')}</textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="document.getElementById('trainingGoalsOverlay').remove();">Cancel</button>
+        <button class="btn brass" onclick="saveTrainingGoalsAndCopyPack()">Save &amp; Copy Review Pack</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+async function saveTrainingGoalsAndCopyPack(){
+  const priorityMuscles = readMuscleGroupPills('trainingGoalsPriorityPills');
+  const notesEl = document.getElementById('trainingGoalsNotes');
+  const notes = notesEl ? notesEl.value.trim() : '';
+  state.settings.trainingGoals = { priorityMuscles, notes, updatedAt:new Date().toISOString() };
+  await saveSettings();
+  const overlay = document.getElementById('trainingGoalsOverlay');
+  if(overlay) overlay.remove();
+  copyTrainingReviewPack();
+}
 function copyTrainingReviewPack(){
   const pack = buildTrainingReviewPack();
   const packJson = JSON.stringify(pack, null, 2);
@@ -11875,12 +11983,17 @@ function copyTrainingReviewPack(){
   // Current exercise library so the AI can reference existing exercise IDs.
   const exerciseLibrary = state.training.exercises.map(e=>({
     id: e.id, name: e.name, category: e.category||'strength',
-    muscleGroups: exMuscleGroups(e), tags: e.tags||[],
+    primaryMuscles: exMuscleGroups(e,'primary'), secondaryMuscles: exMuscleGroups(e,'secondary'), tags: e.tags||[],
   }));
+
+  const trainingGoals = state.settings.trainingGoals || { priorityMuscles:[], notes:'' };
+  const priorityMuscleLabels = (trainingGoals.priorityMuscles||[]).map(mg=>MUSCLE_GROUP_LABELS[mg]||mg);
 
   const prompt = `You are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
 
 MY GOALS: lose ~${pack.goals.weightLossTargetKg}kg (current target ${pack.goals.targetWeightKg}kg), build muscle, train ${pack.goals.weeklyTrainingDays} days/week.
+${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard 10-20 set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
+${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
 MY EXERCISE LIBRARY (use these IDs in the plan):
 \`\`\`json
@@ -11894,7 +12007,7 @@ ${packJson}
 
 WHAT I NEED FROM YOU:
 
-1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band.
+1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
@@ -11920,6 +12033,7 @@ The JSON must follow this exact schema (the same format the app already accepts 
 
 RULES for the plan:
 - Use existing exercise IDs from my library wherever the exercise already exists. Only define new exercises in "exercises" if they genuinely don't exist in my library.
+- Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Schedule training days on the next 14 calendar days starting from ${pack.reviewPeriod.to}, skipping the two rest days of the week that fit best (based on my adherence pattern from the data).
@@ -13573,6 +13687,7 @@ alter table training_exercises add column if not exists muscle_group text;
 alter table training_exercises add column if not exists rest_sec int;
 -- v4.41.0: Editable weekly volume band stored in settings.
 alter table app_settings add column if not exists muscle_band jsonb default '{"min":10,"max":20}';
+alter table app_settings add column if not exists training_goals jsonb default null;
 
 -- v4.40.0: Per-set logging. Each working set now has its own row.
 -- The existing training_logs row stays as a per-exercise header (notes, etc.)
