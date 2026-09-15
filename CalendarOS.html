@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.51.2';
+const APP_VERSION = '4.51.3';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.51.3', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'REVIEW PACK: session names must now include the year too (e.g. "Push Focus \u2014 Sep 17, 2026", not just "Sep 17") \u2014 a month/day-only date collides with itself exactly one year later just as easily as two descriptive labels would.',
+  ]},
   { v:'4.51.2', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'REVIEW PACK: the AI is now told to put the actual calendar date directly in each session\u2019s name (e.g. "Push Focus \u2014 Sep 17"), not just a descriptive label. Uniqueness within one plan (already required) doesn\u2019t protect against a totally separate review pack weeks later independently landing on the same descriptive name \u2014 the AI has no memory of what it called things last time, and the app\u2019s import matching only checks for an exact name match, so that\u2019s enough to silently collide again. A real date can\u2019t repeat, so this closes the door on the whole class of issue permanently rather than one plan at a time.',
@@ -12047,7 +12051,7 @@ RULES for the plan:
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Schedule training days on the next 14 calendar days starting from ${pack.reviewPeriod.to}, skipping the two rest days of the week that fit best (based on my adherence pattern from the data).
 - Each session block should have realistic set counts for a 40–50 minute session.
-- One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") AND include the actual calendar date it's for directly in the "name" itself (e.g. "Push Focus — Sep 17", "Legs — Sep 22"), not just a descriptive label like "Push Focus Alpha". A descriptive-only name can still collide with something named in a completely separate review pack weeks or months from now — you have no memory of what you called things last time, and neither does the app checking for a match, so the date is what actually guarantees it never repeats. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
+- One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") AND include the actual calendar date it's for, including the year, directly in the "name" itself (e.g. "Push Focus — Sep 17, 2026", "Legs — Sep 22, 2026"), not just a descriptive label like "Push Focus Alpha" and not a date missing the year — "Sep 17" alone collides with "Sep 17" a year later just as easily as two descriptive labels would. A descriptive-only name can still collide with something named in a completely separate review pack weeks or months from now — you have no memory of what you called things last time, and neither does the app checking for a match, so the full date is what actually guarantees it never repeats. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
 - Output the import JSON in a single code block. Nothing else in that code block — no comments inside the JSON, valid JSON only.`;
 
   navigator.clipboard.writeText(prompt)
