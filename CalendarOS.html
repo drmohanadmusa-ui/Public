@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.51.0';
+const APP_VERSION = '4.51.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.51.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIXED: 4 of 10 days from a freshly-imported plan showed no target badge and nothing auto-filled. Root cause \u2014 importing a plan updates the calendar\u2019s date\u2192session mapping correctly, but never reconciled a date\u2019s already-staged-but-not-yet-logged exercises against the newly-assigned session. A leftover staged exercise from an older plan or a manual add just sat there unchanged, didn\u2019t match the new session\u2019s blocks, and the app had nothing to read a target or a weight from for it \u2014 which looks identical to "auto-fill is broken" but is really "this exercise doesn\u2019t belong to today\u2019s plan and never did." Importing a plan now clears exactly that kind of leftover for any date it touches (never an exercise that\u2019s already logged \u2014 that\u2019s real history, always left alone), so the day picks up the newly-imported session cleanly.',
+    'Already-affected days made before this fix aren\u2019t retroactively repaired by it (re-importing the same plan will fix them the same way going forward) \u2014 the faster fix for the 4 days already showing this: tap \u2715 on the exercises with no target badge, and the day will auto-restage and auto-fill from its actual assigned session on its own.',
+  ]},
   { v:'4.51.0', changes: [
     '🔴 SQL migration required — Settings → Cloud Sync → Copy SQL, run in the Supabase SQL editor. Adds training_goals (jsonb) on app_settings. Additive/idempotent.',
     'REVIEW PACK: exercise library now sends primaryMuscles/secondaryMuscles separately (was one merged list) and the AI is told to prefer an exercise\u2019s primary target over a secondary one when picking exercises for a muscle group.',
@@ -12289,21 +12294,41 @@ function applyTrainingImportResolution(res){
     }
   });
 
-  let newCalCount=0, updCalCount=0;
+  let newCalCount=0, updCalCount=0, reconciledStaleCount=0;
   res.calendar.forEach(c=>{
     if(!c || !c.date || !c.sessionId) return;
     const resolvedSessionId = sessIdMap[c.sessionId] || c.sessionId;
     const existing = state.training.calendar.find(x=>x.date===c.date);
     if(existing){ existing.sessionId = resolvedSessionId; updCalCount++; }
     else { state.training.calendar.push({ date:c.date, sessionId: resolvedSessionId }); newCalCount++; }
+
+    // Reconcile any already-staged (but not yet logged) exercises for this
+    // date against the session actually being assigned to it now. Without
+    // this, a leftover pending-add from an older plan or a manual staging
+    // sticks around after import, doesn't match the new session's blocks,
+    // and silently shows with no target badge and nothing auto-filled — the
+    // app has no block to read a target/weight from for an exercise that
+    // isn't part of the day's assigned session. Never touches an exercise
+    // that's already been logged for this date; that's real history, not
+    // staging, and stays untouched regardless of what the new plan says.
+    const newSession = getTrainingSessionById(resolvedSessionId);
+    const newBlockIds = new Set(((newSession && newSession.blocks) || []).map(b=>b.exerciseId).filter(Boolean));
+    const pending = state.trainingPendingAdds[c.date] || [];
+    const loggedIds = new Set(state.training.logs.filter(l=>l.date===c.date).map(l=>l.exerciseId));
+    const reconciled = pending.filter(id=> newBlockIds.has(id) || loggedIds.has(id));
+    if(reconciled.length !== pending.length){
+      reconciledStaleCount += (pending.length - reconciled.length);
+      state.trainingPendingAdds[c.date] = reconciled;
+    }
   });
+  if(reconciledStaleCount) flushTrainingDrafts();
 
   saveTraining();
   diagLogEvent('activity', 'Imported training plan', {
-    newEx:newExCount, updEx:updExCount, newSess:newSessCount, updSess:updSessCount, newCal:newCalCount, updCal:updCalCount,
+    newEx:newExCount, updEx:updExCount, newSess:newSessCount, updSess:updSessCount, newCal:newCalCount, updCal:updCalCount, reconciledStale:reconciledStaleCount,
   });
   renderMain();
-  showToast(`Imported: ${newExCount+updExCount} exercises, ${newSessCount+updSessCount} sessions, ${newCalCount+updCalCount} calendar days`);
+  showToast(`Imported: ${newExCount+updExCount} exercises, ${newSessCount+updSessCount} sessions, ${newCalCount+updCalCount} calendar days${reconciledStaleCount ? ` — cleared ${reconciledStaleCount} leftover staged exercise${reconciledStaleCount===1?'':'s'} that didn't match the new plan` : ''}`);
 }
 
 function processTrainingImportText(text){
