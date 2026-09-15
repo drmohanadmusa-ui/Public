@@ -346,12 +346,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.51.0';
+const APP_VERSION = '4.52.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.52.0', date:'2026-09-13', changes:[
+    'Account Budget Chart → new Account / Category toggle. Category mode aggregates every account in a sub category (matching the P&L page\'s own category grouping) into the same Budget vs Actual bar chart, cumulative line chart, and Remaining Budget figure. Clicking an Actual bar in Category mode opens that month\'s transactions across every account in the category, grouped by account then by date within each.',
+    'P&L → the category subtotal row (e.g. "Bills") now carries the same 📊 link the individual account rows already had, jumping straight into the chart in Category mode for that category. Only shown for categories with at least one budgeted account.',
+  ]},
   {version:'4.51.0', date:'2026-09-13', changes:[
     'Account Budget Chart → clicking an Actual bar in the monthly Budget vs Actual chart now opens that month\'s real transactions in a window, same list style as the P&L drill-down. Budget bars aren\'t clickable (nothing real behind them), and a future flat-zero month still opens honestly to a "no transactions" state rather than doing nothing.',
   ]},
@@ -6222,6 +6226,8 @@ let pnlPreset = 'month', pnlSpecificMonth = todayStr().slice(0,7), pnlYear = tod
 let pnlView = 'main';
 let acctChartAccId = null;
 let acctChartYear = todayStr().slice(0,4);
+let acctChartMode = 'account'; // 'account' | 'subcategory' — toggle on the same chart page
+let acctChartSubcat = null; // selected sub category name (matches D.accounts[].category)
 function dataYears(){
   const ys = new Set(D.ledger.map(l=>(l.date||'').slice(0,4)).filter(Boolean));
   return [...ys].sort();
@@ -6308,6 +6314,7 @@ function renderPnL(){
   // same set the chart's own account picker uses, so the link never lands on a "no budgeted
   // accounts" empty state for an account that was never budgeted.
   const budgetedAccIds = new Set(accountsWithBudgetFigures().map(a=>a.id));
+  const budgetedCats = new Set(subcategoriesWithBudgetFigures());
   const expCatData = expCats.map(cat=>{
     const items = expByCat[cat].sort((a,b)=>a.a.id-b.a.id);
     const catTotal = items.reduce((s,i)=>s+i.actual,0), catBudget = items.reduce((s,i)=>s+i.budget,0);
@@ -6319,7 +6326,7 @@ function renderPnL(){
   // since expTotal isn't final until every category has been summed above.
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
-    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
+    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${budgetedCats.has(cat)? ` <span class="mut" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
       items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
@@ -6395,6 +6402,16 @@ function openAcctBudgetChart(accId){
     const opts = accountsWithBudgetFigures();
     if(opts.length) acctChartAccId = opts[0].id;
   }
+  acctChartMode = 'account';
+  pnlView = 'acctchart';
+  renderPnL();
+}
+// Category-mode entry point — the P&L category subtotal row's own 📊 link. Same "no need to
+// duplicate the validity guard" reasoning as openAcctBudgetChart above: renderAcctBudgetChartPage()
+// re-checks acctChartSubcat against subcategoriesWithBudgetFigures() itself.
+function openAcctBudgetChartForCategory(categoryName){
+  acctChartSubcat = categoryName || null;
+  acctChartMode = 'subcategory';
   pnlView = 'acctchart';
   renderPnL();
 }
@@ -6409,6 +6426,21 @@ function accountsWithBudgetFigures(){
       (D.provisionGroups||[]).some(pg=>(pg.lines||[]).some(l=>l.acc===a.id)) ||
       (D.forecastAccountRules||[]).some(r=>r.account===a.id) )
   ).sort((a,b)=>a.id-b.id);
+}
+// The picker's sub category list: every category name that has at least one account qualifying
+// for accountsWithBudgetFigures() above — same qualification bar, just grouped. Order matches the
+// P&L page's own category ordering (by each category's lowest account id), not alphabetical, so
+// the two pickers read consistently against each other.
+function subcategoriesWithBudgetFigures(){
+  const byCat = {};
+  accountsWithBudgetFigures().forEach(a=>{ (byCat[a.category] ??= []).push(a.id); });
+  return Object.keys(byCat).sort((x,y)=> Math.min(...byCat[x]) - Math.min(...byCat[y]));
+}
+// Every expense account belonging to a given category — NOT restricted to already-budgeted
+// accounts, matching exactly how the P&L page's own category subtotal aggregates (expByCat):
+// an unbudgeted account's real spend still counts toward the category's real total.
+function acctBudgetChartCategoryAccountIds(categoryName){
+  return new Set(D.accounts.filter(a=>a.category===categoryName && firstDigit(a.id)===6 && a.status!=='Deleted').map(a=>a.id));
 }
 // Years actually present in the ledger, plus the current year always available even with zero
 // activity yet — reuses dataYears() (the same source the "Specific year…" P&L preset uses) rather
@@ -6429,6 +6461,28 @@ function viewAcctBudgetChartMonthTransactions(accId, monthKey){
     <div class="mut" style="font-size:12px;margin-bottom:10px">Transactions in ${esc(monthLabel(monthKey))}</div>
     <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th></tr></thead>
     <tbody>${lines.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono">${esc(l.date)}</td><td class="mono">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No transactions this month</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="num mono ${moneyClass(total)}">${money(total)}</td></tr></tfoot></table>
+    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
+}
+// Category-mode version of the modal above — spans every account in the category, grouped by
+// account (sorted by account id, matching how the P&L page itself orders accounts within a
+// category), then by date within each account's own section — the exact grouping confirmed for
+// this feature, since a flat combined list would make it hard to tell which account a line
+// actually belongs to when several accounts posted in the same month.
+function viewAcctBudgetChartMonthTransactionsForCategory(categoryName, monthKey){
+  const ids = acctBudgetChartCategoryAccountIds(categoryName);
+  const accIdsWithLines = [...ids].filter(id=>D.ledger.some(l=>l.acc===id && monthOf(l.date)===monthKey)).sort((a,b)=>a-b);
+  const total = D.ledger.filter(l=>ids.has(l.acc) && monthOf(l.date)===monthKey).reduce((s,l)=>s+Number(l.amt),0);
+  const body = accIdsWithLines.map(accId=>{
+    const lines = D.ledger.filter(l=>l.acc===accId && monthOf(l.date)===monthKey).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    return `<tr style="background:var(--chip)"><td colspan="4" style="font-weight:700;color:var(--accent)">${accId} — ${esc(accShort(accId))}</td></tr>` +
+      lines.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono">${esc(l.date)}</td><td class="mono">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('');
+  }).join('') || '<tr><td colspan="4" class="empty">No transactions this month</td></tr>';
+  showModal(`
+    <h3>${esc(categoryName)}</h3>
+    <div class="mut" style="font-size:12px;margin-bottom:10px">Transactions in ${esc(monthLabel(monthKey))}, grouped by account</div>
+    <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th></tr></thead>
+    <tbody>${body}</tbody>
     <tfoot><tr><td colspan="3">Total</td><td class="num mono ${moneyClass(total)}">${money(total)}</td></tr></tfoot></table>
     <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
 }
@@ -6464,22 +6518,72 @@ function computeAcctBudgetChartData(accId, year){
   const remaining = pnlVarianceMagnitude(totalBudget, totalActual);
   return {months, budgetVals, actualVals, cumBudget, cumActual, totalBudget, totalActual, remaining};
 }
+// Category-mode version of computeAcctBudgetChartData above — same month-by-month engine, summed
+// across every account in the category rather than a single account. Kept as a separate function
+// (rather than accId/categoryName overloading in one signature) so each stays simple to read and
+// test on its own; renderAcctBudgetChartPage picks whichever one applies based on acctChartMode.
+function computeAcctBudgetChartDataForCategory(categoryName, year){
+  const ids = acctBudgetChartCategoryAccountIds(categoryName);
+  const todayYm = todayStr().slice(0,7);
+  const months = ACCT_BUDGET_CHART_MONTH_LABELS.map((_,i)=> year+'-'+String(i+1).padStart(2,'0'));
+  let budgetVals;
+  try{
+    beginForecastFastPath();
+    budgetVals = months.map(mk => {
+      let sum = 0;
+      ids.forEach(id=>{ const acc = ACC_BY_ID[id]; if(acc) sum += (computeForecastCell(acc, mk, mk).plan || 0); });
+      return sum;
+    });
+  } finally { endForecastFastPath(); }
+  const actualVals = months.map(mk => mk<=todayYm ? sumAcc(l=>ids.has(l.acc), ...monthRange(mk)) : 0);
+  const cumBudget = [], cumActual = [];
+  months.forEach((mk,i)=>{
+    cumBudget.push((cumBudget[i-1]||0) + budgetVals[i]);
+    cumActual.push((cumActual[i-1]||0) + actualVals[i]);
+  });
+  const totalBudget = budgetVals.reduce((s,v)=>s+v,0);
+  const totalActual = actualVals.reduce((s,v)=>s+v,0);
+  const remaining = pnlVarianceMagnitude(totalBudget, totalActual);
+  return {months, budgetVals, actualVals, cumBudget, cumActual, totalBudget, totalActual, remaining};
+}
+function selectAcctBudgetChartMode(mode){
+  acctChartMode = (mode==='subcategory')? 'subcategory' : 'account';
+  renderPnL();
+}
+function selectAcctBudgetChartSubcat(v){ acctChartSubcat = v || null; renderPnL(); }
 function renderAcctBudgetChartPage(){
   const opts = accountsWithBudgetFigures();
   if(acctChartAccId && !opts.some(a=>a.id===acctChartAccId)) acctChartAccId = null;
   if(!acctChartAccId && opts.length) acctChartAccId = opts[0].id;
+  const subcatOpts = subcategoriesWithBudgetFigures();
+  if(acctChartSubcat && !subcatOpts.includes(acctChartSubcat)) acctChartSubcat = null;
+  if(!acctChartSubcat && subcatOpts.length) acctChartSubcat = subcatOpts[0];
   const years = acctBudgetChartYears();
   if(!years.includes(acctChartYear)) acctChartYear = years[0];
-  const data = acctChartAccId ? computeAcctBudgetChartData(acctChartAccId, acctChartYear) : null;
+  const isSubcat = acctChartMode==='subcategory';
+  const data = isSubcat
+    ? (acctChartSubcat ? computeAcctBudgetChartDataForCategory(acctChartSubcat, acctChartYear) : null)
+    : (acctChartAccId ? computeAcctBudgetChartData(acctChartAccId, acctChartYear) : null);
+  const chartTitle = isSubcat ? esc(acctChartSubcat||'') : esc(accShort(acctChartAccId));
   document.getElementById('app').innerHTML = `
     <div class="panel noprint">
-      <div class="row">
+      <div class="row" style="margin-bottom:10px">
         <button class="btn ghost sm" onclick="closeAcctBudgetChart()">◂ Back to P&amp;L</button>
+        <button class="btn ghost sm" style="${!isSubcat?'border-color:var(--accent);background:var(--chip);font-weight:600':''}" onclick="selectAcctBudgetChartMode('account')">Account</button>
+        <button class="btn ghost sm" style="${isSubcat?'border-color:var(--accent);background:var(--chip);font-weight:600':''}" onclick="selectAcctBudgetChartMode('subcategory')">Category</button>
+      </div>
+      <div class="row">
+        ${isSubcat? `
+        <div style="width:280px"><label class="fl">Sub Category</label>
+          <select onchange="selectAcctBudgetChartSubcat(this.value)" ${!subcatOpts.length?'disabled':''}>
+            ${subcatOpts.length? subcatOpts.map(c=>`<option value="${esc(c)}" ${c===acctChartSubcat?'selected':''}>${esc(c)}</option>`).join('') : '<option value="">No budgeted sub categories found</option>'}
+          </select>
+        </div>` : `
         <div style="width:280px"><label class="fl">Account</label>
           <select onchange="selectAcctBudgetChartAccount(this.value)" ${!opts.length?'disabled':''}>
             ${opts.length? opts.map(a=>`<option value="${a.id}" ${a.id===acctChartAccId?'selected':''}>${a.id} - ${esc(accShort(a.id))}</option>`).join('') : '<option value="">No budgeted accounts found</option>'}
           </select>
-        </div>
+        </div>`}
         <div style="width:120px"><label class="fl">Year</label>
           <select onchange="selectAcctBudgetChartYear(this.value)">
             ${years.map(y=>`<option value="${y}" ${y===acctChartYear?'selected':''}>${y}</option>`).join('')}
@@ -6487,13 +6591,13 @@ function renderAcctBudgetChartPage(){
         </div>
       </div>
     </div>
-    ${!data? `<div class="panel"><div class="empty">No expense accounts with a budget, Provisions plan, or Smart Rule were found.</div></div>` : `
+    ${!data? `<div class="panel"><div class="empty">${isSubcat? 'No expense sub categories with a budget, Provisions plan, or Smart Rule were found.' : 'No expense accounts with a budget, Provisions plan, or Smart Rule were found.'}</div></div>` : `
     <div class="cards">
       <div class="kpi"><div class="l">Full-Year Budget</div><div class="v">${money(data.totalBudget)}</div></div>
       <div class="kpi"><div class="l">Actual to Date</div><div class="v">${money(data.totalActual)}</div></div>
       <div class="kpi"><div class="l">Remaining Budget for the Year</div><div class="v ${moneyClass(data.remaining)}">${money(data.remaining)}</div></div>
     </div>
-    <div class="panel"><h3>Monthly Budget vs Actual — ${esc(accShort(acctChartAccId))} (${acctChartYear})</h3>
+    <div class="panel"><h3>Monthly Budget vs Actual — ${chartTitle} (${acctChartYear})</h3>
       <div style="height:320px"><canvas id="acctBudgetBarChart"></canvas></div>
     </div>
     <div class="panel"><h3>Cumulative Budget vs Actual</h3>
@@ -6501,12 +6605,14 @@ function renderAcctBudgetChartPage(){
     </div>`}`;
   if(data) drawAcctBudgetChart(data);
 }
-function acctBudgetBarChartClickHandler(elements, months, accId){
+function acctBudgetBarChartClickHandler(elements, months, key, mode){
   if(!elements || !elements.length) return;
   const el = elements[0];
   if(el.datasetIndex!==1) return; // only the Actual bar has real transactions to drill into
   const monthKey = months[el.index];
-  if(monthKey) viewAcctBudgetChartMonthTransactions(accId, monthKey);
+  if(!monthKey) return;
+  if(mode==='subcategory') viewAcctBudgetChartMonthTransactionsForCategory(key, monthKey);
+  else viewAcctBudgetChartMonthTransactions(key, monthKey);
 }
 let _acctBudgetCharts = [];
 function drawAcctBudgetChart(data){
@@ -6531,7 +6637,7 @@ function drawAcctBudgetChart(data){
         // rather than pretending there's nothing to click. Delegates to a standalone, directly
         // testable function rather than inline logic, since Chart.js itself never initializes in
         // the Node/JSDOM test harness (no CDN script loaded there).
-        onClick:(evt, elements)=>acctBudgetBarChartClickHandler(elements, data.months, acctChartAccId),
+        onClick:(evt, elements)=>acctBudgetBarChartClickHandler(elements, data.months, acctChartMode==='subcategory'? acctChartSubcat : acctChartAccId, acctChartMode),
         onHover:(evt, elements)=>{ evt.native.target.style.cursor = (elements.length && elements[0].datasetIndex===1)? 'pointer' : 'default'; },
         scales:{x:{ticks:{color:text},grid:{color:grid}}, y:{ticks:{color:text},grid:{color:grid}}}}}));
   }
