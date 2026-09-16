@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.54.0';
+const APP_VERSION = '4.54.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.54.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'EXERCISE LIBRARY: the muscle-group drill-down now follows the same calendar week (and the same \u2039 \u203a navigation) as the Weekly Volume panel, instead of a separate fixed "last 7 days" \u2014 so the sets it lists always match whichever week you\u2019re looking at, with its own week arrows right on the breakdown card too.',
+    'REVIEW PACK: weeklyVolumeByMuscle and plannedRemainingVolumeByMuscle now use the same real calendar week (Sunday-Saturday) the app displays, not the old rolling 7-day window \u2014 one single definition of "this week" across the app and the AI review, rather than two that could quietly disagree. The two rolling-window functions this replaced are gone \u2014 nothing else in the app used the rolling definition anymore, so keeping both around would\u2019ve just been a second, unused implementation of the same idea.',
+  ]},
   { v:'4.54.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'WEEKLY VOLUME: switched from a rolling 7-day window to a real calendar week (Sunday to Saturday), with \u2039 \u203a arrows to page to the week before or after. A fully-past week now correctly shows all Done and zero Planned (nothing left to do), and a fully-future week shows all Planned and zero Done (nothing\u2019s happened yet) \u2014 falls out naturally from the same date-range logic, no special-casing needed for either case.',
@@ -9317,16 +9322,19 @@ function exMuscleGroups(ex, mode){
   return [...new Set([...primary, ...secondary])]; // default: union, for call sites that just need "does this touch this muscle at all"
 }
 /* Item 8: the actual logged sets behind a muscle's weekly volume number on
-   the body map, for the Exercise Library page's muscle filter — same
-   rolling 7-day window and same primary/secondary inclusion rule as
-   computeWeeklyVolumeByMuscle(), so this always sums to the number shown
-   there. Grouped by (date, exercise), not one row per individual set —
-   "3 sets" reads better than three separate identical lines. */
+   the body map, for the Exercise Library page's muscle filter — follows
+   the same calendar week (and the same navigation arrows via
+   trainingVolumeWeekOffset) as the Weekly Volume panel, and the same
+   primary-only inclusion rule as computeCalendarWeekVolume(), so this
+   always sums to the Done number shown there for whichever week is
+   currently selected. Grouped by (date, exercise), not one row per
+   individual set — "3 sets" reads better than three separate identical
+   lines. */
 function getMuscleVolumeBreakdown(mg){
-  const weekStart = addDays(todayStr(), -6);
+  const { weekStart, weekEnd } = getCalendarWeekBounds(state.trainingVolumeWeekOffset||0);
   const rows = {};
   (state.training.sets||[])
-    .filter(s=> s.date>=weekStart && !s.isWarmup && s.done)
+    .filter(s=> s.date>=weekStart && s.date<=weekEnd && !s.isWarmup && s.done)
     .forEach(s=>{
       const ex = getTrainingExerciseById(s.exerciseId);
       const credits = exMuscleGroupCredits(ex);
@@ -10339,54 +10347,17 @@ function toggleSetDone(date, exId, setNo, restSec){
    Clicking any muscle region filters the Exercise Library to that muscle. */
 const MUSCLE_BAND_DEFAULT = { min:10, max:20 };
 
+/* Convenience alias for "this week's done volume" — same single source of
+   truth as the Weekly Volume panel and the review pack (computeCalendarWeekVolume,
+   offset 0), not a separate rolling-window calculation anymore. Kept as its
+   own named function since some callers just want the done total without
+   destructuring the full {weekStart, weekEnd, doneVol, plannedVol} shape. */
 function computeWeeklyVolumeByMuscle(){
-  const weekStart = addDays(todayStr(), -6);
-  const hard = (state.training.sets||[]).filter(s=>
-    s.date>=weekStart && !s.isWarmup && s.done
-  );
-  const vol = {};
-  hard.forEach(s=>{
-    const ex = getTrainingExerciseById(s.exerciseId);
-    // Primary-only credit — see exMuscleGroupCredits().
-    Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ vol[mg] = (vol[mg]||0)+credit; });
-  });
-  return vol;
+  return computeCalendarWeekVolume(0).doneVol;
 }
-/* Forward-looking counterpart to the above — sums the (not-yet-done) working
-   sets already scheduled from today through 6 days out, straight from each
-   day's assigned session blocks. Same rolling-7-day framing as
-   computeWeeklyVolumeByMuscle(), just pointed forward instead of back, so
-   the two together show the whole rolling week: banked so far + already on
-   the calendar for what's left of it. This is a plan, not attendance — it
-   doesn't know whether a scheduled day will actually get logged.
-   Subtracts whatever's already been done TODAY specifically from today's
-   planned contribution — without this, a set already counted in the
-   "done" total would ALSO be counted here via today's full block.sets,
-   inflating done+planned above the real total. */
+/* Same idea, for the planned half. */
 function computePlannedRemainingVolumeByMuscle(){
-  const today = todayStr();
-  const weekEnd = addDays(today, 6);
-  const vol = {};
-  state.training.calendar
-    .filter(c=> c.date>=today && c.date<=weekEnd && c.sessionId)
-    .forEach(c=>{
-      const session = getTrainingSessionById(c.sessionId);
-      if(!session || !session.blocks) return;
-      session.blocks.forEach(b=>{
-        const ex = getTrainingExerciseById(b.exerciseId);
-        if(!ex) return;
-        const targetSets = Number(b.sets)||0;
-        const doneSetsForThisDay = c.date===today ? (state.training.sets||[]).filter(s=>
-          s.date===c.date && s.exerciseId===b.exerciseId && s.done && !s.isWarmup
-        ).length : 0;
-        const remainingSets = Math.max(0, targetSets - doneSetsForThisDay);
-        if(!remainingSets) return;
-        Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{
-          vol[mg] = (vol[mg]||0) + credit*remainingSets;
-        });
-      });
-    });
-  return vol;
+  return computeCalendarWeekVolume(0).plannedVol;
 }
 /* Sunday-Saturday calendar week bounds, offset in whole weeks from the
    current one (0 = this week, -1 = last week, +1 = next week). Used by the
@@ -10564,7 +10535,7 @@ function renderWeeklyVolumePanel(){
             <span style="flex:1;font-size:13px;">${LABELS[mg]||mg}</span>
             <span style="width:38px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${textColour};">${sets||'—'}</span>
             <span style="width:52px;text-align:right;font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);">${planned?`+${planned}`:'—'}</span>
-            <span style="width:44px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${estColour};" title="If everything already on the calendar for the rest of this rolling week gets logged as planned">${estTotal||'—'}</span>
+            <span style="width:44px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${estColour};" title="If everything still on the calendar for the rest of this week (Sun-Sat) gets logged as planned">${estTotal||'—'}</span>
           </div>`;
         }).join('')}
         ${unmapped.length?`<div class="page-sub" style="margin-top:8px;font-size:11.5px;">⚠ ${unmapped.length} exercise${unmapped.length===1?'':'s'} with no muscle group — set it in Exercise Library.</div>`:''}
@@ -11543,18 +11514,31 @@ function renderTrainingExercisesSubpage(){
         </div>
       ` : ''}
       ${mgFilter ? (()=>{
+        const weekOffset = state.trainingVolumeWeekOffset||0;
+        const { weekStart, weekEnd } = getCalendarWeekBounds(weekOffset);
+        const weekLabel = weekOffset===0 ? 'This week' : `${humanDate(weekStart)} – ${humanDate(weekEnd)}`;
         const breakdown = getMuscleVolumeBreakdown(mgFilter);
         const totalCredited = breakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
+        const nav = `<span style="display:flex; align-items:center; gap:4px;">
+          <button class="icon-btn" title="Previous week" onclick="setTrainingVolumeWeekOffset(-1)">‹</button>
+          <span style="font-weight:600;">${weekLabel}</span>
+          <button class="icon-btn" title="Next week" onclick="setTrainingVolumeWeekOffset(1)">›</button>
+        </span>`;
         return breakdown.length ? `
         <div class="card" style="padding:10px 16px; margin-bottom:10px;">
-          <div class="page-sub" style="margin-bottom:6px;">Last 7 days · ${totalCredited} credited set${totalCredited===1?'':'s'} toward ${LABELS[mgFilter]||mgFilter} — the sets behind that number:</div>
+          <div class="page-sub" style="margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <span>${nav} · ${totalCredited} credited set${totalCredited===1?'':'s'} toward ${LABELS[mgFilter]||mgFilter} — the sets behind that number:</span>
+          </div>
           ${breakdown.map(r=>`
             <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:12.5px;">
               <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
               <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
             </div>
           `).join('')}
-        </div>` : `<div class="card" style="padding:10px 16px; margin-bottom:10px;"><div class="page-sub">No sets logged for ${LABELS[mgFilter]||mgFilter} in the last 7 days.</div></div>`;
+        </div>` : `<div class="card" style="padding:10px 16px; margin-bottom:10px;">
+          <div class="page-sub" style="margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">${nav}</div>
+          <div class="page-sub">No sets logged for ${LABELS[mgFilter]||mgFilter} in this week.</div>
+        </div>`;
       })() : ''}
       ${(tags.length || untaggedCount) ? `` : ''}
       <div class="card" style="padding:4px 16px;">
@@ -12176,13 +12160,12 @@ function buildTrainingReviewPack(){
   });
 
   // --- Weekly volume per muscle ---
-  // v4.5x: was a separate inline copy of this calculation that predated the
-  // primary/secondary fractional-credit fix (exMuscleGroupCredits) and never
-  // got updated alongside it — full credit per set regardless of primary vs
-  // secondary, inconsistent with the other two volume calculations in the
-  // app. Now just calls the shared function so all three agree.
-  const volumeByMuscle = computeWeeklyVolumeByMuscle();
-  const plannedRemainingVolumeByMuscle = computePlannedRemainingVolumeByMuscle();
+  // v4.5x: now the same real calendar week (Sunday-Saturday) the app itself
+  // displays on the Weekly Volume panel, not a rolling 7-day window — so
+  // what the AI is looking at always matches what you're looking at when
+  // you check the app. Also picks up that calculation's fix for double-
+  // counting today's already-done sets into the planned figure too.
+  const { doneVol: volumeByMuscle, plannedVol: plannedRemainingVolumeByMuscle } = computeCalendarWeekVolume(0);
 
   // --- Suggestions generated after last session ---
   const suggestions = state.settings.trainingSuggestions||{};
@@ -12332,7 +12315,7 @@ ${packJson}
 
 WHAT I NEED FROM YOU:
 
-1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. Add \`weeklyVolumeByMuscle\` (already banked) to \`plannedRemainingVolumeByMuscle\` (already on the calendar for the rest of the rolling week, whether or not it's been done yet) for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
+1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
