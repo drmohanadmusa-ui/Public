@@ -971,11 +971,11 @@ body.dark-mode .notebook-page{background-image:repeating-linear-gradient(to bott
     border:1px solid var(--line); background:var(--paper-raised); color:var(--ink);
     font-size:15px; display:flex; align-items:center; justify-content:center; z-index:1;
   }
-  /* v4.50.x: the exercise card's ▾ collapse and ✕ remove-from-day buttons sit
-     right next to each other — fine with a mouse, but an easy mis-tap target
-     on a phone where the row of buttons packs into less width. Push delete
-     further away on mobile specifically; desktop spacing is unaffected. */
-  .train-remove-btn{margin-left:14px;}
+  /* v4.5x: was a fixed 14px mobile-only gap between ▾ collapse and ✕ delete
+     — still felt close. The header row now forces its own line (room to
+     work with) and pushes delete to the far right of that line via an
+     inline margin-left:auto instead, at every width, not just mobile —
+     see renderTrainingExerciseLogRow. Nothing left for this rule to do. */
 }
 
 .pin-list-btn{
@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.51.3';
+const APP_VERSION = '4.52.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,16 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.52.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'RESET TIMER: rest-period tips expanded from 7 to 102, and rotation changed from a fixed repeating sequence to a shuffled order \u2014 every tip gets shown once before any repeat, but the order itself is different every time, including which tip shows first when a rest period starts.',
+    'REVIEW PACK: added plannedRemainingVolumeByMuscle \u2014 what\u2019s already on the calendar for the rest of the rolling week, on top of the existing "already banked" volume \u2014 and the AI is told to add the two together against the weekly band and actually adjust a remaining day in its plan if the total still falls short, not just flag it. Also fixed a real inconsistency found along the way: a second, separate copy of the weekly-volume calculation in the review pack predated the primary/secondary fractional-credit fix and never got updated \u2014 it now shares the same function as the rest of the app.',
+    'REVIEW PACK: plans now require exactly 3 working sets per exercise, consistently (was left to the AI\u2019s judgement, which is why some exercises were getting 2 and others 4), require every suggested weight to land on a 2.5kg step to match real equipment (main plates in 5kg jumps plus a 2.5kg toggle \u2014 no more 9kg or 16kg suggestions), and require alternating muscle groups so the same one isn\u2019t worked in two back-to-back exercises.',
+    'Also fixed the app\u2019s own auto-computed warm-up weight, which could land off that same 2.5kg grid (e.g. 13.5kg) since it\u2019s a fraction of the suggested weight \u2014 now rounds to the nearest 2.5kg.',
+    'IMPORT: sessions are now automatically re-ordered on import as a safety net if the AI\u2019s plan still has back-to-back same-muscle exercises despite the new prompt rule \u2014 re-orders to avoid that adjacency wherever a swap is available, without changing what\u2019s actually in the session.',
+    'TRAINING LOG: the collapsed exercise card\u2019s summary line ("N/M sets \u00b7 tap to expand") now always sits on its own line under the title, not just on narrow screens. The expanded card\u2019s header does the same, and the \u2715 remove button is pushed to the far right of that line instead of sitting close to the \u25be collapse button.',
+    'EXERCISE LIBRARY: selecting a muscle group in the filter now also shows the actual logged sets (last 7 days, date + exercise + set count) that add up to that muscle\u2019s number on the body map, so the total is no longer just a number to take on faith.',
+  ]},
   { v:'4.51.3', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'REVIEW PACK: session names must now include the year too (e.g. "Push Focus \u2014 Sep 17, 2026", not just "Sep 17") \u2014 a month/day-only date collides with itself exactly one year later just as easily as two descriptive labels would.',
@@ -9108,12 +9118,14 @@ function startRestTimer(seconds,exId){
   if(_restTimerHandle) clearInterval(_restTimerHandle);
   if(_tipRotationHandle) clearInterval(_tipRotationHandle);
   _restTimerEnd=Date.now()+seconds*1000;_restTimerExId=exId;_restTimerDefaultSec=seconds;
+  _rotateTip(); // picks the first tip from the shuffle bag rather than always starting at the same one
   _updateRestTimerUI();
   _restTimerHandle=setInterval(_updateRestTimerUI,1000);
   // Rotate tips every 4.5 seconds, not every 1 second.
   _tipRotationHandle=setInterval(_rotateTip,6000); // was 4500 — slowed per request in v4.44.0
 }
 let _tipIndex=0;
+let _tipBag=null;
 let _tipRotationHandle=null;
 const REST_TIPS=[
   'Slow walk — keeps you warm without loading the muscle',
@@ -9123,9 +9135,116 @@ const REST_TIPS=[
   'Light shoulder circles between upper-body sets',
   'Hip circles or ankle rolls between lower-body sets',
   'Take a sip of water if you haven\'t in the last 10 minutes',
+  'Roll your wrists a few times if you\'ve been gripping hard',
+  'Unclench your jaw — a surprising amount of tension hides there',
+  'Shake out your hands and forearms for a few seconds',
+  'Check your breathing rate — aim for it to feel normal, not laboured',
+  'Neck rolls, slow and gentle, both directions',
+  'Ankle pumps if you\'ve been sitting on a machine',
+  'Drop your shoulders away from your ears',
+  'Visualize the next set going smoothly, start to finish',
+  'Cat-cow a couple of reps if your lower back feels stiff',
+  'Loosen your grip between sets so your forearms aren\'t pre-fatigued',
+  'Stand up and reset your posture before the next machine',
+  'A slow exhale can bring your heart rate down faster than you\'d think',
+  'Check your seat/pin setting is still right for this exercise',
+  'Light torso twists if you\'ve been stationary a while',
+  'Roll your shoulders back and open your chest',
+  'Straighten up — slouching between sets carries into the next set',
+  'Wipe down the pad/handles if it\'s been a minute',
+  'Reset your foot position before the next set, don\'t just repeat it on autopilot',
+  'A couple of deep belly breaths beats a couple of shallow chest breaths',
+  'If your grip is the limiting factor here, consider straps for the next set',
+  'Sip water even if you don\'t feel thirsty yet — thirst lags behind need',
+  'Loosen your traps with a shoulder shrug or two',
+  'Quick mental note: how did that last set actually feel? RIR guess before you forget',
+  'Stretch your calves if you\'ve been on your toes a lot today',
+  'Reset your hand position on the bar/handle before the next set',
+  'Light quad stretch if the next exercise is upper body anyway',
+  'Check the weight pin is fully seated before you sit back down',
+  'A slow 4-count inhale, 4-count exhale settles the nervous system fast',
+  'Look up from your phone for a second — posture drifts with a lowered head',
+  'Roll your ankles if the next exercise loads your lower body',
+  'Un-round your upper back — reset tall before sitting into the next set',
+  'Relax your face — a clenched jaw doesn\'t make the set easier',
+  'Quick forearm stretch if you\'ve been doing pulling work',
+  'Notice if you\'re holding your breath between sets — let it go',
+  'A light chest opener if you\'ve been hunched over a bench',
+  'Check your seat height hasn\'t drifted since your last set',
+  'This is a good moment to jot a quick note if something felt off',
+  'Loosen your lower back with a gentle side bend',
+  'Stay off the phone screen for this one — eyes forward, mind on the next set',
+  'Hip flexor stretch if legs are next and you\'ve been seated',
+  'A slow neck stretch to each side, nothing aggressive',
+  'Recheck your grip width matches what worked last time',
+  'Roll through your feet if they\'ve been in one position too long',
+  'Reset your breathing before you even touch the handles',
+  'A light row-back of the shoulder blades resets posture fast',
+  'If today\'s felt heavy, this rest is not the time to rush it',
+  'Quads and hamstrings alternate — stretch whichever one is due',
+  'A sip of water now beats a big gulp later',
+  'Check the pad position hasn\'t slipped since last set',
+  'Loosen your hips with a gentle circle each direction',
+  'Straighten your spine — a curved back holds tension you don\'t need right now',
+  'Deep breath in through the nose, slow release through the mouth',
+  'Un-tense your hands — a white-knuckle grip between sets adds nothing',
+  'If the last set was rough, take the extra few seconds — the timer is a floor, not a ceiling',
+  'Light hamstring stretch if you\'ve been sitting on a bench',
+  'Reset your feet flat and stable before the next set starts',
+  'This is a fine moment to glance at the target for this exercise again',
+  'A slow torso rotation each way, nothing forced',
+  'Check your elbow position matches what felt right on your best set',
+  'Roll your upper back against the pad if it\'s available',
+  'Loosen your neck and traps — a lot of tension collects there without you noticing',
+  'Straighten your wrists — a bent wrist under load is asking for trouble',
+  'A light chest stretch if you\'ve been doing pressing work',
+  'Check in with your energy — this is useful data for later, not just a feeling to shrug off',
+  'Reset your stance width to match your best set, not your last one',
+  'A slow exhale on the way down into the seat can help you settle in',
+  'If your form drifted last set, this is the moment to correct it mentally before the next',
+  'Stretch your triceps if you\'ve been pressing a lot today',
+  'Unclench your toes — tension collects in strange places under load',
+  'A light lat stretch if you\'ve been doing pulling work all session',
+  'Recheck the machine\'s pin is in the hole, not resting on top of it',
+  'Roll your shoulders forward and back a few times',
+  'This is your body\'s time, not your phone\'s — stay present for the next set',
+  'A gentle glute stretch if legs are up next',
+  'Check your breathing hasn\'t gone shallow and fast — slow it back down',
+  'Loosen your jaw and forehead — facial tension doesn\'t help your lift',
+  'A quick posture reset: ears over shoulders, shoulders over hips',
+  'Stretch your hip flexors if you\'ve been seated most of the session',
+  'Reset your grip pressure — a death grip fatigues you before the set even starts',
+  'A slow inhale through the nose settles pre-set nerves better than none at all',
+  'Check your foot placement hasn\'t crept since the warm-up set',
+  'Light ankle circles if the next movement is standing or loaded on your feet',
+  'This rest period counts too — don\'t rush it just to finish sooner',
+  'A gentle spinal twist, seated or standing, whichever is comfortable',
+  'Reset your shoulders down and back before gripping the handles again',
+  'Stretch your forearms if grip has been the limiting factor today',
+  'Take stock of how many working sets are left — pace the rest of the session accordingly',
+  'A slow deep breath before standing up from the bench or seat',
+  'Check the resistance setting is still what you intended, not bumped',
+  'Loosen your calves with a gentle stretch if you\'ve been standing a lot',
+  'This is a good spot to reset your mental focus for the next set specifically',
+  'A light bicep stretch if you\'ve been curling or rowing a lot',
+  'Reset your bar/handle grip evenly — an uneven grip skews the whole set',
+  'Check the machine\'s range of motion setting matches your last good set',
+  'One more slow breath before you commit to the next set',
 ];
 function _rotateTip(){
-  _tipIndex=(_tipIndex+1)%REST_TIPS.length;
+  // v4.5x: was sequential (0,1,2,...,then wrap) — same predictable order
+  // every single rest period. Now a shuffled "bag": walk through a random
+  // permutation of all tips before reshuffling, so every tip is seen once
+  // per lap (no early repeats) but the order itself is different each time
+  // through, and never predictable from one rest period to the next.
+  if(!_tipBag || !_tipBag.length){
+    _tipBag = REST_TIPS.map((_,i)=>i);
+    for(let i=_tipBag.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [_tipBag[i],_tipBag[j]]=[_tipBag[j],_tipBag[i]];
+    }
+  }
+  _tipIndex=_tipBag.pop();
   const el=document.getElementById('restTimerTip');
   if(el) el.textContent=REST_TIPS[_tipIndex];
 }
@@ -9188,6 +9307,27 @@ function exMuscleGroups(ex, mode){
    rather than either counting fully (overstates indirect stimulus) or not
    counting at all (undercounts it). If a muscle somehow ends up in both
    lists, primary's full credit wins rather than double-counting. */
+/* Item 8: the actual logged sets behind a muscle's weekly volume number on
+   the body map, for the Exercise Library page's muscle filter — same
+   rolling 7-day window and same primary/secondary inclusion rule as
+   computeWeeklyVolumeByMuscle(), so this always sums to the number shown
+   there. Grouped by (date, exercise), not one row per individual set —
+   "3 sets" reads better than three separate identical lines. */
+function getMuscleVolumeBreakdown(mg){
+  const weekStart = addDays(todayStr(), -6);
+  const rows = {};
+  (state.training.sets||[])
+    .filter(s=> s.date>=weekStart && !s.isWarmup && s.done)
+    .forEach(s=>{
+      const ex = getTrainingExerciseById(s.exerciseId);
+      const credits = exMuscleGroupCredits(ex);
+      if(credits[mg]===undefined) return;
+      const key = `${s.date}::${s.exerciseId}`;
+      if(!rows[key]) rows[key] = { date:s.date, name: ex?ex.name:s.exerciseId, sets:0, credit:credits[mg] };
+      rows[key].sets++;
+    });
+  return Object.values(rows).sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:a.name.localeCompare(b.name)));
+}
 function exMuscleGroupCredits(ex){
   const credits = {};
   exMuscleGroups(ex,'primary').forEach(mg=>{ credits[mg]=1; });
@@ -9392,7 +9532,7 @@ function ensureSetsAutoFilled(date, exerciseIds, session){
     if(suggestedWeightKg!=null){
       upsertTrainingSet({
         date, exerciseId:exId, setNo:setNo++,
-        reps:10, weightKg: Math.round(suggestedWeightKg*0.6*10)/10,
+        reps:10, weightKg: roundToEquipmentIncrement(suggestedWeightKg*0.6),
         done:false, rir:null, toFailure:false, isWarmup:true,
         restTakenSec:null, loggedAt:null,
       });
@@ -9417,6 +9557,13 @@ function getTrainingExerciseById(id){
 function parseSuggestedWeightKg(blockNotes){
   const m = (blockNotes||'').match(/suggested starting weight:\s*([\d.]+)\s*kg/i);
   return m ? Number(m[1]) : null;
+}
+// Your machines move in 5kg main increments plus a 2.5kg toggle — so any
+// weight actually settable on them is a multiple of 2.5kg. Used for the
+// auto-computed warm-up weight, which is a fraction of a suggested weight
+// and so isn't naturally on that grid without this.
+function roundToEquipmentIncrement(kg){
+  return Math.round(kg/2.5)*2.5;
 }
 function getTrainingLogsForDate(date){
   return state.training.logs.filter(l=>l.date===date);
@@ -9794,7 +9941,7 @@ function renderTrainingExerciseLogRow(date, block, index){
           <span style="color:var(--teal); font-size:13px; flex-shrink:0;">✓</span>
           <b style="font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(title)}</b>
         </span>
-        <span style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+        <span style="display:flex; align-items:center; gap:8px; flex:1 0 100%; justify-content:flex-end;">
           <span class="page-sub" style="font-size:11px;">${doneSetsEarly}/${workingSetsEarly.length} sets${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>
           <span class="page-sub" style="font-size:10px;">▾ tap to expand</span>
         </span>
@@ -9894,10 +10041,10 @@ function renderTrainingExerciseLogRow(date, block, index){
           <b>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
           ${ex && ex.seatSetting ? `<span class="page-sub" style="font-size:10.5px; background:var(--paper-dim); border-radius:4px; padding:1px 7px;" title="Seat/machine setting — dial the machine to this before your first set">⚙ Seat ${escapeHtml(ex.seatSetting)}</span>` : ''}
         </span>
-        <span style="display:flex; align-items:center; gap:8px;">
+        <span style="display:flex; align-items:center; gap:14px; flex:1 0 100%; justify-content:flex-end;">
           ${sets.length ? `<span class="page-sub" id="setsDoneLabel_${rowId}" style="font-size:11px;">${doneSets}/${workingSets.length} sets done${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>` : ''}
           ${!isSessionLevel && !isWalking ? `<button class="icon-btn" title="Collapse this exercise" onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')">▾</button>` : ''}
-          <button class="icon-btn train-remove-btn" title="Remove from this day" onclick="removeExerciseFromDay('${date}','${escapeHtml(block.exerciseId)}')">✕</button>
+          <button class="icon-btn train-remove-btn" title="Remove from this day" style="margin-left:auto;" onclick="removeExerciseFromDay('${date}','${escapeHtml(block.exerciseId)}')">✕</button>
         </span>
       </div>
 
@@ -10153,6 +10300,33 @@ function computeWeeklyVolumeByMuscle(){
     // v4.50.0: primary/secondary fractional credit — see exMuscleGroupCredits().
     Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ vol[mg] = (vol[mg]||0)+credit; });
   });
+  return vol;
+}
+/* Forward-looking counterpart to the above — sums the (not-yet-done) working
+   sets already scheduled from today through 6 days out, straight from each
+   day's assigned session blocks. Same rolling-7-day framing as
+   computeWeeklyVolumeByMuscle(), just pointed forward instead of back, so
+   the two together show the whole rolling week: banked so far + already on
+   the calendar for what's left of it. This is a plan, not attendance — it
+   doesn't know whether a scheduled day will actually get logged. */
+function computePlannedRemainingVolumeByMuscle(){
+  const today = todayStr();
+  const weekEnd = addDays(today, 6);
+  const vol = {};
+  state.training.calendar
+    .filter(c=> c.date>=today && c.date<=weekEnd && c.sessionId)
+    .forEach(c=>{
+      const session = getTrainingSessionById(c.sessionId);
+      if(!session || !session.blocks) return;
+      session.blocks.forEach(b=>{
+        const ex = getTrainingExerciseById(b.exerciseId);
+        if(!ex) return;
+        const setsCount = Number(b.sets)||0;
+        Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{
+          vol[mg] = (vol[mg]||0) + credit*setsCount;
+        });
+      });
+    });
   return vol;
 }
 function muscleVolumeColour(sets,band){
@@ -11245,6 +11419,20 @@ function renderTrainingExercisesSubpage(){
           }).join('')}
         </div>
       ` : ''}
+      ${mgFilter ? (()=>{
+        const breakdown = getMuscleVolumeBreakdown(mgFilter);
+        const totalCredited = breakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
+        return breakdown.length ? `
+        <div class="card" style="padding:10px 16px; margin-bottom:10px;">
+          <div class="page-sub" style="margin-bottom:6px;">Last 7 days · ${totalCredited} credited set${totalCredited===1?'':'s'} toward ${LABELS[mgFilter]||mgFilter} — the sets behind that number:</div>
+          ${breakdown.map(r=>`
+            <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:12.5px;">
+              <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
+              <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}${r.credit<1?` (½ credit — secondary)`:''}</span>
+            </div>
+          `).join('')}
+        </div>` : `<div class="card" style="padding:10px 16px; margin-bottom:10px;"><div class="page-sub">No sets logged for ${LABELS[mgFilter]||mgFilter} in the last 7 days.</div></div>`;
+      })() : ''}
       ${(tags.length || untaggedCount) ? `` : ''}
       <div class="card" style="padding:4px 16px;">
         ${sorted.length ? sorted.map(ex=>`
@@ -11863,15 +12051,13 @@ function buildTrainingReviewPack(){
   });
 
   // --- Weekly volume per muscle ---
-  const weekStart = addDays(today, -7);
-  const weekSets = (state.training.sets||[]).filter(s=> s.date>=weekStart && !s.isWarmup && s.done);
-  const volumeByMuscle = {};
-  weekSets.forEach(s=>{
-    const ex = getTrainingExerciseById(s.exerciseId);
-    const groups = exMuscleGroups(ex);
-    if(!groups.length){ volumeByMuscle.unknown = (volumeByMuscle.unknown||0)+1; return; }
-    groups.forEach(mg=>{ volumeByMuscle[mg] = (volumeByMuscle[mg]||0)+1; });
-  });
+  // v4.5x: was a separate inline copy of this calculation that predated the
+  // primary/secondary fractional-credit fix (exMuscleGroupCredits) and never
+  // got updated alongside it — full credit per set regardless of primary vs
+  // secondary, inconsistent with the other two volume calculations in the
+  // app. Now just calls the shared function so all three agree.
+  const volumeByMuscle = computeWeeklyVolumeByMuscle();
+  const plannedRemainingVolumeByMuscle = computePlannedRemainingVolumeByMuscle();
 
   // --- Suggestions generated after last session ---
   const suggestions = state.settings.trainingSuggestions||{};
@@ -11946,6 +12132,7 @@ function buildTrainingReviewPack(){
     bodyMetrics,
     adherence,
     weeklyVolumeByMuscle: volumeByMuscle,
+    plannedRemainingVolumeByMuscle,
     sessionDetail: sessions,
     failureTests,
     currentSuggestions: upcomingSuggestions,
@@ -12020,7 +12207,7 @@ ${packJson}
 
 WHAT I NEED FROM YOU:
 
-1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
+1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. Add \`weeklyVolumeByMuscle\` (already banked) to \`plannedRemainingVolumeByMuscle\` (already on the calendar for the rest of the rolling week, whether or not it's been done yet) for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
@@ -12050,7 +12237,9 @@ RULES for the plan:
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Schedule training days on the next 14 calendar days starting from ${pack.reviewPeriod.to}, skipping the two rest days of the week that fit best (based on my adherence pattern from the data).
-- Each session block should have realistic set counts for a 40–50 minute session.
+- Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
+- Order each session's exercises so the same muscle group doesn't get worked in two back-to-back blocks where avoidable — e.g. don't put two chest-primary exercises next to each other; alternate muscle groups through the session so consecutive exercises give each area a moment to recover before it's hit again.
+- All suggested weights must be achievable on my actual equipment: 5kg main increments plus a 2.5kg toggle, so every suggested weight must land on a 2.5kg step (5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5...) — never something like 9kg or 16kg that isn't actually settable on the machine.
 - One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") AND include the actual calendar date it's for, including the year, directly in the "name" itself (e.g. "Push Focus — Sep 17, 2026", "Legs — Sep 22, 2026"), not just a descriptive label like "Push Focus Alpha" and not a date missing the year — "Sep 17" alone collides with "Sep 17" a year later just as easily as two descriptive labels would. A descriptive-only name can still collide with something named in a completely separate review pack weeks or months from now — you have no memory of what you called things last time, and neither does the app checking for a match, so the full date is what actually guarantees it never repeats. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
 - Output the import JSON in a single code block. Nothing else in that code block — no comments inside the JSON, valid JSON only.`;
 
@@ -12262,6 +12451,38 @@ function submitTrainingImportReview(){
   applyTrainingImportResolution(res);
 }
 
+/* v4.5x: safety net on top of the prompt's "alternate muscle groups" rule —
+   the AI won't always get this right, so re-order every imported session's
+   blocks to actually avoid back-to-back same-primary-muscle exercises where
+   there's a real alternative. Greedy: at each step, pick whichever
+   remaining exercise shares the FEWEST primary muscles with the one just
+   placed (zero if any candidate allows it), tie-broken by original plan
+   order. Not exhaustive-optimal — with typical block counts (4-6) that's
+   not worth the complexity — just meaningfully better than "next in the
+   AI's list" when the AI slips. An exercise missing from the library
+   (shouldn't happen post-resolution, but defensively) is treated as having
+   no muscles, so it never blocks a swap. */
+function reorderBlocksToAvoidBackToBackMuscle(blocks){
+  if(!Array.isArray(blocks) || blocks.length < 2) return blocks;
+  const items = blocks.map(b=>{
+    const ex = b && b.exerciseId ? getTrainingExerciseById(b.exerciseId) : null;
+    return { block:b, primary: new Set(ex ? exMuscleGroups(ex,'primary') : []) };
+  });
+  const remaining = items.slice();
+  const ordered = [];
+  let last = null;
+  while(remaining.length){
+    let bestIdx = 0, bestOverlap = Infinity;
+    for(let i=0;i<remaining.length;i++){
+      const overlap = last ? [...remaining[i].primary].filter(mg=>last.primary.has(mg)).length : 0;
+      if(overlap < bestOverlap){ bestOverlap = overlap; bestIdx = i; if(overlap===0) break; }
+    }
+    const [chosen] = remaining.splice(bestIdx,1);
+    ordered.push(chosen);
+    last = chosen;
+  }
+  return ordered.map(x=>x.block);
+}
 function applyTrainingImportResolution(res){
   const exIdMap = {}; // importedId -> resolved id actually used in state
   let newExCount=0, updExCount=0;
@@ -12289,7 +12510,7 @@ function applyTrainingImportResolution(res){
       ? Object.assign({}, b, { exerciseId: exIdMap[b.exerciseId] || b.exerciseId })
       : b
     );
-    const fields = Object.assign({}, item.fields, { blocks: rewrittenBlocks });
+    const fields = Object.assign({}, item.fields, { blocks: reorderBlocksToAvoidBackToBackMuscle(rewrittenBlocks) });
     if(item.matched){
       Object.assign(item.matched, fields);
       sessIdMap[item.importedId] = item.matched.id;
