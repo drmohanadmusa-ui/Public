@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.55.0';
+const APP_VERSION = '4.55.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.55.1', changes: [
+    '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds include_secondary_muscles (boolean, default false) on app_settings. Additive/idempotent.',
+    'WEEKLY VOLUME: secondary muscles being excluded from the weekly totals is now a toggle on the Training page, not a hard rule \u2014 off by default (matching where it already was), switch it on to count them at half credit each, same fractional-credit approach as before it was removed. Affects the body map, the Exercise Library breakdown, the 8-week trend, and the review pack everywhere at once, and the review pack\u2019s prompt now tells the AI which mode is currently active so it interprets the numbers correctly either way.',
+    'EXERCISE LIBRARY: the muscle drill-down now shows a Planned section alongside Done \u2014 the same date + exercise + set-count breakdown, but for what\u2019s still scheduled for the rest of the selected week, so the Planned figure in the legend is no longer a number you have to take on faith either.',
+  ]},
   { v:'4.55.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIXED: the "X/Y sets logged" target badge (and whether it displays as met) was counting how many set rows EXIST, not how many are actually done \u2014 harmless before auto-fill existed, since a row only ever got created once you\u2019d actually logged it. Auto-fill now pre-creates every target row the moment a planned day opens, so the badge was showing e.g. "3/3 sets logged" and full "met" styling before a single set had been touched \u2014 exactly what a screenshot showed (badge said 3/3, header said 0/3 done). Now counts actually-done sets.',
@@ -4368,7 +4373,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -4681,6 +4686,9 @@ async function pullFromSupabase(onProgress){
       // the one that should win everywhere.
       if(settingsRows[0].training_goals && typeof settingsRows[0].training_goals==='object'){
         state.settings.trainingGoals = settingsRows[0].training_goals;
+      }
+      if(typeof settingsRows[0].include_secondary_muscles === 'boolean'){
+        state.settings.includeSecondaryMuscles = settingsRows[0].include_secondary_muscles;
       }
       // Whichever device confirmed a later day wins — this is what makes
       // "start a new day on one device" actually show up on the others,
@@ -5268,7 +5276,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles }], 'pin'),
     ]);
   }
 }
@@ -9358,17 +9366,50 @@ function getMuscleVolumeBreakdown(mg){
     });
   return Object.values(rows).sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:a.name.localeCompare(b.name)));
 }
-/* v4.5x: secondary muscles no longer count toward weekly volume at all —
-   was 0.5 credit (fractional-credit approach, v4.50.0), now explicitly
-   removed per direct instruction. Only an exercise's PRIMARY muscles
-   contribute to any of the volume numbers this function feeds — the body
-   map, the Exercise Library breakdown, the review pack. Secondary muscles
-   still display as tags in the Exercise Library (that reads
-   exMuscleGroups(ex,'secondary') directly, not this function) — they're
-   just not counted here. */
+/* Planned counterpart to the above, for the same drill-down card — how the
+   Planned number for this muscle in the selected week actually breaks
+   down, date by date and exercise by exercise, mirroring the Done section's
+   format. Same remaining-after-today's-already-done-sets logic as
+   computeCalendarWeekVolume's plannedVol, so this always sums to the exact
+   Planned figure shown in the legend for whichever week is selected. */
+function getMuscleVolumePlannedBreakdown(mg){
+  const { weekStart, weekEnd } = getCalendarWeekBounds(state.trainingVolumeWeekOffset||0);
+  const today = todayStr();
+  const rows = [];
+  state.training.calendar
+    .filter(c=> c.date>=weekStart && c.date<=weekEnd && c.date>=today && c.sessionId)
+    .forEach(c=>{
+      const session = getTrainingSessionById(c.sessionId);
+      if(!session || !session.blocks) return;
+      session.blocks.forEach(b=>{
+        const ex = getTrainingExerciseById(b.exerciseId);
+        if(!ex) return;
+        const credits = exMuscleGroupCredits(ex);
+        if(credits[mg]===undefined) return;
+        const targetSets = Number(b.sets)||0;
+        const doneSetsForThisDay = c.date===today ? (state.training.sets||[]).filter(s=>
+          s.date===c.date && s.exerciseId===b.exerciseId && s.done && !s.isWarmup
+        ).length : 0;
+        const remainingSets = Math.max(0, targetSets - doneSetsForThisDay);
+        if(!remainingSets) return;
+        rows.push({ date:c.date, name:ex.name, sets:remainingSets, credit:credits[mg] });
+      });
+    });
+  return rows.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:a.name.localeCompare(b.name)));
+}
+/* v4.5x: whether secondary muscles count toward weekly volume at all is now
+   a toggle (state.settings.includeSecondaryMuscles, off by default) rather
+   than the hard removal this used to be — at half credit when on, the same
+   fractional-credit approach as before. Secondary muscles always display
+   as tags in the Exercise Library regardless of this toggle (that reads
+   exMuscleGroups(ex,'secondary') directly, not this function) — the toggle
+   only affects whether they're counted in any of the volume numbers. */
 function exMuscleGroupCredits(ex){
   const credits = {};
   exMuscleGroups(ex,'primary').forEach(mg=>{ credits[mg]=1; });
+  if(state.settings.includeSecondaryMuscles){
+    exMuscleGroups(ex,'secondary').forEach(mg=>{ if(credits[mg]===undefined) credits[mg]=0.5; });
+  }
   return credits;
 }
 function defaultRestSec(ex){
@@ -10433,6 +10474,11 @@ function setTrainingVolumeWeekOffset(delta){
   state.trainingVolumeWeekOffset = (state.trainingVolumeWeekOffset||0) + delta;
   renderMain();
 }
+async function toggleIncludeSecondaryMuscles(){
+  state.settings.includeSecondaryMuscles = !state.settings.includeSecondaryMuscles;
+  await saveSettings();
+  renderMain();
+}
 function muscleVolumeColour(sets,band){
   const {min,max}=band||MUSCLE_BAND_DEFAULT;
   if(!sets) return 'var(--paper-dim)';
@@ -10566,6 +10612,10 @@ function renderWeeklyVolumePanel(){
           <input type="number" min="1" max="50" value="${band.max}" style="width:46px;" class="train-input" onchange="setMuscleBand('max',Number(this.value))">
           <span style="font-size:11px;color:var(--ink-soft);">sets / week</span>
         </div>
+        <label style="margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" ${state.settings.includeSecondaryMuscles?'checked':''} onchange="toggleIncludeSecondaryMuscles()">
+          <span style="font-size:12px;color:var(--ink-soft);">Count secondary muscles (½ credit each) in the totals below</span>
+        </label>
       </div>
     </div>
   </div>`;
@@ -11538,27 +11588,33 @@ function renderTrainingExercisesSubpage(){
         const weekOffset = state.trainingVolumeWeekOffset||0;
         const { weekStart, weekEnd } = getCalendarWeekBounds(weekOffset);
         const weekLabel = weekOffset===0 ? 'This week' : `${humanDate(weekStart)} – ${humanDate(weekEnd)}`;
-        const breakdown = getMuscleVolumeBreakdown(mgFilter);
-        const totalCredited = breakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
         const nav = `<span style="display:flex; align-items:center; gap:4px;">
           <button class="icon-btn" title="Previous week" onclick="setTrainingVolumeWeekOffset(-1)">‹</button>
           <span style="font-weight:600;">${weekLabel}</span>
           <button class="icon-btn" title="Next week" onclick="setTrainingVolumeWeekOffset(1)">›</button>
         </span>`;
-        return breakdown.length ? `
+        const doneBreakdown = getMuscleVolumeBreakdown(mgFilter);
+        const doneTotal = doneBreakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
+        const plannedBreakdown = getMuscleVolumePlannedBreakdown(mgFilter);
+        const plannedTotal = plannedBreakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
+        const section = (title, rows, total, emptyLabel) => `
+          <div style="margin-bottom:10px;">
+            <div class="page-sub" style="margin-bottom:4px; font-weight:600;">${title} — ${total} credited set${total===1?'':'s'}</div>
+            ${rows.length ? rows.map(r=>`
+              <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:12.5px;">
+                <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
+                <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
+              </div>
+            `).join('') : `<div class="page-sub" style="font-size:12.5px;">${emptyLabel}</div>`}
+          </div>`;
+        return `
         <div class="card" style="padding:10px 16px; margin-bottom:10px;">
-          <div class="page-sub" style="margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-            <span>${nav} · ${totalCredited} credited set${totalCredited===1?'':'s'} toward ${LABELS[mgFilter]||mgFilter} — the sets behind that number:</span>
+          <div class="page-sub" style="margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <span>${nav}</span>
+            <span>toward ${LABELS[mgFilter]||mgFilter}</span>
           </div>
-          ${breakdown.map(r=>`
-            <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:12.5px;">
-              <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
-              <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
-            </div>
-          `).join('')}
-        </div>` : `<div class="card" style="padding:10px 16px; margin-bottom:10px;">
-          <div class="page-sub" style="margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">${nav}</div>
-          <div class="page-sub">No sets logged for ${LABELS[mgFilter]||mgFilter} in this week.</div>
+          ${section('Done', doneBreakdown, doneTotal, 'No sets logged yet this week.')}
+          ${section('Planned', plannedBreakdown, plannedTotal, 'Nothing still scheduled for the rest of this week.')}
         </div>`;
       })() : ''}
       ${(tags.length || untaggedCount) ? `` : ''}
@@ -12361,7 +12417,7 @@ ${packJson}
 
 WHAT I NEED FROM YOU:
 
-1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
+1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. ${state.settings.includeSecondaryMuscles ? "Secondary muscles are currently included at half credit per set (toggled on in the app) — a muscle only hit as a secondary target is already reflected fractionally in these numbers, you don't need to add anything for it separately." : "Secondary muscles are currently excluded entirely (toggled off in the app) — these numbers only reflect each exercise's primary target muscles, so a muscle that's only ever hit as a secondary target on my current exercises will read as under-volume even if it's getting real indirect work; keep that in mind rather than treating a low secondary-only muscle as purely neglected."} Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
@@ -14110,6 +14166,7 @@ alter table training_exercises add column if not exists rest_sec int;
 -- v4.41.0: Editable weekly volume band stored in settings.
 alter table app_settings add column if not exists muscle_band jsonb default '{"min":10,"max":20}';
 alter table app_settings add column if not exists training_goals jsonb default null;
+alter table app_settings add column if not exists include_secondary_muscles boolean default false;
 
 -- v4.40.0: Per-set logging. Each working set now has its own row.
 -- The existing training_logs row stays as a per-exercise header (notes, etc.)
