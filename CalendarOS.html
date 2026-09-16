@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.53.0';
+const APP_VERSION = '4.53.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.53.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'Secondary muscles no longer count toward weekly volume at all \u2014 was 0.5 credit each (the fractional-credit approach from v4.50.0), now zero. Only primary muscles contribute to the body map, the Exercise Library volume breakdown, the 8-week trend, and the review pack\u2019s volume figures. Secondary muscles still show as tags on each exercise in the Library (a different color from primary since the last release) \u2014 they\u2019re just not counted in any of the set totals anymore.',
+  ]},
   { v:'4.53.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'EXERCISE LIBRARY: primary and secondary muscle tags now show in different colours (teal for primary, brass for secondary) instead of one identical colour for both.',
@@ -5808,9 +5812,8 @@ function weeklyVolumeHistory(nWeeks){
       .filter(s=> s.date>=weekStart && s.date<=weekEnd && !s.isWarmup && s.done)
       .forEach(s=>{
         const ex = getTrainingExerciseById(s.exerciseId);
-        // v4.50.0: primary muscles get full credit, secondary get half —
-        // see exMuscleGroupCredits(). Matches how the current-week body map
-        // (computeWeeklyVolumeByMuscle) computes it.
+        // Primary-only credit — see exMuscleGroupCredits(). Matches how the
+        // current-week body map (computeWeeklyVolumeByMuscle) computes it.
         Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ vol[mg] = (vol[mg]||0)+credit; });
       });
     weeks.push({ label, weekStart, weekEnd, vol });
@@ -9307,12 +9310,6 @@ function exMuscleGroups(ex, mode){
   if(mode==='secondary') return secondary;
   return [...new Set([...primary, ...secondary])]; // default: union, for call sites that just need "does this touch this muscle at all"
 }
-/* Full credit (1) for each primary muscle a set touches, half credit (0.5)
-   for secondary — the "fractional credit" approach: a compound lift's
-   secondary muscles get real but reduced credit toward their weekly band,
-   rather than either counting fully (overstates indirect stimulus) or not
-   counting at all (undercounts it). If a muscle somehow ends up in both
-   lists, primary's full credit wins rather than double-counting. */
 /* Item 8: the actual logged sets behind a muscle's weekly volume number on
    the body map, for the Exercise Library page's muscle filter — same
    rolling 7-day window and same primary/secondary inclusion rule as
@@ -9334,10 +9331,17 @@ function getMuscleVolumeBreakdown(mg){
     });
   return Object.values(rows).sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:a.name.localeCompare(b.name)));
 }
+/* v4.5x: secondary muscles no longer count toward weekly volume at all —
+   was 0.5 credit (fractional-credit approach, v4.50.0), now explicitly
+   removed per direct instruction. Only an exercise's PRIMARY muscles
+   contribute to any of the volume numbers this function feeds — the body
+   map, the Exercise Library breakdown, the review pack. Secondary muscles
+   still display as tags in the Exercise Library (that reads
+   exMuscleGroups(ex,'secondary') directly, not this function) — they're
+   just not counted here. */
 function exMuscleGroupCredits(ex){
   const credits = {};
   exMuscleGroups(ex,'primary').forEach(mg=>{ credits[mg]=1; });
-  exMuscleGroups(ex,'secondary').forEach(mg=>{ if(credits[mg]===undefined) credits[mg]=0.5; });
   return credits;
 }
 function defaultRestSec(ex){
@@ -10337,7 +10341,7 @@ function computeWeeklyVolumeByMuscle(){
   const vol = {};
   hard.forEach(s=>{
     const ex = getTrainingExerciseById(s.exerciseId);
-    // v4.50.0: primary/secondary fractional credit — see exMuscleGroupCredits().
+    // Primary-only credit — see exMuscleGroupCredits().
     Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ vol[mg] = (vol[mg]||0)+credit; });
   });
   return vol;
@@ -11474,7 +11478,7 @@ function renderTrainingExercisesSubpage(){
           ${breakdown.map(r=>`
             <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:12.5px;">
               <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
-              <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}${r.credit<1?` (½ credit — secondary)`:''}</span>
+              <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
             </div>
           `).join('')}
         </div>` : `<div class="card" style="padding:10px 16px; margin-bottom:10px;"><div class="page-sub">No sets logged for ${LABELS[mgFilter]||mgFilter} in the last 7 days.</div></div>`;
@@ -11486,7 +11490,7 @@ function renderTrainingExercisesSubpage(){
             <span class="metric-manage-name">
               ${escapeHtml(ex.name)}${ex.category==='walking' ? ' <span class="page-sub" style="font-size:10px; text-transform:uppercase; letter-spacing:0.03em; border:1px solid var(--line); border-radius:4px; padding:1px 5px; margin-left:4px;">Walking</span>' : ''}
               ${exMuscleGroups(ex,'primary').map(mg=>`<span class="page-sub" style="font-size:10px; background:var(--teal-dim,color-mix(in srgb,var(--teal) 15%,var(--paper))); border:1px solid var(--teal); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--ink);" title="Primary muscle — full credit toward its weekly volume">${mg}</span>`).join('')}
-              ${exMuscleGroups(ex,'secondary').map(mg=>`<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--brass) 15%,var(--paper)); border:1px solid var(--brass); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--ink);" title="Secondary muscle — half credit toward its weekly volume">${mg}</span>`).join('')}
+              ${exMuscleGroups(ex,'secondary').map(mg=>`<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--brass) 15%,var(--paper)); border:1px solid var(--brass); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--ink);" title="Secondary muscle — not counted toward weekly volume">${mg}</span>`).join('')}
               ${failureTestBadgeForExercise(ex)}
               ${exerciseIsUnused(ex) ? `<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--flag,#D95B5B) 12%,var(--paper)); border:1px solid var(--flag,#D95B5B); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--flag,#D95B5B);" title="Not in any upcoming plan and never logged — a candidate to remove or start using">Unused</span>` : ''}
               ${(ex.tagIds||[]).map(tid=>{ const t = tags.find(x=>x.id===tid); return t ? `<span class="page-sub" style="font-size:10px; background:var(--paper-dim); border-radius:4px; padding:1px 6px; margin-left:4px;">${escapeHtml(t.name)}</span>` : ''; }).join('')}
@@ -13231,7 +13235,7 @@ function openAddExerciseModal(addToDayDate){
         ${muscleGroupPillsHtml('newExMuscleGroupPillsPrimary', [])}
       </div>
       <div class="field">
-        <label>Secondary Muscles <span class="page-sub" style="font-weight:400;">— assisted/indirect, half credit toward the weekly volume band</span></label>
+        <label>Secondary Muscles <span class="page-sub" style="font-weight:400;">— assisted/indirect; shown as a tag but not counted toward the weekly volume band</span></label>
         ${muscleGroupPillsHtml('newExMuscleGroupPillsSecondary', [])}
       </div>
       <div class="field">
@@ -13332,7 +13336,7 @@ function openEditExerciseModal(id){
         ${muscleGroupPillsHtml('editExMuscleGroupPillsPrimary', exMuscleGroups(ex,'primary'))}
       </div>
       <div class="field">
-        <label>Secondary Muscles <span class="page-sub" style="font-weight:400;">— assisted/indirect, half credit toward the weekly volume band</span></label>
+        <label>Secondary Muscles <span class="page-sub" style="font-weight:400;">— assisted/indirect; shown as a tag but not counted toward the weekly volume band</span></label>
         ${muscleGroupPillsHtml('editExMuscleGroupPillsSecondary', exMuscleGroups(ex,'secondary'))}
       </div>
       <div class="field">
