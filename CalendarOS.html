@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.54.3';
+const APP_VERSION = '4.55.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.55.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIXED: the "X/Y sets logged" target badge (and whether it displays as met) was counting how many set rows EXIST, not how many are actually done \u2014 harmless before auto-fill existed, since a row only ever got created once you\u2019d actually logged it. Auto-fill now pre-creates every target row the moment a planned day opens, so the badge was showing e.g. "3/3 sets logged" and full "met" styling before a single set had been touched \u2014 exactly what a screenshot showed (badge said 3/3, header said 0/3 done). Now counts actually-done sets.',
+    'IMPORT: touching a date now fully clears whatever was staged-but-unlogged there before the new plan takes over \u2014 every pending exercise and every not-done set row on that date, not just ones that happened to conflict with the new session\u2019s blocks. The previous, more conservative version only dropped non-matching leftovers and left a stale calendar entry on a date the import didn\u2019t explicitly re-touch untouched entirely \u2014 which is exactly how old sessions ended up still assigned to Friday/Saturday after a newer plan correctly had none there, inflating the Weekly Volume panel\u2019s Planned numbers with sessions that shouldn\u2019t have existed anymore. Future dates only \u2014 a past date\u2019s logging state is real history and this never touches it, no matter what the import contains.',
+  ]},
   { v:'4.54.3', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'REVIEW PACK: the AI is now told never to invent new exercises \u2014 every exerciseId in the plan must already exist in my library, and the plan\u2019s "exercises" array must always come back empty. If it thinks a specific movement I don\u2019t have would genuinely help, it names it separately in prose with its reasoning after the plan, for me to decide on \u2014 never auto-added to the plan or the JSON either way. Previously the rule allowed creating a new exercise "if it genuinely doesn\u2019t exist in my library," which is exactly what was happening.',
@@ -10098,7 +10103,15 @@ function renderTrainingExerciseLogRow(date, block, index){
     targetReps ? `${targetReps} reps` : null,
     suggestedWeightKg ? `@ ${suggestedWeightKg} kg (suggested)` : null,
   ].filter(Boolean).join(' × ');
-  const targetMet = hasTarget && targetSets ? workingSets.length >= Number(targetSets) : false;
+  // v4.5x fix: was counting how many working-set ROWS EXIST, not how many
+  // are actually done — harmless before auto-fill existed (rows only got
+  // created as you logged them, so "exists" and "done" were the same
+  // thing), but auto-fill now pre-creates every target row the moment a
+  // planned day is opened, so this was showing "target met" and "N/N sets
+  // logged" before a single set had actually been completed (exactly what
+  // the screenshot showed: badge said 3/3 while the header said 0/3 done).
+  const doneWorkingSets = workingSets.filter(s=>s.done).length;
+  const targetMet = hasTarget && targetSets ? doneWorkingSets >= Number(targetSets) : false;
 
   return `
     <div class="card" style="padding:12px 14px; margin-bottom:10px; background:var(--paper-dim);" data-exercise-id="${escapeHtml(block.exerciseId)}" data-row-id="${rowId}">
@@ -10122,7 +10135,7 @@ function renderTrainingExerciseLogRow(date, block, index){
 
       ${hasTarget ? `<div class="target-badge ${targetMet?'target-badge-met':''}">
         🎯 Target: ${escapeHtml(targetLabel)}
-        ${workingSets.length && targetSets ? ` · <span style="font-weight:600;color:${targetMet?'var(--teal)':'var(--ink-soft)'};">${workingSets.length}/${targetSets} sets logged</span>` : ''}
+        ${targetSets ? ` · <span style="font-weight:600;color:${targetMet?'var(--teal)':'var(--ink-soft)'};">${doneWorkingSets}/${targetSets} sets logged</span>` : ''}
       </div>` : ''}
 
       ${ex ? `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:4px;">
@@ -12667,7 +12680,8 @@ function applyTrainingImportResolution(res){
     }
   });
 
-  let newCalCount=0, updCalCount=0, reconciledStaleCount=0;
+  let newCalCount=0, updCalCount=0, clearedPendingCount=0, clearedSetsCount=0;
+  const today = todayStr();
   res.calendar.forEach(c=>{
     if(!c || !c.date || !c.sessionId) return;
     const resolvedSessionId = sessIdMap[c.sessionId] || c.sessionId;
@@ -12675,33 +12689,43 @@ function applyTrainingImportResolution(res){
     if(existing){ existing.sessionId = resolvedSessionId; updCalCount++; }
     else { state.training.calendar.push({ date:c.date, sessionId: resolvedSessionId }); newCalCount++; }
 
-    // Reconcile any already-staged (but not yet logged) exercises for this
-    // date against the session actually being assigned to it now. Without
-    // this, a leftover pending-add from an older plan or a manual staging
-    // sticks around after import, doesn't match the new session's blocks,
-    // and silently shows with no target badge and nothing auto-filled — the
-    // app has no block to read a target/weight from for an exercise that
-    // isn't part of the day's assigned session. Never touches an exercise
-    // that's already been logged for this date; that's real history, not
-    // staging, and stays untouched regardless of what the new plan says.
-    const newSession = getTrainingSessionById(resolvedSessionId);
-    const newBlockIds = new Set(((newSession && newSession.blocks) || []).map(b=>b.exerciseId).filter(Boolean));
-    const pending = state.trainingPendingAdds[c.date] || [];
+    // Fully clear this date's not-yet-logged state before the new plan
+    // takes over — every staged-but-unlogged exercise and every not-done
+    // set row on the date, not just ones that happen to conflict with the
+    // new session's blocks. A prior, more conservative version of this only
+    // dropped exercises that didn't match the new blocks and left anything
+    // matching alone — but a leftover SET ROW from an older plan (auto-fill
+    // only ever populates a genuinely empty exercise) would silently block
+    // the new plan's auto-fill from ever running for that exercise, and a
+    // leftover CALENDAR entry the import never re-touches (e.g. an old
+    // session still assigned to a day that should now be a rest day) was
+    // never cleared at all — exactly what produced sessions still sitting
+    // on Friday/Saturday after a newer plan was imported that correctly
+    // had none there. Past dates are skipped entirely below — only the
+    // calendar mapping above is ever corrected for those; a day that's
+    // already happened is real history, not staging, and this never
+    // touches anything already logged regardless of date.
+    if(c.date < today) return;
     const loggedIds = new Set(state.training.logs.filter(l=>l.date===c.date).map(l=>l.exerciseId));
-    const reconciled = pending.filter(id=> newBlockIds.has(id) || loggedIds.has(id));
-    if(reconciled.length !== pending.length){
-      reconciledStaleCount += (pending.length - reconciled.length);
-      state.trainingPendingAdds[c.date] = reconciled;
+    const pending = state.trainingPendingAdds[c.date] || [];
+    const keptPending = pending.filter(id=>loggedIds.has(id));
+    clearedPendingCount += pending.length - keptPending.length;
+    state.trainingPendingAdds[c.date] = keptPending;
+    if(state.training.sets && state.training.sets.length){
+      const keptSets = state.training.sets.filter(s=> !(s.date===c.date && !s.done));
+      clearedSetsCount += state.training.sets.length - keptSets.length;
+      state.training.sets = keptSets;
     }
   });
-  if(reconciledStaleCount) flushTrainingDrafts();
+  if(clearedPendingCount || clearedSetsCount) flushTrainingDrafts();
 
   saveTraining();
   diagLogEvent('activity', 'Imported training plan', {
-    newEx:newExCount, updEx:updExCount, newSess:newSessCount, updSess:updSessCount, newCal:newCalCount, updCal:updCalCount, reconciledStale:reconciledStaleCount,
+    newEx:newExCount, updEx:updExCount, newSess:newSessCount, updSess:updSessCount, newCal:newCalCount, updCal:updCalCount, clearedPending:clearedPendingCount, clearedSets:clearedSetsCount,
   });
   renderMain();
-  showToast(`Imported: ${newExCount+updExCount} exercises, ${newSessCount+updSessCount} sessions, ${newCalCount+updCalCount} calendar days${reconciledStaleCount ? ` — cleared ${reconciledStaleCount} leftover staged exercise${reconciledStaleCount===1?'':'s'} that didn't match the new plan` : ''}`);
+  const clearedTotal = clearedPendingCount + clearedSetsCount;
+  showToast(`Imported: ${newExCount+updExCount} exercises, ${newSessCount+updSessCount} sessions, ${newCalCount+updCalCount} calendar days${clearedTotal ? ` — cleared ${clearedTotal} unlogged item${clearedTotal===1?'':'s'} from touched future days first` : ''}`);
 }
 
 function processTrainingImportText(text){
