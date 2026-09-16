@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.54.2';
+const APP_VERSION = '4.54.3';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.54.3', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'REVIEW PACK: the AI is now told never to invent new exercises \u2014 every exerciseId in the plan must already exist in my library, and the plan\u2019s "exercises" array must always come back empty. If it thinks a specific movement I don\u2019t have would genuinely help, it names it separately in prose with its reasoning after the plan, for me to decide on \u2014 never auto-added to the plan or the JSON either way. Previously the rule allowed creating a new exercise "if it genuinely doesn\u2019t exist in my library," which is exactly what was happening.',
+  ]},
   { v:'4.54.2', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'REVIEW PACK: rest days are now a hard, fixed weekly constraint \u2014 whatever\u2019s set in Settings\u2019 weekendDays (Friday/Saturday by default, already an existing setting, reused rather than adding a second one), every week, with zero exceptions. Replaces the previous rule that let the AI pick "whichever 2 days fit best" based on adherence, which is exactly what produced a rest day on a day that should have been a training day. The prompt now also hands over the actual next 14 dates pre-labeled training/rest, rather than leaving the AI to recompute it from a rule.',
@@ -12352,10 +12356,12 @@ WHAT I NEED FROM YOU:
 
 4. **Two-week plan as a CalendarOS import file.** This is the most important output. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
 
+5. **Suggested new exercise types, if any — separately, in prose, never in the JSON.** If you think a specific movement not currently in my library would genuinely help (fills a real gap, not just variety for its own sake), name it and explain why in a short paragraph after the JSON block. I'll decide whether to add it to my library myself. Do not add it to the plan or the JSON either way.
+
 The JSON must follow this exact schema (the same format the app already accepts via Paste & Import):
 \`\`\`
 {
-  "exercises": [ { "id": "...", "name": "...", "category": "strength", "muscleGroups": ["..."], "tags": [], "notes": "..." } ],
+  "exercises": [],
   "sessions": [
     {
       "id": "...", "name": "...", "type": "strength", "format": "", "color": null,
@@ -12367,9 +12373,10 @@ The JSON must follow this exact schema (the same format the app already accepts 
   ]
 }
 \`\`\`
+"exercises" is always an empty array in what you send me — see the rule below, this isn't a placeholder to fill in.
 
 RULES for the plan:
-- Use existing exercise IDs from my library wherever the exercise already exists. Only define new exercises in "exercises" if they genuinely don't exist in my library.
+- Every exerciseId in every block must be one that already exists in my library above. Never invent a new exercise, never put anything in the top-level "exercises" array — leave it empty every time, even if you think a new movement would help (see item 5 above for how to raise that instead). If nothing in my library fits what a muscle group actually needs, pick the closest existing match rather than inventing something new.
 - Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
