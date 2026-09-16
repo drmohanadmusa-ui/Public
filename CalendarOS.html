@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.56.0';
+const APP_VERSION = '4.57.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.57.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'Removed Neck, Calves, and Forearms from tracked muscle groups entirely \u2014 gone from the body map legend, the Exercise Library filter chips, and the Add/Edit pill pickers. Their body-map shapes are decorative silhouette pieces again (no click, no tooltip), the same as Neck was before it got wired up a few versions back. Any exercise that still has one of these three tagged isn\u2019t rewritten \u2014 it just shows as a plain untracked tag until next edited.',
+    'EXERCISE LIBRARY: the muscle drill-down now shows real dates (e.g. "Wed, Sep 17") for every row instead of "Today"/"Tomorrow" \u2014 a consistent, scannable format across a list that mixes several nearby days together.',
+    'FIXED: the Planned figure could go stale for ANY future day, not just today \u2014 the fix a couple versions back (checking a day\u2019s actual staged exercises against its session template) only ever checked today specifically. A future day already opened and edited before today arrives had exactly the same problem: a removed exercise kept counting toward Planned anyway. Now checked for every date in the window.',
+    'The Log History fix from last version now also self-heals just from VIEWING a day, not only from an actual set being logged \u2014 covers the "\u21bb Rebuild from sets" button existing for a reason (a cross-device sync pull, or any other path that doesn\u2019t go through the exact handlers that were the direct fix) without ever needing you to remember to press it again.',
+    'TRAINING LOG: removed the separate \u25be collapse button \u2014 tapping the exercise name itself now toggles expand/collapse (the collapsed card was already fully tap-to-expand; this makes the expanded side match). Also dropped the \u25be icon from the collapsed card\u2019s "tap to expand" hint text.',
+  ]},
   { v:'4.56.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIXED (the big one): training_logs \u2014 which drives Log History, Recent Days\u2019 "X/Y logged" counts, and day-completion stats generally \u2014 was ONLY ever created or updated by the separate "Save Today\u2019s Log" button. That made sense when logging was manual, but since auto-fill and auto-complete-on-RIR-pick, a day can show every set fully checked off without that button ever having been pressed \u2014 so training_logs silently stayed empty for days that were, in every way that actually matters, fully logged. This is what caused Log History to read "No training logged yet" and Recent Days to show "0/5 logged" for days that were genuinely done \u2014 your actual set data (reps, weight, RIR) was never at risk; it lives in a completely separate table (training_sets) that none of this touched. Completion tracking now syncs automatically the moment a set is actually marked done, from either the RIR/F/W picks or the manual done-tap \u2014 the Save button remains for notes and the walking-specific fields, which still need an explicit action.',
@@ -3129,6 +3137,16 @@ function humanDate(dateStr){
   if(diff === 0) return 'Today';
   if(diff === 1) return 'Tomorrow';
   if(diff === -1) return 'Yesterday';
+  return `${DOW_ABBR[d.getDay()]}, ${MONTH_NAMES[d.getMonth()].slice(0,3)} ${d.getDate()}`;
+}
+/* Same formatting as humanDate's non-relative fallback, but always — no
+   "Today"/"Tomorrow"/"Yesterday" substitution. Used where a list mixes
+   several nearby dates together (the Exercise Library muscle drill-down)
+   and a consistent, scannable date is more useful than relative labels
+   that read differently depending on which row you're looking at. */
+function humanDateNoRelative(dateStr){
+  if(!dateStr) return '—';
+  const d = parseDate(dateStr);
   return `${DOW_ABBR[d.getDay()]}, ${MONTH_NAMES[d.getMonth()].slice(0,3)} ${d.getDate()}`;
 }
 function fullDate(dateStr){
@@ -9107,18 +9125,26 @@ async function deleteMetricDef(metricId){
    ============================================================ */
 
 const MUSCLE_GROUPS = [
-  'chest','traps','lats','lower_back','neck','shoulders','biceps','triceps',
-  'quads','hamstrings','glutes','calves','abs','forearms',
+  'chest','traps','lats','lower_back','shoulders','biceps','triceps',
+  'quads','hamstrings','glutes','abs',
 ];
 /* v4.50.0: was 3 separate copies of this label map scattered across the
    Exercise Library row, the body map, and the Add/Edit pill picker — all had
    to be edited in lockstep by hand every time a muscle group was added or
    renamed (exactly the kind of thing that silently drifts). One shared
-   constant now. */
+   constant now.
+   v4.5x: Neck, Calves and Forearms removed from tracking entirely — the
+   body map's neck/calf/forearm shapes are decorative silhouette pieces
+   again (no click, no tooltip, no volume count), same as they were before
+   Neck was ever wired up. Existing exercises that still have one of these
+   three in their stored muscleGroupsPrimary/Secondary aren't rewritten —
+   they just render as a plain, unstyled tag with no special color (the tag
+   rendering already falls back to the raw id when there's no label for it)
+   until that exercise is next edited. */
 const MUSCLE_GROUP_LABELS = {
-  chest:'Chest', traps:'Traps', lats:'Lats', lower_back:'Lower Back', neck:'Neck',
+  chest:'Chest', traps:'Traps', lats:'Lats', lower_back:'Lower Back',
   shoulders:'Shoulders', biceps:'Biceps', triceps:'Triceps', quads:'Quads',
-  hamstrings:'Hamstrings', glutes:'Glutes', calves:'Calves', abs:'Abs', forearms:'Forearms',
+  hamstrings:'Hamstrings', glutes:'Glutes', abs:'Abs',
 };
 
 function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
@@ -9408,23 +9434,25 @@ async function removePlannedExerciseFromSession(sessionId, exerciseId, date){
 function getMuscleVolumePlannedBreakdown(mg){
   const { weekStart, weekEnd } = getCalendarWeekBounds(state.trainingVolumeWeekOffset||0);
   const today = todayStr();
-  // If today's day has already been opened (something's staged there),
-  // only count a block if it's still actually part of what's staged — the
-  // day may have been edited (an exercise removed) since the session was
-  // first assigned, and the session's raw block list on its own doesn't
-  // reflect that. A future day that hasn't been opened yet has nothing
-  // staged to check against, so it just trusts the session as planned.
-  const todayStagedIds = new Set(getTrainingDayExerciseIds(today));
   const rows = [];
   state.training.calendar
     .filter(c=> c.date>=weekStart && c.date<=weekEnd && c.date>=today && c.sessionId)
     .forEach(c=>{
       const session = getTrainingSessionById(c.sessionId);
       if(!session || !session.blocks) return;
+      // v4.5x: was only checked for today specifically — but ANY future date
+      // can have already been opened (auto-staged, then possibly edited)
+      // before today actually arrives, and the same staleness applied then
+      // too: a block still in the session template that's since been
+      // removed from that day's real page kept counting anyway. Now checked
+      // for every date in the window, not just today. A date that's never
+      // been opened has nothing staged to check against, so it still just
+      // trusts the session as planned, same as before.
+      const stagedIds = new Set(getTrainingDayExerciseIds(c.date));
       session.blocks.forEach(b=>{
         const ex = getTrainingExerciseById(b.exerciseId);
         if(!ex) return;
-        if(c.date===today && todayStagedIds.size && !todayStagedIds.has(b.exerciseId)) return;
+        if(stagedIds.size && !stagedIds.has(b.exerciseId)) return;
         const credits = exMuscleGroupCredits(ex);
         if(credits[mg]===undefined) return;
         const targetSets = Number(b.sets)||0;
@@ -10096,7 +10124,7 @@ function renderTrainingExerciseLogRow(date, block, index){
         </span>
         <span style="display:flex; align-items:center; gap:8px; flex:1 0 100%; justify-content:flex-end;">
           <span class="page-sub" style="font-size:11px;">${doneSetsEarly}/${workingSetsEarly.length} sets${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>
-          <span class="page-sub" style="font-size:10px;">▾ tap to expand</span>
+          <span class="page-sub" style="font-size:10px;">tap to expand</span>
         </span>
       </div>
     </div>`;
@@ -10199,12 +10227,11 @@ function renderTrainingExerciseLogRow(date, block, index){
     <div class="card" style="padding:12px 14px; margin-bottom:10px; background:var(--paper-dim);" data-exercise-id="${escapeHtml(block.exerciseId)}" data-row-id="${rowId}">
       <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap;">
         <span style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <b>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
+          <b${!isSessionLevel && !isWalking ? ` style="cursor:pointer;" title="Tap to collapse" onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')"` : ''}>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
           ${ex && ex.seatSetting ? `<span class="page-sub" style="font-size:10.5px; background:var(--paper-dim); border-radius:4px; padding:1px 7px;" title="Seat/machine setting — dial the machine to this before your first set">⚙ Seat ${escapeHtml(ex.seatSetting)}</span>` : ''}
         </span>
         <span style="display:flex; align-items:center; gap:14px; flex:1 0 100%; justify-content:flex-end;">
           ${sets.length ? `<span class="page-sub" id="setsDoneLabel_${rowId}" style="font-size:11px;">${doneSets}/${workingSets.length} sets done${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>` : ''}
-          ${!isSessionLevel && !isWalking ? `<button class="icon-btn" title="Collapse this exercise" onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')">▾</button>` : ''}
           <button class="icon-btn train-remove-btn" title="Remove from this day" style="margin-left:auto;" onclick="removeExerciseFromDay('${date}','${escapeHtml(block.exerciseId)}')">✕</button>
         </span>
       </div>
@@ -10497,19 +10524,20 @@ function computeCalendarWeekVolume(offset){
     Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ doneVol[mg]=(doneVol[mg]||0)+credit; });
   });
   const plannedVol = {};
-  // Same today's-staging-vs-session-template check as getMuscleVolumePlannedBreakdown —
-  // if today's already been opened (and possibly edited), only count a
-  // block if it's still actually staged there.
-  const todayStagedIds = new Set(getTrainingDayExerciseIds(today));
+  // Same staging-vs-session-template check as getMuscleVolumePlannedBreakdown,
+  // for every date in the window, not just today — a future date already
+  // opened and edited before today arrives can drift out of sync with its
+  // session template exactly the same way today can.
   state.training.calendar
     .filter(c=> c.date>=weekStart && c.date<=weekEnd && c.date>=today && c.sessionId)
     .forEach(c=>{
       const session = getTrainingSessionById(c.sessionId);
       if(!session || !session.blocks) return;
+      const stagedIds = new Set(getTrainingDayExerciseIds(c.date));
       session.blocks.forEach(b=>{
         const ex = getTrainingExerciseById(b.exerciseId);
         if(!ex) return;
-        if(c.date===today && todayStagedIds.size && !todayStagedIds.has(b.exerciseId)) return;
+        if(stagedIds.size && !stagedIds.has(b.exerciseId)) return;
         const targetSets = Number(b.sets)||0;
         const doneSetsForThisDay = c.date===today ? (state.training.sets||[]).filter(s=>
           s.date===c.date && s.exerciseId===b.exerciseId && s.done && !s.isWarmup
@@ -10589,7 +10617,7 @@ function renderWeeklyVolumePanel(){
                ellipses/rects — same fs()/onclick()/title wiring as before,
                just better-shaped paths). cx=70 -->
           <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
-          <rect x="65" y="24" width="10" height="9" style="${fs('neck')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('neck')"><title>Neck: ${vol.neck||0} sets</title></rect>
+          <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
           <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders: ${vol.shoulders||0} sets</title></path>
           <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Shoulders</title></path>
           <path d="M 70 44 C 62 42, 52 45, 50 54 C 49 62, 56 68, 65 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('chest')"><title>Chest: ${vol.chest||0} sets</title></path>
@@ -10605,17 +10633,17 @@ function renderWeeklyVolumePanel(){
           </g>
           <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('biceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('biceps')"><title>Biceps: ${vol.biceps||0} sets</title></path>
           <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('biceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('biceps')"><title>Biceps</title></path>
-          <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms: ${vol.forearms||0} sets</title></path>
-          <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
+          <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+          <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
           <path d="M 52 102 C 46 108, 44 130, 46 150 C 47 158, 62 159, 63 150 C 65 130, 62 110, 58 102 Z" style="${fs('quads')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('quads')"><title>Quads: ${vol.quads||0} sets</title></path>
           <path d="M 88 102 C 94 108, 96 130, 94 150 C 93 158, 78 159, 77 150 C 75 130, 78 110, 82 102 Z" style="${fs('quads')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('quads')"><title>Quads</title></path>
-          <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves: ${vol.calves||0} sets</title></path>
-          <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
+          <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+          <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
           <text x="70" y="215" text-anchor="middle" font-size="9" fill="var(--ink-soft)">FRONT</text>
           <!-- BACK (offset +150) -->
           <g transform="translate(150,0)">
             <circle cx="70" cy="15" r="11" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
-            <rect x="65" y="24" width="10" height="9" style="${fs('neck')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('neck')"><title>Neck: ${vol.neck||0} sets</title></rect>
+            <rect x="65" y="24" width="10" height="9" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
             <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
             <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('shoulders')"><title>Rear shoulders</title></path>
             <path d="M 68 56 C 60 57, 52 63, 51 74 C 50 83, 58 88, 64 84 C 68 81, 69 68, 68 56 Z" style="${fs('lats')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('lats')"><title>Lats: ${vol.lats||0} sets</title></path>
@@ -10624,14 +10652,14 @@ function renderWeeklyVolumePanel(){
             <path d="M 70 84 L 60 91 L 70 99 L 80 91 Z" style="${fs('lower_back')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('lower_back')"><title>Lower Back: ${vol.lower_back||0} sets</title></path>
             <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('triceps')"><title>Triceps: ${vol.triceps||0} sets</title></path>
             <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('triceps')"><title>Triceps</title></path>
-            <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
-            <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" style="${fs('forearms')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('forearms')"><title>Forearms</title></path>
+            <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
             <path d="M 55 98 C 47 100, 44 110, 48 118 C 52 124, 65 123, 66 114 C 67 105, 62 99, 55 98 Z" style="${fs('glutes')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('glutes')"><title>Glutes: ${vol.glutes||0} sets</title></path>
             <path d="M 85 98 C 93 100, 96 110, 92 118 C 88 124, 75 123, 74 114 C 73 105, 78 99, 85 98 Z" style="${fs('glutes')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('glutes')"><title>Glutes</title></path>
             <path d="M 51 122 C 46 128, 45 142, 48 155 C 50 161, 62 161, 62 152 C 63 140, 59 128, 55 122 Z" style="${fs('hamstrings')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('hamstrings')"><title>Hamstrings: ${vol.hamstrings||0} sets</title></path>
             <path d="M 89 122 C 94 128, 95 142, 92 155 C 90 161, 78 161, 78 152 C 77 140, 81 128, 85 122 Z" style="${fs('hamstrings')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('hamstrings')"><title>Hamstrings</title></path>
-            <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
-            <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" style="${fs('calves')}" stroke="var(--ink-soft)" stroke-width="1.1" onclick="filterExercisesByMuscle('calves')"><title>Calves</title></path>
+            <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
+            <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" fill="var(--paper-dim)" fill-opacity="0.5" stroke="var(--ink-soft)" stroke-width="1.1"/>
             <text x="70" y="215" text-anchor="middle" font-size="9" fill="var(--ink-soft)">BACK</text>
           </g>
         </svg>
@@ -10734,6 +10762,18 @@ function renderTrainingDayCard(date){
   const cal = getTrainingCalEntry(date);
   const session = cal ? getTrainingSessionById(cal.sessionId) : null;
   if(exerciseIds.length && session) ensureSetsAutoFilled(date, exerciseIds, session);
+  // Defensive self-heal, every time this day is viewed: re-derive each
+  // exercise's training_logs entry from its actual set data, in case
+  // anything ever leaves the two out of sync again (the specific gap this
+  // closes — completion only syncing from the explicit RIR/F/W/done-tap
+  // handlers — is fixed at the source now, but a day that's opened without
+  // touching any set at all, e.g. right after a cross-device sync pull,
+  // still passes through here and gets checked). Cheap — a handful of array
+  // scans per exercise — and only ever persists if something genuinely
+  // changed, so viewing an already-correct day triggers no write at all.
+  let logsHealed = false;
+  exerciseIds.forEach(exId=>{ if(syncTrainingLogFromSets(date, exId)) logsHealed = true; });
+  if(logsHealed) saveTraining();
   const agg = computeDayAggregateV2(date);
   const fullyLogged = isTrainingDayFullyLoggedV2(date);
   // Look up the session assigned to this date so each exercise row can show
@@ -10895,12 +10935,16 @@ function syncTrainingLogFromSets(date, exerciseId){
   const completed = working.length > 0 ? anySetDone : false;
   let log = getTrainingLogForExercise(date, exerciseId);
   if(!log){
-    if(!completed) return; // nothing worth creating a log row for yet
+    if(!completed) return false; // nothing worth creating a log row for yet
     log = { date, exerciseId, sessionId: null, completed:false, difficulty:null, notes:'',
              sets:null, reps:'', weight:null, distanceKm:null, durationMin:null,
              avgHeartRate:null, avgPace:'', incline:'', calories:null, loggedAt:null };
     state.training.logs.push(log);
   }
+  const newSets = working.length ? working.length : log.sets;
+  const newWeight = working.length ? (working[0].weightKg||null) : log.weight;
+  const newReps = working.length ? working.map(s=>s.reps||'?').join('/') : log.reps;
+  const changed = log.completed!==completed || log.sets!==newSets || log.weight!==newWeight || log.reps!==newReps;
   log.completed = completed;
   log.loggedAt = new Date().toISOString();
   if(working.length){
@@ -10908,6 +10952,7 @@ function syncTrainingLogFromSets(date, exerciseId){
     log.weight = working[0].weightKg||null;
     log.reps = working.map(s=>s.reps||'?').join('/');
   }
+  return changed;
 }
 async function saveTrainingDayLogs(date){
   const rowEls = document.querySelectorAll('#trainingExerciseRows [data-row-id]');
@@ -11716,7 +11761,7 @@ function renderTrainingExercisesSubpage(){
             <div class="page-sub" style="margin-bottom:4px; font-weight:600;">${title} — ${total} credited set${total===1?'':'s'}</div>
             ${rows.length ? rows.map(r=>`
               <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:3px 0; font-size:12.5px;">
-                <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
+                <span>${humanDateNoRelative(r.date)} — ${escapeHtml(r.name)}</span>
                 <span style="display:flex; align-items:center; gap:6px;">
                   <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
                   ${withActions ? `
