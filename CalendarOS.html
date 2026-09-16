@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.54.1';
+const APP_VERSION = '4.54.2';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.54.2', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'REVIEW PACK: rest days are now a hard, fixed weekly constraint \u2014 whatever\u2019s set in Settings\u2019 weekendDays (Friday/Saturday by default, already an existing setting, reused rather than adding a second one), every week, with zero exceptions. Replaces the previous rule that let the AI pick "whichever 2 days fit best" based on adherence, which is exactly what produced a rest day on a day that should have been a training day. The prompt now also hands over the actual next 14 dates pre-labeled training/rest, rather than leaving the AI to recompute it from a rule.',
+  ]},
   { v:'4.54.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'EXERCISE LIBRARY: the muscle-group drill-down now follows the same calendar week (and the same \u2039 \u203a navigation) as the Weekly Volume panel, instead of a separate fixed "last 7 days" \u2014 so the sets it lists always match whichever week you\u2019re looking at, with its own week arrows right on the breakdown card too.',
@@ -12234,9 +12238,27 @@ function buildTrainingReviewPack(){
     }),
   }));
 
+  // --- Fixed weekly training schedule ---
+  // Rest days are whatever's set in Settings → weekendDays (already a
+  // real, user-editable setting elsewhere in the app, not training-
+  // specific) — reused here rather than inventing a second "which days am
+  // I off" setting. A per-date breakdown for the actual 14-day window is
+  // handed over explicitly (not left for the AI to infer from a rule) since
+  // an adherence-based "pick whichever 2 days fit best" version of this
+  // rule was tried before and produced a rest day on a day that should
+  // have been a training day.
+  const restDayAbbrs = state.settings.weekendDays || ['Fri','Sat'];
+  const trainingSchedule = [];
+  for(let i=0;i<14;i++){
+    const d = addDays(today, i);
+    const [y,m,dd] = d.split('-').map(Number);
+    const dow = new Date(y, m-1, dd).getDay();
+    trainingSchedule.push({ date:d, dayOfWeek:DOW_ABBR[dow], isRestDay: restDayAbbrs.includes(DOW_ABBR[dow]) });
+  }
+
   return {
     reviewPeriod: { from:sinceDate, to:today },
-    goals: { weightLossTargetKg: 20, targetWeightKg: 85, weeklyTrainingDays: 5 },
+    goals: { weightLossTargetKg: 20, targetWeightKg: 85, weeklyTrainingDays: 7-restDayAbbrs.length },
     bodyMetrics,
     adherence,
     weeklyVolumeByMuscle: volumeByMuscle,
@@ -12245,6 +12267,8 @@ function buildTrainingReviewPack(){
     failureTests,
     currentSuggestions: upcomingSuggestions,
     currentPlan: plan,
+    restDays: restDayAbbrs,
+    trainingSchedule,
   };
 }
 
@@ -12300,6 +12324,11 @@ function copyTrainingReviewPack(){
   const prompt = `You are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
 
 MY GOALS: lose ~${pack.goals.weightLossTargetKg}kg (current target ${pack.goals.targetWeightKg}kg), build muscle, train ${pack.goals.weeklyTrainingDays} days/week.
+
+MY FIXED WEEKLY SCHEDULE (hard constraint, not a suggestion to optimize): ${pack.restDays.join(' and ')} are ALWAYS rest days, every single week, with zero exceptions — not based on how many days I've already trained that week, not based on adherence, not based on anything else. Every other day of the week is a training day. Here's the actual next 14 days with each one already labeled — use this exactly as given, don't recompute it:
+\`\`\`json
+${JSON.stringify(pack.trainingSchedule, null, 2)}
+\`\`\`
 ${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard 10-20 set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
@@ -12344,7 +12373,7 @@ RULES for the plan:
 - Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
-- Schedule training days on the next 14 calendar days starting from ${pack.reviewPeriod.to}, skipping the two rest days of the week that fit best (based on my adherence pattern from the data).
+- Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
 - Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
 - Order each session's exercises so the same muscle group doesn't get worked in two back-to-back blocks where avoidable — e.g. don't put two chest-primary exercises next to each other; alternate muscle groups through the session so consecutive exercises give each area a moment to recover before it's hit again.
 - All suggested weights must be achievable on my actual equipment: 5kg main increments plus a 2.5kg toggle, so every suggested weight must land on a 2.5kg step (5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5...) — never something like 9kg or 16kg that isn't actually settable on the machine.
