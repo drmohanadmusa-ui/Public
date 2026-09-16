@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.55.2';
+const APP_VERSION = '4.56.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,12 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.56.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIXED (the big one): training_logs \u2014 which drives Log History, Recent Days\u2019 "X/Y logged" counts, and day-completion stats generally \u2014 was ONLY ever created or updated by the separate "Save Today\u2019s Log" button. That made sense when logging was manual, but since auto-fill and auto-complete-on-RIR-pick, a day can show every set fully checked off without that button ever having been pressed \u2014 so training_logs silently stayed empty for days that were, in every way that actually matters, fully logged. This is what caused Log History to read "No training logged yet" and Recent Days to show "0/5 logged" for days that were genuinely done \u2014 your actual set data (reps, weight, RIR) was never at risk; it lives in a completely separate table (training_sets) that none of this touched. Completion tracking now syncs automatically the moment a set is actually marked done, from either the RIR/F/W picks or the manual done-tap \u2014 the Save button remains for notes and the walking-specific fields, which still need an explicit action.',
+    'NEW: a "\u21bb Rebuild from sets" button on the Log History page re-derives every missing training_logs entry from your existing, intact training_sets data \u2014 a one-time repair for exactly the gap above. Only ever adds or corrects entries, never deletes anything, safe to run more than once.',
+    'EXERCISE LIBRARY: the muscle drill-down\u2019s Planned section now has quick actions per row \u2014 \u2715 removes that exercise from that specific day only (never a shared template \u2014 sessions are unique-per-day now), and \u21c4 opens the full session editor to swap in a different exercise instead, reusing the existing session-builder picker rather than a second, narrower one built just for this view.',
+  ]},
   { v:'4.55.2', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIXED: a real bug the new drill-down found within a day of shipping \u2014 Planned volume for today was always read straight from the session\u2019s original block list, even for an exercise you\u2019d already removed from today\u2019s actual page. Remove an exercise from today and it kept counting toward today\u2019s Planned total anyway, because nothing checked whether it was still actually staged there. Both the legend\u2019s Planned column and the drill-down breakdown now check today specifically against what\u2019s really staged (only for today \u2014 a future day that hasn\u2019t been opened yet has nothing to check against, so it still just trusts the session as planned, same as before).',
@@ -9376,6 +9382,29 @@ function getMuscleVolumeBreakdown(mg){
    format. Same remaining-after-today's-already-done-sets logic as
    computeCalendarWeekVolume's plannedVol, so this always sums to the exact
    Planned figure shown in the legend for whichever week is selected. */
+/* Item 1 (drill-down quick actions): removes one exercise from a specific
+   day's assigned session — sessions are unique-per-day now (see the import
+   naming/reordering work), so this only ever affects the one date it's
+   called for, never a template shared across multiple days. Also clears it
+   from today's actual staging if today happens to be the date in question,
+   so the removal is immediately reflected everywhere, not just next time
+   the day auto-restages. For swapping in a different exercise rather than
+   just removing this one, openTrainingSessionBuilder(sessionId) is reused
+   as-is — full delete/replace/add already exists there, no need for a
+   second, narrower picker built just for this view. */
+async function removePlannedExerciseFromSession(sessionId, exerciseId, date){
+  const session = getTrainingSessionById(sessionId);
+  if(!session || !session.blocks) return;
+  const ex = getTrainingExerciseById(exerciseId);
+  if(!confirm(`Remove ${ex?ex.name:'this exercise'} from ${humanDate(date)}?`)) return;
+  session.blocks = session.blocks.filter(b=>b.exerciseId!==exerciseId);
+  if(date===todayStr() && state.trainingPendingAdds[date]){
+    state.trainingPendingAdds[date] = state.trainingPendingAdds[date].filter(id=>id!==exerciseId);
+  }
+  await saveTraining();
+  renderMain();
+  showToast(`Removed ${ex?ex.name:'exercise'} from ${humanDate(date)}`);
+}
 function getMuscleVolumePlannedBreakdown(mg){
   const { weekStart, weekEnd } = getCalendarWeekBounds(state.trainingVolumeWeekOffset||0);
   const today = todayStr();
@@ -9404,7 +9433,7 @@ function getMuscleVolumePlannedBreakdown(mg){
         ).length : 0;
         const remainingSets = Math.max(0, targetSets - doneSetsForThisDay);
         if(!remainingSets) return;
-        rows.push({ date:c.date, name:ex.name, sets:remainingSets, credit:credits[mg] });
+        rows.push({ date:c.date, name:ex.name, sets:remainingSets, credit:credits[mg], sessionId:session.id, exerciseId:ex.id });
       });
     });
   return rows.sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:a.name.localeCompare(b.name)));
@@ -10354,6 +10383,11 @@ function setSetMode(date, exId, setNo, mode, rirValue){
     const ex = getTrainingExerciseById(exId);
     if(s.done) startRestTimer(defaultRestSec(ex)||90, exId);
     else stopRestTimer();
+    // Keep training_logs (Log History, day-completion stats) in sync with
+    // what actually just happened — see syncTrainingLogFromSets's comment
+    // for why this can no longer wait for the separate Save button.
+    syncTrainingLogFromSets(date, exId);
+    saveTraining();
   }
   scheduleTrainingDraftSave();
   // Deliberately NOT a full renderMain() — RIR/F/W is tapped many times in a
@@ -10407,7 +10441,9 @@ function toggleSetDone(date, exId, setNo, restSec){
   s.loggedAt = s.done ? new Date().toISOString() : null;
   if(s.done) startRestTimer(restSec||90, exId);
   else stopRestTimer();
+  syncTrainingLogFromSets(date, exId);
   scheduleTrainingDraftSave();
+  saveTraining();
   renderMain();
   updateTrainingDayAggPreview();
 }
@@ -10836,6 +10872,42 @@ function renderTrainingDayCard(date){
 function reopenTrainingDayLog(date){
   state.trainingEditingDate = date;
   renderMain();
+}
+/* v4.5x: the ONLY thing that used to create/update a training_logs entry
+   was pressing "Save Today's Log" — which made sense when logging was
+   manual, but since auto-fill (v4.50.0) and auto-complete-on-RIR-pick,
+   every set can show fully checked off without that button ever having
+   been pressed. Log History, day-level completion stats, and anything else
+   reading training_logs would then show nothing for a day that was, in
+   every way that actually matters, fully logged — exactly what happened
+   here. This is the completion-tracking half of what that button used to
+   do (everything derivable from state.training.sets directly — completed
+   flag, sets/weight/reps summary), now called automatically whenever a
+   set's done status changes, so training_logs can never silently drift
+   out of sync with the real per-set data again. Notes and the
+   walking-specific fields (distance/duration/heart rate/calories) still
+   need the explicit Save button — those are free-text/number DOM inputs
+   with no other trigger that makes sense to read them from. */
+function syncTrainingLogFromSets(date, exerciseId){
+  const exSets = getSetsForExercise(date, exerciseId);
+  const working = exSets.filter(s=>!s.isWarmup);
+  const anySetDone = working.some(s=>s.done);
+  const completed = working.length > 0 ? anySetDone : false;
+  let log = getTrainingLogForExercise(date, exerciseId);
+  if(!log){
+    if(!completed) return; // nothing worth creating a log row for yet
+    log = { date, exerciseId, sessionId: null, completed:false, difficulty:null, notes:'',
+             sets:null, reps:'', weight:null, distanceKm:null, durationMin:null,
+             avgHeartRate:null, avgPace:'', incline:'', calories:null, loggedAt:null };
+    state.training.logs.push(log);
+  }
+  log.completed = completed;
+  log.loggedAt = new Date().toISOString();
+  if(working.length){
+    log.sets = working.length;
+    log.weight = working[0].weightKg||null;
+    log.reps = working.map(s=>s.reps||'?').join('/');
+  }
 }
 async function saveTrainingDayLogs(date){
   const rowEls = document.querySelectorAll('#trainingExerciseRows [data-row-id]');
@@ -11318,11 +11390,36 @@ function toggleTrainingCalExpand(date){
 }
 
 /* ---------- Subpage: Log History ---------- */
+/* One-time repair for exactly the situation that motivated syncTrainingLogFromSets:
+   existing days where state.training.sets already has real, done sets, but
+   the matching training_logs entry was never created because it predates
+   this fix (the only way a log used to get created was the separate Save
+   button). Walks every (date, exerciseId) pair that has any sets at all and
+   re-derives its log the same way syncTrainingLogFromSets always does — a
+   pair that's already correctly in sync is untouched in substance, so this
+   is safe to run more than once. */
+async function backfillTrainingLogsFromSets(){
+  const before = state.training.logs.length;
+  const seen = new Set();
+  (state.training.sets||[]).forEach(s=>{
+    const key = `${s.date}::${s.exerciseId}`;
+    if(seen.has(key)) return;
+    seen.add(key);
+    syncTrainingLogFromSets(s.date, s.exerciseId);
+  });
+  const created = state.training.logs.length - before;
+  await saveTraining();
+  renderMain();
+  showToast(created ? `Rebuilt ${created} log ${created===1?'entry':'entries'} from your set history` : 'Nothing to rebuild — every set already has a matching log entry');
+}
 function renderTrainingHistorySubpage(){
   const dates = [...new Set(state.training.logs.map(l=>l.date))].sort((a,b)=> a<b?1:-1).slice(0,60);
   return `
     <div class="section">
-      <div class="section-head"><h2>Log History</h2></div>
+      <div class="section-head">
+        <h2>Log History</h2>
+        <button class="btn ghost sm" title="Rebuild any missing log entries from your actual set data — safe to run any time" onclick="if(confirm('Rebuild Log History from your logged sets? This only adds/corrects entries, never deletes anything.')) backfillTrainingLogsFromSets();">↻ Rebuild from sets</button>
+      </div>
       ${dates.length ? dates.map(date=>{
         const agg = computeDayAggregate(date);
         const cal = getTrainingCalEntry(date);
@@ -11614,13 +11711,19 @@ function renderTrainingExercisesSubpage(){
         const doneTotal = doneBreakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
         const plannedBreakdown = getMuscleVolumePlannedBreakdown(mgFilter);
         const plannedTotal = plannedBreakdown.reduce((sum,r)=>sum+r.sets*r.credit, 0);
-        const section = (title, rows, total, emptyLabel) => `
+        const section = (title, rows, total, emptyLabel, withActions) => `
           <div style="margin-bottom:10px;">
             <div class="page-sub" style="margin-bottom:4px; font-weight:600;">${title} — ${total} credited set${total===1?'':'s'}</div>
             ${rows.length ? rows.map(r=>`
-              <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:12.5px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:3px 0; font-size:12.5px;">
                 <span>${humanDate(r.date)} — ${escapeHtml(r.name)}</span>
-                <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                  <span class="page-sub">${r.sets} set${r.sets===1?'':'s'}</span>
+                  ${withActions ? `
+                    <button class="icon-btn" title="Swap this exercise for a different one" onclick="openTrainingSessionBuilder('${r.sessionId}')" style="width:22px;height:22px;font-size:11px;">⇄</button>
+                    <button class="icon-btn" title="Remove this exercise from ${humanDate(r.date)}" onclick="removePlannedExerciseFromSession('${r.sessionId}','${r.exerciseId}','${r.date}')" style="width:22px;height:22px;font-size:11px;">✕</button>
+                  ` : ''}
+                </span>
               </div>
             `).join('') : `<div class="page-sub" style="font-size:12.5px;">${emptyLabel}</div>`}
           </div>`;
@@ -11630,8 +11733,8 @@ function renderTrainingExercisesSubpage(){
             <span>${nav}</span>
             <span>toward ${LABELS[mgFilter]||mgFilter}</span>
           </div>
-          ${section('Done', doneBreakdown, doneTotal, 'No sets logged yet this week.')}
-          ${section('Planned', plannedBreakdown, plannedTotal, 'Nothing still scheduled for the rest of this week.')}
+          ${section('Done', doneBreakdown, doneTotal, 'No sets logged yet this week.', false)}
+          ${section('Planned', plannedBreakdown, plannedTotal, 'Nothing still scheduled for the rest of this week.', true)}
         </div>`;
       })() : ''}
       ${(tags.length || untaggedCount) ? `` : ''}
