@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.55.1';
+const APP_VERSION = '4.55.2';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.55.2', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIXED: a real bug the new drill-down found within a day of shipping \u2014 Planned volume for today was always read straight from the session\u2019s original block list, even for an exercise you\u2019d already removed from today\u2019s actual page. Remove an exercise from today and it kept counting toward today\u2019s Planned total anyway, because nothing checked whether it was still actually staged there. Both the legend\u2019s Planned column and the drill-down breakdown now check today specifically against what\u2019s really staged (only for today \u2014 a future day that hasn\u2019t been opened yet has nothing to check against, so it still just trusts the session as planned, same as before).',
+  ]},
   { v:'4.55.1', changes: [
     '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds include_secondary_muscles (boolean, default false) on app_settings. Additive/idempotent.',
     'WEEKLY VOLUME: secondary muscles being excluded from the weekly totals is now a toggle on the Training page, not a hard rule \u2014 off by default (matching where it already was), switch it on to count them at half credit each, same fractional-credit approach as before it was removed. Affects the body map, the Exercise Library breakdown, the 8-week trend, and the review pack everywhere at once, and the review pack\u2019s prompt now tells the AI which mode is currently active so it interprets the numbers correctly either way.',
@@ -9375,6 +9379,13 @@ function getMuscleVolumeBreakdown(mg){
 function getMuscleVolumePlannedBreakdown(mg){
   const { weekStart, weekEnd } = getCalendarWeekBounds(state.trainingVolumeWeekOffset||0);
   const today = todayStr();
+  // If today's day has already been opened (something's staged there),
+  // only count a block if it's still actually part of what's staged — the
+  // day may have been edited (an exercise removed) since the session was
+  // first assigned, and the session's raw block list on its own doesn't
+  // reflect that. A future day that hasn't been opened yet has nothing
+  // staged to check against, so it just trusts the session as planned.
+  const todayStagedIds = new Set(getTrainingDayExerciseIds(today));
   const rows = [];
   state.training.calendar
     .filter(c=> c.date>=weekStart && c.date<=weekEnd && c.date>=today && c.sessionId)
@@ -9384,6 +9395,7 @@ function getMuscleVolumePlannedBreakdown(mg){
       session.blocks.forEach(b=>{
         const ex = getTrainingExerciseById(b.exerciseId);
         if(!ex) return;
+        if(c.date===today && todayStagedIds.size && !todayStagedIds.has(b.exerciseId)) return;
         const credits = exMuscleGroupCredits(ex);
         if(credits[mg]===undefined) return;
         const targetSets = Number(b.sets)||0;
@@ -10449,6 +10461,10 @@ function computeCalendarWeekVolume(offset){
     Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ doneVol[mg]=(doneVol[mg]||0)+credit; });
   });
   const plannedVol = {};
+  // Same today's-staging-vs-session-template check as getMuscleVolumePlannedBreakdown —
+  // if today's already been opened (and possibly edited), only count a
+  // block if it's still actually staged there.
+  const todayStagedIds = new Set(getTrainingDayExerciseIds(today));
   state.training.calendar
     .filter(c=> c.date>=weekStart && c.date<=weekEnd && c.date>=today && c.sessionId)
     .forEach(c=>{
@@ -10457,6 +10473,7 @@ function computeCalendarWeekVolume(offset){
       session.blocks.forEach(b=>{
         const ex = getTrainingExerciseById(b.exerciseId);
         if(!ex) return;
+        if(c.date===today && todayStagedIds.size && !todayStagedIds.has(b.exerciseId)) return;
         const targetSets = Number(b.sets)||0;
         const doneSetsForThisDay = c.date===today ? (state.training.sets||[]).filter(s=>
           s.date===c.date && s.exerciseId===b.exerciseId && s.done && !s.isWarmup
