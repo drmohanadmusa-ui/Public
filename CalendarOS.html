@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.53.1';
+const APP_VERSION = '4.54.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.54.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'WEEKLY VOLUME: switched from a rolling 7-day window to a real calendar week (Sunday to Saturday), with \u2039 \u203a arrows to page to the week before or after. A fully-past week now correctly shows all Done and zero Planned (nothing left to do), and a fully-future week shows all Planned and zero Done (nothing\u2019s happened yet) \u2014 falls out naturally from the same date-range logic, no special-casing needed for either case.',
+    'Fixed a real double-counting bug found while building this: the existing Planned figure counted TODAY\u2019s full planned set count even for sets already marked done today, so a set already counted in Done got counted a second time in Planned, inflating the estimated total above what the day will actually end up at. Today\u2019s planned contribution is now the plan minus what\u2019s already done today \u2014 fixed in both the app\u2019s display and the review pack\u2019s figures.',
+  ]},
   { v:'4.53.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'Secondary muscles no longer count toward weekly volume at all \u2014 was 0.5 credit each (the fractional-credit approach from v4.50.0), now zero. Only primary muscles contribute to the body map, the Exercise Library volume breakdown, the 8-week trend, and the review pack\u2019s volume figures. Secondary muscles still show as tags on each exercise in the Library (a different color from primary since the last release) \u2014 they\u2019re just not counted in any of the set totals anymore.',
@@ -3015,6 +3020,7 @@ const state = {
   // logs are session-level (completed/difficulty/notes) keyed by date.
   training: { exercises: [], sessions: [], calendar: [], logs: [], resources: [], sets: [] },
   trainingSelectedDate: null, // date being viewed/logged on the Training page; defaults to today on first render
+  trainingVolumeWeekOffset: 0, // Weekly Volume panel: 0 = this calendar week (Sun-Sat), -1 = last week, +1 = next week
   recipes: { items: [] }, // recipe library — see recipe/ingredient row conversion functions
   recipesSelectedId: null, // which recipe is open in detail view, if any
   progressSelectedTaskId: null, // which task's individual history is open, if any
@@ -10352,7 +10358,11 @@ function computeWeeklyVolumeByMuscle(){
    computeWeeklyVolumeByMuscle(), just pointed forward instead of back, so
    the two together show the whole rolling week: banked so far + already on
    the calendar for what's left of it. This is a plan, not attendance — it
-   doesn't know whether a scheduled day will actually get logged. */
+   doesn't know whether a scheduled day will actually get logged.
+   Subtracts whatever's already been done TODAY specifically from today's
+   planned contribution — without this, a set already counted in the
+   "done" total would ALSO be counted here via today's full block.sets,
+   inflating done+planned above the real total. */
 function computePlannedRemainingVolumeByMuscle(){
   const today = todayStr();
   const weekEnd = addDays(today, 6);
@@ -10365,13 +10375,71 @@ function computePlannedRemainingVolumeByMuscle(){
       session.blocks.forEach(b=>{
         const ex = getTrainingExerciseById(b.exerciseId);
         if(!ex) return;
-        const setsCount = Number(b.sets)||0;
+        const targetSets = Number(b.sets)||0;
+        const doneSetsForThisDay = c.date===today ? (state.training.sets||[]).filter(s=>
+          s.date===c.date && s.exerciseId===b.exerciseId && s.done && !s.isWarmup
+        ).length : 0;
+        const remainingSets = Math.max(0, targetSets - doneSetsForThisDay);
+        if(!remainingSets) return;
         Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{
-          vol[mg] = (vol[mg]||0) + credit*setsCount;
+          vol[mg] = (vol[mg]||0) + credit*remainingSets;
         });
       });
     });
   return vol;
+}
+/* Sunday-Saturday calendar week bounds, offset in whole weeks from the
+   current one (0 = this week, -1 = last week, +1 = next week). Used by the
+   Weekly Volume panel and its navigation arrows. */
+function getCalendarWeekBounds(offset){
+  const dow = new Date().getDay(); // 0=Sunday..6=Saturday, in the browser's local time — matches how the rest of the app reads "today"
+  const thisWeekStart = addDays(todayStr(), -dow);
+  const weekStart = addDays(thisWeekStart, (offset||0)*7);
+  const weekEnd = addDays(weekStart, 6);
+  return { weekStart, weekEnd };
+}
+/* Done vs planned volume for an arbitrary calendar week (see
+   getCalendarWeekBounds). A fully-past week naturally comes back all-done/
+   zero-planned (every date in it is before today, so nothing is "still to
+   do"); a fully-future week naturally comes back all-planned/zero-done
+   (nothing in it has happened yet) — neither needs special-casing, it falls
+   out of the same date-range logic used for the current week. Same
+   today's-already-done-sets subtraction as computePlannedRemainingVolumeByMuscle,
+   for the same reason (today can straddle done and planned within one day). */
+function computeCalendarWeekVolume(offset){
+  const { weekStart, weekEnd } = getCalendarWeekBounds(offset);
+  const today = todayStr();
+  const doneVol = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(s.date<weekStart || s.date>weekEnd || s.isWarmup || !s.done) return;
+    const ex = getTrainingExerciseById(s.exerciseId);
+    Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{ doneVol[mg]=(doneVol[mg]||0)+credit; });
+  });
+  const plannedVol = {};
+  state.training.calendar
+    .filter(c=> c.date>=weekStart && c.date<=weekEnd && c.date>=today && c.sessionId)
+    .forEach(c=>{
+      const session = getTrainingSessionById(c.sessionId);
+      if(!session || !session.blocks) return;
+      session.blocks.forEach(b=>{
+        const ex = getTrainingExerciseById(b.exerciseId);
+        if(!ex) return;
+        const targetSets = Number(b.sets)||0;
+        const doneSetsForThisDay = c.date===today ? (state.training.sets||[]).filter(s=>
+          s.date===c.date && s.exerciseId===b.exerciseId && s.done && !s.isWarmup
+        ).length : 0;
+        const remainingSets = Math.max(0, targetSets - doneSetsForThisDay);
+        if(!remainingSets) return;
+        Object.entries(exMuscleGroupCredits(ex)).forEach(([mg,credit])=>{
+          plannedVol[mg] = (plannedVol[mg]||0) + credit*remainingSets;
+        });
+      });
+    });
+  return { weekStart, weekEnd, doneVol, plannedVol };
+}
+function setTrainingVolumeWeekOffset(delta){
+  state.trainingVolumeWeekOffset = (state.trainingVolumeWeekOffset||0) + delta;
+  renderMain();
 }
 function muscleVolumeColour(sets,band){
   const {min,max}=band||MUSCLE_BAND_DEFAULT;
@@ -10405,17 +10473,22 @@ function muscleVolumeTextColour(sets,band){
   return 'var(--teal)';
 }
 function renderWeeklyVolumePanel(){
-  const vol=computeWeeklyVolumeByMuscle();
-  const plannedRemaining=computePlannedRemainingVolumeByMuscle();
+  const weekOffset = state.trainingVolumeWeekOffset||0;
+  const { weekStart, weekEnd, doneVol:vol, plannedVol:plannedRemaining } = computeCalendarWeekVolume(weekOffset);
   const band=state.settings.muscleBand||MUSCLE_BAND_DEFAULT;
   const LABELS = MUSCLE_GROUP_LABELS;
   const fs=(mg)=>`fill:${muscleVolumeColour(vol[mg]||0,band)};fill-opacity:${muscleVolumeOpacity(vol[mg]||0,band)};cursor:pointer;`;
   const unmapped=state.training.exercises.filter(e=>e.category==='strength'&&!exMuscleGroups(e).length);
+  const weekLabel = weekOffset===0 ? 'This week' : `${humanDate(weekStart)} – ${humanDate(weekEnd)}`;
   return `
   <div class="section" style="margin-bottom:20px;">
     <div class="section-head">
       <h2>Weekly Volume</h2>
-      <span class="page-sub" style="font-size:11.5px;">Last 7 days done · next 7 days planned</span>
+      <span style="display:flex; align-items:center; gap:6px;">
+        <button class="icon-btn" title="Previous week" onclick="setTrainingVolumeWeekOffset(-1)">‹</button>
+        <span class="page-sub" style="font-size:11.5px; min-width:110px; text-align:center;">${weekLabel}</span>
+        <button class="icon-btn" title="Next week" onclick="setTrainingVolumeWeekOffset(1)">›</button>
+      </span>
     </div>
     <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
       <div>
@@ -10479,7 +10552,7 @@ function renderWeeklyVolumePanel(){
       </div>
       <div style="flex:1;min-width:220px;">
         <div style="display:flex;gap:8px;margin-bottom:6px;font-size:11px;color:var(--ink-soft);">
-          <span style="flex:1;">Muscle</span><span style="width:38px;text-align:right;">Done</span><span style="width:52px;text-align:right;" title="Already on the calendar for the rest of this rolling week, whether or not it's been logged yet">Planned</span><span style="width:44px;text-align:right;" title="Done + Planned">Est.</span>
+          <span style="flex:1;">Muscle</span><span style="width:38px;text-align:right;">Done</span><span style="width:52px;text-align:right;" title="Still on the calendar for the rest of this week (Sun-Sat), whether or not it's been logged yet">Planned</span><span style="width:44px;text-align:right;" title="Done + Planned">Est.</span>
         </div>
         ${MUSCLE_GROUPS.map(mg=>{
           const sets=vol[mg]||0; const colour=muscleVolumeColour(sets,band); const textColour=muscleVolumeTextColour(sets,band);
