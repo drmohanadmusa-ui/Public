@@ -2188,7 +2188,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.57.0';
+const APP_VERSION = '4.58.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2196,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.58.0', changes: [
+    'SQL migration needed \u2014 one new column: alter table app_settings add column if not exists exercise_suggestions jsonb default null; (Settings \u2192 Cloud Sync \u2192 Copy SQL is safe to re-run in full, it\u2019s additive/idempotent).',
+    'Swapping an exercise in a session (session builder, or the \u21c4 button on the muscle drill-down) now recomputes that exercise\u2019s suggested weight, reps and set count from scratch instead of carrying over the exercise it replaced. Preference order: your own logged history for the newly picked exercise (same double-progression logic already used for scheduled exercises), falling back to a per-exercise starting-point number from the AI review pack ONLY when there\u2019s no logged history yet, falling back to blank (type it in yourself the first time) if neither exists.',
+    'Review Pack now also asks the AI for a suggested weight/rep range for every exercise in your library, not just the ones it actually schedules \u2014 stored as a fallback so swapping in an exercise you\u2019ve never logged still has a starting number instead of a blank field.',
+    'Exercise Library: a new \ud83d\udd58 History button on each exercise opens its logged history \u2014 heaviest set and best e1RM at a glance, then the last 10 sessions (weight\u00d7reps, RIR/failure flags) with a Load More for further back.',
+    'New "Muscles by Day" panel below Weekly Volume: seven small body figures, one per day of the selected week (weekends included, even if you don\u2019t normally train then \u2014 an empty box is itself useful confirmation), highlighting which primary muscles were actually done (green) vs still planned (yellow) that day. Same week \u2039 \u203a navigation as Weekly Volume.',
+    'Review Pack rule added: the AI should no longer schedule the same primary muscle group as a direct target on two consecutive training days (a rest day in between resets this) \u2014 except deliberately for a priority muscle that genuinely needs the extra frequency, which it should call out in the summary rather than do silently. Backed by a new import-time check: importing a plan that still does this shows a dismissible warning listing the conflicts, not a hard block \u2014 you can proceed if it was intentional.',
+  ]},
   { v:'4.57.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'Removed Neck, Calves, and Forearms from tracked muscle groups entirely \u2014 gone from the body map legend, the Exercise Library filter chips, and the Add/Edit pill pickers. Their body-map shapes are decorative silhouette pieces again (no click, no tooltip), the same as Neck was before it got wired up a few versions back. Any exercise that still has one of these three tagged isn\u2019t rewritten \u2014 it just shows as a plain untracked tag until next edited.',
@@ -4401,7 +4409,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -5304,7 +5312,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null }], 'pin'),
     ]);
   }
 }
@@ -9935,6 +9943,8 @@ function renderTrainingToday(){
 
     ${renderWeeklyVolumePanel()}
 
+    ${renderDayMuscleBoxes()}
+
     <div class="section">
       <div class="section-head"><h2>Recent Days</h2></div>
       <div class="card" style="padding:4px 16px;">
@@ -10590,6 +10600,129 @@ function muscleVolumeTextColour(sets,band){
   if(sets<min) return '#8A6416';
   if(sets>max) return '#A83D3D';
   return 'var(--teal)';
+}
+/* Item 5 (v4.58.0): "Muscles by Day" — one compact body figure per day of
+   the selected calendar week (all 7, weekends included, per Muhannad's
+   answer — a rest day just shows nothing highlighted, which is itself
+   useful confirmation). Primary muscles only, binary highlight (done/
+   planned/neither) rather than the Weekly Volume panel's continuous heat
+   scale, and done overrides planned for a muscle that's both in one day.
+   Reuses the exact same anatomical path geometry as the Weekly Volume
+   panel's SVG (bodyFigureMiniSVG below) but as its own copy rather than a
+   shared refactor of that panel — that code is tested and working, and
+   isn't touched here. */
+function computeDayMuscleStatus(date){
+  const today = todayStr();
+  const doneMuscles = new Set();
+  (state.training.sets||[]).forEach(s=>{
+    if(s.date!==date || !s.done || s.isWarmup) return;
+    const ex = getTrainingExerciseById(s.exerciseId);
+    exMuscleGroups(ex,'primary').forEach(mg=>doneMuscles.add(mg));
+  });
+  const plannedMuscles = new Set();
+  if(date>=today){
+    const cal = getTrainingCalEntry(date);
+    const session = cal ? getTrainingSessionById(cal.sessionId) : null;
+    if(session && session.blocks){
+      const stagedIds = new Set(getTrainingDayExerciseIds(date));
+      session.blocks.forEach(b=>{
+        if(stagedIds.size && !stagedIds.has(b.exerciseId)) return;
+        const ex = getTrainingExerciseById(b.exerciseId);
+        if(!ex) return;
+        exMuscleGroups(ex,'primary').forEach(mg=>{ if(!doneMuscles.has(mg)) plannedMuscles.add(mg); });
+      });
+    }
+  }
+  return { doneMuscles, plannedMuscles };
+}
+function dayMuscleFillStyle(mg, status){
+  if(status[mg]==='done') return `fill:var(--teal);fill-opacity:0.85;`;
+  if(status[mg]==='planned') return `fill:#E9B84A;fill-opacity:0.75;`;
+  return `fill:var(--paper-dim);fill-opacity:0.3;`;
+}
+/* Same front+back path geometry as renderWeeklyVolumePanel's SVG, non-
+   interactive (no onclick — a tiny per-day glance box isn't the place for
+   the muscle-filter link) and with a <title> per shape for a hover label. */
+function bodyFigureMiniSVG(fs, labelFn){
+  return `
+    <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('shoulders')}</title></path>
+    <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('shoulders')}</title></path>
+    <path d="M 70 44 C 62 42, 52 45, 50 54 C 49 62, 56 68, 65 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('chest')}</title></path>
+    <path d="M 70 44 C 78 42, 88 45, 90 54 C 91 62, 84 68, 75 66 C 70 65, 70 55, 70 44 Z" style="${fs('chest')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('chest')}</title></path>
+    <rect x="61" y="69" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('abs')}</title></rect>
+    <rect x="71" y="69" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1"/>
+    <rect x="61" y="80" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1"/>
+    <rect x="71" y="80" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1"/>
+    <rect x="61" y="91" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1"/>
+    <rect x="71" y="91" width="8" height="9" rx="2" style="${fs('abs')}" stroke="var(--ink-soft)" stroke-width="1"/>
+    <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('biceps')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('biceps')}</title></path>
+    <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('biceps')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('biceps')}</title></path>
+    <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+    <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+    <path d="M 52 102 C 46 108, 44 130, 46 150 C 47 158, 62 159, 63 150 C 65 130, 62 110, 58 102 Z" style="${fs('quads')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('quads')}</title></path>
+    <path d="M 88 102 C 94 108, 96 130, 94 150 C 93 158, 78 159, 77 150 C 75 130, 78 110, 82 102 Z" style="${fs('quads')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('quads')}</title></path>
+    <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+    <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+    <g transform="translate(150,0)">
+      <path d="M 38 42 C 33 38, 33 50, 38 55 C 44 58, 52 55, 52 47 C 52 40, 45 38, 38 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1"/>
+      <path d="M 102 42 C 107 38, 107 50, 102 55 C 96 58, 88 55, 88 47 C 88 40, 95 38, 102 42 Z" style="${fs('shoulders')}" stroke="var(--ink-soft)" stroke-width="1"/>
+      <path d="M 68 56 C 60 57, 52 63, 51 74 C 50 83, 58 88, 64 84 C 68 81, 69 68, 68 56 Z" style="${fs('lats')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('lats')}</title></path>
+      <path d="M 72 56 C 80 57, 88 63, 89 74 C 90 83, 82 88, 76 84 C 72 81, 71 68, 72 56 Z" style="${fs('lats')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('lats')}</title></path>
+      <path d="M 70 34 L 52 50 L 70 60 L 88 50 Z" style="${fs('traps')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('traps')}</title></path>
+      <path d="M 70 84 L 60 91 L 70 99 L 80 91 Z" style="${fs('lower_back')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('lower_back')}</title></path>
+      <path d="M 34 55 C 28 58, 26 70, 29 80 C 31 85, 39 85, 40 78 C 41 68, 40 60, 34 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('triceps')}</title></path>
+      <path d="M 106 55 C 112 58, 114 70, 111 80 C 109 85, 101 85, 100 78 C 99 68, 100 60, 106 55 Z" style="${fs('triceps')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('triceps')}</title></path>
+      <path d="M 30 83 C 27 90, 26 100, 29 108 C 31 112, 37 111, 37 104 C 37 96, 35 88, 30 83 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+      <path d="M 110 83 C 113 90, 114 100, 111 108 C 109 112, 103 111, 103 104 C 103 96, 105 88, 110 83 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+      <path d="M 55 98 C 47 100, 44 110, 48 118 C 52 124, 65 123, 66 114 C 67 105, 62 99, 55 98 Z" style="${fs('glutes')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('glutes')}</title></path>
+      <path d="M 85 98 C 93 100, 96 110, 92 118 C 88 124, 75 123, 74 114 C 73 105, 78 99, 85 98 Z" style="${fs('glutes')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('glutes')}</title></path>
+      <path d="M 51 122 C 46 128, 45 142, 48 155 C 50 161, 62 161, 62 152 C 63 140, 59 128, 55 122 Z" style="${fs('hamstrings')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('hamstrings')}</title></path>
+      <path d="M 89 122 C 94 128, 95 142, 92 155 C 90 161, 78 161, 78 152 C 77 140, 81 128, 85 122 Z" style="${fs('hamstrings')}" stroke="var(--ink-soft)" stroke-width="1"><title>${labelFn('hamstrings')}</title></path>
+      <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+      <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
+    </g>
+  `;
+}
+function renderDayMuscleBoxes(){
+  const weekOffset = state.trainingVolumeWeekOffset||0;
+  const { weekStart, weekEnd } = getCalendarWeekBounds(weekOffset);
+  const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const today = todayStr();
+  const weekLabel = weekOffset===0 ? 'This week' : `${humanDate(weekStart)} – ${humanDate(weekEnd)}`;
+  const boxes = dayLabels.map((lbl,i)=>{
+    const date = addDays(weekStart, i);
+    const { doneMuscles, plannedMuscles } = computeDayMuscleStatus(date);
+    const status = {};
+    MUSCLE_GROUPS.forEach(mg=>{ status[mg] = doneMuscles.has(mg) ? 'done' : (plannedMuscles.has(mg) ? 'planned' : 'none'); });
+    const fs = mg => dayMuscleFillStyle(mg, status);
+    const labelFn = mg => `${MUSCLE_GROUP_LABELS[mg]||mg}${status[mg]==='done'?' — done':status[mg]==='planned'?' — planned':''}`;
+    const hit = MUSCLE_GROUPS.filter(mg=>status[mg]!=='none');
+    const isToday = date===today;
+    return `
+      <div style="text-align:center; flex-shrink:0;">
+        <div style="font-size:11px; font-weight:600; ${isToday?'color:var(--brass);':''}">${lbl}${isToday?' •':''}</div>
+        <div class="page-sub" style="font-size:9.5px; margin-bottom:2px;">${date.slice(5)}</div>
+        <svg viewBox="0 0 300 215" width="98" xmlns="http://www.w3.org/2000/svg">${bodyFigureMiniSVG(fs, labelFn)}</svg>
+        <div class="page-sub" style="font-size:9px; min-height:11px;">${hit.length ? '' : 'Nothing'}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head">
+        <h2>Muscles by Day</h2>
+        <span style="display:flex; align-items:center; gap:6px;">
+          <button class="icon-btn" title="Previous week" onclick="setTrainingVolumeWeekOffset(-1)">‹</button>
+          <span class="page-sub" style="font-size:11.5px; min-width:110px; text-align:center;">${weekLabel}</span>
+          <button class="icon-btn" title="Next week" onclick="setTrainingVolumeWeekOffset(1)">›</button>
+        </span>
+      </div>
+      <div style="display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;">${boxes}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--ink-soft);">
+        <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#E9B84A;display:inline-block;"></span>Planned</span>
+        <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--teal);display:inline-block;"></span>Done</span>
+      </div>
+    </div>
+  `;
 }
 function renderWeeklyVolumePanel(){
   const weekOffset = state.trainingVolumeWeekOffset||0;
@@ -11794,6 +11927,7 @@ function renderTrainingExercisesSubpage(){
               ${exerciseIsUnused(ex) ? `<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--flag,#D95B5B) 12%,var(--paper)); border:1px solid var(--flag,#D95B5B); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--flag,#D95B5B);" title="Not in any upcoming plan and never logged — a candidate to remove or start using">Unused</span>` : ''}
               ${(ex.tagIds||[]).map(tid=>{ const t = tags.find(x=>x.id===tid); return t ? `<span class="page-sub" style="font-size:10px; background:var(--paper-dim); border-radius:4px; padding:1px 6px; margin-left:4px;">${escapeHtml(t.name)}</span>` : ''; }).join('')}
             </span>
+            <button class="icon-btn" title="View history" onclick="event.stopPropagation(); openExerciseLibraryHistoryModal('${ex.id}')">🕘</button>
             <button class="icon-btn" title="Delete" onclick="event.stopPropagation(); deleteTrainingExercise('${ex.id}')">✕</button>
           </div>
         `).join('') : `<div class="page-sub" style="padding:10px 0;">${tagFilter==='all' ? 'No exercises yet — add one with "+ Add Exercise", or import a plan.' : 'No exercises with this tag.'}</div>`}
@@ -12604,10 +12738,14 @@ The JSON must follow this exact schema (the same format the app already accepts 
   ],
   "calendar": [
     { "date": "YYYY-MM-DD", "sessionId": "..." }
+  ],
+  "exerciseSuggestions": [
+    { "exerciseId": "...", "suggestedWeightKg": 40, "reps": "8-12" }
   ]
 }
 \`\`\`
 "exercises" is always an empty array in what you send me — see the rule below, this isn't a placeholder to fill in.
+"exerciseSuggestions" is a fallback, not part of the plan itself — the app already computes a live suggested weight for any exercise with real logged history, and only falls back to this list for an exercise with NO logged history yet (freshly added, or one I might swap into a day later that isn't in this plan at all). Give your best-estimate starting weight and rep range for every exercise in my library above, even ones that aren't part of this plan, based on my overall data — so I always have something to start from instead of a blank field, the moment I stage or swap in that exercise.
 
 RULES for the plan:
 - Every exerciseId in every block must be one that already exists in my library above. Never invent a new exercise, never put anything in the top-level "exercises" array — leave it empty every time, even if you think a new movement would help (see item 5 above for how to raise that instead). If nothing in my library fits what a muscle group actually needs, pick the closest existing match rather than inventing something new.
@@ -12617,6 +12755,7 @@ RULES for the plan:
 - Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
 - Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
 - Order each session's exercises so the same muscle group doesn't get worked in two back-to-back blocks where avoidable — e.g. don't put two chest-primary exercises next to each other; alternate muscle groups through the session so consecutive exercises give each area a moment to recover before it's hit again.
+- Don't schedule the same PRIMARY muscle group as a direct target on two consecutive TRAINING days (a rest day in between resets this — it only applies to actual back-to-back training days). This is for recovery, not just within-session variety. Exception: if a priority muscle group above genuinely cannot get its extra frequency without landing on consecutive training days, it's fine to do so — but say so explicitly in your performance summary (item 1) so I know it was a deliberate trade-off, not an oversight. Secondary-muscle overlap between consecutive days is fine and expected; this rule is primary-only.
 - All suggested weights must be achievable on my actual equipment: 5kg main increments plus a 2.5kg toggle, so every suggested weight must land on a 2.5kg step (5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5...) — never something like 9kg or 16kg that isn't actually settable on the machine.
 - One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") AND include the actual calendar date it's for, including the year, directly in the "name" itself (e.g. "Push Focus — Sep 17, 2026", "Legs — Sep 22, 2026"), not just a descriptive label like "Push Focus Alpha" and not a date missing the year — "Sep 17" alone collides with "Sep 17" a year later just as easily as two descriptive labels would. A descriptive-only name can still collide with something named in a completely separate review pack weeks or months from now — you have no memory of what you called things last time, and neither does the app checking for a match, so the full date is what actually guarantees it never repeats. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
 - Output the import JSON in a single code block. Nothing else in that code block — no comments inside the JSON, valid JSON only.`;
@@ -12689,7 +12828,13 @@ function stripJsonComments(text){
    only fall to asking when neither resolves cleanly — either no match, or
    more than one existing entry shares that name. */
 function buildImportResolution(data){
-  const res = { exercises: [], sessions: [], calendar: Array.isArray(data.calendar)?data.calendar:[], skipped: 0 };
+  const res = { exercises: [], sessions: [], calendar: Array.isArray(data.calendar)?data.calendar:[], skipped: 0,
+    // Item 3 (v4.58.0): per-exercise fallback suggestions from the review
+    // pack — see recomputeBlockPlanForSwap. Only kept when both an
+    // exerciseId and a weight are actually present; a malformed entry is
+    // just dropped rather than blocking the rest of the import.
+    exerciseSuggestions: (Array.isArray(data.exerciseSuggestions) ? data.exerciseSuggestions : [])
+      .filter(s=> s && s.exerciseId && s.suggestedWeightKg!=null) };
 
   (Array.isArray(data.exercises)?data.exercises:[]).forEach(ex=>{
     if(!ex || !ex.name){ res.skipped++; return; }
@@ -12826,6 +12971,7 @@ function submitTrainingImportReview(){
   const overlay = document.getElementById('importReviewOverlay');
   if(overlay) overlay.remove();
   pendingImportResolution = null;
+  if(!confirmConsecutiveMuscleWarnings(res)) return;
   applyTrainingImportResolution(res);
 }
 
@@ -12860,6 +13006,51 @@ function reorderBlocksToAvoidBackToBackMuscle(blocks){
     last = chosen;
   }
   return ordered.map(x=>x.block);
+}
+/* Item 6 (v4.58.0): app-side check on top of the new prompt rule — flags,
+   but never blocks, the same primary muscle landing on two consecutive
+   TRAINING days within the plan being imported. Only checks dates present
+   in this import (not the whole calendar) — that's the plan actually being
+   reviewed. A rest day (no calendar entry, or a session with no blocks) in
+   between naturally breaks the "consecutive" chain since it falls out of
+   the date-adjacency check below, no special-casing needed. Deliberately
+   an alarm, not a hard stop — a priority muscle needing extra frequency is
+   a legitimate reason to do this on purpose (see the prompt rule), so the
+   confirm dialog this feeds just needs an "I know, continue" option. */
+function computeConsecutiveMuscleWarnings(res){
+  const sessionByImportedId = {};
+  res.sessions.forEach(item=>{ sessionByImportedId[item.importedId] = item; });
+  const dayMuscles = {};
+  (res.calendar||[]).forEach(c=>{
+    if(!c || !c.date || !c.sessionId) return;
+    const sessItem = sessionByImportedId[c.sessionId];
+    const blocks = sessItem ? (sessItem.fields.blocks||[]) : [];
+    const muscles = new Set();
+    blocks.forEach(b=>{
+      if(!b || !b.exerciseId) return;
+      const ex = getTrainingExerciseById(b.exerciseId);
+      exMuscleGroups(ex,'primary').forEach(mg=>muscles.add(mg));
+    });
+    dayMuscles[c.date] = muscles;
+  });
+  const dates = Object.keys(dayMuscles).sort();
+  const warnings = [];
+  for(let i=0;i<dates.length-1;i++){
+    const d1=dates[i], d2=dates[i+1];
+    if(addDays(d1,1)!==d2) continue; // a gap of more than a day — not actually back-to-back
+    dayMuscles[d1].forEach(mg=>{ if(dayMuscles[d2].has(mg)) warnings.push({ date1:d1, date2:d2, muscle:mg }); });
+  }
+  return warnings;
+}
+/* Shows the item-6 alarm if there's anything to flag; returns true if it's
+   safe to proceed with the import (nothing to flag, or the person chose to
+   continue anyway), false if they backed out. */
+function confirmConsecutiveMuscleWarnings(res){
+  const warnings = computeConsecutiveMuscleWarnings(res);
+  if(!warnings.length) return true;
+  const lines = warnings.slice(0,8).map(w=>`• ${MUSCLE_GROUP_LABELS[w.muscle]||w.muscle}: ${humanDate(w.date1)} → ${humanDate(w.date2)}`).join('\n');
+  const more = warnings.length>8 ? `\n…and ${warnings.length-8} more` : '';
+  return confirm(`⚠ Same primary muscle scheduled on back-to-back training days:\n${lines}${more}\n\nThis can be intentional for a priority muscle that needs extra frequency. Import anyway?`);
 }
 function applyTrainingImportResolution(res){
   const exIdMap = {}; // importedId -> resolved id actually used in state
@@ -12940,6 +13131,24 @@ function applyTrainingImportResolution(res){
   });
   if(clearedPendingCount || clearedSetsCount) flushTrainingDrafts();
 
+  // Item 3 (v4.58.0): stash the AI's per-exercise fallback suggestions,
+  // resolved through the same exIdMap as everything else above (an
+  // exerciseId in this list may point at an imported exercise that got
+  // mapped onto a different existing id). Never overwrites a real,
+  // history-based suggestion — recomputeBlockPlanForSwap only reads this
+  // when there's no logged history at all for that exercise.
+  if(res.exerciseSuggestions && res.exerciseSuggestions.length){
+    if(!state.settings.exerciseSuggestions) state.settings.exerciseSuggestions = {};
+    res.exerciseSuggestions.forEach(s=>{
+      const resolvedId = exIdMap[s.exerciseId] || s.exerciseId;
+      state.settings.exerciseSuggestions[resolvedId] = {
+        weightKg: Number(s.suggestedWeightKg), reps: s.reps || '8-12',
+        basis: 'ai-review-pack', updatedAt: new Date().toISOString(),
+      };
+    });
+    saveSettings();
+  }
+
   saveTraining();
   diagLogEvent('activity', 'Imported training plan', {
     newEx:newExCount, updEx:updExCount, newSess:newSessCount, updSess:updSessCount, newCal:newCalCount, updCal:updCalCount, clearedPending:clearedPendingCount, clearedSets:clearedSetsCount,
@@ -12977,6 +13186,7 @@ function processTrainingImportText(text){
     `Calendar days: ${res.calendar.length}` +
     (res.skipped ? `\nSkipped (missing required fields): ${res.skipped}` : '');
   if(!confirm(`Import this training plan?\n\n${summary}\n\nApply these changes?`)) return;
+  if(!confirmConsecutiveMuscleWarnings(res)) return;
 
   applyTrainingImportResolution(res);
 }
@@ -13169,7 +13379,7 @@ let trainingSessionDraft = null; // {id, isNew, name, type, format, blocks:[{exe
 function openTrainingSessionBuilder(existingId){
   const existing = existingId ? getTrainingSessionById(existingId) : null;
   trainingSessionDraft = existing
-    ? { id: existing.id, isNew:false, name: existing.name, type: existing.type||'strength', format: existing.format||'', blocks: (existing.blocks||[]).map(b=>Object.assign({},b)) }
+    ? { id: existing.id, isNew:false, name: existing.name, type: existing.type||'strength', format: existing.format||'', blocks: (existing.blocks||[]).map(b=>Object.assign({}, b, { _origExerciseId: b.exerciseId })) }
     : { id: newId('sess'), isNew:true, name:'', type:'strength', format:'', blocks:[] };
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -13263,7 +13473,7 @@ function setSessionDraftType(t){
 }
 function addSessionDraftBlock(){
   syncSessionDraftFromDom();
-  trainingSessionDraft.blocks.push({ exerciseId:'', reps:'', sets:null, notes:'' });
+  trainingSessionDraft.blocks.push({ exerciseId:'', reps:'', sets:null, notes:'', _origExerciseId:'' });
   renderSessionBuilderModalBody();
 }
 function removeSessionDraftBlock(idx){
@@ -13299,6 +13509,46 @@ function selectExercisePickerResultFromEl(el){
   if(valueEl) valueEl.value = exId;
   hideExercisePickerResults(idx);
 }
+/* Item 3 (v4.58.0): when a block's exerciseId is changed to something
+   different from what it was when the draft opened — a real swap, or a
+   brand-new block just picked for the first time — its reps/sets/suggested-
+   weight are recomputed from scratch for the NEWLY selected exercise rather
+   than keeping whatever the old exercise's block happened to have. Only
+   called for blocks that actually changed (see saveSessionDraft below), so
+   a block you didn't touch keeps whatever you typed by hand.
+   Preference order, per Muhannad's call:
+   1. The app's own live double-progression suggestion, computed from that
+      exercise's actual last logged session (same algorithm already used
+      for the next occurrence of a scheduled exercise) — always wins once
+      real history exists, since it reflects reality better than anything
+      written weeks ago in a review pack.
+   2. Falling back to the per-exercise suggestion the AI review pack wrote
+      into state.settings.exerciseSuggestions (see copyTrainingReviewPack /
+      applyTrainingImportResolution) — only used when there's truly no
+      logged history yet for this exercise (brand new, or just never
+      trained), so a swap is never left with a completely blank plan.
+   3. If neither exists, leave the weight suggestion blank — nothing to
+      compute from, and inventing a number would be worse than an honest
+      "type it in yourself the first time." */
+function recomputeBlockPlanForSwap(block){
+  const exId = block.exerciseId;
+  if(!exId) return;
+  const lastSets = getLastSetsForExercise(exId, null).filter(s=>!s.isWarmup);
+  let weightKg = null, repsTarget = null;
+  if(lastSets.length){
+    const baseWeight = lastSets[0].weightKg;
+    const prog = doubleProgressionSuggestion(exId, { repsMin:8, repsMax:12, weightKg:baseWeight }, lastSets);
+    if(prog){ weightKg = prog.newWeightKg; repsTarget = prog.repsTarget; }
+    else if(baseWeight!=null){ weightKg = baseWeight; repsTarget = 8; }
+  }
+  if(weightKg==null){
+    const fallback = (state.settings.exerciseSuggestions||{})[exId];
+    if(fallback && fallback.weightKg!=null){ weightKg = fallback.weightKg; repsTarget = parseInt(String(fallback.reps||'8').split('-')[0])||8; }
+  }
+  block.reps = weightKg!=null ? `${repsTarget||8}-12` : '';
+  block.notes = weightKg!=null ? `suggested starting weight: ${weightKg}kg` : '';
+  if(!block.sets) block.sets = 3;
+}
 async function saveSessionDraft(){
   syncSessionDraftFromDom();
   const d = trainingSessionDraft;
@@ -13307,6 +13557,9 @@ async function saveSessionDraft(){
   d.name = name;
   const incomplete = d.blocks.filter(b=> !b.exerciseId);
   if(incomplete.length && !confirm(`${incomplete.length} exercise row(s) don't have an exercise selected and will be dropped. Continue?`)) return;
+  d.blocks.forEach(b=>{
+    if(b.exerciseId && b.exerciseId !== b._origExerciseId) recomputeBlockPlanForSwap(b);
+  });
   const cleanBlocks = d.blocks.filter(b=> b.exerciseId).map(b=> ({ exerciseId:b.exerciseId, reps:b.reps||'', sets:b.sets||null, notes:b.notes||'' }));
 
   const existing = state.training.sessions.find(s=>s.id===d.id);
@@ -13646,6 +13899,62 @@ async function submitAddExercise(){
     renderMain();
     showToast('Exercise added to library');
   }
+}
+/* Item 4 (v4.58.0): per-exercise history modal from the Exercise Library.
+   All the underlying data already existed (training_sets, epley1RM /
+   bestE1RMForExercise from the review-pack work) — this just surfaces it.
+   Paginated 10 sessions at a time per Muhannad's answer, with a heaviest-
+   set + best-e1RM summary line at the top. */
+let _exerciseHistoryState = null;
+function openExerciseLibraryHistoryModal(exId){
+  _exerciseHistoryState = { exId, shown:10 };
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'exerciseHistoryOverlay';
+  overlay.onclick = (e)=>{ if(e.target===overlay){ overlay.remove(); _exerciseHistoryState=null; } };
+  document.body.appendChild(overlay);
+  renderExerciseHistoryModalBody();
+}
+function loadMoreExerciseHistory(){
+  if(!_exerciseHistoryState) return;
+  _exerciseHistoryState.shown += 10;
+  renderExerciseHistoryModalBody();
+}
+function renderExerciseHistoryModalBody(){
+  const overlay = document.getElementById('exerciseHistoryOverlay');
+  const st = _exerciseHistoryState;
+  if(!overlay || !st) return;
+  const ex = getTrainingExerciseById(st.exId);
+  const allDates = [...new Set((state.training.sets||[]).filter(s=>s.exerciseId===st.exId).map(s=>s.date))].sort((a,b)=>a<b?1:-1);
+  const shownDates = allDates.slice(0, st.shown);
+  const bestE1RM = bestE1RMForExercise(st.exId, null);
+  const workingSets = (state.training.sets||[]).filter(s=>s.exerciseId===st.exId && s.done && !s.isWarmup && s.weightKg);
+  const maxWeight = workingSets.length ? Math.max(...workingSets.map(s=>s.weightKg)) : null;
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:560px; max-height:85vh; overflow-y:auto;">
+      <h3>${escapeHtml(ex?ex.name:'Exercise')} — History</h3>
+      ${(bestE1RM||maxWeight) ? `
+        <div style="display:flex; gap:18px; margin:8px 0 14px; padding:10px 12px; background:var(--paper-dim); border-radius:8px;">
+          ${maxWeight ? `<div><div class="page-sub" style="font-size:10.5px;">Heaviest set</div><div style="font-size:16px; font-weight:700;">${maxWeight} kg</div></div>` : ''}
+          ${bestE1RM ? `<div><div class="page-sub" style="font-size:10.5px;">Best e1RM</div><div style="font-size:16px; font-weight:700;">${Math.round(bestE1RM*10)/10} kg</div></div>` : ''}
+        </div>
+      ` : ''}
+      ${allDates.length ? shownDates.map(date=>{
+        const sets = getSetsForExercise(date, st.exId);
+        return `
+          <div style="padding:8px 0; border-bottom:1px solid var(--line);">
+            <div style="font-size:12.5px; font-weight:600; margin-bottom:4px;">${humanDateNoRelative(date)}</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              ${sets.map(s=>`<span class="page-sub" style="font-size:11.5px; background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:2px 7px;">${s.isWarmup?'W ':''}${s.reps||'—'}×${s.weightKg!=null?s.weightKg:'—'}kg${s.toFailure?' · F':''}${s.rir!=null?` · RIR${s.rir}`:''}</span>`).join('')}
+            </div>
+          </div>`;
+      }).join('') : `<div class="page-sub" style="padding:10px 0;">No logged sets for this exercise yet.</div>`}
+      ${allDates.length > shownDates.length ? `<button class="btn secondary sm" style="margin-top:10px;" onclick="loadMoreExerciseHistory()">Load more (${allDates.length - shownDates.length} more session${allDates.length-shownDates.length===1?'':'s'})</button>` : ''}
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="document.getElementById('exerciseHistoryOverlay').remove(); _exerciseHistoryState=null;">Close</button>
+      </div>
+    </div>
+  `;
 }
 function openEditExerciseModal(id){
   const ex = state.training.exercises.find(e=>e.id===id);
@@ -14355,6 +14664,12 @@ create table if not exists training_sets (
 -- v4.40.0: Progression suggestions stored in app_settings so they sync
 -- across devices and are available for the AI review loop.
 alter table app_settings add column if not exists training_suggestions jsonb default '{}';
+
+-- v4.58.0: per-exercise fallback suggestions (weight/reps) from the AI
+-- review pack, keyed by exerciseId — used only when an exercise has no
+-- logged history yet, so a swapped-in exercise always has something to
+-- start from. See recomputeBlockPlanForSwap / applyTrainingImportResolution.
+alter table app_settings add column if not exists exercise_suggestions jsonb default null;
 
 do $$
 declare t text;
