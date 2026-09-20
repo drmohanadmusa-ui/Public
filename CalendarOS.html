@@ -2205,7 +2205,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.59.0';
+const APP_VERSION = '4.59.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2213,6 +2213,9 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.59.1', changes: [
+    'Fixed a real bug from v4.59.0: the rest_timer_sound_muted column migration was described in that version\'s changelog entry but never actually added to the real Copy SQL block, so "Copy SQL" never actually contained it — no amount of copying and running it would have added the column, hence the sync error ("PGRST204 — Could not find the rest_timer_sound_muted column"). The line is now actually in the SQL block. If you already added the column by hand while tracking this down, re-running Copy SQL is harmless (IF NOT EXISTS) — this is only for anyone setting up fresh or who hasn\'t fixed it manually yet.',
+  ]},
   { v:'4.59.0', changes: [
     'SQL migration needed \u2014 one new column: alter table app_settings add column if not exists rest_timer_sound_muted boolean default false; (Settings \u2192 Cloud Sync \u2192 Copy SQL, safe to re-run in full).',
     'Fixed a real bug (item 2): importing a plan could silently overwrite an exercise\u2019s manually-written Notes with whatever the AI happened to send, if its "exercises" array ever included an entry matching something already in the library (supposed to always be empty, but nothing enforced that). That\u2019s where a "20kg produced 15,15,23 reps\u2026" note nobody typed came from. Notes can no longer be touched by import at all; also removed the Notes line from the Today\u2019s Training card entirely, so nothing but the live Target box shows a suggested weight there.',
@@ -14893,6 +14896,15 @@ alter table app_settings add column if not exists training_suggestions jsonb def
 -- logged history yet, so a swapped-in exercise always has something to
 -- start from. See recomputeBlockPlanForSwap / applyTrainingImportResolution.
 alter table app_settings add column if not exists exercise_suggestions jsonb default null;
+
+-- v4.59.0: mute toggle for the rest-timer chimes (item 8). NOTE: this line
+-- was accidentally left out of this block when v4.59.0 shipped — it was
+-- only mentioned in the changelog text, never actually added here, so
+-- "Copy SQL" never actually contained it no matter how many times it was
+-- copied and run. Fixed in v4.59.1; if you already added this column by
+-- hand while tracking that down, this line is a no-op for you (IF NOT
+-- EXISTS), but it's here now so a fresh setup gets it correctly.
+alter table app_settings add column if not exists rest_timer_sound_muted boolean default false;
 
 do $$
 declare t text;
