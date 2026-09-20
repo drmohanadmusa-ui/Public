@@ -829,6 +829,23 @@ select.filter-select, input.filter-date{
   .week-grid{grid-template-columns:1fr;}
 }
 
+/* Muscles by Day (v4.58.0 panel) — a row of 7 mini body figures is wider
+   than a phone screen. It had overflow-x:auto with no visible scroll
+   affordance, so on mobile most days just looked missing (item 1,
+   2026-09-20 batch). Wrapping onto multiple rows below a breakpoint,
+   plus shrinking the figures a bit further under that, guarantees every
+   day is actually visible without relying on a hidden scroll gesture. */
+.muscle-day-row{display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;}
+.muscle-day-box{text-align:center; flex-shrink:0;}
+.muscle-day-svg{width:98px; height:auto; display:block; margin:0 auto;}
+@media (max-width: 700px){
+  .muscle-day-row{flex-wrap:wrap; overflow-x:visible; justify-content:center; row-gap:10px;}
+  .muscle-day-svg{width:72px;}
+}
+@media (max-width: 380px){
+  .muscle-day-svg{width:58px;}
+}
+
 .recipe-grid{
   display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:14px;
 }
@@ -2188,7 +2205,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.58.0';
+const APP_VERSION = '4.59.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2196,6 +2213,20 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.59.0', changes: [
+    'SQL migration needed \u2014 one new column: alter table app_settings add column if not exists rest_timer_sound_muted boolean default false; (Settings \u2192 Cloud Sync \u2192 Copy SQL, safe to re-run in full).',
+    'Fixed a real bug (item 2): importing a plan could silently overwrite an exercise\u2019s manually-written Notes with whatever the AI happened to send, if its "exercises" array ever included an entry matching something already in the library (supposed to always be empty, but nothing enforced that). That\u2019s where a "20kg produced 15,15,23 reps\u2026" note nobody typed came from. Notes can no longer be touched by import at all; also removed the Notes line from the Today\u2019s Training card entirely, so nothing but the live Target box shows a suggested weight there.',
+    'Fixed a real bug (items 5 & 7): the original \u21ba History button read from a secondary table that only rebuilds itself for a date you actually open \u2014 real logged history could permanently fail to show if that rebuild never ran. Now reads straight from the same authoritative set data the newer Exercise Library history modal already used.',
+    'Fixed mobile sizing on the Muscles by Day panel (item 1) \u2014 it now wraps onto multiple rows on narrow screens instead of silently overflowing with no visible way to scroll.',
+    'Per-exercise Weight Increment (item 3): 2.5 / 5 / 10 / 20kg, set per exercise (Edit Exercise) \u2014 defaults to 2.5kg so nothing already in use changes. Threaded through the double-progression suggestion, the swap-recompute logic, warm-up weight rounding, and what the Review Pack tells the AI per exercise. Also fixed a leftover hardcoded "must land on a 2.5kg step" rule in the Review Pack prompt that would have silently contradicted this.',
+    'Removed the Lift Type picker entirely (item 4) \u2014 Rest Between Sets is now the only per-exercise rest control, and the fallback default (when nothing custom is set) is a flat 60s instead of guessing 90/60 from compound vs. isolation. Existing exercises keep whatever Lift Type they already had stored, unused, same non-destructive pattern as previous field retirements \u2014 it still quietly backs failure-day test eligibility, which is a separate concern from the rest timer.',
+    'Rest timer chimes (item 8): a tick each of the last 5 seconds, a distinct chime when it hits zero, generated with WebAudio (no file to embed). New mute toggle next to the other training toggles.',
+    'Swap Days (item 9): new action in Calendar View \u2014 pick any two dates and swap which plan is assigned to each. Only the plan assignment moves; anything already logged stays on the date it was actually logged on. Warns (doesn\u2019t block) if either day already has logged sets.',
+    '10-set weekly floor (item 10): Review Pack now tells the AI every muscle group must hit at least the Weekly Volume Band\u2019s minimum (currently 10, but this now follows the live setting rather than a hardcoded number \u2014 also fixed a second spot in the prompt that still said "10\u201320" verbatim regardless of the actual band).',
+    'Exercise Library history modal (item 11) now separates \ud83d\udcc5 Planned (staged, not yet logged) from History (actually done), instead of listing every date under one heading.',
+    'Cross-device sync fix: exercise_suggestions (added last version) was being pushed to Supabase but never pulled back down on sync \u2014 a suggestion saved on one device never reached another. Fixed.',
+    'Added four reference documents (equipment/muscle map template, how CalendarOS\u2019s training system actually works, general strength-training best practices, and a ready-to-paste project setup prompt) meant to be attached as standing knowledge wherever a training review gets done, so the in-app Review Pack prompt doesn\u2019t have to re-explain the same background every time. A follow-up note is left in the prompt-building code itself: once these are consistently in use, that prompt can likely be trimmed down \u2014 not done yet, flagged for later.',
+  ]},
   { v:'4.58.0', changes: [
     'SQL migration needed \u2014 one new column: alter table app_settings add column if not exists exercise_suggestions jsonb default null; (Settings \u2192 Cloud Sync \u2192 Copy SQL is safe to re-run in full, it\u2019s additive/idempotent).',
     'Swapping an exercise in a session (session builder, or the \u21c4 button on the muscle drill-down) now recomputes that exercise\u2019s suggested weight, reps and set count from scratch instead of carrying over the exercise it replaced. Preference order: your own logged history for the newly picked exercise (same double-progression logic already used for scheduled exercises), falling back to a per-exercise starting-point number from the AI review pack ONLY when there\u2019s no logged history yet, falling back to blank (type it in yourself the first time) if neither exists.',
@@ -4409,7 +4440,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -4725,6 +4756,20 @@ async function pullFromSupabase(onProgress){
       }
       if(typeof settingsRows[0].include_secondary_muscles === 'boolean'){
         state.settings.includeSecondaryMuscles = settingsRows[0].include_secondary_muscles;
+      }
+      // v4.59.0 fix: this was added to the push side in v4.58.0 but the pull
+      // side was missed, so a suggestion written on one device never
+      // actually reached another. Merged per-exercise like
+      // training_suggestions above — different devices may have filled in
+      // different exercises' fallback numbers, so a straight overwrite
+      // could silently drop ones only known locally.
+      if(settingsRows[0].exercise_suggestions && typeof settingsRows[0].exercise_suggestions==='object'){
+        state.settings.exerciseSuggestions = Object.assign(
+          state.settings.exerciseSuggestions||{}, settingsRows[0].exercise_suggestions
+        );
+      }
+      if(typeof settingsRows[0].rest_timer_sound_muted === 'boolean'){
+        state.settings.restTimerSoundMuted = settingsRows[0].rest_timer_sound_muted;
       }
       // Whichever device confirmed a later day wins — this is what makes
       // "start a new day on one device" actually show up on the others,
@@ -5312,7 +5357,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted }], 'pin'),
     ]);
   }
 }
@@ -9159,12 +9204,13 @@ function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
   if(!lastSets || !lastSets.length) return null;
   if(!sessionTarget || !sessionTarget.repsMin || !sessionTarget.repsMax) return null;
   const { repsMin, repsMax, weightKg } = sessionTarget;
+  const increment = getExerciseWeightIncrement(exId);
   const working = lastSets.filter(s=> !s.isWarmup && !s.toFailure);
   if(!working.length) return null;
   const allAtTop = working.every(s=> s.reps >= repsMax && (s.rir==null||s.rir<=2));
   const anyBelowBottom = working.some(s=> s.reps < repsMin);
-  if(allAtTop) return { type:'addWeight', newWeightKg:(weightKg||lastSets[0].weightKg||0)+2.5,
-    repsTarget:repsMin, message:`All sets hit ${repsMax} reps at RIR≤2 — try +2.5 kg, drop back to ${repsMin}` };
+  if(allAtTop) return { type:'addWeight', newWeightKg:(weightKg||lastSets[0].weightKg||0)+increment,
+    repsTarget:repsMin, message:`All sets hit ${repsMax} reps at RIR≤2 — try +${increment} kg, drop back to ${repsMin}` };
   if(anyBelowBottom) return { type:'hold', newWeightKg:lastSets[0].weightKg,
     repsTarget:repsMin, message:`Hold the weight — didn't reach ${repsMin} reps on all sets` };
   const nextReps=Math.max(...working.map(s=>s.reps||0))+1;
@@ -9198,11 +9244,47 @@ function bestE1RMForExercise(exId, excludeDate){
   return best;
 }
 
-let _restTimerHandle=null,_restTimerEnd=null,_restTimerExId=null,_restTimerDefaultSec=120;
+let _restTimerHandle=null,_restTimerEnd=null,_restTimerExId=null,_restTimerDefaultSec=120,_restTimerLastTickSec=null;
+/* v4.59.0: rest timer chimes (item 8) — a short tick each of the last 5
+   seconds, then a distinct two-tone chime at zero. Generated with the
+   WebAudio oscillator rather than an audio file, so the page stays fully
+   self-contained (no asset to embed or fetch). Muted via
+   state.settings.restTimerSoundMuted (default off — sound plays unless
+   turned off). One shared AudioContext, created lazily on first use since
+   browsers block audio until a user gesture, which a "mark set done" tap
+   always is. */
+let _restAudioCtx = null;
+function _getRestAudioCtx(){
+  if(state.settings.restTimerSoundMuted) return null;
+  if(!_restAudioCtx){
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if(!Ctx) return null;
+    _restAudioCtx = new Ctx();
+  }
+  if(_restAudioCtx.state === 'suspended') _restAudioCtx.resume();
+  return _restAudioCtx;
+}
+function _playTone(freq, durationMs, when, gain){
+  const ctx = _getRestAudioCtx();
+  if(!ctx) return;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  const startAt = ctx.currentTime + (when||0);
+  g.gain.setValueAtTime(0, startAt);
+  g.gain.linearRampToValueAtTime(gain||0.15, startAt+0.01);
+  g.gain.linearRampToValueAtTime(0, startAt+durationMs/1000);
+  osc.connect(g); g.connect(ctx.destination);
+  osc.start(startAt); osc.stop(startAt+durationMs/1000+0.02);
+}
+function playRestTimerTick(){ _playTone(880, 90, 0, 0.12); }
+function playRestTimerDone(){ _playTone(660, 140, 0, 0.16); _playTone(990, 220, 0.15, 0.18); }
 function startRestTimer(seconds,exId){
   if(_restTimerHandle) clearInterval(_restTimerHandle);
   if(_tipRotationHandle) clearInterval(_tipRotationHandle);
   _restTimerEnd=Date.now()+seconds*1000;_restTimerExId=exId;_restTimerDefaultSec=seconds;
+  _restTimerLastTickSec = null; // item 8: so the countdown chimes fire fresh for this timer
   _rotateTip(); // picks the first tip from the shuffle bag rather than always starting at the same one
   _updateRestTimerUI();
   _restTimerHandle=setInterval(_updateRestTimerUI,1000);
@@ -9337,7 +9419,11 @@ function _updateRestTimerUI(){
   const remaining=Math.max(0,Math.round((_restTimerEnd-Date.now())/1000));
   const el=document.getElementById('restTimerDisplay');
   if(!el){if(_restTimerHandle){clearInterval(_restTimerHandle);_restTimerHandle=null;}return;}
-  if(remaining<=0){clearInterval(_restTimerHandle);_restTimerHandle=null;el.innerHTML=_restTimerDoneHtml();return;}
+  if(remaining<=0){
+    if(_restTimerLastTickSec!==0){ playRestTimerDone(); _restTimerLastTickSec=0; }
+    clearInterval(_restTimerHandle);_restTimerHandle=null;el.innerHTML=_restTimerDoneHtml();return;
+  }
+  if(remaining<=5 && remaining!==_restTimerLastTickSec){ playRestTimerTick(); _restTimerLastTickSec=remaining; }
   const m=Math.floor(remaining/60),s=remaining%60;
   // Only re-render the timer structure on the first call; after that only update the count.
   // This prevents the tip re-rendering (and flickering) every second.
@@ -9490,25 +9576,34 @@ function exMuscleGroupCredits(ex){
   return credits;
 }
 function defaultRestSec(ex){
-  // Lowered in v4.44.0: 120/90 felt too long in practice. 90s (compound) /
-  // 60s (isolation) still allows partial recovery between heavy sets while
-  // keeping session length down; a custom restSec on the exercise itself
-  // always overrides this.
-  // v4.45.0: the muscle-group guess below is wrong for things like a chest
-  // FLY — muscleGroup 'chest' reads as compound even though a fly is
-  // isolation. ex.liftType, when set explicitly on the exercise, now takes
-  // priority over the guess; the guess remains the fallback for exercises
-  // that haven't been given an explicit lift type.
-  // v4.47.0: an exercise can now target several muscle groups — compound
-  // if ANY of them is one of the usual compound groups, matching the
-  // intuition that a multi-joint movement stays a multi-joint movement
-  // regardless of which of its targets you're thinking about it in terms of.
-  if(!ex) return 90;
+  // v4.59.0: Lift Type picker removed entirely (Muhannad's call — one rest
+  // field is simpler than a picker plus a guess-from-muscle-group that was
+  // often wrong anyway, e.g. a fly reading as compound). A custom restSec
+  // on the exercise still always overrides this; with nothing custom set,
+  // it's just a flat 60s now, full stop. Existing exercises that still have
+  // an old ex.liftType value keep it in storage (unused here) rather than
+  // being stripped, same non-destructive-removal pattern as Neck/Calves/
+  // Forearms before this — see isIsolationExercise below, which still reads
+  // it for failure-day eligibility, a genuinely separate concern from the
+  // rest timer.
+  if(!ex) return 60;
   if(ex.restSec) return Number(ex.restSec);
-  if(ex.liftType === 'compound') return 90;
-  if(ex.liftType === 'isolation') return 60;
+  return 60;
+}
+/* Failure-day eligibility only (see pickFailureExerciseForDay) — kept
+   separate from defaultRestSec above since that's now flat-60 with no
+   guessing at all, but "is this an isolation movement" is still a
+   meaningful, separate question for whether a failure test makes sense on
+   it. Legacy ex.liftType (from before the picker was removed) still wins
+   when present; anything without it falls back to the same muscle-group
+   guess this always used, so an exercise that never touched the old
+   picker behaves exactly as it did before this change. */
+function isIsolationExercise(ex){
+  if(!ex) return false;
+  if(ex.liftType === 'compound') return false;
+  if(ex.liftType === 'isolation') return true;
   const compound=['chest','traps','lats','shoulders','quads','hamstrings','glutes'];
-  return exMuscleGroups(ex).some(mg=>compound.includes(mg)) ? 90 : 60;
+  return !exMuscleGroups(ex).some(mg=>compound.includes(mg));
 }
 function rirColour(rir){
   if(rir===null||rir===undefined) return 'var(--ink-soft)';
@@ -9637,7 +9732,7 @@ function daysSinceLastFailureSet(exId, beforeDate){
 function pickFailureExerciseForDay(date, stagedExerciseIds){
   const candidates = (stagedExerciseIds||[])
     .map(id=>getTrainingExerciseById(id))
-    .filter(ex=> ex && ex.liftType==='isolation')
+    .filter(ex=> ex && isIsolationExercise(ex))
     .filter(ex=> countLoggedSessionsForExercise(ex.id, date) >= FAILURE_DAY_MIN_HISTORY_SESSIONS)
     .map(ex=> ({ ex, daysSince: daysSinceLastFailureSet(ex.id, date) }))
     .filter(c=> c.daysSince >= FAILURE_DAY_COOLDOWN_DAYS);
@@ -9721,7 +9816,7 @@ function ensureSetsAutoFilled(date, exerciseIds, session){
     if(suggestedWeightKg!=null){
       upsertTrainingSet({
         date, exerciseId:exId, setNo:setNo++,
-        reps:10, weightKg: roundToEquipmentIncrement(suggestedWeightKg*0.6),
+        reps:10, weightKg: roundToEquipmentIncrement(suggestedWeightKg*0.6, getExerciseWeightIncrement(ex)),
         done:false, rir:null, toFailure:false, isWarmup:true,
         restTakenSec:null, loggedAt:null,
       });
@@ -9747,12 +9842,19 @@ function parseSuggestedWeightKg(blockNotes){
   const m = (blockNotes||'').match(/suggested starting weight:\s*([\d.]+)\s*kg/i);
   return m ? Number(m[1]) : null;
 }
-// Your machines move in 5kg main increments plus a 2.5kg toggle — so any
-// weight actually settable on them is a multiple of 2.5kg. Used for the
-// auto-computed warm-up weight, which is a fraction of a suggested weight
-// and so isn't naturally on that grid without this.
-function roundToEquipmentIncrement(kg){
-  return Math.round(kg/2.5)*2.5;
+// Your machines move in 5kg main increments plus a 2.5kg toggle by default —
+// so any weight actually settable on them is a multiple of 2.5kg. Some
+// equipment (a leg press stack, for instance) only moves in bigger jumps;
+// v4.59.0 makes this a per-exercise choice (Edit Exercise → Weight
+// Increment: 2.5/5/10/20kg, defaulting to 2.5 so nothing already set
+// changes) instead of one fixed number for every exercise.
+function getExerciseWeightIncrement(exId){
+  const ex = typeof exId === 'object' ? exId : getTrainingExerciseById(exId);
+  return (ex && ex.weightIncrementKg) || 2.5;
+}
+function roundToEquipmentIncrement(kg, increment){
+  const inc = increment || 2.5;
+  return Math.round(kg/inc)*inc;
 }
 function getTrainingLogsForDate(date){
   return state.training.logs.filter(l=>l.date===date);
@@ -10246,8 +10348,6 @@ function renderTrainingExerciseLogRow(date, block, index){
         </span>
       </div>
 
-      ${ex && (ex.notes||'').trim() ? `<div class="page-sub" style="margin-top:2px;font-size:11.5px;">${escapeHtml(ex.notes)}</div>` : ''}
-
       ${!isSessionLevel && !isWalking && (state.settings.trainingFailurePlan||{})[date]===block.exerciseId ? `<div class="suggestion-box" style="border-color:var(--flag,#D95B5B);">
         🔥 <b>Failure day:</b> push your <b>last set</b> of this exercise to true failure — isolation movement, established history, ~${FAILURE_DAY_COOLDOWN_DAYS} days since your last one. Log it with the F pill so it's recorded.
       </div>` : ''}
@@ -10570,6 +10670,11 @@ async function toggleIncludeSecondaryMuscles(){
   await saveSettings();
   renderMain();
 }
+async function toggleRestTimerSound(){
+  state.settings.restTimerSoundMuted = !state.settings.restTimerSoundMuted;
+  await saveSettings();
+  renderMain();
+}
 function muscleVolumeColour(sets,band){
   const {min,max}=band||MUSCLE_BAND_DEFAULT;
   if(!sets) return 'var(--paper-dim)';
@@ -10699,10 +10804,10 @@ function renderDayMuscleBoxes(){
     const hit = MUSCLE_GROUPS.filter(mg=>status[mg]!=='none');
     const isToday = date===today;
     return `
-      <div style="text-align:center; flex-shrink:0;">
-        <div style="font-size:11px; font-weight:600; ${isToday?'color:var(--brass);':''}">${lbl}${isToday?' •':''}</div>
+      <div class="muscle-day-box" style="${isToday?'color:var(--brass);':''}">
+        <div style="font-size:11px; font-weight:600;">${lbl}${isToday?' •':''}</div>
         <div class="page-sub" style="font-size:9.5px; margin-bottom:2px;">${date.slice(5)}</div>
-        <svg viewBox="0 0 300 215" width="98" xmlns="http://www.w3.org/2000/svg">${bodyFigureMiniSVG(fs, labelFn)}</svg>
+        <svg class="muscle-day-svg" viewBox="0 0 300 215" xmlns="http://www.w3.org/2000/svg">${bodyFigureMiniSVG(fs, labelFn)}</svg>
         <div class="page-sub" style="font-size:9px; min-height:11px;">${hit.length ? '' : 'Nothing'}</div>
       </div>`;
   }).join('');
@@ -10716,7 +10821,7 @@ function renderDayMuscleBoxes(){
           <button class="icon-btn" title="Next week" onclick="setTrainingVolumeWeekOffset(1)">›</button>
         </span>
       </div>
-      <div style="display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;">${boxes}</div>
+      <div class="muscle-day-row">${boxes}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--ink-soft);">
         <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:#E9B84A;display:inline-block;"></span>Planned</span>
         <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--teal);display:inline-block;"></span>Done</span>
@@ -10829,6 +10934,10 @@ function renderWeeklyVolumePanel(){
         <label style="margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" ${state.settings.includeSecondaryMuscles?'checked':''} onchange="toggleIncludeSecondaryMuscles()">
           <span style="font-size:12px;color:var(--ink-soft);">Count secondary muscles (½ credit each) in the totals below</span>
+        </label>
+        <label style="margin-top:4px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" ${state.settings.restTimerSoundMuted?'':'checked'} onchange="toggleRestTimerSound()">
+          <span style="font-size:12px;color:var(--ink-soft);">Play a chime as the rest timer finishes</span>
         </label>
       </div>
     </div>
@@ -11020,7 +11129,7 @@ function renderTrainingDayCard(date){
           <div style="background:var(--paper-dim); border-radius:8px; padding:10px 12px;">
             <b style="font-size:12px;">Rest Timer</b>
             <div style="font-size:12px; color:var(--slate); margin-top:4px; line-height:1.5;">
-              Starts automatically when you tick a set done. <b>90 s</b> for compound lifts · <b>60 s</b> for isolation (curls, extensions, raises, flies). Based on the exercise's Lift Type if set, otherwise guessed from its muscle group — set Lift Type explicitly on the exercise if the guess is wrong (e.g. a chest fly is isolation, not compound). If your rep count drops sharply between sets, your rest is too short.
+              Starts automatically when you tick a set done. <b>60 s</b> by default, or whatever's set as this exercise's own Rest Between Sets (Edit Exercise). If your rep count drops sharply between sets, your rest is too short — try bumping the per-exercise rest up.
             </div>
           </div>
         </div>
@@ -11529,6 +11638,7 @@ function renderTrainingCalendarSubpage(){
         <h2>${MONTH_NAMES[month]} ${year}</h2>
         <button class="btn secondary sm" onclick="shiftTrainingCalMonth(1)">Next →</button>
         <button class="btn ghost sm" onclick="goToCurrentTrainingCalMonth()">Today</button>
+        <button class="btn ghost sm" onclick="openSwapDaysModal()">🔁 Swap Days</button>
       </div>
       <div class="cal-grid">
         ${DOW_ABBR.map(d=>`<div class="cal-dow">${d}</div>`).join('')}
@@ -11564,6 +11674,57 @@ function goToCurrentTrainingCalMonth(){
 }
 function toggleTrainingCalExpand(date){
   state.trainingCalExpandedDate = state.trainingCalExpandedDate === date ? null : date;
+  renderMain();
+}
+/* Item 9 (v4.59.0): swap which session/plan is assigned to two dates.
+   Deliberately swaps ONLY the calendar->session mapping — never the actual
+   logged sets, which stay attached to whichever date they were really
+   logged on. Two free date fields rather than picking from the visible
+   month grid, so you can swap dates that aren't both on screen at once
+   (e.g. today with next Tuesday). If either day already has logged sets,
+   this warns but doesn't block — same dismissible-alarm pattern as the
+   consecutive-muscle import check, since swapping a day that's already
+   partially done can be exactly what's wanted. */
+function openSwapDaysModal(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'swapDaysOverlay';
+  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px;">
+      <h3>Swap Two Days</h3>
+      <div class="page-sub" style="margin-bottom:12px;">Swaps which plan is assigned to each date. Any sets you've already logged stay on the date you actually logged them — only the assignment moves.</div>
+      <div class="field"><label>First date</label><input type="date" id="swapDayA" value="${todayStr()}"></div>
+      <div class="field"><label>Second date</label><input type="date" id="swapDayB"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="document.getElementById('swapDaysOverlay').remove();">Cancel</button>
+        <button class="btn brass" onclick="submitSwapDays()">Swap</button>
+      </div>
+    </div>
+  `;
+  setTimeout(()=>{ const el=document.getElementById('swapDayB'); if(el) el.focus(); }, 50);
+}
+function submitSwapDays(){
+  const dateA = document.getElementById('swapDayA').value;
+  const dateB = document.getElementById('swapDayB').value;
+  if(!dateA || !dateB){ showToast('Pick both dates'); return; }
+  if(dateA === dateB){ showToast('Pick two different dates'); return; }
+  const hasLoggedA = (state.training.sets||[]).some(s=>s.date===dateA && s.done);
+  const hasLoggedB = (state.training.sets||[]).some(s=>s.date===dateB && s.done);
+  if(hasLoggedA || hasLoggedB){
+    const which = hasLoggedA && hasLoggedB ? `${humanDate(dateA)} and ${humanDate(dateB)} both already have`
+      : `${humanDate(hasLoggedA?dateA:dateB)} already has`;
+    if(!confirm(`${which} logged sets. Swapping the plan won't move that logged data — it stays on its original date. Continue?`)) return;
+  }
+  const calA = getTrainingCalEntry(dateA);
+  const calB = getTrainingCalEntry(dateB);
+  if(calA) calA.date = dateB;
+  if(calB) calB.date = dateA;
+  saveTraining();
+  const overlay = document.getElementById('swapDaysOverlay');
+  if(overlay) overlay.remove();
+  showToast('Days swapped');
   renderMain();
 }
 
@@ -12495,6 +12656,14 @@ ${JSON.stringify(template, null, 2)}`;
    Bundles everything needed to send to an AI and get a revised plan back.
    Designed so the AI can return a JSON import in the existing format, and
    you paste it straight into Paste & Import — no new infrastructure needed. */
+/* NOTE FOR LATER (not actioned yet — 2026-09-20): once the four
+   knowledge-docs (equipment/muscle map, app mechanics, best practices,
+   project setup prompt) are consistently attached as standing project
+   knowledge wherever this prompt gets pasted, this function's prompt text
+   can likely be trimmed — a lot of what's spelled out inline below
+   (double-progression logic, the volume-band/priority-muscle rules, the
+   recovery rule, etc.) would then be redundant with that standing
+   knowledge. Revisit as its own piece of work; not done here. */
 function buildTrainingReviewPack(){
   const today = todayStr();
   const sinceDate = addDays(today, -14); // last two weeks
@@ -12688,10 +12857,12 @@ function copyTrainingReviewPack(){
   const exerciseLibrary = state.training.exercises.map(e=>({
     id: e.id, name: e.name, category: e.category||'strength',
     primaryMuscles: exMuscleGroups(e,'primary'), secondaryMuscles: exMuscleGroups(e,'secondary'), tags: e.tags||[],
+    weightIncrementKg: e.weightIncrementKg || 2.5,
   }));
 
   const trainingGoals = state.settings.trainingGoals || { priorityMuscles:[], notes:'' };
   const priorityMuscleLabels = (trainingGoals.priorityMuscles||[]).map(mg=>MUSCLE_GROUP_LABELS[mg]||mg);
+  const band = state.settings.muscleBand || MUSCLE_BAND_DEFAULT;
 
   const prompt = `You are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
 
@@ -12701,10 +12872,11 @@ MY FIXED WEEKLY SCHEDULE (hard constraint, not a suggestion to optimize): ${pack
 \`\`\`json
 ${JSON.stringify(pack.trainingSchedule, null, 2)}
 \`\`\`
-${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard 10-20 set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
+EVERY tracked muscle group must get AT LEAST ${band.min} sets/week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, increase sets per session or add a day it's trained on to close the gap, while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
+${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard ${band.min}-${band.max} set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
-MY EXERCISE LIBRARY (use these IDs in the plan):
+MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid):
 \`\`\`json
 ${JSON.stringify(exerciseLibrary, null, 2)}
 \`\`\`
@@ -12756,7 +12928,7 @@ RULES for the plan:
 - Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
 - Order each session's exercises so the same muscle group doesn't get worked in two back-to-back blocks where avoidable — e.g. don't put two chest-primary exercises next to each other; alternate muscle groups through the session so consecutive exercises give each area a moment to recover before it's hit again.
 - Don't schedule the same PRIMARY muscle group as a direct target on two consecutive TRAINING days (a rest day in between resets this — it only applies to actual back-to-back training days). This is for recovery, not just within-session variety. Exception: if a priority muscle group above genuinely cannot get its extra frequency without landing on consecutive training days, it's fine to do so — but say so explicitly in your performance summary (item 1) so I know it was a deliberate trade-off, not an oversight. Secondary-muscle overlap between consecutive days is fine and expected; this rule is primary-only.
-- All suggested weights must be achievable on my actual equipment: 5kg main increments plus a 2.5kg toggle, so every suggested weight must land on a 2.5kg step (5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5...) — never something like 9kg or 16kg that isn't actually settable on the machine.
+- All suggested weights must be achievable on that specific exercise's own equipment — see weightIncrementKg on each exercise above (most are 2.5kg: 5kg main increments plus a 2.5kg toggle, but some machines only move in 5/10/20kg jumps). Every suggested weight for an exercise must land on THAT exercise's increment grid, not a blanket 2.5kg assumption — e.g. a weightIncrementKg of 10 means 40, 50, 60kg are valid but 45kg isn't.
 - One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") AND include the actual calendar date it's for, including the year, directly in the "name" itself (e.g. "Push Focus — Sep 17, 2026", "Legs — Sep 22, 2026"), not just a descriptive label like "Push Focus Alpha" and not a date missing the year — "Sep 17" alone collides with "Sep 17" a year later just as easily as two descriptive labels would. A descriptive-only name can still collide with something named in a completely separate review pack weeks or months from now — you have no memory of what you called things last time, and neither does the app checking for a match, so the full date is what actually guarantees it never repeats. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
 - Output the import JSON in a single code block. Nothing else in that code block — no comments inside the JSON, valid JSON only.`;
 
@@ -13057,7 +13229,20 @@ function applyTrainingImportResolution(res){
   let newExCount=0, updExCount=0;
   res.exercises.forEach(item=>{
     if(item.matched){
-      Object.assign(item.matched, item.fields);
+      // v4.59.0: notes is a manually-curated field (Edit Exercise → Notes) —
+      // the review pack prompt never asks the AI to write it, and "exercises"
+      // is supposed to always be an empty array for anything already in the
+      // library anyway. But nothing enforced that: if the AI ever sent a
+      // populated entry matching an existing exercise (id or name), this
+      // Object.assign silently overwrote its real notes with whatever the AI
+      // wrote there — exactly what happened and confused item 2 in the
+      // 2026-09-20 batch (a "20kg produced 15,15,23 reps... Progress load"
+      // note Muhannad never typed, sitting right next to the real, current
+      // suggested-weight target and reading as a second, conflicting number).
+      // Every other field an import can legitimately update on a NEW
+      // exercise still applies to a matched one too — just never notes.
+      const { notes, ...safeFields } = item.fields;
+      Object.assign(item.matched, safeFields);
       exIdMap[item.importedId] = item.matched.id;
       updExCount++;
     } else {
@@ -13545,6 +13730,7 @@ function recomputeBlockPlanForSwap(block){
     const fallback = (state.settings.exerciseSuggestions||{})[exId];
     if(fallback && fallback.weightKg!=null){ weightKg = fallback.weightKg; repsTarget = parseInt(String(fallback.reps||'8').split('-')[0])||8; }
   }
+  if(weightKg!=null) weightKg = roundToEquipmentIncrement(weightKg, getExerciseWeightIncrement(exId));
   block.reps = weightKg!=null ? `${repsTarget||8}-12` : '';
   block.notes = weightKg!=null ? `suggested starting weight: ${weightKg}kg` : '';
   if(!block.sets) block.sets = 3;
@@ -13641,16 +13827,38 @@ function difficultyBadge(v, opts){
 }
 
 /* ---------- Exercise history (last 5 sessions) ----------
-   Read-only: pulls straight from training.logs so it can never disagree with
-   what was actually recorded, and writes nothing. Excludes the day currently
-   being logged, since showing today's half-filled row as "history" would be
-   misleading when the point is to decide what to put in it. */
+   v4.59.0: strength history now derived straight from training_sets (the
+   authoritative table since v4.40.0), not training_logs — training_logs is
+   a secondary/derived table that only gets rebuilt for a given
+   (date,exerciseId) via syncTrainingLogFromSets, which only runs when that
+   exact date is actually opened. That gap meant real, logged history could
+   permanently fail to show here — items 5 & 7 in the 2026-09-20 batch
+   ("some exercises have history for sure, it's not showing"). Walking
+   exercises still read training_logs, since distance/pace/HR/incline/
+   calories have no equivalent in training_sets at all. */
 function getExerciseHistory(exId, excludeDate, limit){
-  return state.training.logs
-    .filter(l=> l.exerciseId === exId && l.date !== excludeDate)
-    .filter(l=> l.completed || l.sets || l.reps || l.weight!=null || l.distanceKm!=null || l.durationMin!=null)
-    .sort((a,b)=> a.date < b.date ? 1 : -1)
-    .slice(0, limit || 5);
+  const ex = getTrainingExerciseById(exId);
+  if(ex && ex.category === 'walking'){
+    return state.training.logs
+      .filter(l=> l.exerciseId === exId && l.date !== excludeDate)
+      .filter(l=> l.completed || l.sets || l.reps || l.weight!=null || l.distanceKm!=null || l.durationMin!=null)
+      .sort((a,b)=> a.date < b.date ? 1 : -1)
+      .slice(0, limit || 5);
+  }
+  const byDate = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId!==exId || s.date===excludeDate || s.isWarmup || !s.done) return;
+    (byDate[s.date] || (byDate[s.date]=[])).push(s);
+  });
+  return Object.keys(byDate).sort((a,b)=> a<b?1:-1).slice(0, limit||5).map(date=>{
+    const sets = byDate[date].sort((a,b)=>a.setNo-b.setNo);
+    return {
+      date, exerciseId: exId, completed:true, sets: sets.length,
+      reps: sets.map(s=>s.reps||'?').join('/'),
+      weight: sets[0].weightKg!=null ? sets[0].weightKg : null,
+      notes:'', difficulty:null,
+    };
+  });
 }
 function formatHistoryMetrics(l, isWalking){
   const bits = [];
@@ -13829,15 +14037,16 @@ function openAddExerciseModal(addToDayDate){
         ${muscleGroupPillsHtml('newExMuscleGroupPillsSecondary', [])}
       </div>
       <div class="field">
-        <label>Lift Type <span class="page-sub" style="font-weight:400;">— sets the rest-timer default (a fly is isolation even though it's a chest exercise)</span></label>
-        <div class="radio-pills" id="newExLiftTypePills">
-          <button type="button" class="radio-pill active" data-val="" onclick="pickExCategoryUI('newExLiftTypePills', this)">Auto (from muscle group)</button>
-          <button type="button" class="radio-pill" data-val="compound" onclick="pickExCategoryUI('newExLiftTypePills', this)">Compound — 90s</button>
-          <button type="button" class="radio-pill" data-val="isolation" onclick="pickExCategoryUI('newExLiftTypePills', this)">Isolation — 60s</button>
+        <label>Weight Increment <span class="page-sub" style="font-weight:400;">— smallest jump this exercise's equipment actually moves in (a leg press stack, for instance, might only move in 10kg steps)</span></label>
+        <div class="radio-pills" id="newExWeightIncrementPills">
+          <button type="button" class="radio-pill active" data-val="2.5" onclick="pickExCategoryUI('newExWeightIncrementPills', this)">2.5 kg</button>
+          <button type="button" class="radio-pill" data-val="5" onclick="pickExCategoryUI('newExWeightIncrementPills', this)">5 kg</button>
+          <button type="button" class="radio-pill" data-val="10" onclick="pickExCategoryUI('newExWeightIncrementPills', this)">10 kg</button>
+          <button type="button" class="radio-pill" data-val="20" onclick="pickExCategoryUI('newExWeightIncrementPills', this)">20 kg</button>
         </div>
       </div>
       <div class="field">
-        <label>Rest between sets (seconds) <span class="page-sub" style="font-weight:400;">— overrides the default</span></label>
+        <label>Rest between sets (seconds) <span class="page-sub" style="font-weight:400;">— overrides the default (60s)</span></label>
         <input type="number" id="newExRestSec" min="30" max="600" step="5" placeholder="e.g. 90" style="width:100px;">
       </div>
       <div class="field">
@@ -13874,13 +14083,13 @@ async function submitAddExercise(){
   const tagIds = [];
   const muscleGroupsPrimary = readMuscleGroupPills('newExMuscleGroupPillsPrimary');
   const muscleGroupsSecondary = readMuscleGroupPills('newExMuscleGroupPillsSecondary');
-  const liftTypeBtn = document.querySelector('#newExLiftTypePills .radio-pill.active');
-  const liftType = liftTypeBtn && liftTypeBtn.dataset.val ? liftTypeBtn.dataset.val : null;
+  const weightIncBtn = document.querySelector('#newExWeightIncrementPills .radio-pill.active');
+  const weightIncrementKg = weightIncBtn ? Number(weightIncBtn.dataset.val) : 2.5;
   const rsEl = document.getElementById('newExRestSec');
   const restSec = rsEl && rsEl.value !== '' ? Number(rsEl.value) : null;
   const seatEl = document.getElementById('newExSeatSetting');
   const seatSetting = seatEl && seatEl.value.trim() !== '' ? seatEl.value.trim() : null;
-  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroupsPrimary, muscleGroupsSecondary, restSec, liftType, seatSetting };
+  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroupsPrimary, muscleGroupsSecondary, restSec, weightIncrementKg, seatSetting };
   const overlay = document.getElementById('addExerciseOverlay');
   // Read the context flag BEFORE removing the overlay that carries it.
   const addToDay = overlay ? (overlay.dataset.addToDay || '') : '';
@@ -13925,11 +14134,28 @@ function renderExerciseHistoryModalBody(){
   const st = _exerciseHistoryState;
   if(!overlay || !st) return;
   const ex = getTrainingExerciseById(st.exId);
-  const allDates = [...new Set((state.training.sets||[]).filter(s=>s.exerciseId===st.exId).map(s=>s.date))].sort((a,b)=>a<b?1:-1);
-  const shownDates = allDates.slice(0, st.shown);
+  // Item 11 (v4.59.0): a date only counts as History once at least one
+  // working set on it is actually done; anything staged (sets exist, none
+  // done yet — today's not-yet-logged rows or an already-opened future day)
+  // is Planned instead, shown separately so the two never blur together.
+  const allDates = [...new Set((state.training.sets||[]).filter(s=>s.exerciseId===st.exId).map(s=>s.date))];
+  const isDone = d => getSetsForExercise(d, st.exId).some(s=>s.done && !s.isWarmup);
+  const historyDates = allDates.filter(isDone).sort((a,b)=>a<b?1:-1);
+  const plannedDates = allDates.filter(d=>!isDone(d)).sort((a,b)=>a<b?-1:1);
+  const shownHistoryDates = historyDates.slice(0, st.shown);
   const bestE1RM = bestE1RMForExercise(st.exId, null);
   const workingSets = (state.training.sets||[]).filter(s=>s.exerciseId===st.exId && s.done && !s.isWarmup && s.weightKg);
   const maxWeight = workingSets.length ? Math.max(...workingSets.map(s=>s.weightKg)) : null;
+  const renderDateRow = (date, planned) => {
+    const sets = getSetsForExercise(date, st.exId);
+    return `
+      <div style="padding:8px 0; border-bottom:1px solid var(--line);">
+        <div style="font-size:12.5px; font-weight:600; margin-bottom:4px; ${planned?'color:var(--brass);':''}">${humanDateNoRelative(date)}</div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+          ${sets.map(s=>`<span class="page-sub" style="font-size:11.5px; background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:2px 7px;">${s.isWarmup?'W ':''}${s.reps||'—'}×${s.weightKg!=null?s.weightKg:'—'}kg${s.toFailure?' · F':''}${s.rir!=null?` · RIR${s.rir}`:''}${planned&&!s.done&&!s.isWarmup?' · planned':''}</span>`).join('')}
+        </div>
+      </div>`;
+  };
   overlay.innerHTML = `
     <div class="modal" style="max-width:560px; max-height:85vh; overflow-y:auto;">
       <h3>${escapeHtml(ex?ex.name:'Exercise')} — History</h3>
@@ -13939,17 +14165,13 @@ function renderExerciseHistoryModalBody(){
           ${bestE1RM ? `<div><div class="page-sub" style="font-size:10.5px;">Best e1RM</div><div style="font-size:16px; font-weight:700;">${Math.round(bestE1RM*10)/10} kg</div></div>` : ''}
         </div>
       ` : ''}
-      ${allDates.length ? shownDates.map(date=>{
-        const sets = getSetsForExercise(date, st.exId);
-        return `
-          <div style="padding:8px 0; border-bottom:1px solid var(--line);">
-            <div style="font-size:12.5px; font-weight:600; margin-bottom:4px;">${humanDateNoRelative(date)}</div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px;">
-              ${sets.map(s=>`<span class="page-sub" style="font-size:11.5px; background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:2px 7px;">${s.isWarmup?'W ':''}${s.reps||'—'}×${s.weightKg!=null?s.weightKg:'—'}kg${s.toFailure?' · F':''}${s.rir!=null?` · RIR${s.rir}`:''}</span>`).join('')}
-            </div>
-          </div>`;
-      }).join('') : `<div class="page-sub" style="padding:10px 0;">No logged sets for this exercise yet.</div>`}
-      ${allDates.length > shownDates.length ? `<button class="btn secondary sm" style="margin-top:10px;" onclick="loadMoreExerciseHistory()">Load more (${allDates.length - shownDates.length} more session${allDates.length-shownDates.length===1?'':'s'})</button>` : ''}
+      ${plannedDates.length ? `
+        <div style="font-size:12px; font-weight:700; color:var(--brass); margin-bottom:4px;">📅 Planned</div>
+        ${plannedDates.map(d=>renderDateRow(d,true)).join('')}
+        <div style="font-size:12px; font-weight:700; margin:14px 0 4px;">History</div>
+      ` : ''}
+      ${historyDates.length ? shownHistoryDates.map(d=>renderDateRow(d,false)).join('') : `<div class="page-sub" style="padding:10px 0;">No logged sets for this exercise yet.</div>`}
+      ${historyDates.length > shownHistoryDates.length ? `<button class="btn secondary sm" style="margin-top:10px;" onclick="loadMoreExerciseHistory()">Load more (${historyDates.length - shownHistoryDates.length} more session${historyDates.length-shownHistoryDates.length===1?'':'s'})</button>` : ''}
       <div class="modal-actions">
         <button class="btn secondary" onclick="document.getElementById('exerciseHistoryOverlay').remove(); _exerciseHistoryState=null;">Close</button>
       </div>
@@ -13986,15 +14208,16 @@ function openEditExerciseModal(id){
         ${muscleGroupPillsHtml('editExMuscleGroupPillsSecondary', exMuscleGroups(ex,'secondary'))}
       </div>
       <div class="field">
-        <label>Lift Type <span class="page-sub" style="font-weight:400;">— sets the rest-timer default (a fly is isolation even though it's a chest exercise)</span></label>
-        <div class="radio-pills" id="editExLiftTypePills">
-          <button type="button" class="radio-pill ${!ex.liftType?'active':''}" data-val="" onclick="pickExCategoryUI('editExLiftTypePills', this)">Auto (from muscle group)</button>
-          <button type="button" class="radio-pill ${ex.liftType==='compound'?'active':''}" data-val="compound" onclick="pickExCategoryUI('editExLiftTypePills', this)">Compound — 90s</button>
-          <button type="button" class="radio-pill ${ex.liftType==='isolation'?'active':''}" data-val="isolation" onclick="pickExCategoryUI('editExLiftTypePills', this)">Isolation — 60s</button>
+        <label>Weight Increment <span class="page-sub" style="font-weight:400;">— smallest jump this exercise's equipment actually moves in (a leg press stack, for instance, might only move in 10kg steps)</span></label>
+        <div class="radio-pills" id="editExWeightIncrementPills">
+          <button type="button" class="radio-pill ${(!ex.weightIncrementKg||ex.weightIncrementKg==2.5)?'active':''}" data-val="2.5" onclick="pickExCategoryUI('editExWeightIncrementPills', this)">2.5 kg</button>
+          <button type="button" class="radio-pill ${ex.weightIncrementKg==5?'active':''}" data-val="5" onclick="pickExCategoryUI('editExWeightIncrementPills', this)">5 kg</button>
+          <button type="button" class="radio-pill ${ex.weightIncrementKg==10?'active':''}" data-val="10" onclick="pickExCategoryUI('editExWeightIncrementPills', this)">10 kg</button>
+          <button type="button" class="radio-pill ${ex.weightIncrementKg==20?'active':''}" data-val="20" onclick="pickExCategoryUI('editExWeightIncrementPills', this)">20 kg</button>
         </div>
       </div>
       <div class="field">
-        <label>Rest between sets (seconds) <span class="page-sub" style="font-weight:400;">— overrides the default</span></label>
+        <label>Rest between sets (seconds) <span class="page-sub" style="font-weight:400;">— overrides the default (60s)</span></label>
         <input type="number" id="editExRestSec" min="30" max="600" step="5" placeholder="e.g. 90" value="${ex.restSec||''}" style="width:100px;">
       </div>
       <div class="field">
@@ -14038,8 +14261,8 @@ async function submitEditExercise(id){
   ex.muscleGroupsSecondary = readMuscleGroupPills('editExMuscleGroupPillsSecondary');
   ex.muscleGroups = null;
   ex.muscleGroup = null;
-  const liftTypeBtn = document.querySelector('#editExLiftTypePills .radio-pill.active');
-  ex.liftType = liftTypeBtn && liftTypeBtn.dataset.val ? liftTypeBtn.dataset.val : null;
+  const weightIncBtn = document.querySelector('#editExWeightIncrementPills .radio-pill.active');
+  ex.weightIncrementKg = weightIncBtn ? Number(weightIncBtn.dataset.val) : 2.5;
   const rsEl = document.getElementById('editExRestSec');
   if(rsEl) ex.restSec = rsEl.value !== '' ? Number(rsEl.value) : null;
   const seatEl = document.getElementById('editExSeatSetting');
