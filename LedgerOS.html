@@ -346,12 +346,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.52.0';
+const APP_VERSION = '4.53.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.53.0', date:'2026-09-21', changes:[
+    'Reconciliation page: pressing Enter no longer kicks you out of the field a moment later. The Statement units/Cash inputs move focus immediately, same as before, but the save that follows used to trigger a full page re-render that silently discarded it — focus is now restored to the right field once that re-render completes.',
+    'Reconciliation page: every platform now has an Expand/Collapse button and starts collapsed by default, independent of the main Investments page\'s own expand state.',
+    'Reconciliation page: clicking a position name now opens a window showing that asset\'s transactions across every platform holding it (matched by ticker), grouped by platform. Click any transaction to edit it, or pick a platform from the dropdown and add a new one directly from the same window.',
+    'Investments page: each platform\'s expanded view now shows a "Portfolio + Cash" combined total, for a direct eyeball comparison against Invested (Out).',
+  ]},
   {version:'4.52.0', date:'2026-09-13', changes:[
     'Account Budget Chart → new Account / Category toggle. Category mode aggregates every account in a sub category (matching the P&L page\'s own category grouping) into the same Budget vs Actual bar chart, cumulative line chart, and Remaining Budget figure. Clicking an Actual bar in Category mode opens that month\'s transactions across every account in the category, grouped by account then by date within each.',
     'P&L → the category subtotal row (e.g. "Bills") now carries the same 📊 link the individual account rows already had, jumping straight into the chart in Category mode for that category. Only shown for categories with at least one budgeted account.',
@@ -8775,13 +8781,90 @@ function invPlatformLastReconciledDate(platformId){
 // Enter behaves like Tab across every reconciliation input on the page — down each platform's
 // Statement units column, into its Cash row, then straight into the next platform's first field
 // — so a full batch check-in can be done without reaching for the mouse or the Tab key.
+// The focus move itself is immediate, but the onchange it triggers (saving) is async and ends in
+// a full page re-render (renderInvestmentsPage → renderInvReconPage), which recreates every input
+// as a brand-new DOM node — silently discarding whatever focus() was just set. _invReconFocusKey
+// remembers WHICH input should end up focused, by a stable per-input key (not the DOM node itself,
+// which won't survive the re-render), so renderInvReconPage can restore it once the fresh markup
+// is actually in the document.
+let _invReconFocusKey = null;
 function invReconEnterNext(el, ev){
   if(ev.key!=='Enter') return;
   ev.preventDefault();
   const inputs = Array.from(document.querySelectorAll('.recon-input'));
   const idx = inputs.indexOf(el);
-  if(idx>=0 && idx<inputs.length-1) inputs[idx+1].focus();
-  else if(idx===inputs.length-1) el.blur();
+  if(idx>=0 && idx<inputs.length-1){
+    const next = inputs[idx+1];
+    _invReconFocusKey = next.dataset.reconkey || null;
+    next.focus();
+  } else if(idx===inputs.length-1){
+    _invReconFocusKey = null;
+    el.blur();
+  }
+}
+// Independent from the main Investments page's own invExpandedPlatforms (confirmed decision) —
+// this page always starts fresh/collapsed regardless of what's expanded elsewhere.
+let invReconExpandedPlatforms = new Set();
+function toggleInvReconPlatformExpanded(id){
+  if(invReconExpandedPlatforms.has(id)) invReconExpandedPlatforms.delete(id); else invReconExpandedPlatforms.add(id);
+  renderInvestmentsPage();
+}
+// "Same asset" identity used by the cross-platform asset window below: ticker when the position
+// has one (confirmed decision — e.g. every "BTC" position across platforms groups together
+// regardless of what each one happens to be named locally), falling back to the exact position
+// name for tickerless holdings (real estate, "Other" asset class, etc.) so the feature still works
+// for them, just scoped to an exact name match instead.
+function invAssetIdentity(pos){
+  const t = pos && pos.ticker && String(pos.ticker).trim();
+  return (t || (pos? String(pos.name).trim() : '')).toUpperCase();
+}
+function invPositionsMatchingAsset(identityKey){
+  if(!identityKey) return [];
+  const k = String(identityKey).trim().toUpperCase();
+  return (D.invPositions||[]).filter(p=>invAssetIdentity(p)===k);
+}
+function openInvAssetAcrossPlatforms(identityKey){
+  const matches = invPositionsMatchingAsset(identityKey);
+  if(!matches.length) return;
+  const byPlatform = {};
+  matches.forEach(p=>{ (byPlatform[p.platformId] ??= []).push(p); });
+  const platformIds = Object.keys(byPlatform).map(Number).sort((a,b)=>{
+    const na = (invPlatformById(a)||{}).name||'', nb = (invPlatformById(b)||{}).name||'';
+    return na.localeCompare(nb);
+  });
+  const label = (matches[0].ticker && matches[0].ticker.trim()) ? matches[0].ticker.trim() : matches[0].name;
+  const platformOptions = platformIds.map(pid=>{
+    const pl = invPlatformById(pid);
+    const targetPos = byPlatform[pid][0]; // the position to attach a new transaction to on this platform
+    return `<option value="${targetPos.id}">${esc(pl? pl.name : 'Platform '+pid)}</option>`;
+  }).join('');
+  const sections = platformIds.map(pid=>{
+    const pl = invPlatformById(pid);
+    const rows = byPlatform[pid].flatMap(pos=>invTxForPosition(pos.id).slice().reverse().map(t=>`<tr class="click" onclick="openInvTxModal(${pos.id}, ${t.id})">
+      <td class="mono">${esc(t.date)}</td>
+      <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'⇄ Transfer out':'⇄ Transfer in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
+      <td class="num mono">${Number(t.units).toLocaleString(undefined,{maximumFractionDigits:8})}</td>
+      <td class="num mono">${money(t.totalSar)}</td>
+    </tr>`)).join('');
+    return `<div style="margin-bottom:14px">
+      <h4 style="margin:8px 0 4px">${esc(pl? pl.name : 'Platform')}</h4>
+      <div style="overflow-x:auto"><table style="min-width:480px"><thead><tr><th>Date</th><th>Type</th><th class="num">Units</th><th class="num">Total SAR</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4" class="empty">No transactions yet</td></tr>'}</tbody></table></div>
+    </div>`;
+  }).join('');
+  showModal(`
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h3 style="margin:0">${esc(label)}</h3>
+      <button class="x noprint" onclick="closeModal()">✕</button>
+    </div>
+    <div class="mut" style="font-size:12px;margin:4px 0 12px">Transactions across every platform holding this asset — click any row to edit it</div>
+    ${sections}
+    <div class="row noprint" style="justify-content:flex-end;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <label class="mut" style="font-size:12px">Add new transaction on:</label>
+      <select id="invAssetModalPlatformPick" style="max-width:220px">${platformOptions}</select>
+      <button class="btn pri sm" onclick="openInvTxModal(Number(document.getElementById('invAssetModalPlatformPick').value), null)">+ New Transaction</button>
+    </div>
+    <div class="row noprint" style="justify-content:flex-end;margin-top:10px"><button class="btn ghost" onclick="closeModal()">Close</button></div>`, true);
 }
 function renderInvReconPage(tabs){
   // Robo-Investment platforms have no per-holding breakdown and no platform-cash tracking to
@@ -8794,41 +8877,48 @@ function renderInvReconPage(tabs){
   const reconColgroup = '<colgroup><col style="width:30%"><col style="width:15%"><col style="width:19%"><col style="width:16%"><col style="width:20%"></colgroup>';
   const body = platforms.map(p=>{
     const r = invPlatformReconciliation(p.id);
-    const rows = r.positions.map(x=>{
-      const badge = x.stmtUnits===null? '' : (x.ok? ' <span class="badge pos">✓</span>' : ' <span class="badge neg">off</span>');
-      const posDate = x.pos.stmtDate || null;
-      const posStale = posDate && daysBetweenDates(posDate, todayStr())>INV_PRICE_STALE_DAYS;
-      return `<tr>
-        <td style="word-break:break-word">${esc(x.pos.name)}${x.pos.ticker? ` <span class="mut">${esc(x.pos.ticker)}</span>`:''}</td>
-        <td class="num mono">${invFmtUnits(x.trackerUnits)}</td>
-        <td class="num"><input class="recon-input" type="number" step="any" style="width:100%;max-width:150px;text-align:right" value="${x.stmtUnits===null?'':esc(x.stmtUnits)}"
-          placeholder="per statement" onchange="saveInvPositionStmtUnits(${x.pos.id}, this.value)" onkeydown="invReconEnterNext(this, event)"></td>
-        <td class="num mono ${x.variance===null?'':(x.ok?'':'r')}">${x.variance===null? '—' : invFmtUnits(x.variance)}${badge}</td>
-        <td class="mut" style="font-size:11px;${posStale?'color:var(--red)':''}">${posDate? esc(posDate) : '—'}</td></tr>`;
-    }).join('');
-    const cashBadge = r.stmtCashUsd===null? '' : (r.cashOk? ' <span class="badge pos">✓</span>' : ' <span class="badge neg">off</span>');
     const lastRecon = invPlatformLastReconciledDate(p.id);
     const staleRecon = lastRecon && daysBetweenDates(lastRecon, todayStr())>INV_PRICE_STALE_DAYS;
-    const cashDate = p.stmtDate || null;
-    const cashStale = cashDate && daysBetweenDates(cashDate, todayStr())>INV_PRICE_STALE_DAYS;
-    return `<div class="panel">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <h3 style="margin:0">🏦 ${esc(p.name)}</h3>
-        <div class="mut" style="font-size:11.5px">${r.entered? (r.allMatched? 'All entered lines reconciled ✓' : r.matched+' of '+r.entered+' entered lines match') : 'Nothing entered yet'}${lastRecon? ` · last reconciled <span style="${staleRecon?'color:var(--red)':''}">${esc(lastRecon)}</span>` : ''}</div>
-      </div>
-      <div style="overflow-x:auto"><table style="min-width:760px;table-layout:fixed">${reconColgroup}<thead><tr>
+    const expanded = invReconExpandedPlatforms.has(p.id);
+    const statusLine = `${r.entered? (r.allMatched? 'All entered lines reconciled ✓' : r.matched+' of '+r.entered+' entered lines match') : 'Nothing entered yet'}${lastRecon? ` · last reconciled <span style="${staleRecon?'color:var(--red)':''}">${esc(lastRecon)}</span>` : ''}`;
+    let tableHtml = '';
+    if(expanded){
+      const rows = r.positions.map(x=>{
+        const badge = x.stmtUnits===null? '' : (x.ok? ' <span class="badge pos">✓</span>' : ' <span class="badge neg">off</span>');
+        const posDate = x.pos.stmtDate || null;
+        const posStale = posDate && daysBetweenDates(posDate, todayStr())>INV_PRICE_STALE_DAYS;
+        const assetKey = esc(invAssetIdentity(x.pos)).replace(/'/g,"\\'");
+        return `<tr>
+          <td class="click" style="word-break:break-word;cursor:pointer" onclick="openInvAssetAcrossPlatforms('${assetKey}')">${esc(x.pos.name)}${x.pos.ticker? ` <span class="mut">${esc(x.pos.ticker)}</span>`:''}</td>
+          <td class="num mono">${invFmtUnits(x.trackerUnits)}</td>
+          <td class="num"><input class="recon-input" data-reconkey="pos-${x.pos.id}" type="number" step="any" style="width:100%;max-width:150px;text-align:right" value="${x.stmtUnits===null?'':esc(x.stmtUnits)}"
+            placeholder="per statement" onchange="saveInvPositionStmtUnits(${x.pos.id}, this.value)" onkeydown="invReconEnterNext(this, event)"></td>
+          <td class="num mono ${x.variance===null?'':(x.ok?'':'r')}">${x.variance===null? '—' : invFmtUnits(x.variance)}${badge}</td>
+          <td class="mut" style="font-size:11px;${posStale?'color:var(--red)':''}">${posDate? esc(posDate) : '—'}</td></tr>`;
+      }).join('');
+      tableHtml = `<div style="overflow-x:auto"><table style="min-width:760px;table-layout:fixed">${reconColgroup}<thead><tr>
         <th>Position</th><th class="num">Tracker units</th><th class="num">Statement units</th><th class="num">Variance</th><th>Last checked</th>
       </tr></thead>
       <tbody>${rows || '<tr><td colspan="5" class="empty">No positions on this platform</td></tr>'}
         <tr style="background:var(--chip)">
           <td style="font-weight:700">💵 Cash (USD)</td>
           <td class="num mono" style="font-weight:700">${fmt2(r.trackerCashUsd)}</td>
-          <td class="num"><input class="recon-input" type="number" step="0.01" style="width:100%;max-width:150px;text-align:right" value="${r.stmtCashUsd===null?'':esc(r.stmtCashUsd)}"
+          <td class="num"><input class="recon-input" data-reconkey="cash-${p.id}" type="number" step="0.01" style="width:100%;max-width:150px;text-align:right" value="${r.stmtCashUsd===null?'':esc(r.stmtCashUsd)}"
             placeholder="per statement" onchange="saveInvPlatformStmtCash(${p.id}, this.value)" onkeydown="invReconEnterNext(this, event)"></td>
-          <td class="num mono ${r.cashVariance===null?'':(r.cashOk?'':'r')}" style="font-weight:700">${r.cashVariance===null? '—' : fmt2(r.cashVariance)}${cashBadge}</td>
-          <td class="mut" style="font-size:11px;${cashStale?'color:var(--red)':''}">${cashDate? esc(cashDate) : '—'}</td>
+          <td class="num mono ${r.cashVariance===null?'':(r.cashOk?'':'r')}" style="font-weight:700">${r.cashVariance===null? '—' : fmt2(r.cashVariance)}${(r.stmtCashUsd===null? '' : (r.cashOk? ' <span class="badge pos">✓</span>' : ' <span class="badge neg">off</span>'))}</td>
+          <td class="mut" style="font-size:11px;${(p.stmtDate && daysBetweenDates(p.stmtDate, todayStr())>INV_PRICE_STALE_DAYS)?'color:var(--red)':''}">${p.stmtDate? esc(p.stmtDate) : '—'}</td>
         </tr>
-      </tbody></table></div>
+      </tbody></table></div>`;
+    }
+    return `<div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">🏦 ${esc(p.name)}</h3>
+        <div class="row noprint" style="gap:10px;align-items:center">
+          <div class="mut" style="font-size:11.5px">${statusLine}</div>
+          <button class="btn ghost sm" onclick="toggleInvReconPlatformExpanded(${p.id})">${expanded? '▾ Hide' : '▸ Expand'}</button>
+        </div>
+      </div>
+      ${tableHtml}
     </div>`;
   }).join('');
   document.getElementById('app').innerHTML = tabs + `
@@ -8848,6 +8938,11 @@ function renderInvReconPage(tabs){
       <tbody id="invManualPriceTable"></tbody></table></div>
     </div>`;
   renderInvManualPriceTable();
+  if(_invReconFocusKey){
+    const target = document.querySelector(`.recon-input[data-reconkey="${_invReconFocusKey}"]`);
+    if(target) target.focus();
+    _invReconFocusKey = null;
+  }
 }
 async function saveInvPositionStmtUnits(posId, val){
   const pos = invPositionById(posId); if(!pos) return;
@@ -9113,6 +9208,10 @@ function renderInvPlatformSection(p){
         ${Math.abs(cash.profitUsd)>0.005? `<span class="mut" title="Realised gain still sitting on the platform. It has never passed through your bank, so it is excluded from the reconciliation against the Invested/Withdrawn accounts."> · of which $${fmt2(cash.profitUsd)} is realised profit</span>`:''}
       </div>
       <div style="font-size:12.5px">📈 Portfolio value <b class="mono" style="margin-left:6px">$${fmt2(portfolioUsd)}</b><span class="mut">· ${money(tot.m)} SAR</span></div>
+    </div>
+    <div class="mut" style="font-size:11.5px;margin-bottom:6px">
+      Portfolio + Cash: <b class="mono">$${fmt2(portfolioUsd+cash.totalUsd)}</b> <span class="mut">· ${money(tot.m+cash.totalUsd*fx)} SAR</span>
+      <span class="mut" title="For a quick eyeball comparison against Invested (Out) below"> (compare against Invested (Out))</span>
     </div>
     <div class="mut" style="font-size:11.5px;margin-bottom:10px">
       Invested (Out): <b class="mono">${acctBalTxt(p.outAcc)}</b>
