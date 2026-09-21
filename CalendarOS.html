@@ -2205,7 +2205,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.59.1';
+const APP_VERSION = '4.60.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2213,6 +2213,16 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.60.0', changes: [
+    'No SQL migration needed — front-end only.',
+    'Exercise rows now default to COLLAPSED (item 1), not expanded — flips the v4.50.0 default. Purely manual either way, session-local, same as before.',
+    'Fixed a real bug (items 2 & 7): the collapsed card always showed a teal ✓ regardless of whether the exercise was actually done. Now shows ✓ (teal) only when every working set is logged, ✗ (red) otherwise — and the exercise name itself is colored to match (teal when done, yellow when not) in both the collapsed and expanded views, so the whole day scans at a glance.',
+    'Fixed a real bug (item 3): the rest timer chime was built to create its AudioContext lazily on the first tick, inside a setInterval callback — by then it\'s well outside the original tap that started the timer, which most mobile browsers (Safari especially) don\'t count as a user gesture, so audio stayed silently blocked. Now unlocks the AudioContext synchronously inside the tap itself.',
+    'Removed the per-set "Last: Xkg × Y" carry-forward label (item 4) — it showed inconsistently and added clutter above the reps/weight inputs.',
+    'Review Pack: added a rep-target framing rule (item 5) — the top of a rep range is the aim, not a bar that has to be cleared; landing under it at real effort is normal and shouldn\'t be flagged as underperformance, EXCEPT the first session right after a weight increase, where the bottom of the range is what\'s actually expected.',
+    'Review Pack: added a same-week exercise-variety rule (item 6) — prefer a different exercise/machine for a muscle group across different days in the same week rather than repeating the identical one, unless there\'s a real reason not to (limited equipment for that muscle, deliberate repetition for a specific weakness).',
+    'Found and fixed a third leftover hardcoded "10–20 set band" reference in the Review Pack prompt (performance-summary section) that had slipped past the same fix in the last two versions — now reads the live band setting like everywhere else.',
+  ]},
   { v:'4.59.1', changes: [
     'Fixed a real bug from v4.59.0: the rest_timer_sound_muted column migration was described in that version\'s changelog entry but never actually added to the real Copy SQL block, so "Copy SQL" never actually contained it — no amount of copying and running it would have added the column, hence the sync error ("PGRST204 — Could not find the rest_timer_sound_muted column"). The line is now actually in the SQL block. If you already added the column by hand while tracking this down, re-running Copy SQL is harmless (IF NOT EXISTS) — this is only for anyone setting up fresh or who hasn\'t fixed it manually yet.',
   ]},
@@ -9288,6 +9298,16 @@ function startRestTimer(seconds,exId){
   if(_tipRotationHandle) clearInterval(_tipRotationHandle);
   _restTimerEnd=Date.now()+seconds*1000;_restTimerExId=exId;_restTimerDefaultSec=seconds;
   _restTimerLastTickSec = null; // item 8: so the countdown chimes fire fresh for this timer
+  // v4.60.0 fix (item 3 — chime not working): this is called synchronously
+  // from the "mark set done" click, which IS a real user gesture. Creating
+  // (or resuming a suspended) AudioContext HERE, inside that gesture, is
+  // what actually unlocks audio on mobile browsers. Before this fix, the
+  // context was only ever created lazily the first time a tick tried to
+  // play — by then we're deep inside a setInterval callback, seconds after
+  // the gesture ended, which most mobile browsers (Safari especially)
+  // don't count as a gesture at all, so the context stayed silently
+  // suspended and nothing ever played.
+  _getRestAudioCtx();
   _rotateTip(); // picks the first tip from the shuffle bag rather than always starting at the same one
   _updateRestTimerUI();
   _restTimerHandle=setInterval(_updateRestTimerUI,1000);
@@ -10194,11 +10214,17 @@ function announceRestoredTrainingDrafts(){
    only when you tap to collapse it, regardless of how many sets are done.
    Session-local only (not synced, not persisted across a reload), same as
    the override it replaces. */
+/* v4.60.0 (item 1): default flipped from expanded to COLLAPSED. Rather than
+   track "explicitly collapsed" against a default of expanded, this now
+   tracks "explicitly expanded" against a default of collapsed — cleaner
+   than trying to invert the old flag's meaning in place. Still purely
+   manual and session-local (not synced, not persisted across a reload),
+   same as before. */
 function toggleTrainingRowExpanded(date, exId){
-  if(!state.trainingRowCollapsed) state.trainingRowCollapsed = {};
+  if(!state.trainingRowExpanded) state.trainingRowExpanded = {};
   const key = `${date}::${exId}`;
-  if(state.trainingRowCollapsed[key]) delete state.trainingRowCollapsed[key];
-  else state.trainingRowCollapsed[key] = true;
+  if(state.trainingRowExpanded[key]) delete state.trainingRowExpanded[key];
+  else state.trainingRowExpanded[key] = true;
   renderMain();
 }
 function renderTrainingExerciseLogRow(date, block, index){
@@ -10226,7 +10252,12 @@ function renderTrainingExerciseLogRow(date, block, index){
   const workingSetsEarly = !isSessionLevel && !isWalking ? sets.filter(s=>!s.isWarmup) : [];
   const doneSetsEarly = workingSetsEarly.filter(s=>s.done).length;
   const expandKey = `${date}::${block.exerciseId}`;
-  const manuallyCollapsed = !isSessionLevel && !isWalking && state.trainingRowCollapsed && state.trainingRowCollapsed[expandKey];
+  const manuallyCollapsed = !isSessionLevel && !isWalking && !(state.trainingRowExpanded && state.trainingRowExpanded[expandKey]);
+  // Item 2 & 7 (v4.60.0): the collapsed card always showed a teal ✓
+  // regardless of actual completion — fixed to reflect the real state, and
+  // colored the name to match (green=done, yellow=not done yet) so the
+  // whole daily list scans at a glance.
+  const isFullyDone = workingSetsEarly.length>0 && doneSetsEarly===workingSetsEarly.length;
   if(manuallyCollapsed){
     return `
     <div class="card" style="padding:10px 14px; margin-bottom:10px; background:var(--paper-dim); cursor:pointer;"
@@ -10234,8 +10265,8 @@ function renderTrainingExerciseLogRow(date, block, index){
       onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
         <span style="display:flex; align-items:center; gap:8px; min-width:0;">
-          <span style="color:var(--teal); font-size:13px; flex-shrink:0;">✓</span>
-          <b style="font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(title)}</b>
+          <span style="color:${isFullyDone?'var(--teal)':'var(--flag,#D95B5B)'}; font-size:13px; flex-shrink:0;">${isFullyDone?'✓':'✗'}</span>
+          <b style="font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:${isFullyDone?'var(--teal)':'#E9B84A'};">${escapeHtml(title)}</b>
         </span>
         <span style="display:flex; align-items:center; gap:8px; flex:1 0 100%; justify-content:flex-end;">
           <span class="page-sub" style="font-size:11px;">${doneSetsEarly}/${workingSetsEarly.length} sets${e1RMDisplay?` · ${e1RMDisplay}`:''}</span>
@@ -10273,18 +10304,12 @@ function renderTrainingExerciseLogRow(date, block, index){
   const displaySets = sets.length ? sets : [];
 
   const setRowsHtml = displaySets.map((s, i) => {
-    const lastMatchingSet = lastWorking[i];
-    const lLabel = lastMatchingSet
-      ? `${lastMatchingSet.weightKg||'?'}kg × ${lastMatchingSet.reps||'?'}`
-      + (lastMatchingSet.rir!=null ? ` RIR${lastMatchingSet.rir}` : '')
-      : null;
     return `
     <div class="set-row ${s.done?'set-row-done':''} ${s.isWarmup?'set-row-warmup':''}" data-set-no="${s.setNo}">
       <button type="button" class="set-tick ${s.done?'set-tick-done':''}"
         onclick="toggleSetDone('${date}','${escapeHtml(block.exerciseId)}',${s.setNo},${defaultRestSec(ex)});"
         title="${s.done?'Unmark done':'Mark set done + start rest timer'}">${s.done?'✓':String(s.setNo)}</button>
       <div style="display:flex;flex-direction:column;gap:2px;">
-        ${lLabel ? `<span class="set-last-ref">Last: ${escapeHtml(lLabel)}</span>` : ''}
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <input type="number" min="0" step="1" value="${s.reps||''}" placeholder="${defaultReps||'reps'}"
             class="train-input set-num-input"
@@ -10342,7 +10367,7 @@ function renderTrainingExerciseLogRow(date, block, index){
     <div class="card" style="padding:12px 14px; margin-bottom:10px; background:var(--paper-dim);" data-exercise-id="${escapeHtml(block.exerciseId)}" data-row-id="${rowId}">
       <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap;">
         <span style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <b${!isSessionLevel && !isWalking ? ` style="cursor:pointer;" title="Tap to collapse" onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')"` : ''}>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
+          <b${!isSessionLevel && !isWalking ? ` style="cursor:pointer; color:${isFullyDone?'var(--teal)':'#E9B84A'};" title="Tap to collapse" onclick="toggleTrainingRowExpanded('${date}','${escapeHtml(block.exerciseId)}')"` : ''}>${title ? escapeHtml(title) : `⚠ missing exercise "${escapeHtml(block.exerciseId||'')}"`}</b>
           ${ex && ex.seatSetting ? `<span class="page-sub" style="font-size:10.5px; background:var(--paper-dim); border-radius:4px; padding:1px 7px;" title="Seat/machine setting — dial the machine to this before your first set">⚙ Seat ${escapeHtml(ex.seatSetting)}</span>` : ''}
         </span>
         <span style="display:flex; align-items:center; gap:14px; flex:1 0 100%; justify-content:flex-end;">
@@ -12891,7 +12916,7 @@ ${packJson}
 
 WHAT I NEED FROM YOU:
 
-1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the 10–20 set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. ${state.settings.includeSecondaryMuscles ? "Secondary muscles are currently included at half credit per set (toggled on in the app) — a muscle only hit as a secondary target is already reflected fractionally in these numbers, you don't need to add anything for it separately." : "Secondary muscles are currently excluded entirely (toggled off in the app) — these numbers only reflect each exercise's primary target muscles, so a muscle that's only ever hit as a secondary target on my current exercises will read as under-volume even if it's getting real indirect work; keep that in mind rather than treating a low secondary-only muscle as purely neglected."} Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
+1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the ${band.min}–${band.max} set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. ${state.settings.includeSecondaryMuscles ? "Secondary muscles are currently included at half credit per set (toggled on in the app) — a muscle only hit as a secondary target is already reflected fractionally in these numbers, you don't need to add anything for it separately." : "Secondary muscles are currently excluded entirely (toggled off in the app) — these numbers only reflect each exercise's primary target muscles, so a muscle that's only ever hit as a secondary target on my current exercises will read as under-volume even if it's getting real indirect work; keep that in mind rather than treating a low secondary-only muscle as purely neglected."} Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
@@ -12926,6 +12951,8 @@ RULES for the plan:
 - Every exerciseId in every block must be one that already exists in my library above. Never invent a new exercise, never put anything in the top-level "exercises" array — leave it empty every time, even if you think a new movement would help (see item 5 above for how to raise that instead). If nothing in my library fits what a muscle group actually needs, pick the closest existing match rather than inventing something new.
 - Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
+- Rep target framing, for both planning and reviewing past sessions in your summary: the TOP of a range is what I'm aiming for, not a bar I have to clear. Landing under it at real effort (roughly RIR 1-3) is a normal, expected outcome — I'm firmly in the intended effort zone — not a shortfall, don't flag it as underperformance (e.g. a target of 15 and I land at 12 is fine on its own). The one exception: the first session after a weight increase on an exercise (this session's weight is higher than that exercise's prior session), where the BOTTOM of the range is what's actually expected and appropriate — that's the point of dropping back down after adding weight, so hitting the bottom of the range right after a bump is the success case there, not a miss. Only flag a genuine concern when reps land meaningfully below even the bottom of the range, or a stall pattern per the Flags section above.
+- Within a single week, prefer varying WHICH exercise targets a given muscle across different training days rather than repeating the identical exercise every time that muscle comes up — e.g. two chest days in a week should generally use two different chest exercises/machines, not the same one twice, unless there's a genuine reason not to (limited equipment options for that muscle in my library, or a specific weakness being deliberately grooved with repetition). This is about variety of stimulus, not frequency — training the same MUSCLE multiple times a week is expected and good; this rule is only about not defaulting to the identical movement each time.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
 - Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
