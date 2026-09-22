@@ -1472,7 +1472,13 @@ body.dark-mode .splash-bypass:hover{ background:rgba(255,255,255,0.06); }
 
 @media (max-width: 860px){
   .settings-layout{flex-direction:column;}
-  .settings-nav{width:100%; flex-direction:row; overflow-x:auto; position:static; padding-bottom:4px;}
+  /* v4.61.0 (item 3): was overflow-x:auto with no visible scroll
+     affordance — on a phone, only the first couple of tabs were ever
+     visible and the rest (Calendar View among them) just silently
+     scrolled off, with nothing on screen hinting there was more. Same
+     class of bug as the Muscles by Day panel from the last batch — wrap
+     onto multiple rows instead so every tab is always visible. */
+  .settings-nav{width:100%; flex-direction:row; flex-wrap:wrap; overflow-x:visible; position:static; padding-bottom:4px;}
   .settings-nav-item{white-space:nowrap;}
 }
 
@@ -2205,7 +2211,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.60.0';
+const APP_VERSION = '4.61.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2213,6 +2219,15 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.61.0', changes: [
+    'No SQL migration needed — front-end only.',
+    'Fixed a real, severe bug (item 3): Calendar View and Session Library were fully built but had been dropped entirely from the Training page\'s navigation — genuinely unreachable, which is why Swap Days (built last version, living inside Calendar View) was invisible. Both restored. Also fixed the same undiscoverable-mobile-scroll issue found last time on the Muscles by Day panel, this time on the subpage nav bar itself (now wraps instead of silently scrolling off-screen) — more likely to bite now that it has 6 tabs instead of 4.',
+    'Fixed a real, severe bug (item 6): a day\'s exercise list only ever checked training_logs (which needs something actually logged first) and trainingPendingAdds (deliberately NOT persisted, in-session-only) — so a day auto-staged in an earlier session, with real persisted set data, could go completely invisible in the daily view after a reload, cross-device sync, or just enough time passing. The daily view now also checks training_sets directly, the one source that\'s actually always there. Also fixed two knock-on spots this touched: removing an exercise now actually purges its set rows instead of just clearing the ephemeral staging flag (else it would silently reappear), and the remove button works even when an exercise has sets but no log row yet.',
+    'Exercise Library-style history (item 4): the day-card\'s ↺ History button now opens the same rich per-set/RIR modal as the Exercise Library, instead of a flattened one-line-per-session summary. Walking exercises still use the old modal (no per-set equivalent exists for distance/pace data).',
+    'Rest timer chime hardening (item 5): added a second, earlier unlock attempt on the very first tap anywhere in the app, on top of last version\'s per-timer unlock — mobile audio-unlock quirks can be flaky on the very first attempt, especially in a home-screen/standalone PWA. Can\'t fully verify without on-device testing.',
+    'Exercise row order (item 7): now follows the session\'s fixed planned block order instead of a completion-driven order that could shift an exercise to the front the moment it got marked done. Each exercise is now numbered in that same order, so it\'s explicit which one to do next. Review Pack also now instructs the AI to order each session\'s blocks using real hypertrophy-programming sequencing (compounds before isolation, larger muscles before smaller) on top of the existing same-muscle-adjacency rule.',
+    'Review Pack now includes each exercise\'s weight increment AND seat/machine setting (item 8) as informational context, not just weight increment alone.',
+  ]},
   { v:'4.60.0', changes: [
     'No SQL migration needed — front-end only.',
     'Exercise rows now default to COLLAPSED (item 1), not expanded — flips the v4.50.0 default. Purely manual either way, session-local, same as before.',
@@ -9916,7 +9931,20 @@ function getTrainingLoggableBlocks(session){
 function getTrainingDayExerciseIds(date){
   const loggedIds = state.training.logs.filter(l=>l.date===date).map(l=>l.exerciseId);
   const pending = state.trainingPendingAdds[date] || [];
-  return Array.from(new Set([...loggedIds, ...pending]));
+  // v4.61.0 (item 6 — CRITICAL FIX): trainingPendingAdds is deliberately
+  // NOT persisted (ephemeral, in-session-only — see its declaration), but
+  // the auto-stage-on-open logic (renderTrainingDayCard) relies on it to
+  // remember what's on a day, and it creates real, persisted training_sets
+  // rows when it stages a day. Once trainingPendingAdds resets (any reload,
+  // any new session, cross-device sync), a day that was auto-staged but
+  // never actually completed — no training_logs row exists yet either —
+  // became completely invisible: real set data sitting in the database,
+  // but nothing left to tell the daily view it was there. This is exactly
+  // what "scheduled for Friday but nothing shows in the daily view" was —
+  // checking training_sets directly closes the gap, since that's the one
+  // source that's actually persisted regardless of what else forgets.
+  const setIds = (state.training.sets||[]).filter(s=>s.date===date).map(s=>s.exerciseId);
+  return Array.from(new Set([...loggedIds, ...pending, ...setIds]));
 }
 function computeDayAggregateV2(date){
   const ids = getTrainingDayExerciseIds(date);
@@ -10005,15 +10033,26 @@ function renderTrainingView(){
   ensureTrainingViewDate();
   if(!state.trainingSection) state.trainingSection = 'today';
 
+  // v4.61.0 (item 3 — CRITICAL FIX): 'calendar' and 'sessions' were both
+  // missing from this array entirely, even though renderTrainingCalendarSubpage
+  // and renderTrainingSessionsSubpage are fully built and referenced in past
+  // changelogs ("Training page restructured into 5 subpages..."). Somewhere
+  // along the way this array only ever kept 4 of the 5 — the Calendar View
+  // page (and Swap Days, built directly into it last version) has been
+  // completely unreachable via the UI. Restored to all 5.
   const TRAINING_NAV = [
     ['today','◐',"Log Training"],
+    ['calendar','▦','Calendar View'],
     ['history','≡','Log History'],
+    ['sessions','☰','Session Library'],
     ['exercises','⛊','Exercise Library'],
     ['resources','◈','Resources'],
   ];
   const sectionRenderers = {
     today: renderTrainingToday,
+    calendar: renderTrainingCalendarSubpage,
     history: renderTrainingHistorySubpage,
+    sessions: renderTrainingSessionsSubpage,
     exercises: renderTrainingExercisesSubpage,
     resources: renderTrainingResourcesSubpage,
   };
@@ -10227,7 +10266,7 @@ function toggleTrainingRowExpanded(date, exId){
   else state.trainingRowExpanded[key] = true;
   renderMain();
 }
-function renderTrainingExerciseLogRow(date, block, index){
+function renderTrainingExerciseLogRow(date, block, index, orderNum){
   const isSessionLevel = !!block.__sessionLevel;
   const ex = isSessionLevel ? null : getTrainingExerciseById(block.exerciseId);
   const log = getTrainingLogForExercise(date, block.exerciseId);
@@ -10236,7 +10275,8 @@ function renderTrainingExerciseLogRow(date, block, index){
   const completedVal = (draft && draft.completed!==undefined) ? draft.completed : !!(log && log.completed);
   const isWalking = !isSessionLevel && ex && ex.category === 'walking';
   const rowId = `trainEx_${index}`;
-  const title = isSessionLevel ? 'Log this session' : (ex ? ex.name : null);
+  const orderPrefix = (!isSessionLevel && orderNum) ? `${orderNum}. ` : '';
+  const title = isSessionLevel ? 'Log this session' : (ex ? `${orderPrefix}${ex.name}` : null);
 
   // Per-set data — new in v4.40.0
   const sets = !isSessionLevel && !isWalking ? getSetsForExercise(date, block.exerciseId) : [];
@@ -10389,7 +10429,7 @@ function renderTrainingExerciseLogRow(date, block, index){
         ${exVideoUrls(ex).length ? (exVideoUrls(ex).length===1
           ? `<a class="btn ghost sm" style="padding-left:0;" href="${escapeHtml(exVideoUrls(ex)[0])}" target="_blank" rel="noopener">▶ Form guide</a>`
           : `<button class="btn ghost sm" style="padding-left:0;" onclick="openExerciseVideoPicker('${ex.id}')">▶ Form guides (${exVideoUrls(ex).length})</button>`) : ''}
-        <button class="btn ghost sm" style="padding-left:0;" onclick="openExerciseHistoryModal('${ex.id}','${date}')">↺ History</button>
+        <button class="btn ghost sm" style="padding-left:0;" onclick="${isWalking ? `openExerciseHistoryModal('${ex.id}','${date}')` : `openExerciseLibraryHistoryModal('${ex.id}')`}">↺ History</button>
       </div>` : ''}
 
       <div id="${rowId}_sets" style="margin-top:10px;">
@@ -11163,10 +11203,30 @@ function renderTrainingDayCard(date){
         </div>
       </details>
       <div id="trainingExerciseRows">
-        ${exerciseIds.map((id,i)=>{
-          const block = sessionBlockMap[id] || { exerciseId:id, reps:null, sets:null, notes:null };
-          return renderTrainingExerciseLogRow(date, block, i);
-        }).join('')}
+        ${(() => {
+          // Item 7 (v4.61.0): row order used to come from
+          // getTrainingDayExerciseIds' Set-union of logs+pending+sets — the
+          // moment an exercise got its own training_logs row (as soon as
+          // anything about it changes, not just full completion), it jumped
+          // to the front of that union, which is why exercises appeared to
+          // reorder themselves when marked done. Sort by the session's own
+          // planned block order instead — a fixed reference that never
+          // moves — with anything not in the session (extra adds) appended
+          // after in their original relative order.
+          const sessionOrder = {};
+          if(session && session.blocks) session.blocks.forEach((b,idx)=>{
+            if(b.exerciseId!=null && !(b.exerciseId in sessionOrder)) sessionOrder[b.exerciseId] = idx;
+          });
+          const orderedIds = [...exerciseIds].sort((a,b)=>{
+            const ai = sessionOrder.hasOwnProperty(a) ? sessionOrder[a] : Infinity;
+            const bi = sessionOrder.hasOwnProperty(b) ? sessionOrder[b] : Infinity;
+            return ai - bi;
+          });
+          return orderedIds.map((id,i)=>{
+            const block = sessionBlockMap[id] || { exerciseId:id, reps:null, sets:null, notes:null };
+            return renderTrainingExerciseLogRow(date, block, i, i+1);
+          }).join('');
+        })()}
       </div>
 
       <div class="modal-actions" style="justify-content:flex-start; margin-top:4px; flex-wrap:wrap;">
@@ -11321,6 +11381,16 @@ async function removeExerciseFromDay(date, exerciseId){
     if(!confirm('Are you sure?')) return;
     state.trainingPendingAdds[date] = pending.filter(id=>id!==exerciseId);
     delete state.trainingDraftValues[trainingDraftKey(date, exerciseId)];
+    // v4.61.0: this used to only clear the (ephemeral, unpersisted) staging
+    // flag — but auto-staging (and ensureSetsAutoFilled) can already have
+    // created real, persisted training_sets rows by this point. Leaving
+    // those behind meant a "removed" exercise came right back on the next
+    // render, once getTrainingDayExerciseIds started checking sets directly
+    // (item 6's fix) rather than just the staging flag that was cleared
+    // here. Purge the actual rows too, and persist it.
+    deleteTrainingSetsForExercise(date, exerciseId);
+    pendingTrainingDeletes.push({ table:'training_sets', match:{ log_date:date, exercise_id:exerciseId } });
+    await saveTraining();
     flushTrainingDrafts();
     renderMain();
     return;
@@ -11585,7 +11655,14 @@ function addExerciseToDayFromPicker(date, el){
 }
 async function deleteTrainingExerciseLog(date, exerciseId){
   const log = getTrainingLogForExercise(date, exerciseId);
-  if(!log) return;
+  // v4.61.0: used to require a training_logs row to exist at all before
+  // doing anything — but an exercise can now be showing in the daily view
+  // (see item 6's getTrainingDayExerciseIds fix) purely because it has real
+  // training_sets rows, with no log row yet if nothing on it was ever
+  // completed. Removing it needs to work either way, not silently no-op
+  // just because the log side happens to be empty.
+  const hasSets = (state.training.sets||[]).some(s=>s.date===date && s.exerciseId===exerciseId);
+  if(!log && !hasSets) return;
   if(!confirm(`Delete this log entry? This can't be undone.`)) return;
   delete state.trainingDraftValues[trainingDraftKey(date, exerciseId)];
   flushTrainingDrafts();
@@ -12885,7 +12962,7 @@ function copyTrainingReviewPack(){
   const exerciseLibrary = state.training.exercises.map(e=>({
     id: e.id, name: e.name, category: e.category||'strength',
     primaryMuscles: exMuscleGroups(e,'primary'), secondaryMuscles: exMuscleGroups(e,'secondary'), tags: e.tags||[],
-    weightIncrementKg: e.weightIncrementKg || 2.5,
+    weightIncrementKg: e.weightIncrementKg || 2.5, seatSetting: e.seatSetting || null,
   }));
 
   const trainingGoals = state.settings.trainingGoals || { priorityMuscles:[], notes:'' };
@@ -12904,7 +12981,7 @@ EVERY tracked muscle group must get AT LEAST ${band.min} sets/week — this is a
 ${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard ${band.min}-${band.max} set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
-MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid):
+MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid; seatSetting, where present, is my own note on how I have that machine dialed in — purely informational, nothing for you to act on):
 \`\`\`json
 ${JSON.stringify(exerciseLibrary, null, 2)}
 \`\`\`
@@ -12956,7 +13033,7 @@ RULES for the plan:
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
 - Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
-- Order each session's exercises so the same muscle group doesn't get worked in two back-to-back blocks where avoidable — e.g. don't put two chest-primary exercises next to each other; alternate muscle groups through the session so consecutive exercises give each area a moment to recover before it's hit again.
+- Order each session's blocks array deliberately, using established hypertrophy-programming sequencing, not an arbitrary order — this order is what I'll actually perform the exercises in, in that exact sequence: heavier/more technically demanding compound movements first while genuinely fresh, isolation and accessory work later; the more fatiguing/larger-muscle work generally before smaller-muscle/single-joint work. On top of that base sequencing, also avoid the same muscle group in two back-to-back blocks where avoidable (e.g. don't put two chest-primary exercises next to each other) — alternate through the session so consecutive exercises give each area a moment before it's hit again.
 - Don't schedule the same PRIMARY muscle group as a direct target on two consecutive TRAINING days (a rest day in between resets this — it only applies to actual back-to-back training days). This is for recovery, not just within-session variety. Exception: if a priority muscle group above genuinely cannot get its extra frequency without landing on consecutive training days, it's fine to do so — but say so explicitly in your performance summary (item 1) so I know it was a deliberate trade-off, not an oversight. Secondary-muscle overlap between consecutive days is fine and expected; this rule is primary-only.
 - All suggested weights must be achievable on that specific exercise's own equipment — see weightIncrementKg on each exercise above (most are 2.5kg: 5kg main increments plus a 2.5kg toggle, but some machines only move in 5/10/20kg jumps). Every suggested weight for an exercise must land on THAT exercise's increment grid, not a blanket 2.5kg assumption — e.g. a weightIncrementKg of 10 means 40, 50, 60kg are valid but 45kg isn't.
 - One session per calendar day, never reused across multiple days — give every session in "sessions" a unique "id" (e.g. "legs_20260917") AND include the actual calendar date it's for, including the year, directly in the "name" itself (e.g. "Push Focus — Sep 17, 2026", "Legs — Sep 22, 2026"), not just a descriptive label like "Push Focus Alpha" and not a date missing the year — "Sep 17" alone collides with "Sep 17" a year later just as easily as two descriptive labels would. A descriptive-only name can still collide with something named in a completely separate review pack weeks or months from now — you have no memory of what you called things last time, and neither does the app checking for a match, so the full date is what actually guarantees it never repeats. Do NOT reuse a repeating name like "Push A"/"Push B" across the two weeks — each day's session is planned individually for that day, not an instance of a rotating template. (The app matches an imported session to an existing one by exact name, so a repeated name gets treated as "this is the same session as before" and asks me to manually confirm it during import — that's the specific problem this rule avoids.)
@@ -17103,6 +17180,19 @@ document.addEventListener('keydown', (e)=>{
     if(cmdPaletteOpen) closeCommandPalette(); else openCommandPalette();
   }
 });
+
+/* v4.61.0 (item 5 — chime hardening): startRestTimer already tries to
+   unlock the AudioContext right in the tap that starts it, but that's the
+   FIRST time this runs per page load, and audio-unlock quirks (especially
+   iOS Safari, more so in home-screen/standalone PWA mode) can be flaky on
+   that very first attempt. This adds an earlier, defensive unlock attempt
+   on literally the first tap/click anywhere in the app — often well before
+   the first set ever gets marked done — so by the time a rest timer
+   actually needs to play something, the context has had the best possible
+   chance to already be sitting in 'running' state. Harmless if it's
+   already unlocked by then; { once: true } means this never fires again
+   after the first real interaction. */
+document.addEventListener('click', ()=>{ try{ _getRestAudioCtx(); }catch(e){} }, { once:true, capture:true });
 
 init();
 
