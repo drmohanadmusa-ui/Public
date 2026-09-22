@@ -2211,7 +2211,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.61.0';
+const APP_VERSION = '4.62.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2219,6 +2219,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.62.0', changes: [
+    'No SQL migration needed — front-end only.',
+    'Locked-date import protection: "once a plan is turned into actual, it\'s done." A date with any logged (done) set is now locked — a later import that would touch it (reassign its session, or update a session currently mapped to it — sessions are shared templates, so protecting one day\'s copy means protecting the whole session) now stops and asks first instead of silently landing new exercises alongside work already completed that day. Real choice: Skip the locked day(s) and apply everything else normally, Replace anyway (overwrite, including today\'s progress), or Cancel the import entirely. This is exactly what caused Leg Press and Leg Extension to show up mid-day on an already-half-done back session.',
+  ]},
   { v:'4.61.0', changes: [
     'No SQL migration needed — front-end only.',
     'Fixed a real, severe bug (item 3): Calendar View and Session Library were fully built but had been dropped entirely from the Training page\'s navigation — genuinely unreachable, which is why Swap Days (built last version, living inside Calendar View) was invisible. Both restored. Also fixed the same undiscoverable-mobile-scroll issue found last time on the Muscles by Day panel, this time on the subpage nav bar itself (now wraps instead of silently scrolling off-screen) — more likely to bite now that it has 6 tabs instead of 4.',
@@ -13251,7 +13255,7 @@ function submitTrainingImportReview(){
   if(overlay) overlay.remove();
   pendingImportResolution = null;
   if(!confirmConsecutiveMuscleWarnings(res)) return;
-  applyTrainingImportResolution(res);
+  proceedWithImportApply(res);
 }
 
 /* v4.5x: safety net on top of the prompt's "alternate muscle groups" rule —
@@ -13331,7 +13335,75 @@ function confirmConsecutiveMuscleWarnings(res){
   const more = warnings.length>8 ? `\n…and ${warnings.length-8} more` : '';
   return confirm(`⚠ Same primary muscle scheduled on back-to-back training days:\n${lines}${more}\n\nThis can be intentional for a priority muscle that needs extra frequency. Import anyway?`);
 }
-function applyTrainingImportResolution(res){
+/* v4.62.0: "once a plan is turned into actual, it's done" — a date with any
+   logged (done) set on it is treated as locked. A later import that would
+   touch that date (reassign its session, or update a session that's
+   currently mapped to it — sessions are shared templates, so protecting
+   one instance means protecting the whole session object) stops and asks
+   first, rather than silently landing new exercises alongside work
+   already completed that day. This is exactly what happened in the
+   2026-09-22 batch: a re-import regenerated an already-in-progress day's
+   session with 2 extra exercises tacked on. */
+function computeLockedDateConflicts(res){
+  const doneDates = new Set((state.training.sets||[]).filter(s=>s.done).map(s=>s.date));
+  const lockedDates = [...new Set((res.calendar||[]).map(c=>c && c.date).filter(Boolean))]
+    .filter(d=> doneDates.has(d))
+    .sort();
+  const protectedSessionIds = new Set();
+  lockedDates.forEach(d=>{
+    const cal = getTrainingCalEntry(d);
+    if(cal && cal.sessionId) protectedSessionIds.add(cal.sessionId);
+  });
+  return { lockedDates, protectedSessionIds };
+}
+let pendingLockedDateConflictRes = null;
+function openLockedDateConflictModal(res, lockedDates){
+  pendingLockedDateConflictRes = res;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'lockedDateConflictOverlay';
+  overlay.onclick = (e)=>{ if(e.target===overlay) resolveLockedDateConflict('cancel'); };
+  document.body.appendChild(overlay);
+  const dateList = lockedDates.map(d=>humanDate(d)).join(', ');
+  const plural = lockedDates.length!==1;
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:480px;">
+      <h3>Already-trained day${plural?'s':''} in this plan</h3>
+      <div class="page-sub" style="margin-bottom:14px;">${escapeHtml(dateList)} already ${plural?'have':'has'} logged sets, and this import would touch ${plural?'them':'it'}. What do you want to do?</div>
+      <div class="modal-actions" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <button class="btn brass" onclick="resolveLockedDateConflict('skip')">Skip ${plural?'those days':'that day'} — keep what's already there, apply everything else</button>
+        <button class="btn secondary" onclick="resolveLockedDateConflict('replace')">Replace anyway — overwrite, including logged progress</button>
+        <button class="btn ghost" onclick="resolveLockedDateConflict('cancel')">Cancel this import</button>
+      </div>
+    </div>
+  `;
+}
+function resolveLockedDateConflict(choice){
+  const res = pendingLockedDateConflictRes;
+  pendingLockedDateConflictRes = null;
+  const overlay = document.getElementById('lockedDateConflictOverlay');
+  if(overlay) overlay.remove();
+  if(!res || choice==='cancel') return;
+  if(choice==='skip'){
+    const { lockedDates, protectedSessionIds } = computeLockedDateConflicts(res);
+    applyTrainingImportResolution(res, { skipDates: new Set(lockedDates), protectedSessionIds });
+  } else {
+    applyTrainingImportResolution(res);
+  }
+}
+/* Shared gate for both import paths (auto-resolved and manual-review) —
+   checks for locked-date conflicts and either applies immediately (nothing
+   locked) or pauses for the decision modal above. */
+function proceedWithImportApply(res){
+  const { lockedDates } = computeLockedDateConflicts(res);
+  if(lockedDates.length){
+    openLockedDateConflictModal(res, lockedDates);
+    return;
+  }
+  applyTrainingImportResolution(res);
+}
+function applyTrainingImportResolution(res, opts){
+  opts = opts || {};
   const exIdMap = {}; // importedId -> resolved id actually used in state
   let newExCount=0, updExCount=0;
   res.exercises.forEach(item=>{
@@ -13363,6 +13435,15 @@ function applyTrainingImportResolution(res){
   const sessIdMap = {};
   let newSessCount=0, updSessCount=0;
   res.sessions.forEach(item=>{
+    if(item.matched && opts.protectedSessionIds && opts.protectedSessionIds.has(item.matched.id)){
+      // Locked-date protection, "Skip" chosen: this session is currently
+      // mapped to a date with logged work — leave its blocks/fields exactly
+      // as they are. Still resolve the id mapping so anything else in this
+      // import referencing it (e.g. a calendar entry for a DIFFERENT,
+      // non-locked date that reuses this same session) lines up correctly.
+      sessIdMap[item.importedId] = item.matched.id;
+      return;
+    }
     // Rewrite each block's exerciseId through exIdMap — a block may point at
     // an imported exercise that just got mapped onto a DIFFERENT existing
     // id (auto name-match or a manual choice in the review modal), so the
@@ -13388,6 +13469,7 @@ function applyTrainingImportResolution(res){
   const today = todayStr();
   res.calendar.forEach(c=>{
     if(!c || !c.date || !c.sessionId) return;
+    if(opts.skipDates && opts.skipDates.has(c.date)) return; // locked-date protection, "Skip" chosen
     const resolvedSessionId = sessIdMap[c.sessionId] || c.sessionId;
     const existing = state.training.calendar.find(x=>x.date===c.date);
     if(existing){ existing.sessionId = resolvedSessionId; updCalCount++; }
@@ -13480,7 +13562,7 @@ function processTrainingImportText(text){
   if(!confirm(`Import this training plan?\n\n${summary}\n\nApply these changes?`)) return;
   if(!confirmConsecutiveMuscleWarnings(res)) return;
 
-  applyTrainingImportResolution(res);
+  proceedWithImportApply(res);
 }
 
 function handleImportTrainingJson(event){
