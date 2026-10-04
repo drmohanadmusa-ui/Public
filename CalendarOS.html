@@ -2211,7 +2211,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.62.0';
+const APP_VERSION = '4.63.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2219,6 +2219,18 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.63.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'Fixed a real cause of weights going backwards: progression took the FIRST row of your last session as the base weight \u2014 sometimes a warm-up, and in a ramping session the lightest working set \u2014 so a suggestion could land below what you actually lifted. It also treated the most recent DATE with any set rows as your last session, which could be a future day that is only staged with planned numbers. Everything now looks only at COMPLETED work (done, non-warm-up sets) and uses the heaviest working weight of your last completed session as the base; reps are judged on the sets done at that weight.',
+    'One working weight per exercise per day: the placeholder and any new set use your last completed top weight for every working set (reps still follow the matching set), and the Review Pack tells the AI to write a single weight per exercise per day. Warm-ups are untouched.',
+    'Weights never go backward (import check): before an import is applied you now see a "Weight check" screen. Every suggested weight is auto-corrected onto its machine\u2019s increment grid (nearest step; an exact tie rounds up), and any weight below your last completed top weight for that exercise (within 4 weeks), or below an earlier week\u2019s planned weight in the same plan, is raised to it \u2014 shown as a regression flag. Choose Apply corrections, Import as written, or Cancel. The AI starting-point suggestions are snapped to the grid too. A below-last-weight suggestion that still gets in (imported as written, or edited by hand) shows a red warning on the exercise\u2019s Target line.',
+    'The app\u2019s own suggestions (after you save a day, and when you swap an exercise) can no longer drop below your last completed top weight either.',
+    'Review Pack: each exercise now carries lastCompleted (date and top weight) so the AI can honor the floor, plus new rules \u2014 one weight per exercise per day, never below your last weight (deloads must be called out explicitly), and use every strength exercise once per calendar week, with a new exerciseUsageCurrentWeek section showing what has already been done this week.',
+    'New Exercise Usage panel under Muscles by Day (same week \u2039 \u203a navigation): every strength exercise with the number of distinct days it was done and planned that week, shown separately; unused ones show as "not used" and anything on 2+ days gets a red \u00d7N badge.',
+    'History button on an exercise card now shows ONLY completed history \u2014 sessions before that day where you actually did the exercise, and only the sets you actually did. No planned or unfinished days.',
+    'Screen jumping after tapping a set (best-effort fix, not reproduced on a device): a full re-render wiped the rest-timer box and it popped back in up to a second later above your exercises, pushing everything down. It is now restored in the same frame, and your scroll position is kept across any re-render of the same page.',
+    'History window: the close button is now a \u2715 pinned to the top (it used to sit at the very bottom of a long list), Esc and tapping outside close it too, and rows are more compact with no "planned" text (planned rows in the Library view are colored instead).',
+  ]},
   { v:'4.62.0', changes: [
     'No SQL migration needed — front-end only.',
     'Locked-date import protection: "once a plan is turned into actual, it\'s done." A date with any logged (done) set is now locked — a later import that would touch it (reassign its session, or update a session currently mapped to it — sessions are shared templates, so protecting one day\'s copy means protecting the whole session) now stops and asks first instead of silently landing new exercises alongside work already completed that day. Real choice: Skip the locked day(s) and apply everything else normally, Replace anyway (overwrite, including today\'s progress), or Cancel the import entirely. This is exactly what caused Leg Press and Leg Extension to show up mid-day on an already-half-done back session.',
@@ -6836,6 +6848,7 @@ function setView(v){
   updateNavBadges();
 }
 
+let _lastRenderSig = null;
 function renderMain(){
   applyDynamicTheme();
   const el = document.getElementById('mainContent');
@@ -6847,6 +6860,15 @@ function renderMain(){
   // table is a standing risk to data you cannot see, so it should not be
   // possible to use the app for weeks without noticing. Empty string when
   // coverage is complete, so it costs nothing in the normal case.
+  // v4.63.0 — keep the scroll position across a full re-render of the SAME page
+  // (tapping a set's tick, adding a set, etc. all rebuild the page). Only when
+  // the page/section/date is unchanged, so real navigation still starts at the
+  // top as before.
+  const _sig = [state.view, state.trainingSection, state.trainingSelectedDate, state.settingsSection, state.selectedListId].join('|');
+  const _keepScroll = (_sig === _lastRenderSig);
+  _lastRenderSig = _sig;
+  const _sy = _keepScroll ? (window.scrollY || window.pageYOffset || 0) : 0;
+  const _st = _keepScroll ? el.scrollTop : 0;
   const backupBanner = renderBackupCoverageBanner();
   try{
     if(state.view === 'dashboard') el.innerHTML = renderDashboard();
@@ -6872,6 +6894,18 @@ function renderMain(){
         <p style="color:var(--slate); font-size:13px;">This is usually caused by a settings value left over from an older version. Repairing resets any missing appearance settings to their defaults — it won't touch your tasks, lists, or health log.</p>
         <button class="btn brass" onclick="repairSettingsAndRetry()">Repair &amp; Retry</button>
       </div>`;
+  }
+  // v4.63.0 — a full re-render wipes the rest-timer box (#restTimerDisplay), and
+  // it used to reappear up to a second later at the top of the card, shoving
+  // every exercise below it down — a visible jump right after tapping a set.
+  // Put it straight back in the same frame instead.
+  if(_restTimerEnd){ try{ _updateRestTimerUI(); }catch(e){} }
+  if(_keepScroll && (_sy || _st)){
+    if(_st) el.scrollTop = _st;
+    if(_sy && Math.abs((window.scrollY||0) - _sy) > 2) window.scrollTo(0, _sy);
+    if(typeof requestAnimationFrame === 'function'){
+      requestAnimationFrame(()=>{ if(_sy && Math.abs((window.scrollY||0) - _sy) > 2) window.scrollTo(0, _sy); });
+    }
   }
   renderPinnedPanel();
 }
@@ -9235,30 +9269,73 @@ const MUSCLE_GROUP_LABELS = {
 function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
   if(!lastSets || !lastSets.length) return null;
   if(!sessionTarget || !sessionTarget.repsMin || !sessionTarget.repsMax) return null;
-  const { repsMin, repsMax, weightKg } = sessionTarget;
+  const { repsMin, repsMax } = sessionTarget;
   const increment = getExerciseWeightIncrement(exId);
   const working = lastSets.filter(s=> !s.isWarmup && !s.toFailure);
   if(!working.length) return null;
-  const allAtTop = working.every(s=> s.reps >= repsMax && (s.rir==null||s.rir<=2));
-  const anyBelowBottom = working.some(s=> s.reps < repsMin);
-  if(allAtTop) return { type:'addWeight', newWeightKg:(weightKg||lastSets[0].weightKg||0)+increment,
+  // v4.63.0: the base is the HEAVIEST working weight of that session, never
+  // the first row (which could be a warm-up, or the lightest set of a
+  // ramping session) — a suggestion can no longer land below what was lifted.
+  // Reps are judged on the sets actually performed at that top weight.
+  const weights = working.map(s=>s.weightKg).filter(w=>w!=null && w>0);
+  const topW = weights.length ? Math.max(...weights) : (sessionTarget.weightKg||null);
+  const atTop = weights.length ? working.filter(s=>s.weightKg===topW) : working;
+  const allAtTop = atTop.every(s=> s.reps >= repsMax && (s.rir==null||s.rir<=2));
+  const anyBelowBottom = atTop.some(s=> s.reps < repsMin);
+  if(allAtTop) return { type:'addWeight', newWeightKg:(topW||0)+increment,
     repsTarget:repsMin, message:`All sets hit ${repsMax} reps at RIR≤2 — try +${increment} kg, drop back to ${repsMin}` };
-  if(anyBelowBottom) return { type:'hold', newWeightKg:lastSets[0].weightKg,
+  if(anyBelowBottom) return { type:'hold', newWeightKg:topW,
     repsTarget:repsMin, message:`Hold the weight — didn't reach ${repsMin} reps on all sets` };
-  const nextReps=Math.max(...working.map(s=>s.reps||0))+1;
-  return { type:'addRep', newWeightKg:lastSets[0].weightKg,
+  const nextReps=Math.max(...atTop.map(s=>s.reps||0))+1;
+  return { type:'addRep', newWeightKg:topW,
     repsTarget:Math.min(nextReps,repsMax), message:`Try ${Math.min(nextReps,repsMax)} reps at the same weight` };
 }
 
 function getSetsForExercise(date, exId){
   return (state.training.sets||[]).filter(s=>s.date===date&&s.exerciseId===exId).sort((a,b)=>a.setNo-b.setNo);
 }
+/* v4.63.0 — "last session" used to mean "the most recent DATE that has any
+   set rows", which (a) could be a future day that is only staged with planned
+   numbers, and (b) included warm-ups and not-done rows. Progression then took
+   the FIRST row of that day as the base weight, so a warm-up (or the lightest
+   set of a ramping session) could drag a suggestion BELOW what was actually
+   lifted — the "weights going backwards" report. These helpers only ever look
+   at COMPLETED work: done, non-warm-up sets. */
+const WEIGHT_FLOOR_WINDOW_DAYS = 28;
+function getLastCompletedSession(exId, beforeDate){
+  const byDate = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId!==exId || !s.done || s.isWarmup) return;
+    if(beforeDate && !(s.date < beforeDate)) return;
+    (byDate[s.date] || (byDate[s.date]=[])).push(s);
+  });
+  const dates = Object.keys(byDate).sort((a,b)=>a<b?1:-1);
+  if(!dates.length) return null;
+  const date = dates[0];
+  const sets = byDate[date].slice().sort((a,b)=>a.setNo-b.setNo);
+  const weights = sets.map(s=>s.weightKg).filter(w=>w!=null && w>0);
+  return { date, sets, topWeightKg: weights.length ? Math.max(...weights) : null };
+}
+/* The weight a plan for `forDate` should not drop below: the heaviest weight
+   from the last completed session before that date — unless that session is
+   more than WEIGHT_FLOOR_WINDOW_DAYS earlier (after a long break, forcing the
+   old weight would be wrong). */
+function getWeightFloor(exId, forDate){
+  const last = getLastCompletedSession(exId, forDate);
+  if(!last || last.topWeightKg==null) return null;
+  if(forDate && daysBetween(last.date, forDate) > WEIGHT_FLOOR_WINDOW_DAYS) return null;
+  return { weightKg: last.topWeightKg, date: last.date };
+}
 function getLastSetsForExercise(exId, excludeDate){
-  const byDate={};
-  (state.training.sets||[]).filter(s=>s.exerciseId===exId&&s.date!==excludeDate)
-    .forEach(s=>{(byDate[s.date]||(byDate[s.date]=[])).push(s);});
-  const dates=Object.keys(byDate).sort((a,b)=>a<b?1:-1);
-  return dates.length?byDate[dates[0]]:[];
+  // Legacy signature, now completed-only: the done sets of the most recent
+  // completed session on a date other than excludeDate.
+  const byDate = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId!==exId || s.date===excludeDate || !s.done) return;
+    (byDate[s.date] || (byDate[s.date]=[])).push(s);
+  });
+  const dates = Object.keys(byDate).filter(d=>byDate[d].some(s=>!s.isWarmup)).sort((a,b)=>a<b?1:-1);
+  return dates.length ? byDate[dates[0]].slice().sort((a,b)=>a.setNo-b.setNo) : [];
 }
 function epley1RM(sets){
   if(!sets||!sets.length) return null;
@@ -9687,17 +9764,20 @@ function setTrainingSuggestion(date,exId,suggestion){
   state.settings.trainingSuggestions[`${date}::${exId}`]={...suggestion,generatedAt:new Date().toISOString()};
 }
 function refreshSuggestionForExercise(exId, date){
-  const lastSets=getLastSetsForExercise(exId,null); // null = include today now saved
-  if(!lastSets.length) return;
+  // v4.63.0: last COMPLETED session up to and including `date` (today is
+  // included now that it's saved), never a future/staged day.
+  const lastSess=getLastCompletedSession(exId, addDays(date,1));
+  if(!lastSess) return;
+  const lastSets=lastSess.sets;
   const cal=getTrainingCalEntry(date);
   const session=cal?getTrainingSessionById(cal.sessionId):null;
   const block=session&&session.blocks?session.blocks.find(b=>b.exerciseId===exId):null;
   const target=block?{
     repsMin:parseInt(String(block.reps||'').split('-')[0])||8,
     repsMax:parseInt(String(block.reps||'').split('-').pop())||12,
-    weightKg:lastSets[0]&&lastSets[0].weightKg, sets:block.sets||3,
+    weightKg:lastSess.topWeightKg, sets:block.sets||3,
   }:null;
-  const prog=doubleProgressionSuggestion(exId,target,lastSets.filter(s=>!s.isWarmup));
+  const prog=doubleProgressionSuggestion(exId,target,lastSets);
   if(!prog) return;
   // Find next calendar date for this exercise.
   const futureDates=state.training.calendar.filter(c=>c.date>date).sort((a,b)=>a.date<b.date?-1:1);
@@ -10113,6 +10193,8 @@ function renderTrainingToday(){
 
     ${renderDayMuscleBoxes()}
 
+    ${renderExerciseUsagePanel()}
+
     <div class="section">
       <div class="section-head"><h2>Recent Days</h2></div>
       <div class="card" style="padding:4px 16px;">
@@ -10284,7 +10366,8 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
 
   // Per-set data — new in v4.40.0
   const sets = !isSessionLevel && !isWalking ? getSetsForExercise(date, block.exerciseId) : [];
-  const lastSets = !isSessionLevel && !isWalking ? getLastSetsForExercise(block.exerciseId, date) : [];
+  const lastSess = !isSessionLevel && !isWalking ? getLastCompletedSession(block.exerciseId, date) : null;
+  const lastSets = lastSess ? lastSess.sets : [];
   const prevE1RM = !isSessionLevel && !isWalking ? bestE1RMForExercise(block.exerciseId, date) : null;
   const curE1RM = sets.length ? epley1RM(sets) : null;
   const isPR = curE1RM && prevE1RM && curE1RM > prevE1RM;
@@ -10343,7 +10426,8 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
   /* Build per-set rows. Pre-fill weight from last session for convenience.
      If the person already has saved sets for today, show those; otherwise show
      one row pre-filled from the last session (or the session block target). */
-  const defaultWeight = lastRef ? lastRef.weightKg : null;
+  // v4.63.0: one consistent weight per day — placeholder is the last completed top weight
+  const defaultWeight = (lastSess && lastSess.topWeightKg!=null) ? lastSess.topWeightKg : (lastRef ? lastRef.weightKg : null);
   const defaultReps = lastRef ? lastRef.reps : (block.reps ? parseInt(String(block.reps).split('-')[0])||null : null);
   const displaySets = sets.length ? sets : [];
 
@@ -10397,6 +10481,9 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
     targetReps ? `${targetReps} reps` : null,
     suggestedWeightKg ? `@ ${suggestedWeightKg} kg (suggested)` : null,
   ].filter(Boolean).join(' × ');
+  // v4.63.0: regression flag — a suggested weight below the last completed top weight
+  const weightFloor = (!isSessionLevel && !isWalking && suggestedWeightKg!=null) ? getWeightFloor(block.exerciseId, date) : null;
+  const belowFloor = !!(weightFloor && suggestedWeightKg < weightFloor.weightKg - 1e-9);
   // v4.5x fix: was counting how many working-set ROWS EXIST, not how many
   // are actually done — harmless before auto-fill existed (rows only got
   // created as you logged them, so "exists" and "done" were the same
@@ -10425,7 +10512,7 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
       </div>` : ''}
 
       ${hasTarget ? `<div class="target-badge ${targetMet?'target-badge-met':''}">
-        🎯 Target: ${escapeHtml(targetLabel)}
+        🎯 Target: ${escapeHtml(targetLabel)}${belowFloor ? ` <span style="color:var(--flag,#D95B5B);font-weight:600;" title="This plan suggests less than the ${weightFloor.weightKg} kg you completed on ${escapeHtml(humanDateNoRelative(weightFloor.date))}">⚠ below your last ${weightFloor.weightKg} kg</span>` : ''}
         ${targetSets ? ` · <span style="font-weight:600;color:${targetMet?'var(--teal)':'var(--ink-soft)'};">${doneWorkingSets}/${targetSets} sets logged</span>` : ''}
       </div>` : ''}
 
@@ -10433,7 +10520,7 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
         ${exVideoUrls(ex).length ? (exVideoUrls(ex).length===1
           ? `<a class="btn ghost sm" style="padding-left:0;" href="${escapeHtml(exVideoUrls(ex)[0])}" target="_blank" rel="noopener">▶ Form guide</a>`
           : `<button class="btn ghost sm" style="padding-left:0;" onclick="openExerciseVideoPicker('${ex.id}')">▶ Form guides (${exVideoUrls(ex).length})</button>`) : ''}
-        <button class="btn ghost sm" style="padding-left:0;" onclick="${isWalking ? `openExerciseHistoryModal('${ex.id}','${date}')` : `openExerciseLibraryHistoryModal('${ex.id}')`}">↺ History</button>
+        <button class="btn ghost sm" style="padding-left:0;" onclick="${isWalking ? `openExerciseHistoryModal('${ex.id}','${date}')` : `openExerciseCompletedHistoryModal('${ex.id}','${date}')`}">↺ History</button>
       </div>` : ''}
 
       <div id="${rowId}_sets" style="margin-top:10px;">
@@ -10509,9 +10596,15 @@ function addSet(date, exId){
   if(last){
     reps = last.reps; weightKg = last.weightKg;
   } else {
-    const lastWorking = getLastSetsForExercise(exId, date).filter(s=>!s.isWarmup);
-    const matchingLast = lastWorking[existing.filter(s=>!s.isWarmup).length];
-    if(matchingLast){ reps = matchingLast.reps; weightKg = matchingLast.weightKg; }
+    // v4.63.0: one consistent working weight per day — reps follow the
+    // matching set of the last completed session, the weight is that
+    // session's top weight (not the Nth set's weight of a ramp).
+    const lastSess = getLastCompletedSession(exId, date);
+    if(lastSess){
+      const nth = lastSess.sets[existing.filter(s=>!s.isWarmup).length] || lastSess.sets[lastSess.sets.length-1];
+      reps = nth ? nth.reps : null;
+      weightKg = lastSess.topWeightKg!=null ? lastSess.topWeightKg : (nth ? nth.weightKg : null);
+    }
   }
   upsertTrainingSet({
     date, exerciseId:exId, setNo,
@@ -10858,6 +10951,72 @@ function bodyFigureMiniSVG(fs, labelFn){
       <path d="M 49 162 C 46 170, 46 185, 49 194 C 51 198, 60 197, 60 190 C 60 180, 58 168, 54 162 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
       <path d="M 91 162 C 94 170, 94 185, 91 194 C 89 198, 80 197, 80 190 C 80 180, 82 168, 86 162 Z" fill="var(--paper-dim)" fill-opacity="0.3" stroke="var(--ink-soft)" stroke-width="1"/>
     </g>
+  `;
+}
+/* v4.63.0: per-exercise weekly usage — how many DISTINCT DAYS each strength
+   exercise is done (logged) / planned in a calendar week. Unused ones show up
+   too (count 0), since the goal is to touch every machine once a week. */
+function computeDayExerciseStatus(date){
+  const today = todayStr();
+  const done = new Set(), planned = new Set();
+  (state.training.sets||[]).forEach(s=>{ if(s.date===date && s.done && !s.isWarmup) done.add(s.exerciseId); });
+  if(date >= today){
+    const cal = getTrainingCalEntry(date);
+    const session = cal ? getTrainingSessionById(cal.sessionId) : null;
+    const staged = new Set(getTrainingDayExerciseIds(date));
+    const ids = new Set();
+    if(session && session.blocks) session.blocks.forEach(b=>{ if(!staged.size || staged.has(b.exerciseId)) ids.add(b.exerciseId); });
+    staged.forEach(id=>ids.add(id));
+    ids.forEach(id=>{ if(!done.has(id)) planned.add(id); });
+  }
+  return { done, planned };
+}
+function computeExerciseWeekUsage(offset){
+  const { weekStart, weekEnd } = getCalendarWeekBounds(offset||0);
+  const usage = {};
+  for(let i=0;i<7;i++){
+    const d = addDays(weekStart, i);
+    const { done, planned } = computeDayExerciseStatus(d);
+    done.forEach(id=>{ (usage[id] || (usage[id]={ d:new Set(), p:new Set() })).d.add(d); });
+    planned.forEach(id=>{ (usage[id] || (usage[id]={ d:new Set(), p:new Set() })).p.add(d); });
+  }
+  const rows = (state.training.exercises||[]).filter(e=>e.category!=='walking').map(e=>{
+    const u = usage[e.id];
+    const done = u ? u.d.size : 0, planned = u ? u.p.size : 0;
+    return { exId:e.id, name:e.name, muscles:exMuscleGroups(e,'primary'), done, planned, total:done+planned };
+  }).sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
+  return { weekStart, weekEnd, rows };
+}
+function renderExerciseUsagePanel(){
+  const offset = state.trainingVolumeWeekOffset||0;
+  const u = computeExerciseWeekUsage(offset);
+  if(!u.rows.length) return '';
+  const weekLabel = offset===0 ? 'This week' : `${humanDate(u.weekStart)} – ${humanDate(u.weekEnd)}`;
+  const used = u.rows.filter(r=>r.total>0).length;
+  const repeated = u.rows.filter(r=>r.total>1).length;
+  const cells = u.rows.map(r=>{
+    const counts = r.total===0
+      ? `<span class="page-sub" style="font-size:11px;">not used</span>`
+      : `<span style="font-size:11px; white-space:nowrap;">${r.done?`<b style="color:var(--teal);">${r.done}</b> done`:''}${r.done&&r.planned?' · ':''}${r.planned?`<b style="color:#E9B84A;">${r.planned}</b> planned`:''}</span>`;
+    const badge = r.total>=2 ? `<span style="font-size:10.5px; font-weight:700; color:#fff; background:var(--flag,#D95B5B); border-radius:8px; padding:0 6px;">×${r.total}</span>` : '';
+    return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; ${r.total===0?'opacity:.65;':''}">
+      <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px;" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</span>
+      <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">${counts}${badge}</span>
+    </div>`;
+  }).join('');
+  return `
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head">
+        <h2>Exercise Usage</h2>
+        <span style="display:flex; align-items:center; gap:6px;">
+          <button class="icon-btn" title="Previous week" onclick="setTrainingVolumeWeekOffset(-1)">‹</button>
+          <span class="page-sub" style="font-size:11.5px; min-width:110px; text-align:center;">${weekLabel}</span>
+          <button class="icon-btn" title="Next week" onclick="setTrainingVolumeWeekOffset(1)">›</button>
+        </span>
+      </div>
+      <div class="page-sub" style="font-size:11.5px; margin-bottom:8px;">${used} of ${u.rows.length} exercises used · ${repeated} used on more than one day. Counts are distinct days; done and planned shown separately.</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:6px;">${cells}</div>
+    </div>
   `;
 }
 function renderDayMuscleBoxes(){
@@ -12919,6 +13078,11 @@ function buildTrainingReviewPack(){
     currentPlan: plan,
     restDays: restDayAbbrs,
     trainingSchedule,
+    exerciseUsageCurrentWeek: (()=>{
+      const u = computeExerciseWeekUsage(0);
+      return { weekStart:u.weekStart, weekEnd:u.weekEnd,
+        exercises: u.rows.map(r=>({ exerciseId:r.exId, name:r.name, doneDays:r.done, currentlyPlannedDays:r.planned })) };
+    })(),
   };
 }
 
@@ -12967,6 +13131,7 @@ function copyTrainingReviewPack(){
     id: e.id, name: e.name, category: e.category||'strength',
     primaryMuscles: exMuscleGroups(e,'primary'), secondaryMuscles: exMuscleGroups(e,'secondary'), tags: e.tags||[],
     weightIncrementKg: e.weightIncrementKg || 2.5, seatSetting: e.seatSetting || null,
+    lastCompleted: (()=>{ const l = getLastCompletedSession(e.id, null); return l ? { date:l.date, topWeightKg:l.topWeightKg } : null; })(),
   }));
 
   const trainingGoals = state.settings.trainingGoals || { priorityMuscles:[], notes:'' };
@@ -12985,7 +13150,7 @@ EVERY tracked muscle group must get AT LEAST ${band.min} sets/week — this is a
 ${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard ${band.min}-${band.max} set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
-MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid; seatSetting, where present, is my own note on how I have that machine dialed in — purely informational, nothing for you to act on):
+MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid; seatSetting, where present, is my own note on how I have that machine dialed in — purely informational, nothing for you to act on; lastCompleted is the date and heaviest working weight of my most recent completed session of that exercise, null if I have never done it):
 \`\`\`json
 ${JSON.stringify(exerciseLibrary, null, 2)}
 \`\`\`
@@ -13032,6 +13197,9 @@ RULES for the plan:
 - Every exerciseId in every block must be one that already exists in my library above. Never invent a new exercise, never put anything in the top-level "exercises" array — leave it empty every time, even if you think a new movement would help (see item 5 above for how to raise that instead). If nothing in my library fits what a muscle group actually needs, pick the closest existing match rather than inventing something new.
 - Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
+- ONE working weight per exercise per day: every working set of an exercise on a given day uses the same weight — I aim all sets at that weight, only the warm-up differs and the app calculates the warm-up itself at about 60%. Never write ramping or pyramid weights, and put exactly one "suggested starting weight: Xkg" in each block's notes.
+- Weight never goes backward: the suggested weight for an exercise must be at least the weight I last completed successfully — lastCompleted.topWeightKg in the exercise library above is the heaviest weight across my done working sets in my most recent completed session (ignore it only if lastCompleted.date is more than 4 weeks old). Hold that weight if I did not reach the bottom of the rep range on all sets; add one weightIncrementKg when I reached the top of the range at RIR 2 or lower. Across the weeks of this plan, a later week's weight for the same exercise must be at least the earlier week's. If you deliberately want a lighter deload, say so explicitly in your summary — the app flags every below-last-weight suggestion at import and I decide whether to keep it.
+- Use every strength exercise in my library once per calendar week (Sunday through Saturday) across the weeks this plan covers: each exercise should appear on exactly one training day per week, and only appear a second time in the same week if that is genuinely necessary to reach a muscle's weekly set floor — and in that case choose a different exercise for that muscle first. exerciseUsageCurrentWeek in the data pack shows, for the current week, how many days each exercise has already been done (doneDays — fixed, count these toward the once-per-week target) and how many days it is currently planned (currentlyPlannedDays — that is the old plan, which your new plan replaces for any day not already logged, so ignore it). If some exercises genuinely cannot fit in a week, list which ones and why in your summary rather than silently dropping them.
 - Rep target framing, for both planning and reviewing past sessions in your summary: the TOP of a range is what I'm aiming for, not a bar I have to clear. Landing under it at real effort (roughly RIR 1-3) is a normal, expected outcome — I'm firmly in the intended effort zone — not a shortfall, don't flag it as underperformance (e.g. a target of 15 and I land at 12 is fine on its own). The one exception: the first session after a weight increase on an exercise (this session's weight is higher than that exercise's prior session), where the BOTTOM of the range is what's actually expected and appropriate — that's the point of dropping back down after adding weight, so hitting the bottom of the range right after a bump is the success case there, not a miss. Only flag a genuine concern when reps land meaningfully below even the bottom of the range, or a stall pattern per the Flags section above.
 - Within a single week, prefer varying WHICH exercise targets a given muscle across different training days rather than repeating the identical exercise every time that muscle comes up — e.g. two chest days in a week should generally use two different chest exercises/machines, not the same one twice, unless there's a genuine reason not to (limited equipment options for that muscle in my library, or a specific weakness being deliberately grooved with repetition). This is about variety of stimulus, not frequency — training the same MUSCLE multiple times a week is expected and good; this rule is only about not defaulting to the identical movement each time.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
@@ -13394,7 +13562,131 @@ function resolveLockedDateConflict(choice){
 /* Shared gate for both import paths (auto-resolved and manual-review) —
    checks for locked-date conflicts and either applies immediately (nothing
    locked) or pauses for the decision modal above. */
+/* v4.63.0: weight check on import. Two things are enforced, then shown to the
+   person BEFORE anything is applied:
+   1. Every suggested weight sits on the machine's own increment grid (nearest
+      multiple; an exact tie rounds up).
+   2. Weights never go backward — a suggestion below the last completed top
+      weight for that exercise (within WEIGHT_FLOOR_WINDOW_DAYS), or below an
+      earlier week's planned weight in the same plan, is raised to it (rounded
+      up onto the grid). This is the "regression flag". */
+function setSuggestedWeightInNotes(notes, kg){
+  return String(notes||'').replace(/(suggested starting weight:\s*)([\d.]+)(\s*kg)/i, (m,a,b,c)=> a + cleanKg(kg) + c);
+}
+function computeImportWeightCorrections(res){
+  const changes = {};
+  const sessIdx = {}, sessionDates = {};
+  res.sessions.forEach((item,i)=>{ sessIdx[item.importedId] = i; sessionDates[i] = new Set(); });
+  (res.calendar||[]).forEach(c=>{ if(c && c.date && c.sessionId && sessIdx[c.sessionId]!=null) sessionDates[sessIdx[c.sessionId]].add(c.date); });
+  const cur = {};
+  const blocksOf = i => (res.sessions[i].fields.blocks||[]);
+  const getW = (i,j)=>{ const k=i+':'+j; if(k in cur) return cur[k]; const b = blocksOf(i)[j]; return parseSuggestedWeightKg(b && b.notes); };
+  const note = (i,j,b,from,to,reason)=>{
+    const k=i+':'+j;
+    const ch = changes[k] || (changes[k] = { i, j, exId:b.exerciseId, sessionName:res.sessions[i].fields.name||'', from, to:from, reasons:[], dates:sessionDates[i] });
+    ch.to = to; ch.reasons.push(reason); cur[k] = to;
+  };
+  // Pass 1 — snap onto the machine's grid
+  res.sessions.forEach((item,i)=>{
+    blocksOf(i).forEach((b,j)=>{
+      if(!b || !b.exerciseId) return;
+      const w = getW(i,j); if(w==null) return;
+      const inc = getExerciseWeightIncrement(b.exerciseId);
+      if(!isOnGrid(w, inc)) note(i,j,b,w,snapToIncrement(w,inc),{ kind:'increment', inc });
+    });
+  });
+  // Pass 2 — never backward, walking the plan's dates in order
+  const entries = (res.calendar||[]).filter(c=>c && c.date && c.sessionId && sessIdx[c.sessionId]!=null)
+    .slice().sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0));
+  const planned = {};
+  entries.forEach(c=>{
+    const i = sessIdx[c.sessionId];
+    blocksOf(i).forEach((b,j)=>{
+      if(!b || !b.exerciseId) return;
+      let w = getW(i,j); if(w==null) return;
+      const inc = getExerciseWeightIncrement(b.exerciseId);
+      let req = null, reason = null;
+      const floor = getWeightFloor(b.exerciseId, c.date);
+      if(floor){ req = floor.weightKg; reason = { kind:'floor-history', kg:floor.weightKg, date:floor.date }; }
+      const pw = planned[b.exerciseId];
+      if(pw && (req==null || pw.kg > req + 1e-9)){ req = pw.kg; reason = { kind:'floor-plan', kg:pw.kg, date:pw.date }; }
+      if(req!=null && w < req - 1e-9){
+        const to = ceilToIncrement(req, inc);
+        note(i,j,b,w,to,reason); w = to;
+      }
+      if(!planned[b.exerciseId] || w > planned[b.exerciseId].kg) planned[b.exerciseId] = { kg:w, date:c.date };
+    });
+  });
+  const fallbackChanges = [];
+  (res.exerciseSuggestions||[]).forEach((s,k)=>{
+    const w = Number(s.suggestedWeightKg); if(!isFinite(w)) return;
+    const inc = getExerciseWeightIncrement(s.exerciseId);
+    if(!isOnGrid(w, inc)) fallbackChanges.push({ k, exId:s.exerciseId, from:w, to:snapToIncrement(w,inc), inc });
+  });
+  const list = Object.values(changes).map(ch=>Object.assign({}, ch, { dates:[...ch.dates].sort() }));
+  return { changes:list, fallbackChanges };
+}
+function applyImportWeightCorrections(res, result){
+  result.changes.forEach(ch=>{
+    const b = (res.sessions[ch.i].fields.blocks||[])[ch.j];
+    if(b) b.notes = setSuggestedWeightInNotes(b.notes, ch.to);
+  });
+  result.fallbackChanges.forEach(f=>{ if(res.exerciseSuggestions[f.k]) res.exerciseSuggestions[f.k].suggestedWeightKg = f.to; });
+}
+let pendingWeightCorrections = null;
+function openImportWeightCorrectionsModal(res, result){
+  pendingWeightCorrections = { res, result };
+  const exName = id => { const e = getTrainingExerciseById(id); return e ? e.name : id; };
+  const datesLabel = ch => ch.dates.length ? `${humanDateNoRelative(ch.dates[0])}${ch.dates.length>1?` (+${ch.dates.length-1})`:''}` : 'unscheduled';
+  const reasonText = r => r.kind==='increment' ? `snapped to the ${r.inc} kg step`
+    : r.kind==='floor-history' ? `last completed ${r.kg} kg on ${humanDateNoRelative(r.date)}`
+    : `earlier in this plan: ${r.kg} kg on ${humanDateNoRelative(r.date)}`;
+  const regress = result.changes.filter(ch=>ch.reasons.some(r=>r.kind!=='increment'));
+  const snapOnly = result.changes.filter(ch=>ch.reasons.every(r=>r.kind==='increment'));
+  const line = ch => `<div style="padding:5px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
+      <b>${escapeHtml(exName(ch.exId))}</b> <span class="page-sub">· ${escapeHtml(ch.sessionName)} · ${escapeHtml(datesLabel(ch))}</span><br>
+      <span style="font-family:var(--font-mono,monospace);">${ch.from} → <b>${ch.to} kg</b></span> <span class="page-sub">(${ch.reasons.map(reasonText).join('; ')})</span>
+    </div>`;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'weightCorrectionsOverlay';
+  overlay.onclick = (e)=>{ if(e.target===overlay) resolveImportWeightCorrections('cancel'); };
+  document.body.appendChild(overlay);
+  overlay.innerHTML = `
+    <div class="modal wide" style="padding:0 20px 0;">
+      <div style="position:sticky; top:0; z-index:2; background:var(--paper-raised); padding:16px 0 8px;">
+        <h3>Weight check before import</h3>
+        <div class="page-sub">Corrections are applied automatically unless you choose to import as written.</div>
+      </div>
+      ${regress.length ? `<div style="font-weight:700; color:var(--flag,#D95B5B); margin:10px 0 2px;">⚠ Below your last completed weight (${regress.length})</div>${regress.map(line).join('')}` : ''}
+      ${snapOnly.length ? `<div style="font-weight:700; margin:12px 0 2px;">Not on the machine's increment (${snapOnly.length})</div>${snapOnly.map(line).join('')}` : ''}
+      ${result.fallbackChanges.length ? `<div style="font-weight:700; margin:12px 0 2px;">Starting-point suggestions snapped (${result.fallbackChanges.length})</div>${result.fallbackChanges.map(f=>`<div style="padding:4px 0; border-bottom:1px solid var(--line); font-size:12.5px;"><b>${escapeHtml(exName(f.exId))}</b> <span style="font-family:var(--font-mono,monospace);">${f.from} → <b>${f.to} kg</b></span> <span class="page-sub">(${f.inc} kg step)</span></div>`).join('')}` : ''}
+      <div class="modal-actions" style="flex-direction:column; align-items:stretch; gap:8px; position:sticky; bottom:0; background:var(--paper-raised); padding:12px 0 16px; margin-top:8px;">
+        <button class="btn brass" onclick="resolveImportWeightCorrections('apply')">Apply corrections &amp; continue</button>
+        <button class="btn secondary" onclick="resolveImportWeightCorrections('asis')">Import as written (no corrections)</button>
+        <button class="btn ghost" onclick="resolveImportWeightCorrections('cancel')">Cancel this import</button>
+      </div>
+    </div>
+  `;
+}
+function resolveImportWeightCorrections(choice){
+  const p = pendingWeightCorrections;
+  pendingWeightCorrections = null;
+  const overlay = document.getElementById('weightCorrectionsOverlay');
+  if(overlay) overlay.remove();
+  if(!p || choice==='cancel') return;
+  if(choice==='apply') applyImportWeightCorrections(p.res, p.result);
+  continueImportAfterWeightCheck(p.res);
+}
 function proceedWithImportApply(res){
+  const result = computeImportWeightCorrections(res);
+  if(result.changes.length || result.fallbackChanges.length){
+    openImportWeightCorrectionsModal(res, result);
+    return;
+  }
+  continueImportAfterWeightCheck(res);
+}
+function continueImportAfterWeightCheck(res){
   const { lockedDates } = computeLockedDateConflicts(res);
   if(lockedDates.length){
     openLockedDateConflictModal(res, lockedDates);
@@ -13907,23 +14199,34 @@ function selectExercisePickerResultFromEl(el){
 function recomputeBlockPlanForSwap(block){
   const exId = block.exerciseId;
   if(!exId) return;
-  const lastSets = getLastSetsForExercise(exId, null).filter(s=>!s.isWarmup);
+  const inc = getExerciseWeightIncrement(exId);
+  const lastSess = getLastCompletedSession(exId, null);
   let weightKg = null, repsTarget = null;
-  if(lastSets.length){
-    const baseWeight = lastSets[0].weightKg;
-    const prog = doubleProgressionSuggestion(exId, { repsMin:8, repsMax:12, weightKg:baseWeight }, lastSets);
+  if(lastSess){
+    const prog = doubleProgressionSuggestion(exId, { repsMin:8, repsMax:12, weightKg:lastSess.topWeightKg }, lastSess.sets);
     if(prog){ weightKg = prog.newWeightKg; repsTarget = prog.repsTarget; }
-    else if(baseWeight!=null){ weightKg = baseWeight; repsTarget = 8; }
+    else if(lastSess.topWeightKg!=null){ weightKg = lastSess.topWeightKg; repsTarget = 8; }
   }
   if(weightKg==null){
     const fallback = (state.settings.exerciseSuggestions||{})[exId];
     if(fallback && fallback.weightKg!=null){ weightKg = fallback.weightKg; repsTarget = parseInt(String(fallback.reps||'8').split('-')[0])||8; }
   }
-  if(weightKg!=null) weightKg = roundToEquipmentIncrement(weightKg, getExerciseWeightIncrement(exId));
+  if(weightKg!=null){
+    weightKg = roundToEquipmentIncrement(weightKg, inc);
+    // v4.63.0: never below the last completed top weight (rounded UP onto the
+    // machine's grid if that weight itself isn't on it).
+    const floor = getWeightFloor(exId, todayStr());
+    if(floor && weightKg < floor.weightKg - 1e-9) weightKg = ceilToIncrement(floor.weightKg, inc);
+  }
   block.reps = weightKg!=null ? `${repsTarget||8}-12` : '';
   block.notes = weightKg!=null ? `suggested starting weight: ${weightKg}kg` : '';
   if(!block.sets) block.sets = 3;
 }
+/* Grid helpers shared by the swap logic and the import weight check. */
+function cleanKg(n){ return Math.round(n*100)/100; }
+function isOnGrid(kg, inc){ const q = kg/inc; return Math.abs(q-Math.round(q)) < 1e-6; }
+function snapToIncrement(kg, inc){ return cleanKg(Math.round(kg/inc + 1e-9)*inc); }   // nearest; an exact tie rounds up
+function ceilToIncrement(kg, inc){ return cleanKg(Math.ceil(kg/inc - 1e-9)*inc); }
 async function saveSessionDraft(){
   syncSessionDraftFromDom();
   const d = trainingSessionDraft;
@@ -14304,14 +14607,31 @@ async function submitAddExercise(){
    Paginated 10 sessions at a time per Muhannad's answer, with a heaviest-
    set + best-e1RM summary line at the top. */
 let _exerciseHistoryState = null;
-function openExerciseLibraryHistoryModal(exId){
-  _exerciseHistoryState = { exId, shown:10 };
+let _exerciseHistoryEscHandler = null;
+function closeExerciseHistoryModal(){
+  const overlay = document.getElementById('exerciseHistoryOverlay');
+  if(overlay) overlay.remove();
+  if(_exerciseHistoryEscHandler){ document.removeEventListener('keydown', _exerciseHistoryEscHandler); _exerciseHistoryEscHandler = null; }
+  _exerciseHistoryState = null;
+}
+function openExerciseLibraryHistoryModal(exId, opts){
+  closeExerciseHistoryModal(); // never stack two
+  opts = opts || {};
+  _exerciseHistoryState = { exId, shown:10, completedOnly:!!opts.completedOnly, beforeDate:opts.beforeDate||null };
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'exerciseHistoryOverlay';
-  overlay.onclick = (e)=>{ if(e.target===overlay){ overlay.remove(); _exerciseHistoryState=null; } };
+  overlay.onclick = (e)=>{ if(e.target===overlay) closeExerciseHistoryModal(); };
   document.body.appendChild(overlay);
+  _exerciseHistoryEscHandler = (e)=>{ if(e.key==='Escape') closeExerciseHistoryModal(); };
+  document.addEventListener('keydown', _exerciseHistoryEscHandler);
   renderExerciseHistoryModalBody();
+}
+/* v4.63.0: the History button on a day's exercise card — ONLY sessions where
+   the exercise was actually completed, before the day being viewed, showing
+   only the sets that were really done. No planned/staged days. */
+function openExerciseCompletedHistoryModal(exId, beforeDate){
+  openExerciseLibraryHistoryModal(exId, { completedOnly:true, beforeDate });
 }
 function loadMoreExerciseHistory(){
   if(!_exerciseHistoryState) return;
@@ -14323,47 +14643,47 @@ function renderExerciseHistoryModalBody(){
   const st = _exerciseHistoryState;
   if(!overlay || !st) return;
   const ex = getTrainingExerciseById(st.exId);
-  // Item 11 (v4.59.0): a date only counts as History once at least one
-  // working set on it is actually done; anything staged (sets exist, none
-  // done yet — today's not-yet-logged rows or an already-opened future day)
-  // is Planned instead, shown separately so the two never blur together.
-  const allDates = [...new Set((state.training.sets||[]).filter(s=>s.exerciseId===st.exId).map(s=>s.date))];
-  const isDone = d => getSetsForExercise(d, st.exId).some(s=>s.done && !s.isWarmup);
-  const historyDates = allDates.filter(isDone).sort((a,b)=>a<b?1:-1);
-  const plannedDates = allDates.filter(d=>!isDone(d)).sort((a,b)=>a<b?-1:1);
+  const allSets = (state.training.sets||[]).filter(s=>s.exerciseId===st.exId);
+  const allDates = [...new Set(allSets.map(s=>s.date))];
+  // A date only counts as History once a working set on it is actually done;
+  // staged-but-not-done days are Planned (and are left out entirely in the
+  // completed-only view used by the day card's History button).
+  const doneOn = d => allSets.some(s=>s.date===d && s.done && !s.isWarmup);
+  let historyDates = allDates.filter(doneOn);
+  if(st.beforeDate) historyDates = historyDates.filter(d=>d < st.beforeDate);
+  historyDates.sort((a,b)=>a<b?1:-1);
+  const plannedDates = st.completedOnly ? [] : allDates.filter(d=>!doneOn(d)).sort((a,b)=>a<b?-1:1);
   const shownHistoryDates = historyDates.slice(0, st.shown);
   const bestE1RM = bestE1RMForExercise(st.exId, null);
-  const workingSets = (state.training.sets||[]).filter(s=>s.exerciseId===st.exId && s.done && !s.isWarmup && s.weightKg);
+  const workingSets = allSets.filter(s=>s.done && !s.isWarmup && s.weightKg);
   const maxWeight = workingSets.length ? Math.max(...workingSets.map(s=>s.weightKg)) : null;
-  const renderDateRow = (date, planned) => {
-    const sets = getSetsForExercise(date, st.exId);
+  const chip = (s, planned) => `<span style="font-size:11px; white-space:nowrap; background:var(--paper); border:1px solid ${planned?'var(--brass)':'var(--line)'}; ${planned?'color:var(--brass);':''} border-radius:5px; padding:1px 6px;">${s.isWarmup?'W ':''}${s.reps||'—'}×${s.weightKg!=null?s.weightKg:'—'}kg${s.toFailure?' · F':''}${s.rir!=null?` · RIR${s.rir}`:''}</span>`;
+  const row = (date, planned) => {
+    let sets = allSets.filter(s=>s.date===date).sort((a,b)=>a.setNo-b.setNo);
+    if(st.completedOnly) sets = sets.filter(s=>s.done);
     return `
-      <div style="padding:8px 0; border-bottom:1px solid var(--line);">
-        <div style="font-size:12.5px; font-weight:600; margin-bottom:4px; ${planned?'color:var(--brass);':''}">${humanDateNoRelative(date)}</div>
-        <div style="display:flex; flex-wrap:wrap; gap:6px;">
-          ${sets.map(s=>`<span class="page-sub" style="font-size:11.5px; background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:2px 7px;">${s.isWarmup?'W ':''}${s.reps||'—'}×${s.weightKg!=null?s.weightKg:'—'}kg${s.toFailure?' · F':''}${s.rir!=null?` · RIR${s.rir}`:''}${planned&&!s.done&&!s.isWarmup?' · planned':''}</span>`).join('')}
-        </div>
+      <div style="display:flex; gap:10px; align-items:baseline; padding:5px 0; border-bottom:1px solid var(--line);">
+        <span style="flex:0 0 80px; font-size:11.5px; font-weight:600; ${planned?'color:var(--brass);':''}">${humanDateNoRelative(date)}</span>
+        <span style="display:flex; flex-wrap:wrap; gap:4px; flex:1;">${sets.map(s=>chip(s, planned)).join('')}</span>
       </div>`;
   };
+  const stats = [maxWeight?`Heaviest <b>${maxWeight} kg</b>`:null, bestE1RM?`Best e1RM <b>${Math.round(bestE1RM*10)/10} kg</b>`:null].filter(Boolean).join(' · ');
   overlay.innerHTML = `
-    <div class="modal" style="max-width:560px; max-height:85vh; overflow-y:auto;">
-      <h3>${escapeHtml(ex?ex.name:'Exercise')} — History</h3>
-      ${(bestE1RM||maxWeight) ? `
-        <div style="display:flex; gap:18px; margin:8px 0 14px; padding:10px 12px; background:var(--paper-dim); border-radius:8px;">
-          ${maxWeight ? `<div><div class="page-sub" style="font-size:10.5px;">Heaviest set</div><div style="font-size:16px; font-weight:700;">${maxWeight} kg</div></div>` : ''}
-          ${bestE1RM ? `<div><div class="page-sub" style="font-size:10.5px;">Best e1RM</div><div style="font-size:16px; font-weight:700;">${Math.round(bestE1RM*10)/10} kg</div></div>` : ''}
+    <div class="modal" style="max-width:560px; padding:0 18px 14px;">
+      <div style="position:sticky; top:0; z-index:2; background:var(--paper-raised); padding:14px 0 8px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="min-width:0;">
+          <div style="font-size:16px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(ex?ex.name:'Exercise')} — History</div>
+          ${stats ? `<div class="page-sub" style="font-size:11.5px;">${stats}</div>` : ''}
         </div>
-      ` : ''}
-      ${plannedDates.length ? `
-        <div style="font-size:12px; font-weight:700; color:var(--brass); margin-bottom:4px;">📅 Planned</div>
-        ${plannedDates.map(d=>renderDateRow(d,true)).join('')}
-        <div style="font-size:12px; font-weight:700; margin:14px 0 4px;">History</div>
-      ` : ''}
-      ${historyDates.length ? shownHistoryDates.map(d=>renderDateRow(d,false)).join('') : `<div class="page-sub" style="padding:10px 0;">No logged sets for this exercise yet.</div>`}
-      ${historyDates.length > shownHistoryDates.length ? `<button class="btn secondary sm" style="margin-top:10px;" onclick="loadMoreExerciseHistory()">Load more (${historyDates.length - shownHistoryDates.length} more session${historyDates.length-shownHistoryDates.length===1?'':'s'})</button>` : ''}
-      <div class="modal-actions">
-        <button class="btn secondary" onclick="document.getElementById('exerciseHistoryOverlay').remove(); _exerciseHistoryState=null;">Close</button>
+        <button id="exerciseHistoryClose" class="icon-btn" aria-label="Close" title="Close (Esc)" style="flex-shrink:0;" onclick="closeExerciseHistoryModal()">✕</button>
       </div>
+      ${plannedDates.length ? `
+        <div style="font-size:11.5px; font-weight:700; color:var(--brass); margin:8px 0 2px;">📅 Planned</div>
+        ${plannedDates.map(d=>row(d,true)).join('')}
+        <div style="font-size:11.5px; font-weight:700; margin:10px 0 2px;">History</div>
+      ` : ''}
+      ${historyDates.length ? shownHistoryDates.map(d=>row(d,false)).join('') : `<div class="page-sub" style="padding:10px 0;">${st.completedOnly ? 'No completed sessions for this exercise yet.' : 'No logged sets for this exercise yet.'}</div>`}
+      ${historyDates.length > shownHistoryDates.length ? `<button class="btn secondary sm" style="margin-top:8px;" onclick="loadMoreExerciseHistory()">Load more (${historyDates.length - shownHistoryDates.length} more)</button>` : ''}
     </div>
   `;
 }
