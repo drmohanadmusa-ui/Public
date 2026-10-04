@@ -835,6 +835,9 @@ select.filter-select, input.filter-date{
    2026-09-20 batch). Wrapping onto multiple rows below a breakpoint,
    plus shrinking the figures a bit further under that, guarantees every
    day is actually visible without relying on a hidden scroll gesture. */
+/* Coffee (v4.64.0): a taste slider you have not touched yet is dimmed, so an untouched
+   slider is never mistaken for a rating of 5 (it is not recorded until you move it). */
+input[type=range].cf-unset{opacity:.45;}
 .muscle-day-row{display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;}
 .muscle-day-box{text-align:center; flex-shrink:0;}
 .muscle-day-svg{width:98px; height:auto; display:block; margin:0 auto;}
@@ -2211,7 +2214,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.63.0';
+const APP_VERSION = '4.64.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2219,6 +2222,17 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.64.0', changes: [
+    '\u{1F534} SQL migration required: Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Creates three new tables \u2014 coffee_beans, coffee_bags, coffee_brews \u2014 and adds them to the row-level-security loop. Additive and idempotent, safe to re-run. Coffee sync is fault-isolated like Training/Recipes, so nothing else is affected before it is run.',
+    '\u{1F534} Backup script: the nightly backup refuses to run when the app syncs a table its TABLES list does not know. Add coffee_beans, coffee_bags and coffee_brews to TABLES (Settings \u2192 Cloud Sync \u2192 Copy backup script generates the full current list).',
+    'NEW \u2014 Coffee page (sidebar, after Recipes) for logging every V60 cup. Subpages: Brew, History, Coffees & Bags, Insights, Guide, AI Pack. Works on phone and desktop.',
+    'Three linked layers: a coffee (name, roaster, origin country, process, roast level, the roaster\u2019s tasting notes), a physical bag of it (roast date, purchase date, open date) and each brew (coffee g, hot water g, ice g, temperature, grind number, brew time, 1\u201310 taste ratings, extraction verdict, flavour wheel, overall liking, brew again). Buying the same coffee again is a NEW bag, so freshness can be compared bag to bag.',
+    'The open date is automatic: the first brew from a bag sets it to that brew\u2019s date. A coffee you have logged before asks whether this is the same bag or a new one. A back-dated brew can pull the open date earlier, never later. Every brew shows days off roast and days since opened, and Insights compares scores by freshness and by how long you waited to open each bag.',
+    'Recipe calculator: choose Hot or Iced, a ratio (1:15\u20131:18 presets, any custom 1:x, or g/L) and the ice share as a percentage (30/40/50 presets or any value), start from your coffee dose or the cup size, and it gives coffee, hot water and ice in grams plus the total ratio, g/L, ice % and ice : hot-water ratio. One tap copies it into the brew form.',
+    'Taste form: quick by default (five 1\u201310 sliders, an under/balanced/over-extracted verdict, the SCA flavour wheel with the roaster\u2019s notes shown right above it, overall liking, brew again), with an optional detailed section (aftertaste, balance, notes). Each rating has a plain-language explanation on the page, and the Guide explains how to taste.',
+    'After each cup the app suggests ONE next change (grind, temperature or time) from your verdict, shows what changed since the last brew of that coffee, and Insights ranks your coffees, shows your best recipe per coffee, the profile of the cups you rated 8+, and results by origin, process and roast level. The AI Pack copies everything with instructions for an AI.',
+    'Page order and visibility: Coffee appears in Settings \u2192 page order too (that list now also shows proper names for Week, Training, Recipes and Progress instead of raw keys).',
+  ]},
   { v:'4.63.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'Fixed a real cause of weights going backwards: progression took the FIRST row of your last session as the base weight \u2014 sometimes a warm-up, and in a ramping session the lightest working set \u2014 so a suggestion could land below what you actually lifted. It also treated the most recent DATE with any set rows as your last session, which could be a future day that is only staged with planned numbers. Everything now looks only at COMPLETED work (done, non-warm-up sets) and uses the heaviest working weight of your last completed session as the base; reps are judged on the sets done at that weight.',
@@ -3037,7 +3051,7 @@ const DEFAULT_SETTINGS_EXTRAS = {
     'Other': '#A0527A',
   },
   hiddenPages: [],
-  pageOrder: ['dashboard','overdue','tasks','calendar','week','lists','health','training','recipes','progress','settings'],
+  pageOrder: ['dashboard','overdue','tasks','calendar','week','lists','health','training','recipes','coffee','progress','settings'],
   rememberUnlock: true,
   healthCoreMetricsSeeded: false,
   darkMode: false,
@@ -3089,8 +3103,14 @@ function backfillSettingsDefaults(){
   if(!state.settings.siloColors) state.settings.siloColors = {};
   if(!state.settings.locationColors) state.settings.locationColors = {};
   // any locations/pages added since pageOrder was created should still show up
-  const ALL_PAGE_KEYS = ['dashboard','overdue','tasks','calendar','week','lists','health','training','recipes','progress','settings'];
+  const ALL_PAGE_KEYS = ['dashboard','overdue','tasks','calendar','week','lists','health','training','recipes','coffee','progress','settings'];
   if(!state.settings.pageOrder) state.settings.pageOrder = ALL_PAGE_KEYS.slice();
+  // A saved order from before Coffee existed gets it slotted in after Recipes
+  // rather than tacked on after Settings.
+  if(!state.settings.pageOrder.includes('coffee')){
+    const ri = state.settings.pageOrder.indexOf('recipes');
+    state.settings.pageOrder.splice(ri >= 0 ? ri + 1 : Math.max(0, state.settings.pageOrder.length - 1), 0, 'coffee');
+  }
   ALL_PAGE_KEYS.forEach(k=>{ if(!state.settings.pageOrder.includes(k)) state.settings.pageOrder.push(k); });
 }
 
@@ -3109,6 +3129,7 @@ const STORAGE_KEYS = {
   TRAINING: 'dispatch:training', // { exercises:[], sessions:[], calendar:[], logs:[] }
   RECIPES: 'dispatch:recipes', // { items:[ {id,name,mealType,imageUrl,baseServings,ingredients:[],steps,macros} ] }
   HYDRATION: 'dispatch:hydration', // [ {id,date,containerId,ml,loggedAt} ]
+  COFFEE: 'dispatch:coffee', // { beans:[], bags:[], brews:[] } — see the COFFEE module
   SYNC_ERROR_HISTORY: 'dispatch:syncerrorhistory', // durable, bounded, local-only — see recordSyncErrorHistory()
   DELETION_HISTORY: 'dispatch:deletionhistory', // durable, bounded, local-only — see recordDeletion()
   TRAINING_DRAFTS: 'dispatch:trainingdrafts', // in-progress, UNSAVED training entry — local-only, never synced. See saveTrainingDrafts().
@@ -3146,6 +3167,8 @@ const state = {
   trainingSelectedDate: null, // date being viewed/logged on the Training page; defaults to today on first render
   trainingVolumeWeekOffset: 0, // Weekly Volume panel: 0 = this calendar week (Sun-Sat), -1 = last week, +1 = next week
   recipes: { items: [] }, // recipe library — see recipe/ingredient row conversion functions
+  coffee: { beans: [], bags: [], brews: [] }, // coffee types, physical bags, brews — see the COFFEE module
+  coffeeSection: 'brew',
   recipesSelectedId: null, // which recipe is open in detail view, if any
   progressSelectedTaskId: null, // which task's individual history is open, if any
   progressRangeDays: 30, // 7 | 30 | 90 | null (all time) — for the overall Activity Log
@@ -3462,6 +3485,7 @@ const pendingCompletionDeletes = [];
 const pendingTrainingDeletes = []; // [{table, match: {col:val,...}}]
 const pendingRecipeDeletes = []; // [{table, match: {col:val,...}}]
 const pendingHydrationDeletes = []; // [{table, match: {col:val,...}}]
+const pendingCoffeeDeletes = []; // [{table, match: {col:val,...}}]
 let pendingDivergence = null; // set by a pull when local and remote disagree; auto-resolved (online wins) inside runBackgroundSync()
 // Same pattern for health metric definitions — deleting one locally without
 // also telling Supabase means the next pull brings it right back (this was
@@ -3630,7 +3654,7 @@ async function loadSettingsOnly(){
 
 async function loadAll(){
   try{
-    const [tasksRes, listsRes, healthRes, ratingsRes, metricDefsRes, trainingRes, recipesRes, hydrationRes, syncErrHistRes, delHistRes, trainingDraftsRes] = await Promise.all([
+    const [tasksRes, listsRes, healthRes, ratingsRes, metricDefsRes, trainingRes, recipesRes, hydrationRes, syncErrHistRes, delHistRes, trainingDraftsRes, coffeeRes] = await Promise.all([
       safeGet(STORAGE_KEYS.TASKS),
       safeGet(STORAGE_KEYS.LISTS),
       safeGet(STORAGE_KEYS.HEALTH),
@@ -3642,6 +3666,7 @@ async function loadAll(){
       safeGet(STORAGE_KEYS.SYNC_ERROR_HISTORY),
       safeGet(STORAGE_KEYS.DELETION_HISTORY),
       safeGet(STORAGE_KEYS.TRAINING_DRAFTS),
+      safeGet(STORAGE_KEYS.COFFEE),
     ]);
     state.syncErrorHistory = syncErrHistRes ? JSON.parse(syncErrHistRes.value) : [];
     state.deletionHistory = delHistRes ? JSON.parse(delHistRes.value) : [];
@@ -3708,6 +3733,12 @@ async function loadAll(){
 
     // Hydration logs — same treatment as Recipes/Training.
     state.hydrationLogs = hydrationRes ? (JSON.parse(hydrationRes.value)||[]) : [];
+
+    // Coffee — same treatment as Recipes/Hydration (bounded, kept locally).
+    try{
+      const cf = coffeeRes ? JSON.parse(coffeeRes.value) : null;
+      state.coffee = { beans:(cf&&cf.beans)||[], bags:(cf&&cf.bags)||[], brews:(cf&&cf.brews)||[] };
+    } catch(e){ state.coffee = { beans:[], bags:[], brews:[] }; }
 
     // settings were already loaded by loadSettingsOnly() before the gate;
     // if for some reason this runs standalone, make sure they're present.
@@ -3890,7 +3921,7 @@ async function runBackgroundSync(){
    an older build may well still be running on another device, and it reads
    `dirty` directly. If that key vanished, the old build would read undefined,
    conclude everything was clean, and pull over genuinely unsynced work. */
-const SYNC_DOMAINS = ['tasks','lists','health','ratings','metricDefs','settings','training','recipes','hydration'];
+const SYNC_DOMAINS = ['tasks','lists','health','ratings','metricDefs','settings','training','recipes','hydration','coffee'];
 
 /* Domains whose failure is fatal to the whole push, versus those that are
    fault-isolated. Unchanged in meaning from the original coreSteps /
@@ -4011,12 +4042,14 @@ const SYNCED_TABLES = [
   'health_logs','daily_ratings','health_metric_defs','app_settings',
   'training_exercises','training_sessions','training_calendar','training_logs',
   'training_sets','training_resources','recipes','recipe_ingredients','hydration_logs',
+  'coffee_beans','coffee_bags','coffee_brews',
 ];
 const BACKED_UP_TABLES = [
   'one_time_tasks','recurring_tasks','task_completions','lists','list_items',
   'health_logs','daily_ratings','health_metric_defs','app_settings',
   'training_exercises','training_sessions','training_calendar','training_logs',
   'training_sets','training_resources','recipes','recipe_ingredients','hydration_logs',
+  'coffee_beans','coffee_bags','coffee_brews',
 ];
 /* Builds the backup script with its TABLES list generated from SYNCED_TABLES,
    so the code you copy is always current by construction. The banner tells you
@@ -4508,6 +4541,12 @@ function syncStepsForDomain(domain){
       ()=> flushPendingHydrationDeletes(),
       ()=> state.hydrationLogs.length ? supaUpsert('hydration_logs', state.hydrationLogs.map(hydrationLogToRow), 'pin,id') : null,
     ];
+    case 'coffee': return [
+      ()=> flushPendingCoffeeDeletes(),
+      ()=> state.coffee.beans.length ? supaUpsert('coffee_beans', state.coffee.beans.map(coffeeBeanToRow), 'pin,id') : null,
+      ()=> state.coffee.bags.length ? supaUpsert('coffee_bags', state.coffee.bags.map(coffeeBagToRow), 'pin,id') : null,
+      ()=> state.coffee.brews.length ? supaUpsert('coffee_brews', state.coffee.brews.map(coffeeBrewToRow), 'pin,id') : null,
+    ];
     default: return [];
   }
 }
@@ -4566,7 +4605,8 @@ async function pullFromSupabase(onProgress){
   const trainingTables = ['training_exercises','training_sessions','training_calendar','training_logs','training_sets'];
   const recipeTables = ['recipes','recipe_ingredients'];
   const hydrationTables = ['hydration_logs'];
-  const totalTables = coreTables.length + trainingTables.length + recipeTables.length + hydrationTables.length;
+  const coffeeTables = ['coffee_beans','coffee_bags','coffee_brews'];
+  const totalTables = coreTables.length + trainingTables.length + recipeTables.length + hydrationTables.length + coffeeTables.length;
   const results = {};
   for(let i=0;i<coreTables.length;i++){
     results[coreTables[i]] = await supaSelectAll(coreTables[i]);
@@ -4633,6 +4673,22 @@ async function pullFromSupabase(onProgress){
     diagLogEvent('sync', 'Hydration pull failed — core pull still proceeded', { error: e.message||String(e) });
     recordSyncErrorHistory('hydration-pull', e.message||String(e));
     console.error('Hydration pull failed (core task/list/health data still pulled fine):', e);
+  }
+
+  // Coffee: same fault-isolation as the others — a missing/failed coffee
+  // migration must never abort the core pull.
+  let coffeePulled = null;
+  try{
+    const coffeeResults = {};
+    for(let i=0;i<coffeeTables.length;i++){
+      coffeeResults[coffeeTables[i]] = await supaSelectAll(coffeeTables[i]);
+      if(onProgress) onProgress(coreTables.length+trainingTables.length+recipeTables.length+hydrationTables.length+i+1, totalTables);
+    }
+    coffeePulled = coffeeResults;
+  } catch(e){
+    diagLogEvent('sync', 'Coffee pull failed — core pull still proceeded', { error: e.message||String(e) });
+    recordSyncErrorHistory('coffee-pull', e.message||String(e));
+    console.error('Coffee pull failed (core task/list/health data still pulled fine):', e);
   }
 
   const hasAnyRemoteData = oneTimeRows.length || recurringRows.length || listRows.length;
@@ -4757,6 +4813,16 @@ async function pullFromSupabase(onProgress){
     }
     // else: hydration fetch failed — same "leave it as-is" treatment as training/recipes.
 
+    if(coffeePulled){
+      state.coffee = {
+        beans: coffeePulled.coffee_beans.map(rowToCoffeeBean),
+        bags: coffeePulled.coffee_bags.map(rowToCoffeeBag),
+        brews: coffeePulled.coffee_brews.map(rowToCoffeeBrew),
+      };
+      pendingCoffeeDeletes.length = 0;
+    }
+    // else: coffee fetch failed — leave local as-is, same as the others.
+
     if(settingsRows.length){
       state.settings.locations = settingsRows[0].locations || state.settings.locations;
       state.settings.silos = settingsRows[0].silos || state.settings.silos;
@@ -4851,6 +4917,7 @@ async function pullFromSupabase(onProgress){
     if(trainingPulled){ try{ await window.storage.set(STORAGE_KEYS.TRAINING, JSON.stringify(state.training), false); } catch(e){ console.error('local cache write failed (training)', e); } }
     if(recipesPulled){ try{ await window.storage.set(STORAGE_KEYS.RECIPES, JSON.stringify(state.recipes), false); } catch(e){ console.error('local cache write failed (recipes)', e); } }
     if(hydrationPulled){ try{ await window.storage.set(STORAGE_KEYS.HYDRATION, JSON.stringify(state.hydrationLogs), false); } catch(e){ console.error('local cache write failed (hydration)', e); } }
+    if(coffeePulled){ try{ await window.storage.set(STORAGE_KEYS.COFFEE, JSON.stringify(state.coffee), false); } catch(e){ console.error('local cache write failed (coffee)', e); } }
     await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
 
     if(needsReconcilePush){
@@ -4917,6 +4984,7 @@ function isQuotaError(e){
 // other way around.
 const DISPOSABLE_STORAGE_KEYS = [
   'dispatch:hydration',
+  'dispatch:coffee',
   'dispatch:training',
   'dispatch:recipes',
   'dispatch:health',
@@ -6544,6 +6612,7 @@ function render(){
     health: ['♥','Health Log'],
     training: ['⛊','Training'],
     recipes: ['❖','Recipes'],
+    coffee: ['☕','Coffee'],
     progress: ['◈','Progress'],
     settings: ['⚙','Settings'],
   };
@@ -6864,7 +6933,7 @@ function renderMain(){
   // (tapping a set's tick, adding a set, etc. all rebuild the page). Only when
   // the page/section/date is unchanged, so real navigation still starts at the
   // top as before.
-  const _sig = [state.view, state.trainingSection, state.trainingSelectedDate, state.settingsSection, state.selectedListId].join('|');
+  const _sig = [state.view, state.trainingSection, state.coffeeSection, state.trainingSelectedDate, state.settingsSection, state.selectedListId].join('|');
   const _keepScroll = (_sig === _lastRenderSig);
   _lastRenderSig = _sig;
   const _sy = _keepScroll ? (window.scrollY || window.pageYOffset || 0) : 0;
@@ -6877,6 +6946,7 @@ function renderMain(){
     else if(state.view === 'calendar') el.innerHTML = renderCalendarView();
     else if(state.view === 'week') el.innerHTML = renderWeekView();
     else if(state.view === 'recipes') el.innerHTML = renderRecipesView();
+    else if(state.view === 'coffee') el.innerHTML = renderCoffeeView();
     else if(state.view === 'progress') el.innerHTML = renderProgressView();
     else if(state.view === 'lists') el.innerHTML = renderListsView();
     else if(state.view === 'health') el.innerHTML = renderHealthView();
@@ -12403,6 +12473,1048 @@ function closeRecipeDetail(){
   state.recipesSelectedId = null;
   renderMain();
 }
+/* ======================================================================
+   COFFEE (v4.64.0) — a tasting + brewing log for V60 pour-over.
+
+   Three linked layers, each its own synced table:
+     coffee_beans  — a coffee TYPE (name, roaster/brand, origin country,
+                     process, roast level, the roaster's own tasting notes)
+     coffee_bags   — one physical bag of a coffee (roast date, purchase date,
+                     open date). A coffee you re-buy later is a NEW bag of the
+                     same coffee, so freshness can be compared bag to bag.
+     coffee_brews  — one cup: recipe (dose / hot water / ice / temp / grind /
+                     time), taste ratings (1–10), direction, flavour-wheel
+                     notes, overall score.
+
+   The idea behind the taste form comes from the SCA Coffee Value Assessment:
+   DESCRIBE the cup (intensities) separately from how much you LIKE it
+   (overall), so the app can later tell you what you actually enjoy.
+   ====================================================================== */
+const COFFEE_PROCESSES = ['Washed','Natural','Honey','Anaerobic','Other'];
+const COFFEE_ROASTS = ['Light','Medium-light','Medium','Medium-dark','Dark'];
+const COFFEE_RATIO_PRESETS = [15, 15.5, 16, 16.5, 17, 18];
+const COFFEE_ICE_PRESETS = [30, 40, 50];
+const COFFEE_TASTE = [
+  { key:'sweetness',  label:'Sweetness',  low:'none',   high:'very sweet',  hint:'Natural sugar-like sweetness — honey, caramel, ripe fruit. Not added sugar. It is what makes acidity taste pleasant instead of sour.' },
+  { key:'acidity',    label:'Acidity',    low:'flat',   high:'very bright', hint:'Brightness and liveliness — the tang of a citrus or a green apple. Pleasant acidity is "bright"; unpleasant acidity is "sharp" or "sour". Rate how MUCH there is, then use the buttons below for whether it was pleasant.' },
+  { key:'bitterness', label:'Bitterness', low:'none',   high:'very bitter', hint:'The dark, harsh, lingering taste at the back of the tongue — dark chocolate, burnt toast. A little is normal; a lot usually means over-extraction.' },
+  { key:'body',       label:'Body',       low:'watery', high:'heavy',       hint:'Weight and texture in the mouth. 1 = thin and watery like tea, 10 = heavy and syrupy like cream.' },
+  { key:'strength',   label:'Strength',   low:'weak',   high:'strong',      hint:'How concentrated and intense the whole cup tastes — the overall volume of flavour. Different from body (texture) and bitterness (one specific taste).' },
+];
+const COFFEE_TASTE_DETAIL = [
+  { key:'aftertaste', label:'Aftertaste', low:'vanishes', high:'long & pleasant', hint:'How long, and how pleasantly, the flavour lingers after you swallow.' },
+  { key:'balance',    label:'Balance',    low:'lopsided', high:'harmonious',      hint:'How well sweetness, acidity, body and flavour fit together — nothing sticks out and nothing is missing.' },
+];
+const COFFEE_DIRECTIONS = [
+  { key:'sour',     label:'Too sour / sharp' },
+  { key:'balanced', label:'Balanced' },
+  { key:'bitter',   label:'Too bitter / harsh' },
+];
+/* SCA Coffee Taster's Flavor Wheel: 9 broad categories in the centre, then
+   progressively more specific notes. Start broad, then narrow down. */
+const COFFEE_WHEEL = [
+  { cat:'Fruity', groups:[
+    { name:'Berry', notes:['Blackberry','Raspberry','Blueberry','Strawberry'] },
+    { name:'Dried Fruit', notes:['Raisin','Prune'] },
+    { name:'Other Fruit', notes:['Coconut','Cherry','Pomegranate','Pineapple','Grape','Apple','Peach','Pear'] },
+    { name:'Citrus Fruit', notes:['Grapefruit','Orange','Lemon','Lime'] } ] },
+  { cat:'Floral', groups:[
+    { name:'Black Tea', notes:[] },
+    { name:'Floral', notes:['Chamomile','Rose','Jasmine'] } ] },
+  { cat:'Sweet', groups:[
+    { name:'Brown Sugar', notes:['Molasses','Maple Syrup','Caramelized','Honey'] },
+    { name:'Vanilla', notes:[] },
+    { name:'Overall Sweet', notes:[] } ] },
+  { cat:'Nutty/Cocoa', groups:[
+    { name:'Nutty', notes:['Peanuts','Hazelnut','Almond'] },
+    { name:'Cocoa', notes:['Chocolate','Dark Chocolate'] } ] },
+  { cat:'Spices', groups:[
+    { name:'Pepper', notes:[] },
+    { name:'Brown Spice', notes:['Anise','Nutmeg','Cinnamon','Clove'] } ] },
+  { cat:'Roasted', groups:[
+    { name:'Cereal', notes:['Grain','Malt'] },
+    { name:'Tobacco', notes:['Pipe Tobacco','Tobacco'] },
+    { name:'Burnt', notes:['Smoky','Ashy','Acrid','Brown Roast'] } ] },
+  { cat:'Green/Vegetative', groups:[
+    { name:'Fresh', notes:['Peapod','Hay-like','Herb-like'] },
+    { name:'Olive Oil', notes:[] },
+    { name:'Raw', notes:[] } ] },
+  { cat:'Sour/Fermented', groups:[
+    { name:'Sour', notes:['Citric Acid','Malic Acid','Acetic Acid'] },
+    { name:'Alcohol/Fermented', notes:['Winey','Whiskey','Fermented','Overripe'] } ] },
+  { cat:'Other', groups:[
+    { name:'Papery/Musty', notes:['Stale','Cardboard','Papery','Woody','Musty/Earthy'] },
+    { name:'Chemical', notes:['Bitter','Salty','Medicinal','Rubber'] } ] },
+];
+
+/* ---------------------------------------------------------------------
+   Calculator — pure maths, no DOM.
+   ratio   = grams of TOTAL liquid (hot water + ice) per 1 g coffee
+   icePct  = share of that total liquid which is ice (0 for a hot brew)
+   basis   = 'dose'  -> amount is grams of coffee you have
+             'total' -> amount is grams of liquid you want in the cup
+   Coffee is rounded to 0.1 g and water/ice to whole grams, the way a
+   kitchen scale reads; the total is derived from the ROUNDED dose so the
+   ratio shown is exactly what you will brew.
+   --------------------------------------------------------------------- */
+function coffeeCalc(o){
+  const ratio = Number(o.ratio) > 0 ? Number(o.ratio) : 16;
+  const iced = !!o.iced;
+  const icePct = iced ? Math.min(90, Math.max(0, Number(o.icePct) || 0)) : 0;
+  const amount = Number(o.amount) || 0;
+  const rawDose = o.basis === 'total' ? amount / ratio : amount;
+  const doseG = Math.round(rawDose * 10) / 10;
+  const totalG = Math.round(doseG * ratio);
+  const iceG = Math.round(totalG * icePct / 100);
+  const hotWaterG = totalG - iceG;
+  return {
+    doseG, hotWaterG, iceG, totalG, icePct,
+    ratioTotal: Math.round(ratio * 100) / 100,
+    ratioHot: doseG > 0 ? Math.round(hotWaterG / doseG * 100) / 100 : null,
+    gPerL: totalG > 0 ? Math.round(doseG / totalG * 10000) / 10 : null,       // g coffee per litre of total liquid (1 g water = 1 mL)
+    iceToHot: iceG > 0 ? Math.round(hotWaterG / iceG * 100) / 100 : null,     // ice : hot water = 1 : x
+  };
+}
+function coffeeRatioFromGPerL(g){ return Number(g) > 0 ? Math.round(1000 / Number(g) * 100) / 100 : null; }
+function coffeeGPerLFromRatio(r){ return Number(r) > 0 ? Math.round(1000 / Number(r) * 10) / 10 : null; }
+function coffeeParseTime(s){
+  if(s == null || s === '') return null;
+  const t = String(s).trim();
+  const m = t.match(/^(\d+):(\d{1,2})$/);
+  if(m) return Number(m[1]) * 60 + Number(m[2]);
+  const n = Number(t);
+  return isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+function coffeeFmtTime(sec){
+  if(sec == null || !isFinite(sec)) return '';
+  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+}
+
+/* ---------------------------------------------------------------------
+   Row mappers (same shape as every other synced module)
+   --------------------------------------------------------------------- */
+const _num = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
+function coffeeBeanToRow(b){
+  const s = state.settings.sync;
+  return { pin:s.pin, id:b.id, name:b.name||'', brand:b.brand||null, country:b.country||null,
+    process:b.process||null, roast_level:b.roastLevel||null, roaster_notes:b.roasterNotes||null,
+    created_at:b.createdAt||new Date().toISOString() };
+}
+function rowToCoffeeBean(r){
+  return { id:r.id, name:r.name||'', brand:r.brand||'', country:r.country||'', process:r.process||'',
+    roastLevel:r.roast_level||'', roasterNotes:r.roaster_notes||'', createdAt:r.created_at };
+}
+function coffeeBagToRow(g){
+  const s = state.settings.sync;
+  return { pin:s.pin, id:g.id, bean_id:g.beanId, roast_date:g.roastDate||null, purchase_date:g.purchaseDate||null,
+    open_date:g.openDate||null, created_at:g.createdAt||new Date().toISOString() };
+}
+function rowToCoffeeBag(r){
+  return { id:r.id, beanId:r.bean_id, roastDate:r.roast_date||'', purchaseDate:r.purchase_date||'',
+    openDate:r.open_date||'', createdAt:r.created_at };
+}
+function coffeeBrewToRow(b){
+  const s = state.settings.sync;
+  return { pin:s.pin, id:b.id, bean_id:b.beanId, bag_id:b.bagId||null,
+    brewed_at:b.brewedAt||new Date().toISOString(), brew_date:b.date, method:b.method||'V60', is_iced:!!b.iced,
+    dose_g:_num(b.doseG), hot_water_g:_num(b.hotWaterG), ice_g:_num(b.iceG)||0, temp_c:_num(b.tempC),
+    grind:_num(b.grind), brew_time_sec:_num(b.brewTimeSec),
+    sweetness:_num(b.sweetness), acidity:_num(b.acidity), bitterness:_num(b.bitterness),
+    body:_num(b.body), strength:_num(b.strength), direction:b.direction||null,
+    overall:_num(b.overall), brew_again:(b.brewAgain === true || b.brewAgain === false) ? b.brewAgain : null,
+    flavors:b.flavors||[], detail:b.detail||{} };
+}
+function rowToCoffeeBrew(r){
+  return { id:r.id, beanId:r.bean_id, bagId:r.bag_id||'', brewedAt:r.brewed_at, date:r.brew_date,
+    method:r.method||'V60', iced:!!r.is_iced, doseG:r.dose_g, hotWaterG:r.hot_water_g, iceG:r.ice_g||0,
+    tempC:r.temp_c, grind:r.grind, brewTimeSec:r.brew_time_sec,
+    sweetness:r.sweetness, acidity:r.acidity, bitterness:r.bitterness, body:r.body, strength:r.strength,
+    direction:r.direction||'', overall:r.overall, brewAgain:r.brew_again,
+    flavors:Array.isArray(r.flavors) ? r.flavors : [], detail:(r.detail && typeof r.detail === 'object') ? r.detail : {} };
+}
+async function flushPendingCoffeeDeletes(){
+  while(pendingCoffeeDeletes.length){
+    const { table, match } = pendingCoffeeDeletes[0];
+    const q = Object.entries(match).map(([k,v])=>`${k}=eq.${encodeURIComponent(v)}`).join('&');
+    await supaDeleteMatch(table, q);
+    pendingCoffeeDeletes.shift();
+  }
+}
+async function saveCoffee(){
+  await safeStorageSet(STORAGE_KEYS.COFFEE, JSON.stringify(state.coffee), 'coffee');
+  if(syncConfigured()){
+    scheduleSync('coffee', ()=>[
+      ()=> flushPendingCoffeeDeletes(),
+      ()=> state.coffee.beans.length ? supaUpsert('coffee_beans', state.coffee.beans.map(coffeeBeanToRow), 'pin,id') : null,
+      ()=> state.coffee.bags.length ? supaUpsert('coffee_bags', state.coffee.bags.map(coffeeBagToRow), 'pin,id') : null,
+      ()=> state.coffee.brews.length ? supaUpsert('coffee_brews', state.coffee.brews.map(coffeeBrewToRow), 'pin,id') : null,
+    ]);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Lookups + derived numbers
+   --------------------------------------------------------------------- */
+function coffeeBean(id){ return state.coffee.beans.find(b=>b.id===id) || null; }
+function coffeeBag(id){ return state.coffee.bags.find(g=>g.id===id) || null; }
+function coffeeBagsFor(beanId){
+  return state.coffee.bags.filter(g=>g.beanId===beanId)
+    .sort((a,b)=> (a.createdAt||'') < (b.createdAt||'') ? -1 : 1);
+}
+function coffeeBrewsFor(beanId){
+  return state.coffee.brews.filter(b=>b.beanId===beanId)
+    .sort((a,b)=> (a.brewedAt||'') < (b.brewedAt||'') ? 1 : -1);   // newest first
+}
+function coffeeBagLabel(g, idx){
+  const roast = g.roastDate ? `roasted ${humanDateNoRelative(g.roastDate)}` : 'roast date unknown';
+  const open = g.openDate ? `opened ${humanDateNoRelative(g.openDate)}` : 'not opened yet';
+  return `Bag ${idx + 1} — ${roast} · ${open}`;
+}
+/* Everything a brew's freshness depends on, derived from its bag. */
+function coffeeBrewMetrics(b){
+  const bag = coffeeBag(b.bagId);
+  const dose = Number(b.doseG) || 0, hot = Number(b.hotWaterG) || 0, ice = Number(b.iceG) || 0;
+  const total = hot + ice;
+  return {
+    totalG: total,
+    ratio: dose > 0 && total > 0 ? Math.round(total / dose * 100) / 100 : null,
+    gPerL: dose > 0 && total > 0 ? Math.round(dose / total * 10000) / 10 : null,
+    icePct: total > 0 ? Math.round(ice / total * 1000) / 10 : 0,
+    daysOffRoast: bag && bag.roastDate ? daysBetween(bag.roastDate, b.date) : null,
+    daysSinceOpen: bag && bag.openDate ? daysBetween(bag.openDate, b.date) : null,
+    restAtOpen: bag && bag.roastDate && bag.openDate ? daysBetween(bag.roastDate, bag.openDate) : null,
+  };
+}
+function coffeeAvg(list){
+  const v = list.filter(x=> x != null && isFinite(x));
+  return v.length ? Math.round(v.reduce((a,b)=>a+Number(b),0) / v.length * 10) / 10 : null;
+}
+
+/* ---------------------------------------------------------------------
+   Dial-in suggestion. Sour/sharp/thin = under-extracted; bitter/harsh/
+   drying = over-extracted. Change ONE variable per brew, otherwise you
+   cannot tell which change made the difference.
+   --------------------------------------------------------------------- */
+function coffeeSuggestNext(b){
+  const temp = Number(b.tempC) || null;
+  const out = { kind:'', primary:'', alternatives:[], note:'Change only ONE thing per brew so you can tell what helped.' };
+  if(b.direction === 'sour'){
+    out.kind = 'under';
+    out.primary = 'Tasted under-extracted. Next brew: grind one step finer.';
+    if(temp == null || temp < 96) out.alternatives.push('or raise the water temperature by 1–2 °C (the usual range is 90–96 °C)');
+    out.alternatives.push('or extend the total brew time by about 15–20 seconds');
+  } else if(b.direction === 'bitter'){
+    out.kind = 'over';
+    out.primary = 'Tasted over-extracted. Next brew: grind one step coarser.';
+    if(temp == null || temp > 90) out.alternatives.push('or lower the water temperature by 1–2 °C');
+    out.alternatives.push('or shorten the total brew time by about 15–20 seconds');
+  } else if(b.direction === 'balanced'){
+    out.kind = 'balanced';
+    if(Number(b.overall) >= 8) out.primary = 'Balanced and you loved it — keep this recipe exactly. It is saved as your best for this coffee.';
+    else if(Number(b.strength) <= 3) { out.primary = 'Balanced but weak. Next brew: add coffee or use a slightly lower ratio (e.g. one step toward 1:15).'; }
+    else if(Number(b.strength) >= 8) { out.primary = 'Balanced but very strong. Next brew: use a slightly higher ratio (e.g. one step toward 1:17).'; }
+    else out.primary = 'Balanced. To go from good to great, nudge ONE variable (temperature ±1–2 °C, or a half-step on the grinder) and compare.';
+  } else {
+    out.kind = 'none';
+    out.primary = 'Pick "too sour", "balanced" or "too bitter" when you log a cup and the app will suggest the next change.';
+    out.note = '';
+  }
+  return out;
+}
+function coffeeRecipeDiff(cur, prev){
+  if(!prev) return [];
+  const fields = [['doseG','coffee','g'],['hotWaterG','hot water','g'],['iceG','ice','g'],['tempC','temperature','°C'],['grind','grind','']];
+  const out = [];
+  fields.forEach(([k,label,unit])=>{
+    const a = Number(cur[k]) || 0, p = Number(prev[k]) || 0;
+    if(a !== p) out.push(`${label} ${p}${unit} → ${a}${unit}`);
+  });
+  if((cur.brewTimeSec || 0) !== (prev.brewTimeSec || 0)) out.push(`time ${coffeeFmtTime(prev.brewTimeSec) || '—'} → ${coffeeFmtTime(cur.brewTimeSec) || '—'}`);
+  return out;
+}
+
+/* ---------------------------------------------------------------------
+   Insights (pure — everything the Insights page and AI pack show)
+   --------------------------------------------------------------------- */
+function coffeeInsights(){
+  const brews = state.coffee.brews, beans = state.coffee.beans;
+  const rated = brews.filter(b=> b.overall != null);
+  const perBean = beans.map(bean=>{
+    const bb = coffeeBrewsFor(bean.id);
+    const rb = bb.filter(b=> b.overall != null);
+    let best = null;
+    rb.forEach(b=>{ if(!best || b.overall > best.overall || (b.overall === best.overall && (b.brewedAt||'') > (best.brewedAt||''))) best = b; });
+    return {
+      beanId:bean.id, name:bean.name, brand:bean.brand, country:bean.country, process:bean.process, roastLevel:bean.roastLevel,
+      brews:bb.length, avgOverall:coffeeAvg(rb.map(b=>b.overall)), bestOverall:best ? best.overall : null,
+      best, avgDaysOffRoast:coffeeAvg(bb.map(b=>coffeeBrewMetrics(b).daysOffRoast)),
+    };
+  }).sort((a,b)=> (b.avgOverall||0) - (a.avgOverall||0) || b.brews - a.brews);
+  const profile = (list)=>{
+    const o = {};
+    COFFEE_TASTE.forEach(t=>{ o[t.key] = coffeeAvg(list.map(b=>b[t.key])); });
+    return o;
+  };
+  const loved = rated.filter(b=> b.overall >= 8);
+  const groupBy = (keyFn)=>{
+    const m = {};
+    perBean.forEach(p=>{
+      const k = keyFn(p); if(!k || p.avgOverall == null) return;
+      (m[k] || (m[k] = { key:k, scores:[], brews:0 })).scores.push(p.avgOverall);
+      m[k].brews += p.brews;
+    });
+    return Object.values(m).map(g=>({ key:g.key, coffees:g.scores.length, brews:g.brews, avgOverall:coffeeAvg(g.scores) }))
+      .sort((a,b)=> b.avgOverall - a.avgOverall);
+  };
+  const buckets = [[0,7,'0–7 days'],[8,14,'8–14 days'],[15,30,'15–30 days'],[31,60,'31–60 days'],[61,9999,'61+ days']];
+  const freshness = buckets.map(([lo,hi,label])=>{
+    const list = brews.filter(b=>{ const d = coffeeBrewMetrics(b).daysOffRoast; return d != null && d >= lo && d <= hi; });
+    return { label, brews:list.length, avgOverall:coffeeAvg(list.map(b=>b.overall)),
+      sweetness:coffeeAvg(list.map(b=>b.sweetness)), acidity:coffeeAvg(list.map(b=>b.acidity)) };
+  });
+  const bags = state.coffee.bags.map(g=>{
+    const bb = brews.filter(b=>b.bagId === g.id);
+    const bean = coffeeBean(g.beanId);
+    return { bagId:g.id, coffee:bean ? bean.name : '?', roastDate:g.roastDate, openDate:g.openDate,
+      restAtOpen:g.roastDate && g.openDate ? daysBetween(g.roastDate, g.openDate) : null,
+      brews:bb.length, avgOverall:coffeeAvg(bb.map(b=>b.overall)) };
+  });
+  return { totalBrews:brews.length, totalCoffees:beans.length, perBean, profileAll:profile(rated), profileLoved:profile(loved),
+    lovedCount:loved.length, byCountry:groupBy(p=>p.country), byProcess:groupBy(p=>p.process), byRoast:groupBy(p=>p.roastLevel),
+    freshness, bags };
+}
+
+/* ---------------------------------------------------------------------
+   Draft (the in-progress brew form) + calculator state. In-memory only;
+   typing never re-renders, so nothing is lost mid-entry.
+   --------------------------------------------------------------------- */
+function coffeeDraft(){
+  if(!state.coffeeDraft) state.coffeeDraft = coffeeBlankDraft();
+  return state.coffeeDraft;
+}
+function coffeeBlankDraft(){
+  return { beanId:'', bagMode:'current', bagId:'', newBag:{ roastDate:'', purchaseDate:'' }, date:todayStr(), editingBrewId:'',
+    iced:false, doseG:'', hotWaterG:'', iceG:'', tempC:'94', grind:'', brewTime:'',
+    sweetness:null, acidity:null, bitterness:null, body:null, strength:null, aftertaste:null, balance:null,
+    direction:'', flavors:[], overall:null, brewAgain:null, notes:'', detailOpen:false, wheelOpen:{} };
+}
+function coffeeCalcState(){
+  if(!state.coffeeCalc) state.coffeeCalc = { iced:true, ratio:16, icePct:40, basis:'dose', amount:20 };
+  return state.coffeeCalc;
+}
+function coffeeSetSection(k){ state.coffeeSection = k; renderMain(); }
+
+/* ---------------------------------------------------------------------
+   Handlers — calculator
+   --------------------------------------------------------------------- */
+function coffeeCalcSet(field, value, rerender){
+  const c = coffeeCalcState();
+  if(field === 'iced') c.iced = !!value;
+  else if(field === 'basis') c.basis = value;
+  else if(field === 'gPerL'){ const r = coffeeRatioFromGPerL(value); if(r) c.ratio = r; }
+  else c[field] = value === '' ? '' : Number(value);
+  if(rerender) renderMain(); else coffeeCalcRefresh();
+}
+function coffeeCalcResult(){
+  const c = coffeeCalcState();
+  return coffeeCalc({ iced:c.iced, ratio:c.ratio, icePct:c.icePct, basis:c.basis, amount:c.amount });
+}
+function coffeeCalcOutputHtml(){
+  const c = coffeeCalcState(), r = coffeeCalcResult();
+  const cell = (label, val, unit, strong)=>`<div style="text-align:center; padding:8px 4px; border:1px solid var(--line); border-radius:8px; ${strong?'background:var(--paper-dim);':''}">
+      <div class="page-sub" style="font-size:10.5px;">${label}</div>
+      <div style="font-size:19px; font-weight:700;">${val}<span style="font-size:11px; font-weight:500;"> ${unit}</span></div></div>`;
+  return `
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(92px, 1fr)); gap:8px;">
+      ${cell('Coffee', r.doseG, 'g', true)}
+      ${cell(c.iced ? 'Hot water' : 'Water', r.hotWaterG, 'g', true)}
+      ${c.iced ? cell('Ice', r.iceG, 'g', true) : ''}
+      ${cell('Total liquid', r.totalG, 'g')}
+    </div>
+    <div class="page-sub" style="font-size:11.5px; margin-top:8px;">
+      1:${r.ratioTotal} total · ${r.gPerL != null ? r.gPerL : '—'} g/L${c.iced ? ` · ${r.icePct}% ice${r.iceToHot ? ` · ice : hot water = 1 : ${r.iceToHot}` : ''}${r.ratioHot ? ` · coffee : hot water = 1:${r.ratioHot}` : ''}` : ''}
+    </div>`;
+}
+function coffeeCalcRefresh(){
+  const el = document.getElementById('coffeeCalcOutput');
+  if(el) el.innerHTML = coffeeCalcOutputHtml();
+  const g = document.getElementById('coffeeCalcGPerL');
+  if(g && document.activeElement !== g) g.value = coffeeGPerLFromRatio(coffeeCalcState().ratio) || '';
+  const r = document.getElementById('coffeeCalcRatio');
+  if(r && document.activeElement !== r) r.value = coffeeCalcState().ratio;
+}
+function coffeeCalcToForm(){
+  const r = coffeeCalcResult(), c = coffeeCalcState(), d = coffeeDraft();
+  if(!(r.doseG > 0)){ showToast('Enter an amount first'); return; }
+  d.iced = c.iced; d.doseG = String(r.doseG); d.hotWaterG = String(r.hotWaterG); d.iceG = c.iced ? String(r.iceG) : '';
+  showToast('Recipe copied into the brew form below');
+  renderMain();
+}
+
+/* ---------------------------------------------------------------------
+   Handlers — brew form
+   --------------------------------------------------------------------- */
+function coffeeSetDraft(field, value){
+  const d = coffeeDraft();
+  d[field] = value;
+  coffeeRefreshReadout();
+}
+function coffeeSetSlider(field, el){
+  const d = coffeeDraft();
+  d[field] = Number(el.value);
+  el.classList.remove('cf-unset');
+  const v = document.getElementById('cfv_' + field); if(v) v.textContent = d[field];
+}
+function coffeeClearSlider(field){
+  coffeeDraft()[field] = null;
+  renderMain();
+}
+function coffeeSetSliderValue(field, n){ coffeeDraft()[field] = n; renderMain(); }
+function coffeePickDirection(k){ const d = coffeeDraft(); d.direction = d.direction === k ? '' : k; renderMain(); }
+function coffeeSetOverall(n){ const d = coffeeDraft(); d.overall = d.overall === n ? null : n; renderMain(); }
+function coffeeSetBrewAgain(v){ const d = coffeeDraft(); d.brewAgain = d.brewAgain === v ? null : v; renderMain(); }
+function coffeeToggleIced(v){ coffeeDraft().iced = !!v; if(!v) coffeeDraft().iceG = ''; renderMain(); }
+function coffeeToggleDetail(){ const d = coffeeDraft(); d.detailOpen = !d.detailOpen; renderMain(); }
+function coffeeToggleWheelCat(cat){ const d = coffeeDraft(); d.wheelOpen[cat] = !d.wheelOpen[cat]; renderMain(); }
+function coffeeToggleFlavor(path){
+  const d = coffeeDraft();
+  const i = d.flavors.indexOf(path);
+  if(i >= 0) d.flavors.splice(i, 1); else d.flavors.push(path);
+  renderMain();
+}
+function coffeePickBean(id){
+  const d = coffeeDraft();
+  d.beanId = id; d.editingBrewId = '';
+  const bags = coffeeBagsFor(id);
+  d.bagMode = bags.length ? 'current' : 'new';
+  d.bagId = bags.length ? bags[bags.length - 1].id : '';
+  d.newBag = { roastDate:'', purchaseDate:'' };
+  if(id) coffeePrefillFromLast(id, true);
+  renderMain();
+}
+function coffeePickBag(val){
+  const d = coffeeDraft();
+  if(val === '__new__'){ d.bagMode = 'new'; d.bagId = ''; }
+  else { d.bagMode = 'current'; d.bagId = val; }
+  renderMain();
+}
+/* Copies the recipe (not the taste) of the most recent brew of this coffee —
+   or, with no bean, of the most recent brew overall — into the form. */
+function coffeePrefillFromLast(beanId, silent){
+  const list = beanId ? coffeeBrewsFor(beanId) : state.coffee.brews.slice().sort((a,b)=>(a.brewedAt||'')<(b.brewedAt||'')?1:-1);
+  const last = list[0];
+  if(!last){ if(!silent) showToast('No earlier brew to repeat yet'); return; }
+  const d = coffeeDraft();
+  d.iced = !!last.iced; d.doseG = last.doseG != null ? String(last.doseG) : ''; d.hotWaterG = last.hotWaterG != null ? String(last.hotWaterG) : '';
+  d.iceG = last.iceG ? String(last.iceG) : ''; d.tempC = last.tempC != null ? String(last.tempC) : d.tempC;
+  d.grind = last.grind != null ? String(last.grind) : ''; d.brewTime = coffeeFmtTime(last.brewTimeSec);
+  if(!silent){ showToast('Recipe filled from your last brew'); renderMain(); }
+}
+function coffeeRepeatLast(){
+  const d = coffeeDraft();
+  if(!d.beanId){
+    const last = state.coffee.brews.slice().sort((a,b)=>(a.brewedAt||'')<(b.brewedAt||'')?1:-1)[0];
+    if(!last){ showToast('No earlier brew to repeat yet'); return; }
+    coffeePickBean(last.beanId);
+    showToast('Filled from your last brew');
+    return;
+  }
+  coffeePrefillFromLast(d.beanId, false);
+}
+function coffeeDraftReadout(){
+  const d = coffeeDraft();
+  const dose = Number(d.doseG) || 0, hot = Number(d.hotWaterG) || 0, ice = d.iced ? (Number(d.iceG) || 0) : 0;
+  const total = hot + ice;
+  if(!(dose > 0) || !(total > 0)) return 'Enter coffee and water to see the ratio.';
+  const parts = [`1:${Math.round(total / dose * 100) / 100} total`, `${Math.round(dose / total * 10000) / 10} g/L`];
+  if(d.iced){ parts.push(`${Math.round(ice / total * 1000) / 10}% ice`); if(ice > 0) parts.push(`ice : hot water = 1 : ${Math.round(hot / ice * 100) / 100}`); }
+  const bag = d.bagMode === 'current' ? coffeeBag(d.bagId) : null;
+  const roast = bag ? bag.roastDate : d.newBag.roastDate;
+  if(roast && d.date) parts.push(`${daysBetween(roast, d.date)} days off roast`);
+  return parts.join(' · ');
+}
+function coffeeRefreshReadout(){
+  const el = document.getElementById('coffeeReadout');
+  if(el) el.textContent = coffeeDraftReadout();
+}
+function coffeeEditBrew(id){
+  const b = state.coffee.brews.find(x=>x.id===id); if(!b) return;
+  const d = state.coffeeDraft = coffeeBlankDraft();
+  Object.assign(d, { beanId:b.beanId, bagMode:'current', bagId:b.bagId, date:b.date, editingBrewId:b.id, iced:!!b.iced,
+    doseG:b.doseG != null ? String(b.doseG) : '', hotWaterG:b.hotWaterG != null ? String(b.hotWaterG) : '',
+    iceG:b.iceG ? String(b.iceG) : '', tempC:b.tempC != null ? String(b.tempC) : '', grind:b.grind != null ? String(b.grind) : '',
+    brewTime:coffeeFmtTime(b.brewTimeSec), sweetness:b.sweetness, acidity:b.acidity, bitterness:b.bitterness, body:b.body,
+    strength:b.strength, aftertaste:(b.detail||{}).aftertaste ?? null, balance:(b.detail||{}).balance ?? null,
+    direction:b.direction || '', flavors:(b.flavors||[]).slice(), overall:b.overall, brewAgain:b.brewAgain,
+    notes:(b.detail||{}).notes || '', detailOpen:true });
+  state.coffeeSection = 'brew';
+  renderMain();
+  window.scrollTo && window.scrollTo(0, 0);
+}
+function coffeeCancelEdit(){ state.coffeeDraft = coffeeBlankDraft(); renderMain(); }
+
+/* The bag + open-date rules, kept in one place:
+   - first brew of a coffee that has no bag yet -> a bag is created from the
+     roast/purchase dates in the form, and its OPEN DATE is that brew's date;
+   - an existing bag you keep using: its open date never moves forward;
+   - "New bag" for a coffee you have logged before: a fresh bag, so freshness
+     can be compared bag to bag;
+   - a bag with no open date yet (added from the Beans page) gets one the
+     first time you brew from it; a back-dated brew can only pull it earlier. */
+function coffeeResolveBagForSave(d){
+  if(d.bagMode === 'new' || !coffeeBagsFor(d.beanId).length){
+    const bag = { id:newId('cfg'), beanId:d.beanId, roastDate:d.newBag.roastDate || '', purchaseDate:d.newBag.purchaseDate || '',
+      openDate:'', createdAt:new Date().toISOString() };
+    state.coffee.bags.push(bag);
+    return bag;
+  }
+  return coffeeBag(d.bagId) || coffeeBagsFor(d.beanId).slice(-1)[0];
+}
+async function coffeeSaveBrew(){
+  const d = coffeeDraft();
+  if(!d.beanId){ showToast('Pick a coffee first'); return; }
+  const dose = Number(d.doseG), hot = Number(d.hotWaterG);
+  if(!(dose > 0) || !(hot > 0)){ showToast('Enter the coffee and hot water amounts'); return; }
+  if(!d.date){ showToast('Pick the brew date'); return; }
+  const brewTimeSec = coffeeParseTime(d.brewTime);
+  if(d.brewTime && brewTimeSec == null){ showToast('Brew time should look like 3:05'); return; }
+  const detail = {};
+  if(d.aftertaste != null) detail.aftertaste = d.aftertaste;
+  if(d.balance != null) detail.balance = d.balance;
+  if(d.notes && d.notes.trim()) detail.notes = d.notes.trim();
+  const fields = { beanId:d.beanId, date:d.date, method:'V60', iced:!!d.iced, doseG:dose, hotWaterG:hot,
+    iceG:d.iced ? (Number(d.iceG) || 0) : 0, tempC:Number(d.tempC) || null, grind:d.grind === '' ? null : Number(d.grind),
+    brewTimeSec, sweetness:d.sweetness, acidity:d.acidity, bitterness:d.bitterness, body:d.body, strength:d.strength,
+    direction:d.direction || '', flavors:d.flavors.slice(), overall:d.overall, brewAgain:d.brewAgain, detail };
+  let brew, bag;
+  if(d.editingBrewId){
+    brew = state.coffee.brews.find(x=>x.id===d.editingBrewId);
+    if(!brew){ showToast('That brew no longer exists'); return; }
+    bag = coffeeBag(d.bagId) || coffeeBag(brew.bagId);
+    Object.assign(brew, fields, { bagId: bag ? bag.id : brew.bagId });
+  } else {
+    bag = coffeeResolveBagForSave(d);
+    brew = Object.assign({ id:newId('cfb'), brewedAt:new Date().toISOString(), bagId:bag.id }, fields);
+    state.coffee.brews.push(brew);
+  }
+  if(bag && (!bag.openDate || brew.date < bag.openDate)) bag.openDate = brew.date;
+  await saveCoffee();
+  state.coffeeLast = brew.id;
+  // keep the coffee, bag and recipe for the next cup; clear only the tasting
+  const keep = { beanId:d.beanId, bagMode:'current', bagId:bag.id, iced:d.iced, doseG:d.doseG, hotWaterG:d.hotWaterG,
+    iceG:d.iceG, tempC:d.tempC, grind:d.grind, brewTime:d.brewTime };
+  state.coffeeDraft = Object.assign(coffeeBlankDraft(), keep);
+  showToast(d.editingBrewId ? 'Brew updated' : 'Brew logged');
+  renderMain();
+}
+async function coffeeDeleteBrew(id){
+  const b = state.coffee.brews.find(x=>x.id===id); if(!b) return;
+  if(!confirm('Delete this brew? This can\'t be undone.')) return;
+  state.coffee.brews = state.coffee.brews.filter(x=>x.id!==id);
+  pendingCoffeeDeletes.push({ table:'coffee_brews', match:{ id } });
+  await recordDeletion(`Coffee brew ${b.date}`, `brew ${id}`);
+  await saveCoffee();
+  if(state.coffeeLast === id) state.coffeeLast = null;
+  renderMain();
+  showToast('Brew deleted');
+}
+
+/* ---------------------------------------------------------------------
+   Beans: coffee + bag modals and delete guards
+   --------------------------------------------------------------------- */
+function coffeeCloseModal(){ const o = document.getElementById('coffeeModalOverlay'); if(o) o.remove(); }
+function coffeeOpenModal(inner){
+  coffeeCloseModal();
+  const o = document.createElement('div');
+  o.className = 'modal-overlay'; o.id = 'coffeeModalOverlay';
+  o.onclick = (e)=>{ if(e.target === o) coffeeCloseModal(); };
+  o.innerHTML = `<div class="modal" style="max-width:520px;">${inner}</div>`;
+  document.body.appendChild(o);
+}
+function coffeeOpenBeanModal(id){
+  const b = id ? coffeeBean(id) : null;
+  const val = k => escapeHtml(b ? (b[k] || '') : '');
+  const opts = (list, cur)=>`<option value=""></option>` + list.map(x=>`<option ${cur===x?'selected':''}>${x}</option>`).join('');
+  coffeeOpenModal(`
+    <h3>${b ? 'Edit coffee' : 'New coffee'}</h3>
+    <div class="field"><label>Name</label><input type="text" id="cfbName" value="${val('name')}" placeholder="e.g. Ethiopia Guji Hambela"></div>
+    <div class="field"><label>Roaster / brand</label><input type="text" id="cfbBrand" value="${val('brand')}"></div>
+    <div class="field"><label>Origin country</label><input type="text" id="cfbCountry" value="${val('country')}"></div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <div class="field" style="flex:1; min-width:140px;"><label>Process</label><select id="cfbProcess">${opts(COFFEE_PROCESSES, b && b.process)}</select></div>
+      <div class="field" style="flex:1; min-width:140px;"><label>Roast level</label><select id="cfbRoast">${opts(COFFEE_ROASTS, b && b.roastLevel)}</select></div>
+    </div>
+    <div class="field"><label>Roaster's tasting notes <span class="page-sub" style="font-weight:400;">— shown next to the flavour wheel when you taste</span></label>
+      <textarea id="cfbNotes" rows="3" placeholder="e.g. blueberry, jasmine, honey">${val('roasterNotes')}</textarea></div>
+    <div class="modal-actions">
+      ${b ? `<button class="btn ghost" style="margin-right:auto;" onclick="coffeeDeleteBean('${b.id}')">Delete</button>` : ''}
+      <button class="btn secondary" onclick="coffeeCloseModal()">Cancel</button>
+      <button class="btn brass" onclick="coffeeSaveBean('${b ? b.id : ''}')">Save</button>
+    </div>`);
+}
+async function coffeeSaveBean(id){
+  const g = x => (document.getElementById(x).value || '').trim();
+  const name = g('cfbName');
+  if(!name){ showToast('Give the coffee a name'); return; }
+  const fields = { name, brand:g('cfbBrand'), country:g('cfbCountry'), process:g('cfbProcess'), roastLevel:g('cfbRoast'), roasterNotes:g('cfbNotes') };
+  let bean = id ? coffeeBean(id) : null;
+  if(bean) Object.assign(bean, fields);
+  else { bean = Object.assign({ id:newId('cfx'), createdAt:new Date().toISOString() }, fields); state.coffee.beans.push(bean); }
+  await saveCoffee();
+  coffeeCloseModal();
+  if(!id && state.coffeeSection === 'brew') coffeePickBean(bean.id);   // made from the brew form: select it
+  else renderMain();
+  showToast(id ? 'Coffee updated' : 'Coffee added');
+}
+async function coffeeDeleteBean(id){
+  const n = state.coffee.brews.filter(b=>b.beanId === id).length;
+  if(n){ showToast(`This coffee has ${n} logged brew${n===1?'':'s'} — delete those first`); return; }
+  if(!confirm('Delete this coffee and its bags?')) return;
+  const bags = coffeeBagsFor(id);
+  state.coffee.beans = state.coffee.beans.filter(b=>b.id!==id);
+  state.coffee.bags = state.coffee.bags.filter(g=>g.beanId!==id);
+  pendingCoffeeDeletes.push({ table:'coffee_bags', match:{ bean_id:id } });
+  pendingCoffeeDeletes.push({ table:'coffee_beans', match:{ id } });
+  await recordDeletion('Coffee', `coffee ${id} with ${bags.length} bag(s)`);
+  await saveCoffee();
+  coffeeCloseModal();
+  const d = coffeeDraft(); if(d.beanId === id) state.coffeeDraft = coffeeBlankDraft();
+  renderMain();
+}
+function coffeeOpenBagModal(beanId, bagId){
+  const g = bagId ? coffeeBag(bagId) : null;
+  const bean = coffeeBean(beanId);
+  coffeeOpenModal(`
+    <h3>${g ? 'Edit bag' : 'New bag'} — ${escapeHtml(bean ? bean.name : '')}</h3>
+    <div class="field"><label>Roast date</label><input type="date" id="cfgRoast" value="${g ? g.roastDate : ''}"></div>
+    <div class="field"><label>Purchase date</label><input type="date" id="cfgBuy" value="${g ? g.purchaseDate : ''}"></div>
+    <div class="field"><label>Open date <span class="page-sub" style="font-weight:400;">— set automatically by the first brew from this bag; edit only to correct it</span></label>
+      <input type="date" id="cfgOpen" value="${g ? g.openDate : ''}"></div>
+    <div class="modal-actions">
+      ${g ? `<button class="btn ghost" style="margin-right:auto;" onclick="coffeeDeleteBag('${g.id}')">Delete</button>` : ''}
+      <button class="btn secondary" onclick="coffeeCloseModal()">Cancel</button>
+      <button class="btn brass" onclick="coffeeSaveBag('${beanId}','${g ? g.id : ''}')">Save</button>
+    </div>`);
+}
+async function coffeeSaveBag(beanId, bagId){
+  const v = x => document.getElementById(x).value || '';
+  const fields = { roastDate:v('cfgRoast'), purchaseDate:v('cfgBuy'), openDate:v('cfgOpen') };
+  let bag = bagId ? coffeeBag(bagId) : null;
+  if(bag) Object.assign(bag, fields);
+  else { bag = Object.assign({ id:newId('cfg'), beanId, createdAt:new Date().toISOString() }, fields); state.coffee.bags.push(bag); }
+  await saveCoffee();
+  coffeeCloseModal();
+  const d = coffeeDraft();
+  if(!bagId && d.beanId === beanId){ d.bagMode = 'current'; d.bagId = bag.id; }
+  renderMain();
+}
+async function coffeeDeleteBag(id){
+  const n = state.coffee.brews.filter(b=>b.bagId === id).length;
+  if(n){ showToast(`This bag has ${n} logged brew${n===1?'':'s'} — delete those first`); return; }
+  if(!confirm('Delete this bag?')) return;
+  state.coffee.bags = state.coffee.bags.filter(g=>g.id!==id);
+  pendingCoffeeDeletes.push({ table:'coffee_bags', match:{ id } });
+  await recordDeletion('Coffee bag', `bag ${id}`);
+  await saveCoffee();
+  coffeeCloseModal();
+  renderMain();
+}
+
+/* ---------------------------------------------------------------------
+   AI pack — beans, bags, recipes and tastings + instructions, to paste into
+   an AI for recommendations (same idea as the training Review Pack).
+   --------------------------------------------------------------------- */
+function buildCoffeePack(){
+  const ins = coffeeInsights();
+  const brews = state.coffee.brews.slice().sort((a,b)=>(a.brewedAt||'')<(b.brewedAt||'')?1:-1).slice(0, 80).map(b=>{
+    const m = coffeeBrewMetrics(b), bean = coffeeBean(b.beanId);
+    return { date:b.date, coffee:bean ? bean.name : '?', coffeeId:b.beanId, bagId:b.bagId, iced:!!b.iced,
+      coffeeG:b.doseG, hotWaterG:b.hotWaterG, iceG:b.iceG || 0, totalRatio:m.ratio, gPerL:m.gPerL, icePct:m.icePct,
+      tempC:b.tempC, grind:b.grind, brewTime:coffeeFmtTime(b.brewTimeSec), daysOffRoast:m.daysOffRoast, daysSinceOpen:m.daysSinceOpen,
+      sweetness:b.sweetness, acidity:b.acidity, bitterness:b.bitterness, body:b.body, strength:b.strength,
+      aftertaste:(b.detail||{}).aftertaste ?? null, balance:(b.detail||{}).balance ?? null,
+      direction:b.direction || null, flavours:b.flavors, overall:b.overall, brewAgain:b.brewAgain, notes:(b.detail||{}).notes || null };
+  });
+  const coffees = state.coffee.beans.map(b=>({ id:b.id, name:b.name, roaster:b.brand, originCountry:b.country, process:b.process,
+    roastLevel:b.roastLevel, roasterNotes:b.roasterNotes,
+    bags:coffeeBagsFor(b.id).map(g=>({ id:g.id, roastDate:g.roastDate || null, purchaseDate:g.purchaseDate || null, openDate:g.openDate || null,
+      daysRoastToOpen:g.roastDate && g.openDate ? daysBetween(g.roastDate, g.openDate) : null })) }));
+  const summary = { totalBrews:ins.totalBrews, ranking:ins.perBean.map(p=>({ coffee:p.name, brews:p.brews, avgOverall:p.avgOverall, bestOverall:p.bestOverall })),
+    averageTasteAllCups:ins.profileAll, averageTasteOfCupsRated8OrHigher:ins.profileLoved, byCountry:ins.byCountry, byProcess:ins.byProcess,
+    byRoastLevel:ins.byRoast, freshnessByDaysOffRoast:ins.freshness, bags:ins.bags };
+  const prompt = `You are helping me dial in and choose specialty coffee. I brew V60 pour-over (hot, or hot over ice) and log every cup in my CalendarOS app.
+
+HOW TO READ MY DATA
+- All taste scores are 1–10 INTENSITIES (how much of that attribute I perceived), not quality: sweetness, acidity, bitterness, body (1 watery – 10 heavy), strength (1 weak – 10 strong). aftertaste and balance are optional 1–10 impressions.
+- "direction" is my verdict on extraction: sour = too sour/sharp (under-extracted), balanced, bitter = too bitter/harsh (over-extracted).
+- "overall" (1–10) is how much I LIKED the cup — kept separate from the intensities on purpose, so you can tell what I enjoy from what the coffee is like.
+- totalRatio is grams of total liquid (hot water + ice) per 1 g coffee; icePct is the share of that liquid that was ice; grind is my grinder's own number (do not assume which direction is coarser).
+- Each coffee can have several bags; daysOffRoast / daysSinceOpen show how fresh the beans were for each cup.
+- "flavours" use the SCA Coffee Taster's Flavor Wheel; compare them with roasterNotes.
+
+WHAT I WANT
+1. Which coffees and which taste profiles I seem to like most, and the evidence for that.
+2. For each coffee, my best recipe so far and the SINGLE next change to try (one variable at a time — grind, temperature, ratio or ice share), reasoned from direction and the intensities.
+3. Whether beans taste different as they age: compare scores by daysOffRoast, including bags I opened late after buying.
+4. What kinds of coffee (origin / process / roast level) to try next, and what to look for on the bag.
+Be specific and say when the data is too thin to conclude anything.`;
+  return { pack:{ coffees, summary, recentBrews:brews }, prompt };
+}
+function buildCoffeePackText(){
+  const { pack, prompt } = buildCoffeePack();
+  return `${prompt}\n\nMY DATA:\n\`\`\`json\n${JSON.stringify(pack, null, 2)}\n\`\`\``;
+}
+function copyCoffeePack(){
+  if(!state.coffee.brews.length){ showToast('Log a brew first — there is nothing to review yet'); return; }
+  copyTextToClipboard(buildCoffeePackText()).then(ok=> showToast(ok ? 'Coffee pack copied — paste it into an AI' : 'Could not copy — select the text and copy manually'));
+}
+
+/* ---------------------------------------------------------------------
+   Rendering
+   --------------------------------------------------------------------- */
+const COFFEE_NAV = [
+  ['brew','☕','Brew'],
+  ['history','≡','History'],
+  ['beans','◉','Coffees & Bags'],
+  ['insights','◈','Insights'],
+  ['guide','?','Guide'],
+  ['pack','⇪','AI Pack'],
+];
+function renderCoffeeView(){
+  const sec = COFFEE_NAV.some(n=>n[0] === state.coffeeSection) ? state.coffeeSection : 'brew';
+  const renderers = { brew:renderCoffeeBrew, history:renderCoffeeHistory, beans:renderCoffeeBeans, insights:renderCoffeeInsights, guide:renderCoffeeGuide, pack:renderCoffeePack };
+  return `
+    <div class="topbar">
+      <div>
+        <h1 class="page-title">Coffee</h1>
+        <div class="page-sub">${state.coffee.beans.length} coffee${state.coffee.beans.length===1?'':'s'} · ${state.coffee.brews.length} brew${state.coffee.brews.length===1?'':'s'} logged</div>
+      </div>
+    </div>
+    <div class="settings-layout">
+      <div class="settings-nav">
+        ${COFFEE_NAV.map(([key,icon,label])=>`
+          <button class="settings-nav-item ${sec===key?'active':''}" onclick="coffeeSetSection('${key}')">
+            <span class="settings-nav-icon">${icon}</span>${label}
+          </button>`).join('')}
+      </div>
+      <div class="settings-panel">${renderers[sec]()}</div>
+    </div>`;
+}
+function cfPills(items, current, onclickFn){
+  return `<div style="display:flex; flex-wrap:wrap; gap:6px;">${items.map(([val,label])=>
+    `<button type="button" class="radio-pill ${String(current)===String(val)?'active':''}" onclick="${onclickFn(val)}">${label}</button>`).join('')}</div>`;
+}
+function renderCoffeeCalculator(){
+  const c = coffeeCalcState();
+  return `
+    <div class="card" style="padding:16px; margin-bottom:16px;">
+      <div class="section-head"><h2 style="font-size:16px;">Recipe calculator</h2></div>
+      <div class="page-sub" style="font-size:12px; margin-bottom:10px;">Pick hot or iced, a ratio and (for iced) how much of the liquid is ice. It works out the coffee, hot water and ice to weigh.</div>
+      <div class="field"><label>Brew type</label>${cfPills([[false,'Hot'],[true,'Iced (V60 over ice)']], c.iced, v=>`coffeeCalcSet('iced',${v},true)`)}</div>
+      <div class="field"><label>Ratio — 1 g coffee to <i>x</i> g liquid</label>
+        ${cfPills(COFFEE_RATIO_PRESETS.map(r=>[r,'1:'+r]), c.ratio, v=>`coffeeCalcSet('ratio',${v},true)`)}
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+          <span class="page-sub">custom 1:</span><input type="number" id="coffeeCalcRatio" step="0.1" min="5" max="30" value="${c.ratio}" style="width:80px;" oninput="coffeeCalcSet('ratio', this.value)">
+          <span class="page-sub">or</span><input type="number" id="coffeeCalcGPerL" step="0.5" min="30" max="200" value="${coffeeGPerLFromRatio(c.ratio) || ''}" style="width:80px;" oninput="coffeeCalcSet('gPerL', this.value)"><span class="page-sub">g/L</span>
+        </div>
+      </div>
+      ${c.iced ? `<div class="field"><label>Ice — share of the total liquid</label>
+        ${cfPills(COFFEE_ICE_PRESETS.map(p=>[p,p+'%']), c.icePct, v=>`coffeeCalcSet('icePct',${v},true)`)}
+        <div style="display:flex; gap:10px; align-items:center; margin-top:8px;">
+          <input type="range" min="0" max="70" step="5" value="${c.icePct}" style="flex:1;" oninput="coffeeCalcSet('icePct', this.value); document.getElementById('coffeeIceVal').textContent=this.value+'%';">
+          <b id="coffeeIceVal" style="min-width:42px;">${c.icePct}%</b>
+        </div></div>` : ''}
+      <div class="field"><label>Start from</label>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          ${cfPills([['dose','My coffee (g)'],['total','Cup size (g)']], c.basis, v=>`coffeeCalcSet('basis','${v}',true)`)}
+          <input type="number" step="0.1" min="0" value="${c.amount}" style="width:90px;" oninput="coffeeCalcSet('amount', this.value)">
+        </div></div>
+      <div id="coffeeCalcOutput">${coffeeCalcOutputHtml()}</div>
+      <div style="margin-top:12px;"><button class="btn secondary sm" onclick="coffeeCalcToForm()">Use this recipe in the brew form ↓</button></div>
+    </div>`;
+}
+function cfSlider(s, val){
+  const set = val != null;
+  return `<div style="margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:baseline;">
+      <b style="font-size:13px;">${s.label}</b>
+      <span><span id="cfv_${s.key}" style="font-family:var(--font-mono,monospace); font-size:13px;">${set ? val : '—'}</span>
+        ${set ? '' : `<a style="font-size:11px; margin-left:8px; cursor:pointer; text-decoration:underline;" title="Rate it 5 without moving the slider" onclick="coffeeSetSliderValue('${s.key}', 5)">set 5</a>`}
+        ${set ? `<a style="font-size:11px; margin-left:8px; cursor:pointer; text-decoration:underline;" onclick="coffeeClearSlider('${s.key}')">clear</a>` : ''}</span>
+    </div>
+    <input type="range" min="1" max="10" step="1" value="${set ? val : 5}" class="${set ? '' : 'cf-unset'}" style="width:100%;" oninput="coffeeSetSlider('${s.key}', this)">
+    <div style="display:flex; justify-content:space-between; font-size:10.5px;" class="page-sub"><span>${s.low}</span><span>${s.high}</span></div>
+    <div class="page-sub" style="font-size:11.5px; margin-top:2px;">${escapeHtml(s.hint)}</div>
+  </div>`;
+}
+function renderCoffeeWheelPicker(d, bean){
+  const catSelected = c => d.flavors.some(f=> f === c || f.startsWith(c + ' > '));
+  return `
+    <div class="field">
+      <label>Flavours you taste <span class="page-sub" style="font-weight:400;">— start broad (tap a family), then narrow down</span></label>
+      ${bean && bean.roasterNotes ? `<div style="background:var(--paper-dim); border-left:3px solid var(--brass); border-radius:6px; padding:8px 10px; margin-bottom:8px; font-size:12.5px;">
+        <b>${escapeHtml(bean.brand || 'Roaster')} says:</b> ${escapeHtml(bean.roasterNotes)}</div>` : ''}
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        ${COFFEE_WHEEL.map(w=>`<button type="button" class="radio-pill ${d.flavors.includes(w.cat)?'active':(catSelected(w.cat)?'active':'')}" onclick="coffeeToggleFlavor('${w.cat}')" ondblclick="coffeeToggleWheelCat('${w.cat}')" title="Tap to select; use ▾ to narrow down">${w.cat}</button>
+          <button type="button" class="icon-btn" style="width:24px; height:24px; font-size:11px;" title="Narrow down ${w.cat}" onclick="coffeeToggleWheelCat('${w.cat}')">${d.wheelOpen[w.cat] ? '▴' : '▾'}</button>`).join('')}
+      </div>
+      ${COFFEE_WHEEL.filter(w=>d.wheelOpen[w.cat]).map(w=>`
+        <div style="margin-top:10px; padding:8px 10px; border:1px solid var(--line); border-radius:8px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:6px;">${w.cat}</div>
+          ${w.groups.map(g=>`
+            <div style="margin-bottom:6px;">
+              <button type="button" class="radio-pill ${d.flavors.includes(w.cat+' > '+g.name)?'active':''}" onclick="coffeeToggleFlavor('${w.cat} > ${g.name}')">${g.name}</button>
+              ${g.notes.map(n=>`<button type="button" class="radio-pill ${d.flavors.includes(w.cat+' > '+g.name+' > '+n)?'active':''}" style="font-size:11.5px;" onclick="coffeeToggleFlavor('${w.cat} > ${g.name} > ${n}')">${n}</button>`).join('')}
+            </div>`).join('')}
+        </div>`).join('')}
+      ${d.flavors.length ? `<div class="page-sub" style="font-size:11.5px; margin-top:8px;">Selected: ${d.flavors.map(f=>escapeHtml(f.split(' > ').pop())).join(', ')}</div>` : ''}
+    </div>`;
+}
+function renderCoffeeBrew(){
+  const d = coffeeDraft();
+  const bean = coffeeBean(d.beanId);
+  const bags = bean ? coffeeBagsFor(bean.id) : [];
+  const editing = !!d.editingBrewId;
+  const last = state.coffeeLast ? state.coffee.brews.find(b=>b.id === state.coffeeLast) : null;
+  const lastCard = last ? (()=>{
+    const sug = coffeeSuggestNext(last);
+    const prev = coffeeBrewsFor(last.beanId).filter(b=>b.id !== last.id && (b.brewedAt||'') < (last.brewedAt||''))[0];
+    const diff = coffeeRecipeDiff(last, prev);
+    const lb = coffeeBean(last.beanId);
+    return `<div class="card" style="padding:14px; margin-bottom:16px; border-color:var(--teal);">
+      <div style="font-weight:700; margin-bottom:4px;">Last cup — ${escapeHtml(lb ? lb.name : '')}${last.overall != null ? ` · ${last.overall}/10` : ''}</div>
+      ${diff.length ? `<div class="page-sub" style="font-size:12px; margin-bottom:6px;">Changed since the previous brew of this coffee: ${diff.join(' · ')}</div>` : ''}
+      <div style="font-size:13px;"><b>Next:</b> ${escapeHtml(sug.primary)}</div>
+      ${sug.alternatives.length ? `<div class="page-sub" style="font-size:12px; margin-top:2px;">${sug.alternatives.map(a=>escapeHtml(a)).join('; ')}.</div>` : ''}
+      ${sug.note ? `<div class="page-sub" style="font-size:11.5px; margin-top:6px;">${escapeHtml(sug.note)}</div>` : ''}
+    </div>`;
+  })() : '';
+  const beanOptions = `<option value="">— choose a coffee —</option>` +
+    state.coffee.beans.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(b=>`<option value="${b.id}" ${d.beanId===b.id?'selected':''}>${escapeHtml(b.name)}${b.brand ? ' — ' + escapeHtml(b.brand) : ''}</option>`).join('');
+  const bagSection = !bean ? '' : (bags.length && !(d.bagMode === 'new' && !editing) || editing ? `
+      <div class="field"><label>Bag ${editing ? '' : '<span class="page-sub" style="font-weight:400;">— is this a new bag of this coffee?</span>'}</label>
+        <select onchange="coffeePickBag(this.value)">
+          ${bags.map((g,i)=>`<option value="${g.id}" ${d.bagMode==='current' && d.bagId===g.id?'selected':''}>${escapeHtml(coffeeBagLabel(g,i))}</option>`).join('')}
+          ${editing ? '' : `<option value="__new__" ${d.bagMode==='new'?'selected':''}>＋ New bag of this coffee…</option>`}
+        </select></div>` : `
+      <div class="field"><label>${bags.length ? 'New bag' : 'First bag of this coffee'} <span class="page-sub" style="font-weight:400;">— the open date is set automatically to the day of this brew</span></label>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:140px;"><div class="page-sub" style="font-size:11px;">Roast date</div><input type="date" value="${d.newBag.roastDate}" oninput="coffeeDraft().newBag.roastDate=this.value; coffeeRefreshReadout();"></div>
+          <div style="flex:1; min-width:140px;"><div class="page-sub" style="font-size:11px;">Purchase date</div><input type="date" value="${d.newBag.purchaseDate}" oninput="coffeeDraft().newBag.purchaseDate=this.value"></div>
+        </div>
+        ${bags.length ? `<div style="margin-top:6px;"><a style="font-size:12px; cursor:pointer; text-decoration:underline;" onclick="coffeePickBag('${bags[bags.length-1].id}')">← use an existing bag instead</a></div>` : ''}
+      </div>`);
+  return `
+    ${renderCoffeeCalculator()}
+    ${lastCard}
+    <div class="card" style="padding:16px;">
+      <div class="section-head"><h2 style="font-size:16px;">${editing ? 'Edit brew' : 'Log a cup'}</h2>
+        <span style="display:flex; gap:6px;">
+          ${editing ? `<button class="btn ghost sm" onclick="coffeeCancelEdit()">Cancel edit</button>` : `<button class="btn ghost sm" onclick="coffeeRepeatLast()" title="Fill the recipe from your last brew">↺ Repeat last brew</button>`}
+        </span></div>
+
+      <div class="field"><label>Coffee</label>
+        <div style="display:flex; gap:8px;"><select style="flex:1;" onchange="coffeePickBean(this.value)">${beanOptions}</select>
+          <button class="btn secondary sm" onclick="coffeeOpenBeanModal('')">＋ New</button></div></div>
+      ${bagSection}
+      <div class="field"><label>Brew date</label><input type="date" value="${d.date}" oninput="coffeeSetDraft('date', this.value)" style="max-width:180px;"></div>
+
+      <div class="field"><label>Brew type</label>${cfPills([[false,'Hot'],[true,'Iced']], d.iced, v=>`coffeeToggleIced(${v})`)}</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px;">
+        <div class="field"><label>Coffee (g)</label><input type="number" step="0.1" min="0" value="${escapeHtml(d.doseG)}" oninput="coffeeSetDraft('doseG', this.value)"></div>
+        <div class="field"><label>${d.iced ? 'Hot water (g)' : 'Water (g)'}</label><input type="number" step="1" min="0" value="${escapeHtml(d.hotWaterG)}" oninput="coffeeSetDraft('hotWaterG', this.value)"></div>
+        ${d.iced ? `<div class="field"><label>Ice (g)</label><input type="number" step="1" min="0" value="${escapeHtml(d.iceG)}" oninput="coffeeSetDraft('iceG', this.value)"></div>` : ''}
+        <div class="field"><label>Water temp (°C)</label><input type="number" step="0.5" min="60" max="100" value="${escapeHtml(d.tempC)}" oninput="coffeeSetDraft('tempC', this.value)"></div>
+        <div class="field"><label>Grind setting</label><input type="number" step="0.1" min="0" value="${escapeHtml(d.grind)}" oninput="coffeeSetDraft('grind', this.value)"></div>
+        <div class="field"><label>Brew time (m:ss)</label><input type="text" inputmode="numeric" placeholder="3:05" value="${escapeHtml(d.brewTime)}" oninput="coffeeSetDraft('brewTime', this.value)"></div>
+      </div>
+      <div class="page-sub" id="coffeeReadout" style="font-size:12px; margin:-2px 0 14px;">${escapeHtml(coffeeDraftReadout())}</div>
+
+      <div class="section-head" style="margin-top:6px;"><h2 style="font-size:15px;">How did it taste?</h2></div>
+      <div class="page-sub" style="font-size:12px; margin-bottom:10px;">Rate how much of each you noticed (1–10). Leave any you are unsure about untouched.</div>
+      ${COFFEE_TASTE.map(s=>cfSlider(s, d[s.key])).join('')}
+
+      <div class="field"><label>Overall verdict on extraction</label>
+        ${cfPills(COFFEE_DIRECTIONS.map(x=>[x.key,x.label]), d.direction, v=>`coffeePickDirection('${v}')`)}
+        <div class="page-sub" style="font-size:11.5px; margin-top:4px;">Sour, sharp and thin means under-extracted. Bitter, harsh and drying means over-extracted.</div></div>
+
+      ${renderCoffeeWheelPicker(d, bean)}
+
+      <div class="field"><label>How much did you like it? <span class="page-sub" style="font-weight:400;">— your taste, separate from the ratings above</span></label>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button type="button" class="radio-pill ${d.overall===n?'active':''}" style="min-width:38px; justify-content:center;" onclick="coffeeSetOverall(${n})">${n}</button>`).join('')}</div></div>
+      <div class="field"><label>Brew it again?</label>${cfPills([[true,'Yes'],[false,'No']], d.brewAgain, v=>`coffeeSetBrewAgain(${v})`)}</div>
+
+      <div style="margin:6px 0 12px;"><a style="cursor:pointer; text-decoration:underline; font-size:13px;" onclick="coffeeToggleDetail()">${d.detailOpen ? '▾ Hide detailed section' : '▸ Detailed section (aftertaste, balance, notes)'}</a></div>
+      ${d.detailOpen ? `<div style="border-left:3px solid var(--line); padding-left:12px; margin-bottom:12px;">
+        ${COFFEE_TASTE_DETAIL.map(s=>cfSlider(s, d[s.key])).join('')}
+        <div class="field"><label>Notes</label><textarea rows="3" oninput="coffeeSetDraft('notes', this.value)" placeholder="anything worth remembering">${escapeHtml(d.notes)}</textarea></div>
+      </div>` : ''}
+
+      <div class="modal-actions" style="justify-content:flex-start;"><button class="btn brass" onclick="coffeeSaveBrew()">${editing ? 'Save changes' : 'Log this cup'}</button></div>
+    </div>`;
+}
+function cfBrewCard(b){
+  const bean = coffeeBean(b.beanId), m = coffeeBrewMetrics(b), bag = coffeeBag(b.bagId);
+  const taste = COFFEE_TASTE.filter(t=>b[t.key] != null).map(t=>`<span class="page-sub" style="font-size:11.5px; border:1px solid var(--line); border-radius:5px; padding:1px 6px;">${t.label.toLowerCase()} ${b[t.key]}</span>`).join(' ');
+  const dirLabel = (COFFEE_DIRECTIONS.find(x=>x.key === b.direction) || {}).label;
+  return `<div class="card" style="padding:12px 14px; margin-bottom:10px;">
+    <div style="display:flex; justify-content:space-between; gap:10px; align-items:baseline; flex-wrap:wrap;">
+      <b>${escapeHtml(bean ? bean.name : 'Unknown coffee')}</b>
+      <span class="page-sub" style="font-size:12px;">${humanDateNoRelative(b.date)}${b.overall != null ? ` · <b>${b.overall}/10</b>` : ''}${b.brewAgain === true ? ' · ↻ again' : (b.brewAgain === false ? ' · not again' : '')}</span>
+    </div>
+    <div class="page-sub" style="font-size:12px; margin-top:3px;">${b.iced ? 'Iced' : 'Hot'} · ${b.doseG}g coffee · ${b.hotWaterG}g ${b.iced ? 'hot water' : 'water'}${b.iceG ? ` · ${b.iceG}g ice (${m.icePct}%)` : ''} · 1:${m.ratio} (${m.gPerL} g/L) · ${b.tempC != null ? b.tempC + '°C' : '—'} · grind ${b.grind != null ? b.grind : '—'} · ${coffeeFmtTime(b.brewTimeSec) || '—'}</div>
+    ${bag ? `<div class="page-sub" style="font-size:12px;">${m.daysOffRoast != null ? `${m.daysOffRoast} days off roast` : 'roast date unknown'}${m.daysSinceOpen != null ? ` · ${m.daysSinceOpen} days since opened` : ''}</div>` : ''}
+    ${(taste || dirLabel) ? `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">${dirLabel ? `<span style="font-size:11.5px; font-weight:600;">${dirLabel}</span>` : ''}${taste}</div>` : ''}
+    ${b.flavors.length ? `<div style="font-size:12px; margin-top:4px;">Flavours: ${b.flavors.map(f=>escapeHtml(f.split(' > ').pop())).join(', ')}</div>` : ''}
+    ${(b.detail || {}).notes ? `<div class="page-sub" style="font-size:12px; margin-top:4px;">${escapeHtml(b.detail.notes)}</div>` : ''}
+    <div style="display:flex; gap:6px; margin-top:8px;">
+      <button class="btn ghost sm" onclick="coffeeEditBrew('${b.id}')">Edit</button>
+      <button class="btn ghost sm" onclick="coffeeDeleteBrew('${b.id}')">Delete</button>
+    </div></div>`;
+}
+function renderCoffeeHistory(){
+  const f = state.coffeeHistoryFilter || '';
+  const list = state.coffee.brews.filter(b=>!f || b.beanId === f).slice().sort((a,b)=>(a.brewedAt||'')<(b.brewedAt||'')?1:-1);
+  return `
+    <div class="filter-bar" style="margin-bottom:12px;">
+      <select onchange="state.coffeeHistoryFilter=this.value; renderMain();">
+        <option value="">All coffees</option>
+        ${state.coffee.beans.map(b=>`<option value="${b.id}" ${f===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}
+      </select>
+      <span class="page-sub" style="margin-left:auto;">${list.length} brew${list.length===1?'':'s'}</span>
+    </div>
+    ${list.length ? list.map(cfBrewCard).join('') : `<div class="card" style="padding:20px;"><div class="page-sub">No brews logged yet. Log your first cup on the Brew tab.</div></div>`}`;
+}
+function renderCoffeeBeans(){
+  const beans = state.coffee.beans.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  return `
+    <div class="filter-bar" style="margin-bottom:12px;"><button class="btn brass sm" onclick="coffeeOpenBeanModal('')">＋ New coffee</button></div>
+    ${beans.length ? beans.map(b=>{
+      const bags = coffeeBagsFor(b.id), brews = coffeeBrewsFor(b.id);
+      const avg = coffeeAvg(brews.filter(x=>x.overall != null).map(x=>x.overall));
+      return `<div class="card" style="padding:14px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:baseline;">
+          <b style="font-size:15px;">${escapeHtml(b.name)}</b>
+          <span class="page-sub" style="font-size:12px;">${brews.length} brew${brews.length===1?'':'s'}${avg != null ? ` · avg ${avg}/10` : ''}</span>
+        </div>
+        <div class="page-sub" style="font-size:12px; margin-top:2px;">${[b.brand, b.country, b.process, b.roastLevel ? b.roastLevel + ' roast' : ''].filter(Boolean).map(escapeHtml).join(' · ') || 'No details yet'}</div>
+        ${b.roasterNotes ? `<div style="font-size:12.5px; margin-top:6px;"><b>Roaster notes:</b> ${escapeHtml(b.roasterNotes)}</div>` : ''}
+        <div style="margin-top:10px; font-weight:600; font-size:12px;">Bags</div>
+        ${bags.length ? bags.map((g,i)=>{
+          const rest = g.roastDate && g.openDate ? daysBetween(g.roastDate, g.openDate) : null;
+          const n = state.coffee.brews.filter(x=>x.bagId === g.id).length;
+          return `<div style="display:flex; justify-content:space-between; gap:8px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;">
+            <span style="font-size:12.5px;">Bag ${i+1} · roasted ${g.roastDate ? humanDateNoRelative(g.roastDate) : '—'} · bought ${g.purchaseDate ? humanDateNoRelative(g.purchaseDate) : '—'} · opened ${g.openDate ? humanDateNoRelative(g.openDate) : 'not yet'}${rest != null ? ` (${rest} days after roast)` : ''} · ${n} brew${n===1?'':'s'}</span>
+            <button class="btn ghost sm" onclick="coffeeOpenBagModal('${b.id}','${g.id}')">Edit</button></div>`;
+        }).join('') : `<div class="page-sub" style="font-size:12px; padding:4px 0;">No bags yet — one is created with your first brew.</div>`}
+        <div style="display:flex; gap:6px; margin-top:10px;">
+          <button class="btn secondary sm" onclick="coffeeOpenBagModal('${b.id}','')">＋ Add bag</button>
+          <button class="btn ghost sm" onclick="coffeeOpenBeanModal('${b.id}')">Edit coffee</button>
+        </div></div>`;
+    }).join('') : `<div class="card" style="padding:20px;"><div class="page-sub">No coffees yet. Add one here, or pick ＋ New on the Brew tab.</div></div>`}`;
+}
+function cfBar(label, val, max){
+  const w = val == null ? 0 : Math.round(val / (max || 10) * 100);
+  return `<div style="display:flex; align-items:center; gap:8px; font-size:12px; margin:3px 0;">
+    <span style="width:84px;">${label}</span>
+    <span style="flex:1; background:var(--paper-dim); border-radius:4px; height:8px; overflow:hidden;"><span style="display:block; width:${w}%; height:100%; background:var(--teal);"></span></span>
+    <b style="width:30px; text-align:right;">${val != null ? val : '—'}</b></div>`;
+}
+function renderCoffeeInsights(){
+  const ins = coffeeInsights();
+  if(!ins.totalBrews) return `<div class="card" style="padding:20px;"><div class="page-sub">Insights appear once you have logged a few cups. Each one teaches the app a little more about what you like.</div></div>`;
+  const sugg = ins.perBean.filter(p=>p.brews).map(p=>{
+    const lastB = coffeeBrewsFor(p.beanId)[0];
+    const s = coffeeSuggestNext(lastB);
+    return `<div style="padding:6px 0; border-bottom:1px solid var(--line); font-size:12.5px;"><b>${escapeHtml(p.name)}</b> — ${escapeHtml(s.primary)}</div>`;
+  }).join('');
+  const groupTable = (title, rows)=> rows.length ? `<div style="margin-bottom:10px;"><div style="font-weight:600; font-size:12px; margin-bottom:2px;">${title}</div>${rows.map(r=>`<div style="display:flex; justify-content:space-between; font-size:12.5px; padding:2px 0;"><span>${escapeHtml(r.key)} <span class="page-sub">(${r.coffees} coffee${r.coffees===1?'':'s'}, ${r.brews} brews)</span></span><b>${r.avgOverall}</b></div>`).join('')}</div>` : '';
+  return `
+    <div class="card" style="padding:14px; margin-bottom:14px;">
+      <div class="section-head"><h2 style="font-size:15px;">Coffees you like</h2></div>
+      ${ins.perBean.filter(p=>p.brews).map(p=>`<div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid var(--line); font-size:13px; flex-wrap:wrap;">
+        <span><b>${escapeHtml(p.name)}</b> <span class="page-sub">${[p.brand,p.country].filter(Boolean).map(escapeHtml).join(' · ')}</span></span>
+        <span>${p.avgOverall != null ? `avg <b>${p.avgOverall}</b> · best ${p.bestOverall}` : 'not rated'} <span class="page-sub">· ${p.brews} brew${p.brews===1?'':'s'}</span></span></div>`).join('')}
+    </div>
+
+    <div class="card" style="padding:14px; margin-bottom:14px;">
+      <div class="section-head"><h2 style="font-size:15px;">Best recipe per coffee</h2></div>
+      ${ins.perBean.filter(p=>p.best).map(p=>{
+        const b = p.best, m = coffeeBrewMetrics(b);
+        return `<div style="padding:6px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
+          <b>${escapeHtml(p.name)}</b> <span class="page-sub">rated ${b.overall}/10 · ${humanDateNoRelative(b.date)}</span><br>
+          ${b.iced ? 'Iced' : 'Hot'} · ${b.doseG}g coffee · ${b.hotWaterG}g ${b.iced ? 'hot water' : 'water'}${b.iceG ? ` + ${b.iceG}g ice (${m.icePct}%)` : ''} · 1:${m.ratio} · ${b.tempC != null ? b.tempC + '°C' : '—'} · grind ${b.grind != null ? b.grind : '—'} · ${coffeeFmtTime(b.brewTimeSec) || '—'}</div>`;
+      }).join('') || `<div class="page-sub">Rate a cup (1–10) to see its recipe here.</div>`}
+    </div>
+
+    <div class="card" style="padding:14px; margin-bottom:14px;">
+      <div class="section-head"><h2 style="font-size:15px;">Your taste profile</h2></div>
+      <div class="page-sub" style="font-size:12px; margin-bottom:6px;">Average intensities of the cups you rated 8 or higher (${ins.lovedCount} cup${ins.lovedCount===1?'':'s'}) next to all rated cups. Where they differ is what you reach for.</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px;">
+        <div><div style="font-weight:600; font-size:12px;">Rated 8+</div>${COFFEE_TASTE.map(t=>cfBar(t.label, ins.profileLoved[t.key])).join('')}</div>
+        <div><div style="font-weight:600; font-size:12px;">All rated cups</div>${COFFEE_TASTE.map(t=>cfBar(t.label, ins.profileAll[t.key])).join('')}</div>
+      </div>
+      <div style="margin-top:12px;">${groupTable('By origin country (average overall)', ins.byCountry)}${groupTable('By process', ins.byProcess)}${groupTable('By roast level', ins.byRoast)}</div>
+    </div>
+
+    <div class="card" style="padding:14px; margin-bottom:14px;">
+      <div class="section-head"><h2 style="font-size:15px;">Freshness — does age change the cup?</h2></div>
+      <div class="page-sub" style="font-size:12px; margin-bottom:6px;">Every cup grouped by how many days after the roast date it was brewed.</div>
+      ${ins.freshness.map(f=>`<div style="display:flex; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;"><span style="width:90px;">${f.label}</span><span class="page-sub">${f.brews} cup${f.brews===1?'':'s'}</span><span>${f.brews ? `overall <b>${f.avgOverall != null ? f.avgOverall : '—'}</b> · sweet ${f.sweetness != null ? f.sweetness : '—'} · acid ${f.acidity != null ? f.acidity : '—'}` : '—'}</span></div>`).join('')}
+      ${ins.bags.length ? `<div style="font-weight:600; font-size:12px; margin:12px 0 2px;">Bag by bag — how long you waited to open</div>
+        ${ins.bags.map(g=>`<div style="font-size:12.5px; padding:2px 0;">${escapeHtml(g.coffee)} · roasted ${g.roastDate ? humanDateNoRelative(g.roastDate) : '—'} · opened ${g.openDate ? humanDateNoRelative(g.openDate) : 'not yet'}${g.restAtOpen != null ? ` (<b>${g.restAtOpen}</b> days after roast)` : ''} · ${g.brews} brews${g.avgOverall != null ? ` · avg ${g.avgOverall}` : ''}</div>`).join('')}` : ''}
+    </div>
+
+    <div class="card" style="padding:14px;">
+      <div class="section-head"><h2 style="font-size:15px;">Next brew — one change per coffee</h2></div>
+      ${sugg}
+    </div>`;
+}
+function renderCoffeeGuide(){
+  const sec = (title, body)=>`<div class="card" style="padding:14px; margin-bottom:12px;"><div class="section-head"><h2 style="font-size:15px;">${title}</h2></div>${body}</div>`;
+  return `
+    ${sec('How to taste', `
+      <div style="font-size:13px; line-height:1.6;">
+        <p style="margin-top:0;">Take a moment before the first sip: smell the cup. Then sip and let it move across your whole tongue. Note the <b>first impression</b> (is it bright, sweet, heavy?), what it tastes <b>like</b>, and what is <b>left in your mouth</b> after you swallow.</p>
+        <p>Do not worry about naming exact flavours. Start with broad questions — <i>fruity or chocolatey? bright or smooth? sweet or bitter?</i> — and narrow down only if something stands out. Try the same coffee on different days; your recognition gets better with repetition.</p>
+        <p style="margin-bottom:0;">Taste before you decide whether you liked it: first describe what is there, then give the cup your 1–10 liking. The app keeps these apart on purpose.</p>
+      </div>`)}
+    ${sec('What each rating means', `
+      ${[...COFFEE_TASTE, ...COFFEE_TASTE_DETAIL].map(t=>`<div style="margin-bottom:8px;"><b>${t.label}</b> <span class="page-sub">(${t.low} → ${t.high})</span><div class="page-sub" style="font-size:12.5px;">${escapeHtml(t.hint)}</div></div>`).join('')}`)}
+    ${sec('Sour or bitter? — reading extraction', `
+      <div style="font-size:13px; line-height:1.6;">
+        <p style="margin-top:0;"><b>Sour, sharp, thin, no finish → under-extracted.</b> Not enough was pulled out of the coffee. Fix: grind finer, use hotter water, or brew a little longer.</p>
+        <p><b>Bitter, harsh, drying, lingering → over-extracted.</b> Too much was pulled out. Fix: grind coarser, use cooler water, or brew a little shorter.</p>
+        <p><b>Change ONE thing per brew.</b> If you change grind, temperature and time together and the cup improves, you will not know which change did it.</p>
+        <p style="margin-bottom:0;">Beware of mixing up a flavour with a fault: a bright citrus note is acidity doing its job; a sharp, one-note sourness is under-extraction.</p>
+      </div>`)}
+    ${sec('Reference numbers', `
+      <div style="font-size:13px; line-height:1.6;">
+        <ul style="margin:0; padding-left:18px;">
+          <li><b>Ratio:</b> 1:16 (1 g coffee to 16 g water, about 62.5 g/L) is the common starting point; people usually range from 1:15 (stronger) to 1:18 (lighter).</li>
+          <li><b>Water temperature:</b> about 90–96 °C. Cooler tends to taste sour or flat; hotter can taste harsh and bitter.</li>
+          <li><b>Iced V60:</b> brew hot straight onto ice. The ratio is the TOTAL of hot water plus ice — a 60/40 split (60% hot water, 40% ice) is a typical start. Use the calculator for the exact grams.</li>
+          <li><b>Grind:</b> V60 usually wants a medium-fine grind, a little finer for iced because there is less hot water. Record your grinder's own number every time.</li>
+          <li><b>Freshness:</b> flavour changes with days off roast and after the bag is opened — that is what the Freshness insight tracks.</li>
+        </ul>
+      </div>`)}
+    ${sec('The flavour wheel', `
+      <div style="font-size:13px; line-height:1.6;">
+        <p style="margin-top:0;">The SCA Coffee Taster's Flavor Wheel has nine broad families at its centre: ${COFFEE_WHEEL.map(w=>`<b>${w.cat}</b>`).join(', ')}. Moving outward, each family splits into more specific notes (Fruity → Berry → Blueberry).</p>
+        <p style="margin-bottom:0;">On the Brew tab, tap a family, or press ▾ beside it to narrow down. The roaster's own notes are shown above the wheel so you can compare what you taste with what they describe.</p>
+      </div>`)}`;
+}
+function renderCoffeePack(){
+  const have = state.coffee.brews.length;
+  return `
+    <div class="card" style="padding:16px;">
+      <div class="section-head"><h2 style="font-size:15px;">AI pack</h2></div>
+      <div class="page-sub" style="font-size:12.5px; margin-bottom:10px;">Copies your coffees, bags, recipes and tastings together with instructions, ready to paste into an AI for advice on what you like, the next brew change per coffee, whether freshness matters, and what to try next.</div>
+      <button class="btn brass" onclick="copyCoffeePack()">📋 Copy coffee pack</button>
+      <div class="page-sub" style="font-size:12px; margin-top:8px;">${have ? `Includes your ${Math.min(have, 80)} most recent brews.` : 'Log a brew first.'}</div>
+    </div>`;
+}
+
 function renderRecipesView(){
   if(state.recipesSelectedId){
     const recipe = state.recipes.items.find(r=>r.id===state.recipesSelectedId);
@@ -15282,6 +16394,32 @@ create table if not exists hydration_logs (
   primary key (pin, id)
 );
 
+-- v4.64.0: Coffee module — three new tables (additive, idempotent, safe to re-run).
+create table if not exists coffee_beans (
+  pin text not null, id text not null, name text not null,
+  brand text, country text, process text, roast_level text, roaster_notes text,
+  created_at timestamptz default now(),
+  primary key (pin, id)
+);
+create table if not exists coffee_bags (
+  pin text not null, id text not null, bean_id text not null,
+  roast_date date, purchase_date date, open_date date,
+  created_at timestamptz default now(),
+  primary key (pin, id)
+);
+create table if not exists coffee_brews (
+  pin text not null, id text not null, bean_id text not null, bag_id text,
+  brewed_at timestamptz not null default now(), brew_date date not null,
+  method text default 'V60', is_iced boolean default false,
+  dose_g numeric, hot_water_g numeric, ice_g numeric default 0, temp_c numeric,
+  grind numeric, brew_time_sec int,
+  sweetness int, acidity int, bitterness int, body int, strength int,
+  direction text, overall int, brew_again boolean,
+  flavors jsonb default '[]', detail jsonb default '{}',
+  created_at timestamptz default now(),
+  primary key (pin, id)
+);
+
 -- Already had these tables from an earlier version? Run these lines instead —
 -- they only ADD new tables/columns, nothing existing is touched or deleted:
 alter table one_time_tasks add column if not exists due_history jsonb default '[]';
@@ -15416,7 +16554,7 @@ do $$
 declare t text;
 begin
   for t in select unnest(array['one_time_tasks','recurring_tasks','task_completions','lists','list_items','health_logs','daily_ratings','health_metric_defs','app_settings',
-                                'training_exercises','training_sessions','training_calendar','training_logs','training_sets','training_resources','recipes','recipe_ingredients','hydration_logs'])
+                                'training_exercises','training_sessions','training_calendar','training_logs','training_sets','training_resources','recipes','recipe_ingredients','hydration_logs','coffee_beans','coffee_bags','coffee_brews'])
   loop
     execute format('alter table %I enable row level security;', t);
     execute format('drop policy if exists "allow anon all" on %I;', t);
@@ -15696,7 +16834,7 @@ function renderSettingsPages(){
         <div class="page-sub" style="margin-bottom:10px;">Drag to reorder the sidebar. Dashboard and Settings can be moved but not hidden.</div>
         <div class="reorder-list" id="pageReorderList" style="max-width:100%;">
           ${state.settings.pageOrder.map((key,i)=>{
-            const meta = { dashboard:'Dashboard', overdue:'Overdue', tasks:'All Tasks', calendar:'Calendar', lists:'Lists', health:'Health Log', settings:'Settings' };
+            const meta = { dashboard:'Dashboard', overdue:'Overdue', tasks:'All Tasks', calendar:'Calendar', week:'Week', lists:'Lists', health:'Health Log', training:'Training', recipes:'Recipes', coffee:'Coffee', progress:'Progress', settings:'Settings' };
             const locked = key==='dashboard' || key==='settings';
             const hiddenNow = (state.settings.hiddenPages||[]).includes(key);
             return `
@@ -17257,7 +18395,7 @@ function getCommandPaletteResults(){
   const PAGES = [
     ['dashboard','▣','Dashboard'], ['overdue','⚑','Overdue'], ['tasks','☰','All Tasks'],
     ['calendar','▦','Calendar'], ['week','▧','Week'], ['lists','▤','Lists'], ['health','♥','Health Log'],
-    ['training','⛊','Training'], ['recipes','❖','Recipes'], ['progress','◈','Progress'], ['settings','⚙','Settings'],
+    ['training','⛊','Training'], ['recipes','❖','Recipes'], ['coffee','☕','Coffee'], ['progress','◈','Progress'], ['settings','⚙','Settings'],
   ];
   PAGES.forEach(([key,icon,label])=>{
     if(!q || label.toLowerCase().includes(q)){
