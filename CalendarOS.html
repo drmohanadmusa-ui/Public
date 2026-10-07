@@ -695,6 +695,20 @@ select.filter-select, input.filter-date{
   font-size:10.5px; color:var(--ink-soft); letter-spacing:0.01em; margin-bottom:2px;
 }
 .set-num-input{ width:62px; text-align:center; }
+/* v4.65.0 reps/weight scroll-wheel picker */
+.num-pick{cursor:pointer; caret-color:transparent;}
+.np-modal{max-width:340px; padding:20px;}
+.np-wheels{position:relative; display:flex; justify-content:center; align-items:center; gap:4px; height:200px;}
+.np-band{position:absolute; left:0; right:0; top:80px; height:40px; background:var(--paper-dim); border-radius:8px; pointer-events:none;}
+.np-wheel{position:relative; z-index:1; height:200px; width:96px; overflow-y:auto; scroll-snap-type:y mandatory; -webkit-overflow-scrolling:touch; scrollbar-width:none; overscroll-behavior:contain; touch-action:pan-y;}
+.np-wheel::-webkit-scrollbar{display:none;}
+.np-pad{height:80px;}
+.np-item{height:40px; line-height:40px; text-align:center; scroll-snap-align:center; font-size:22px; color:var(--ink-soft); cursor:pointer;}
+.np-item.np-sel{color:var(--ink); font-weight:700;}
+.np-dot{z-index:1; font-size:26px; font-weight:700;}
+.np-actions{display:flex; gap:6px; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap;}
+.np-actions .btn.brass{min-width:72px;}
+
 .set-unit{ font-size:11px; color:var(--ink-soft); align-self:center; }
 .set-rir-label{ font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em; align-self:center; }
 .rir-pill{
@@ -2214,7 +2228,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.64.0';
+const APP_VERSION = '4.65.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2222,6 +2236,15 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.65.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIXED (Coffee): picking an ice % (or a ratio, hot/iced, or the start-from basis) made the whole page flash, because every tap rebuilt the entire page. The calculator now redraws only its own card, in place, with your scroll position untouched.',
+    'FIXED (Training): Log History was empty until you opened a date that had logged training. It now fills itself from your logged sets the moment you open the page (no need to tap Rebuild).',
+    'Coffee brew form: the optional "Detailed section" is gone. Aftertaste and balance are now ordinary sliders under the other taste questions, and Notes sits at the bottom of the form. Existing brews keep their aftertaste, balance and notes.',
+    'Training: removed the "n/3 sets logged" count from the Target badge. The badge just shows the target now; progress still shows in the "n/N sets done" label on the exercise.',
+    'NEW: tapping a reps or weight box on a set opens an iPhone-style scroll wheel with an OK button instead of the full keyboard. Reps is one wheel; weight is two (whole kg and a .00/.25/.50/.75 fraction). It opens on your current value, or the suggested one. Clear empties the box, and "Use keyboard" is there if you ever want to type.',
+    'AI review pack now covers the last 30 days of logged sets, body metrics and adherence (was 14), so a session from a few weeks back is no longer missing from what the AI sees. The prompt wording and the app\u2019s own explanation text now say 30 days. The forward-looking 14-day plan the AI writes is unchanged.',
+  ]},
   { v:'4.64.0', changes: [
     '\u{1F534} SQL migration required: Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Creates three new tables \u2014 coffee_beans, coffee_bags, coffee_brews \u2014 and adds them to the row-level-security loop. Additive and idempotent, safe to re-run. Coffee sync is fault-isolated like Training/Recipes, so nothing else is affected before it is run.',
     '\u{1F534} Backup script: the nightly backup refuses to run when the app syncs a table its TABLES list does not know. Add coffee_beans, coffee_bags and coffee_brews to TABLES (Settings \u2192 Cloud Sync \u2192 Copy backup script generates the full current list).',
@@ -10221,7 +10244,7 @@ function renderTrainingView(){
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn secondary sm" onclick="exportTrainingJson()">Export</button>
-        <button class="btn brass sm" onclick="openTrainingGoalsModal()" title="Confirm your training goals, then bundle last 2 weeks of data + prompt for an AI review — paste result into Paste &amp; Import">📋 Copy Review Pack</button>
+        <button class="btn brass sm" onclick="openTrainingGoalsModal()" title="Confirm your training goals, then bundle last 30 days of data + prompt for an AI review — paste result into Paste &amp; Import">📋 Copy Review Pack</button>
         <button class="btn secondary sm" onclick="openTrainingPasteImportModal()">Paste &amp; Import</button>
         <label class="btn secondary sm" style="cursor:pointer;">
           Import File
@@ -10510,15 +10533,15 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
       <div style="display:flex;flex-direction:column;gap:2px;">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <input type="number" min="0" step="1" value="${s.reps||''}" placeholder="${defaultReps||'reps'}"
-            class="train-input set-num-input"
-            inputmode="numeric" enterkeyhint="next"
+            class="train-input set-num-input num-pick"
+            inputmode="none" readonly onclick="openNumPicker(this,'reps','${date}','${escapeHtml(block.exerciseId)}',${s.setNo})"
             onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextTrainInput(this);}"
             oninput="updateSetField('${date}','${escapeHtml(block.exerciseId)}',${s.setNo},'reps',this.value===''?null:Number(this.value));"
             aria-label="Reps for set ${s.setNo}">
           <span class="set-unit">reps</span>
           <input type="number" min="0" step="0.5" value="${s.weightKg||''}" placeholder="${defaultWeight||'kg'}"
-            class="train-input set-num-input"
-            inputmode="decimal" enterkeyhint="next"
+            class="train-input set-num-input num-pick"
+            inputmode="none" readonly onclick="openNumPicker(this,'weightKg','${date}','${escapeHtml(block.exerciseId)}',${s.setNo})"
             onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextTrainInput(this);}"
             oninput="updateSetField('${date}','${escapeHtml(block.exerciseId)}',${s.setNo},'weightKg',this.value===''?null:Number(this.value));"
             aria-label="Weight for set ${s.setNo}">
@@ -10583,7 +10606,6 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
 
       ${hasTarget ? `<div class="target-badge ${targetMet?'target-badge-met':''}">
         🎯 Target: ${escapeHtml(targetLabel)}${belowFloor ? ` <span style="color:var(--flag,#D95B5B);font-weight:600;" title="This plan suggests less than the ${weightFloor.weightKg} kg you completed on ${escapeHtml(humanDateNoRelative(weightFloor.date))}">⚠ below your last ${weightFloor.weightKg} kg</span>` : ''}
-        ${targetSets ? ` · <span style="font-weight:600;color:${targetMet?'var(--teal)':'var(--ink-soft)'};">${doneWorkingSets}/${targetSets} sets logged</span>` : ''}
       </div>` : ''}
 
       ${ex ? `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:4px;">
@@ -10795,6 +10817,102 @@ function setSetMode(date, exId, setNo, mode, rirValue){
   }
   updateTrainingDayAggPreview();
 }
+/* ---------- v4.65.0: iPhone-style scroll-wheel picker for reps / weight ----------
+   Replaces the full on-screen keyboard. Reps = one wheel (0-60). Weight = two
+   wheels: whole kg (0-300) and a fraction (.00/.25/.50/.75). Scroll-snap
+   wheels, OK commits, Clear empties, "Use keyboard" falls back to typing. */
+const NUMPICK_ITEM_H = 40;
+let _numPick = null;
+function _npWheel(id, items, selIdx){
+  return `<div class="np-wheel" id="${id}" data-n="${items.length}">
+    <div class="np-pad"></div>
+    ${items.map((t,i)=>`<div class="np-item ${i===selIdx?'np-sel':''}" data-i="${i}" onclick="numPickTap('${id}',${i})">${t}</div>`).join('')}
+    <div class="np-pad"></div></div>`;
+}
+function openNumPicker(inputEl, kind, date, exId, setNo){
+  if(_numPick) closeNumPicker(true);
+  const isReps = kind === 'reps';
+  const cur = inputEl.value !== '' ? Number(inputEl.value) : (inputEl.placeholder !== '' && !isNaN(Number(inputEl.placeholder)) ? Number(inputEl.placeholder) : (isReps ? 10 : 20));
+  _numPick = { inputEl, kind, date, exId, setNo };
+  let body, title;
+  if(isReps){
+    title = 'Reps';
+    const v = Math.max(0, Math.min(60, Math.round(cur)));
+    body = _npWheel('npW1', Array.from({length:61}, (_,i)=>String(i)), v);
+    _numPick.init = [v];
+  } else {
+    title = 'Weight (kg)';
+    const whole = Math.max(0, Math.min(300, Math.floor(cur + 1e-9)));
+    const fracIdx = Math.max(0, Math.min(3, Math.round((cur - whole) * 4)));
+    body = _npWheel('npW1', Array.from({length:301}, (_,i)=>String(i)), whole)
+         + '<div class="np-dot">.</div>'
+         + _npWheel('npW2', ['00','25','50','75'], fracIdx);
+    _numPick.init = [whole, fracIdx];
+  }
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay np-overlay'; ov.id = 'numPickOverlay';
+  ov.onclick = (e)=>{ if(e.target === ov) closeNumPicker(true); };
+  ov.innerHTML = `<div class="modal np-modal">
+    <h3 style="margin-bottom:10px;text-align:center;">${title}</h3>
+    <div class="np-wheels"><div class="np-band"></div>${body}</div>
+    <div class="np-actions">
+      <button type="button" class="btn ghost sm" onclick="numPickClear()">Clear</button>
+      <button type="button" class="btn ghost sm" onclick="numPickKeyboard()">Use keyboard</button>
+      <button type="button" class="btn ghost sm" onclick="closeNumPicker(true)">Cancel</button>
+      <button type="button" class="btn brass" onclick="numPickOk()">OK</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  _numPick.init.forEach((idx, k)=>{
+    const w = document.getElementById('npW'+(k+1));
+    if(w){
+      w.scrollTop = idx * NUMPICK_ITEM_H;
+      let t = null;
+      w.addEventListener('scroll', ()=>{
+        clearTimeout(t);
+        t = setTimeout(()=>{
+          const i = _npIndex(w.id);
+          w.querySelectorAll('.np-item').forEach(el=>el.classList.toggle('np-sel', Number(el.dataset.i) === i));
+        }, 60);
+      });
+    }
+  });
+}
+function _npIndex(id){
+  const w = document.getElementById(id); if(!w) return 0;
+  const n = Number(w.dataset.n) || 1;
+  return Math.max(0, Math.min(n-1, Math.round(w.scrollTop / NUMPICK_ITEM_H)));
+}
+function numPickTap(id, i){ const w = document.getElementById(id); if(w) w.scrollTo ? w.scrollTo({top:i*NUMPICK_ITEM_H, behavior:'smooth'}) : (w.scrollTop = i*NUMPICK_ITEM_H); }
+function _numPickValue(){
+  if(!_numPick) return null;
+  if(_numPick.kind === 'reps') return _npIndex('npW1');
+  return _npIndex('npW1') + _npIndex('npW2') * 0.25;
+}
+function _numPickCommit(v){
+  const np = _numPick; if(!np) return;
+  np.inputEl.value = v == null ? '' : String(v);
+  updateSetField(np.date, np.exId, np.setNo, np.kind, v);
+}
+function numPickOk(){
+  const v = _numPickValue();
+  _numPickCommit(v === 0 ? null : v);
+  closeNumPicker(true);
+}
+function numPickClear(){ _numPickCommit(null); closeNumPicker(true); }
+function numPickKeyboard(){
+  const el = _numPick && _numPick.inputEl; if(!el) return;
+  const np = _numPick; closeNumPicker(true);
+  el.removeAttribute('readonly'); el.setAttribute('inputmode', np.kind === 'reps' ? 'numeric' : 'decimal');
+  el.onclick = null;
+  el.oninput = ()=> updateSetField(np.date, np.exId, np.setNo, np.kind, el.value === '' ? null : Number(el.value));
+  el.onblur = ()=>{ el.setAttribute('readonly',''); el.setAttribute('inputmode','none'); };
+  el.focus();
+}
+function closeNumPicker(){
+  const ov = document.getElementById('numPickOverlay'); if(ov) ov.remove();
+  _numPick = null;
+}
+
 function updateSetField(date, exId, setNo, field, value){
   if(!state.training.sets) state.training.sets=[];
   const s = state.training.sets.find(s=>s.date===date&&s.exerciseId===exId&&s.setNo===setNo);
@@ -12090,6 +12208,16 @@ async function backfillTrainingLogsFromSets(){
   showToast(created ? `Rebuilt ${created} log ${created===1?'entry':'entries'} from your set history` : 'Nothing to rebuild — every set already has a matching log entry');
 }
 function renderTrainingHistorySubpage(){
+  // v4.65.0: derive any missing log rows from the sets before listing, so the
+  // page is populated without having to open each date (or tap Rebuild) first.
+  try{
+    const _seen = new Set(); let _changed = false;
+    (state.training.sets||[]).forEach(st=>{
+      const k = st.date+'::'+st.exerciseId; if(_seen.has(k)) return; _seen.add(k);
+      if(syncTrainingLogFromSets(st.date, st.exerciseId)) _changed = true;
+    });
+    if(_changed) saveTraining();
+  }catch(e){ console.warn('history auto-fill failed', e); }
   const dates = [...new Set(state.training.logs.map(l=>l.date))].sort((a,b)=> a<b?1:-1).slice(0,60);
   return `
     <div class="section">
@@ -12796,7 +12924,7 @@ function coffeeBlankDraft(){
   return { beanId:'', bagMode:'current', bagId:'', newBag:{ roastDate:'', purchaseDate:'' }, date:todayStr(), editingBrewId:'',
     iced:false, doseG:'', hotWaterG:'', iceG:'', tempC:'94', grind:'', brewTime:'',
     sweetness:null, acidity:null, bitterness:null, body:null, strength:null, aftertaste:null, balance:null,
-    direction:'', flavors:[], overall:null, brewAgain:null, notes:'', detailOpen:false, wheelOpen:{} };
+    direction:'', flavors:[], overall:null, brewAgain:null, notes:'', wheelOpen:{} };
 }
 function coffeeCalcState(){
   if(!state.coffeeCalc) state.coffeeCalc = { iced:true, ratio:16, icePct:40, basis:'dose', amount:20 };
@@ -12813,7 +12941,18 @@ function coffeeCalcSet(field, value, rerender){
   else if(field === 'basis') c.basis = value;
   else if(field === 'gPerL'){ const r = coffeeRatioFromGPerL(value); if(r) c.ratio = r; }
   else c[field] = value === '' ? '' : Number(value);
-  if(rerender) renderMain(); else coffeeCalcRefresh();
+  if(rerender) coffeeCalcRerender(); else coffeeCalcRefresh();
+}
+/* v4.65.0: redraw ONLY the calculator card (no full-page rebuild, so no flash,
+   no scroll reset). Falls back to renderMain if the card isn't on the page. */
+function coffeeCalcRerender(){
+  const el = document.getElementById('coffeeCalcCard');
+  if(!el){ renderMain(); return; }
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderCoffeeCalculator();
+  const fresh = tmp.firstElementChild;
+  if(!fresh){ renderMain(); return; }
+  el.replaceWith(fresh);
 }
 function coffeeCalcResult(){
   const c = coffeeCalcState();
@@ -12874,7 +13013,6 @@ function coffeePickDirection(k){ const d = coffeeDraft(); d.direction = d.direct
 function coffeeSetOverall(n){ const d = coffeeDraft(); d.overall = d.overall === n ? null : n; renderMain(); }
 function coffeeSetBrewAgain(v){ const d = coffeeDraft(); d.brewAgain = d.brewAgain === v ? null : v; renderMain(); }
 function coffeeToggleIced(v){ coffeeDraft().iced = !!v; if(!v) coffeeDraft().iceG = ''; renderMain(); }
-function coffeeToggleDetail(){ const d = coffeeDraft(); d.detailOpen = !d.detailOpen; renderMain(); }
 function coffeeToggleWheelCat(cat){ const d = coffeeDraft(); d.wheelOpen[cat] = !d.wheelOpen[cat]; renderMain(); }
 function coffeeToggleFlavor(path){
   const d = coffeeDraft();
@@ -12946,7 +13084,7 @@ function coffeeEditBrew(id){
     brewTime:coffeeFmtTime(b.brewTimeSec), sweetness:b.sweetness, acidity:b.acidity, bitterness:b.bitterness, body:b.body,
     strength:b.strength, aftertaste:(b.detail||{}).aftertaste ?? null, balance:(b.detail||{}).balance ?? null,
     direction:b.direction || '', flavors:(b.flavors||[]).slice(), overall:b.overall, brewAgain:b.brewAgain,
-    notes:(b.detail||{}).notes || '', detailOpen:true });
+    notes:(b.detail||{}).notes || '' });
   state.coffeeSection = 'brew';
   renderMain();
   window.scrollTo && window.scrollTo(0, 0);
@@ -13207,7 +13345,7 @@ function cfPills(items, current, onclickFn){
 function renderCoffeeCalculator(){
   const c = coffeeCalcState();
   return `
-    <div class="card" style="padding:16px; margin-bottom:16px;">
+    <div class="card" id="coffeeCalcCard" style="padding:16px; margin-bottom:16px;">
       <div class="section-head"><h2 style="font-size:16px;">Recipe calculator</h2></div>
       <div class="page-sub" style="font-size:12px; margin-bottom:10px;">Pick hot or iced, a ratio and (for iced) how much of the liquid is ice. It works out the coffee, hot water and ice to weigh.</div>
       <div class="field"><label>Brew type</label>${cfPills([[false,'Hot'],[true,'Iced (V60 over ice)']], c.iced, v=>`coffeeCalcSet('iced',${v},true)`)}</div>
@@ -13332,7 +13470,7 @@ function renderCoffeeBrew(){
 
       <div class="section-head" style="margin-top:6px;"><h2 style="font-size:15px;">How did it taste?</h2></div>
       <div class="page-sub" style="font-size:12px; margin-bottom:10px;">Rate how much of each you noticed (1–10). Leave any you are unsure about untouched.</div>
-      ${COFFEE_TASTE.map(s=>cfSlider(s, d[s.key])).join('')}
+      ${[...COFFEE_TASTE, ...COFFEE_TASTE_DETAIL].map(s=>cfSlider(s, d[s.key])).join('')}
 
       <div class="field"><label>Overall verdict on extraction</label>
         ${cfPills(COFFEE_DIRECTIONS.map(x=>[x.key,x.label]), d.direction, v=>`coffeePickDirection('${v}')`)}
@@ -13344,11 +13482,7 @@ function renderCoffeeBrew(){
         <div style="display:flex; flex-wrap:wrap; gap:6px;">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button type="button" class="radio-pill ${d.overall===n?'active':''}" style="min-width:38px; justify-content:center;" onclick="coffeeSetOverall(${n})">${n}</button>`).join('')}</div></div>
       <div class="field"><label>Brew it again?</label>${cfPills([[true,'Yes'],[false,'No']], d.brewAgain, v=>`coffeeSetBrewAgain(${v})`)}</div>
 
-      <div style="margin:6px 0 12px;"><a style="cursor:pointer; text-decoration:underline; font-size:13px;" onclick="coffeeToggleDetail()">${d.detailOpen ? '▾ Hide detailed section' : '▸ Detailed section (aftertaste, balance, notes)'}</a></div>
-      ${d.detailOpen ? `<div style="border-left:3px solid var(--line); padding-left:12px; margin-bottom:12px;">
-        ${COFFEE_TASTE_DETAIL.map(s=>cfSlider(s, d[s.key])).join('')}
-        <div class="field"><label>Notes</label><textarea rows="3" oninput="coffeeSetDraft('notes', this.value)" placeholder="anything worth remembering">${escapeHtml(d.notes)}</textarea></div>
-      </div>` : ''}
+      <div class="field"><label>Notes</label><textarea rows="3" oninput="coffeeSetDraft('notes', this.value)" placeholder="anything worth remembering">${escapeHtml(d.notes)}</textarea></div>
 
       <div class="modal-actions" style="justify-content:flex-start;"><button class="btn brass" onclick="coffeeSaveBrew()">${editing ? 'Save changes' : 'Log this cup'}</button></div>
     </div>`;
@@ -14046,7 +14180,7 @@ ${JSON.stringify(template, null, 2)}`;
    knowledge. Revisit as its own piece of work; not done here. */
 function buildTrainingReviewPack(){
   const today = todayStr();
-  const sinceDate = addDays(today, -14); // last two weeks
+  const sinceDate = addDays(today, -30); // v4.65.0: last 30 days (was 14)
 
   // --- Logged sets since the last review ---
   const recentSets = (state.training.sets||[])
@@ -14122,7 +14256,7 @@ function buildTrainingReviewPack(){
       };
     });
 
-  // --- Body metrics from Health Log (last 14 days) ---
+  // --- Body metrics from Health Log (last 30 days) ---
   // v4.5x fix: was checking only the 3 CORE fields (weight/water/calDeficit)
   // to decide whether to include a day at all — a day logged with only
   // custom metrics (Fiber, Protein, Calories, etc, which most days actually
@@ -14163,7 +14297,7 @@ function buildTrainingReviewPack(){
   // Rest days are whatever's set in Settings → weekendDays (already a
   // real, user-editable setting elsewhere in the app, not training-
   // specific) — reused here rather than inventing a second "which days am
-  // I off" setting. A per-date breakdown for the actual 14-day window is
+  // I off" setting. A per-date breakdown for the actual forward 14-day window is
   // handed over explicitly (not left for the AI to infer from a rule) since
   // an adherence-based "pick whichever 2 days fit best" version of this
   // rule was tried before and produced a rest day on a day that should
