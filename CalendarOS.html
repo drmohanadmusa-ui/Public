@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="CalendarOS">
 <meta name="theme-color" content="#181C22">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wdth,wght@62..125,500..900&family=Instrument+Sans:wght@400..700&display=swap" rel="stylesheet">
 <style>
 /* ============ DESIGN TOKENS ============ */
 :root{
@@ -708,6 +708,134 @@ select.filter-select, input.filter-date{
 .np-dot{z-index:1; font-size:26px; font-weight:700;}
 .np-actions{display:flex; gap:6px; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap;}
 .np-actions .btn.brass{min-width:72px;}
+/* ===== v4.66.0 mobile workout (beta) ===== */
+@media (max-width: 860px){ .train-desk-only{display:none !important;} }
+html body.mw-dark{
+  --ink:#F3F2EE; --ink-soft:#A1A5AD; --slate:#A1A5AD; --slate-light:#6F747C;
+  --paper:#0E0F11; --paper-raised:#17191C; --paper-dim:#202328; --line:#2A2D33;
+  --brass:var(--mw-accent,#D3F53D); --brass-deep:var(--mw-accent,#D3F53D);
+  --teal-soft:#1E2A27; --flag-soft:#3A2420; --accent-soft:#2A2D33;
+  --shadow-card:none; --shadow-tile:none; --shadow-pop:0 -10px 40px rgba(0,0,0,.55);
+  background:#0E0F11; color:#F3F2EE; color-scheme:dark;
+}
+body.mw-dark .btn.brass{ color:#0E0F11; }
+body.mw-focus, body.mw-focus #app, body.mw-focus .main{ background:#0E0F11 !important; }
+body.mw-focus .mobile-top-bar{ display:none !important; }
+body.mw-focus #app{ padding-top:0 !important; }
+body.mw-focus .main{ padding:0 !important; max-width:none !important; }
+
+.mw{ font-family:'Instrument Sans',var(--font-body),system-ui,sans-serif; color:#F3F2EE; background:#0E0F11; min-height:100vh; min-height:100dvh; padding:0 20px 230px; box-sizing:border-box; }
+.mw button{ font:inherit; color:inherit; border:0; background:none; padding:0; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.mw button:disabled{ opacity:.35; cursor:default; }
+.mw-top{ display:flex; align-items:center; justify-content:space-between; padding-top:max(16px, env(safe-area-inset-top,0px)); }
+.mw-round{ width:48px; height:48px; border-radius:24px; background:#1A1C20; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.mw-round.sm{ width:44px; height:44px; border-radius:22px; }
+.mw-clock{ font-family:'Archivo',sans-serif; font-stretch:90%; font-weight:700; font-size:22px; letter-spacing:.02em; font-variant-numeric:tabular-nums; }
+.mw-finish{ height:48px; padding:0 20px !important; border-radius:24px; border:2px solid var(--mw-accent,#D3F53D) !important; color:var(--mw-accent,#D3F53D) !important; font-weight:700; font-size:16px; }
+.mw-dayrow{ display:flex !important; align-items:center; gap:8px; margin-top:12px; width:100%; text-align:left; font-size:14px; font-weight:600; color:#A1A5AD; min-height:44px; }
+.mw-dayrow-sub{ color:#F3F2EE; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mw-dayrow-chev{ margin-left:auto; display:flex; }
+.mw-segs{ display:flex; gap:5px; margin-top:2px; }
+.mw-seg{ flex:1; height:20px; display:flex; align-items:center; }
+.mw-seg::after{ content:''; display:block; width:100%; height:6px; border-radius:3px; background:#202328; }
+.mw-seg.full::after{ background:var(--mw-accent,#D3F53D); }
+.mw-seg.cur::after{ background:var(--mw-accent,#D3F53D); opacity:.5; }
+.mw-ex{ padding-top:18px; }
+.mw-eyebrow{ font-size:12px; letter-spacing:.12em; color:#A1A5AD; font-weight:700; margin-bottom:4px; }
+.mw-acc{ color:var(--mw-accent,#D3F53D) !important; }
+.mw-name{ margin:4px 0 0; font-family:'Archivo',sans-serif; font-stretch:105%; font-weight:800; font-size:34px; line-height:1.04; letter-spacing:-.02em; color:#F3F2EE; }
+.mw-name.big{ font-size:42px; font-stretch:112%; }
+.mw-chips{ display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap; }
+.mw-chip{ height:32px; padding:0 14px; border-radius:16px; background:#202328; display:inline-flex; align-items:center; font-size:14px; font-weight:600; }
+.mw-target{ margin-top:12px; font-size:15px; color:#A1A5AD; }
+.mw-warn{ color:#FF7A59; font-weight:600; }
+.mw-banner{ margin-top:12px; padding:12px 14px; border-radius:16px; background:#2A1E1A; color:#FFB09B; font-size:14px; font-weight:600; }
+.mw-sets{ margin-top:16px; }
+.mw-set{ display:flex; align-items:center; gap:10px; height:72px; margin-bottom:10px; }
+.mw-tick{ width:60px; height:72px; border-radius:20px; flex-shrink:0; border:2px solid #2F3238 !important; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; color:#F3F2EE; }
+.mw-set.warm .mw-tick{ color:#F2B33D; border-color:#5A4720 !important; }
+.mw-set.done .mw-tick{ background:var(--mw-accent,#D3F53D); border-color:var(--mw-accent,#D3F53D) !important; color:#0E0F11; }
+.mw-tile{ flex:1; min-width:0; height:72px; border-radius:20px; background:#17191C; display:flex; flex-direction:column; align-items:center; justify-content:center; margin:0; cursor:pointer; }
+.mw-set.done .mw-tile{ background:#1E2219; }
+.mw-tile span{ font-size:12px; color:#A1A5AD; margin-top:2px; }
+input.mw-num{ width:100%; min-width:0 !important; min-height:0 !important; height:36px; padding:0 !important; border:0 !important; background:transparent !important; text-align:center; font-family:'Archivo',sans-serif; font-stretch:90%; font-weight:800; font-size:30px !important; line-height:1; color:#F3F2EE; font-variant-numeric:tabular-nums; caret-color:transparent; box-shadow:none; }
+input.mw-num::placeholder{ color:#5C6068; opacity:1; }
+.mw-rir{ width:64px; height:72px; border-radius:20px; background:#17191C !important; flex-shrink:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.mw-rir small{ font-size:11px; letter-spacing:.08em; color:#A1A5AD; font-weight:600; }
+.mw-rir b{ font-family:'Archivo',sans-serif; font-weight:800; font-size:24px; }
+.mw-rir.fail b{ color:#FF7A59; }
+.mw-setbtns{ display:flex; gap:10px; margin-top:12px; }
+.mw-ghost{ flex:1; height:56px; border-radius:20px; border:2px dashed #2A2D33 !important; color:#A1A5AD; font-weight:600; font-size:16px; }
+.mw-ghost.small{ flex:0 0 auto; padding:0 18px !important; }
+.mw-ghost.wide{ border:0 !important; background:#1A1C20 !important; color:#F3F2EE; font-weight:700; font-size:17px; }
+.mw-walk{ margin-top:16px; }
+.mw-dock{ position:fixed; left:0; right:0; bottom:0; z-index:250; background:#0E0F11; border-top:1px solid #22252A; padding:12px 20px calc(env(safe-area-inset-bottom,0px) + 16px); box-sizing:border-box; }
+.mw-nav{ display:flex; gap:10px; }
+.mw-prev{ width:64px; height:64px; border-radius:20px; background:#1A1C20 !important; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.mw-next{ flex:1; height:64px; border-radius:20px; background:var(--mw-accent,#D3F53D) !important; color:#0E0F11 !important; font-family:'Archivo',sans-serif; font-stretch:105%; font-weight:800; font-size:19px; }
+.mw-nav .mw-ghost.wide{ flex:0 0 120px; height:64px; }
+.mw-empty{ padding-top:70px; display:flex; flex-direction:column; gap:12px; }
+.mw-stats{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; margin-top:20px; }
+.mw-stat{ background:#17191C; border-radius:22px; padding:16px 18px; }
+.mw-stat small{ display:block; font-size:12px; letter-spacing:.1em; color:#A1A5AD; font-weight:600; }
+.mw-stat b{ display:block; margin-top:4px; font-family:'Archivo',sans-serif; font-stretch:90%; font-weight:800; font-size:34px; line-height:1; font-variant-numeric:tabular-nums; }
+.mw-stat b i{ font-size:16px; color:#A1A5AD; font-weight:600; font-style:normal; }
+.mw-stat.acc{ background:var(--mw-accent,#D3F53D); color:#0E0F11; }
+.mw-stat.acc small{ color:#0E0F11; }
+.mw-list{ margin-top:22px; }
+.mw-listrow{ display:flex; align-items:center; gap:8px; min-height:52px; border-bottom:1px solid #22252A; }
+.mw-ln{ flex:1; min-width:0; font-size:17px; font-weight:600; }
+.mw-ln em{ font-style:normal; font-size:11px; font-weight:800; letter-spacing:.08em; color:var(--mw-accent,#D3F53D); margin-left:6px; }
+.mw-dim{ color:#A1A5AD; font-size:15px; }
+.mw-listrow b{ font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; }
+/* rest timer lives in the dock */
+.rest-adj{ display:none; }
+body.mw-focus #restTimerDisplay{ position:static !important; padding:0 0 12px !important; margin:0 !important; }
+body.mw-focus .rest-timer-box{ display:flex; align-items:center; gap:8px; background:transparent; border:0; border-radius:0; padding:0; box-shadow:none; }
+body.mw-focus .rest-timer-label{ color:#A1A5AD; font-weight:700; letter-spacing:.12em; }
+body.mw-focus .rest-timer-count{ font-family:'Archivo',sans-serif; font-stretch:90%; font-size:34px; font-weight:800; color:var(--mw-accent,#D3F53D); margin-right:auto; }
+body.mw-focus .rest-timer-box .btn{ height:48px; border-radius:24px; background:#1A1C20; border:0; color:#F3F2EE; padding:0 14px; font-weight:700; font-size:15px; }
+body.mw-focus .rest-timer-box .rest-adj{ display:inline-flex; align-items:center; }
+body.mw-focus .rest-timer-tip{ display:none; }
+/* bottom sheets */
+.mw-sheet-overlay{ align-items:flex-end !important; padding:0 !important; z-index:400; }
+.mw-sheet{ width:100%; max-width:520px; max-height:88vh; overflow-y:auto; box-sizing:border-box; background:#17191C; color:#F3F2EE; border-radius:28px 28px 0 0; padding:12px 20px calc(env(safe-area-inset-bottom,0px) + 28px); font-family:'Instrument Sans',var(--font-body),sans-serif; }
+.mw-sheet button{ font:inherit; color:inherit; border:0; background:none; padding:0; cursor:pointer; }
+.mw-grab{ width:44px; height:5px; border-radius:3px; background:#34373D; margin:0 auto 18px; }
+.mw-sheet-sub{ font-size:14px; color:#A1A5AD; margin:0 0 14px; }
+.mw-menugroup{ background:#202328; border-radius:20px; overflow:hidden; margin:8px 0 18px; }
+.mw-menuitem{ display:flex !important; align-items:center; width:100%; min-height:58px; padding:0 18px !important; text-align:left; font-size:17px; font-weight:600; border-bottom:1px solid #2A2D33 !important; }
+.mw-menugroup .mw-menuitem:last-child{ border-bottom:0 !important; }
+.mw-menuitem small{ display:block; font-size:13px; font-weight:400; color:#A1A5AD; margin-top:2px; }
+.mw-pills{ display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:8px; }
+.mw-pill{ height:56px; border-radius:18px; background:#202328 !important; font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; }
+.mw-pill.on{ background:var(--mw-accent,#D3F53D) !important; color:#0E0F11 !important; }
+.mw-pill.fail.on{ background:#FF7A59 !important; }
+.mw-pill.wide{ font-family:inherit; font-size:16px; font-weight:700; flex:1; }
+.mw-daybtns{ display:flex; gap:10px; margin:12px 0; }
+.mw-sheet .mw-ghost.wide{ height:56px; }
+.rest-timer-box .rd-short{ display:none; }
+body.mw-focus .rest-timer-box .rd-long{ display:none; }
+body.mw-focus .rest-timer-box .rd-short{ display:inline; }
+body.mw-focus .rest-timer-box{ flex-wrap:nowrap; }
+body.mw-focus .rest-timer-count{ font-size:32px; min-width:0; }
+body.mw-focus .rest-timer-label{ font-size:11px; }
+body.mw-focus .rest-timer-box .btn{ padding:0 12px; }
+body.mw-focus .modal-overlay{ z-index:400; }
+body.mw-dark .np-overlay{ align-items:flex-end; padding:0; }
+body.mw-dark .np-modal{ max-width:520px; border-radius:28px 28px 0 0; padding:16px 20px calc(env(safe-area-inset-bottom,0px) + 24px); }
+body.mw-dark .np-modal h3{ font-family:'Instrument Sans',var(--font-body),sans-serif; font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft); }
+body.mw-dark .np-wheels{ height:220px; }
+body.mw-dark .np-wheel{ height:220px; }
+body.mw-dark .np-pad{ height:90px; }
+body.mw-dark .np-band{ top:90px; height:40px; background:#23262B; }
+body.mw-dark .np-item{ font-size:24px; }
+body.mw-dark .np-actions{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:14px; }
+body.mw-dark .np-actions .btn{ justify-content:center; text-align:center; display:inline-flex; align-items:center; }
+body.mw-dark .np-actions .btn.ghost{ height:48px; border-radius:16px; background:#202328; border:0; color:#F3F2EE; font-weight:600; font-size:15px; padding:0 6px; }
+body.mw-dark .np-actions .btn.brass{ grid-column:1 / -1; grid-row:2; height:64px; border-radius:20px; font-family:'Archivo',sans-serif; font-stretch:105%; font-weight:800; font-size:20px; background:var(--mw-accent,#D3F53D); border:0; color:#0E0F11; }
+input.mw-date{ width:100%; height:56px; box-sizing:border-box; background:#202328; color:#F3F2EE; border:0; border-radius:16px; font-size:17px; padding:0 16px; color-scheme:dark; margin-top:10px; }
+
 
 .set-unit{ font-size:11px; color:var(--ink-soft); align-self:center; }
 .set-rir-label{ font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em; align-self:center; }
@@ -2228,7 +2356,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.65.0';
+const APP_VERSION = '4.66.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2236,6 +2364,15 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.66.0', changes: [
+    'No SQL migration needed \u2014 front-end only. The two new settings (beta switch, accent colour) are stored on the device only, which is what you want: phone and desktop can differ.',
+    'NEW \u2014 Mobile workout (beta). On a phone, Training now opens straight into a full-screen, dark, one-exercise-at-a-time workout screen: large tick buttons, big weight and reps tiles (tap one for the scroll wheel), an effort (RIR/F/warm-up) sheet, a segmented progress bar across the exercises, Previous and a big Next exercise button, and your rest timer in a bottom dock with \u221215s / +15s / Done early. The elapsed clock starts at your first ticked set. There is no Start button.',
+    'Finish shows a summary: time, sets done, volume, new bests, and next-time weights from the progression logic. Edit log re-opens the workout; reopening a finished day shows its summary.',
+    'The sheet menu (top-left) holds Add exercise, Plan day, Remove this exercise, Calendar view, Log history, Session library, Exercise library, Resources, Export, and a shortcut to every other CalendarOS page. The date line under the clock opens a day picker (previous, next, today, any date).',
+    'Review Pack, Paste & Import and Import File are hidden on phones (they are desktop jobs). Desktop is unchanged, and every other Training page keeps its current layout.',
+    'Settings \u2192 Appearance \u2192 Mobile workout (beta): a switch to go back to the old phone layout at any time, and seven accent colours (Lime is the default) that restyle the workout screen live.',
+    'Not in this version: per-exercise notes on the phone workout screen, and the full-screen rest ring from the mock-up (the rest timer is in the bottom dock).',
+  ]},
   { v:'4.65.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIXED (Coffee): picking an ice % (or a ratio, hot/iced, or the start-from basis) made the whole page flash, because every tap rebuilt the entire page. The calculator now redraws only its own card, in place, with your scroll position untouched.',
@@ -6956,7 +7093,7 @@ function renderMain(){
   // (tapping a set's tick, adding a set, etc. all rebuild the page). Only when
   // the page/section/date is unchanged, so real navigation still starts at the
   // top as before.
-  const _sig = [state.view, state.trainingSection, state.coffeeSection, state.trainingSelectedDate, state.settingsSection, state.selectedListId].join('|');
+  const _sig = [state.view, state.trainingSection, state.coffeeSection, state.trainingSelectedDate, state.settingsSection, state.selectedListId, (state.mwExIdx||{})[state.trainingSelectedDate], state.mwShowSummary].join('|');
   const _keepScroll = (_sig === _lastRenderSig);
   _lastRenderSig = _sig;
   const _sy = _keepScroll ? (window.scrollY || window.pageYOffset || 0) : 0;
@@ -7000,6 +7137,7 @@ function renderMain(){
       requestAnimationFrame(()=>{ if(_sy && Math.abs((window.scrollY||0) - _sy) > 2) window.scrollTo(0, _sy); });
     }
   }
+  applyMobileWorkoutChrome();
   renderPinnedPanel();
 }
 
@@ -9643,7 +9781,9 @@ function _updateRestTimerUI(){
     el.innerHTML=`<div class="rest-timer-box">
       <span class="rest-timer-label">Rest</span>
       <span class="rest-timer-count" id="restTimerCount">${m}:${String(s).padStart(2,'0')}</span>
-      <button class="btn ghost sm" onclick="stopRestTimer()">Done early</button>
+      <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(-15)">\u221215s</button>
+      <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(15)">+15s</button>
+      <button class="btn ghost sm" onclick="stopRestTimer()"><span class="rd-long">Done early</span><span class="rd-short">Skip</span></button>
       <div class="rest-timer-tip" id="restTimerTip">${REST_TIPS[_tipIndex]}</div>
     </div>`;
   } else {
@@ -10209,6 +10349,7 @@ async function clearAllWrongTrainingMappings(){
 function renderTrainingView(){
   ensureTrainingViewDate();
   if(!state.trainingSection) state.trainingSection = 'today';
+  if(mobileWorkoutActive()) return renderMobileWorkout();
 
   // v4.61.0 (item 3 — CRITICAL FIX): 'calendar' and 'sessions' were both
   // missing from this array entirely, even though renderTrainingCalendarSubpage
@@ -10244,9 +10385,9 @@ function renderTrainingView(){
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn secondary sm" onclick="exportTrainingJson()">Export</button>
-        <button class="btn brass sm" onclick="openTrainingGoalsModal()" title="Confirm your training goals, then bundle last 30 days of data + prompt for an AI review — paste result into Paste &amp; Import">📋 Copy Review Pack</button>
-        <button class="btn secondary sm" onclick="openTrainingPasteImportModal()">Paste &amp; Import</button>
-        <label class="btn secondary sm" style="cursor:pointer;">
+        <button class="btn brass sm train-desk-only" onclick="openTrainingGoalsModal()" title="Confirm your training goals, then bundle last 30 days of data + prompt for an AI review — paste result into Paste &amp; Import">📋 Copy Review Pack</button>
+        <button class="btn secondary sm train-desk-only" onclick="openTrainingPasteImportModal()">Paste &amp; Import</button>
+        <label class="btn secondary sm train-desk-only" style="cursor:pointer;">
           Import File
           <input type="file" accept="application/json" style="display:none;" onchange="handleImportTrainingJson(event)">
         </label>
@@ -10269,6 +10410,387 @@ function renderTrainingView(){
 }
 
 /* ---------- Subpage: Today's Training ---------- */
+/* =====================================================================
+   v4.66.0 — Mobile workout (beta)
+   A phone-only, full-screen, one-exercise-at-a-time Today view. Desktop and
+   every other Training page are untouched. Everything here sits on top of the
+   existing set / rest-timer / progression logic — it only changes how the
+   Today page is drawn on a phone, and can be switched off in Settings.
+   ===================================================================== */
+const MW_ACCENTS = [['#D3F53D','Lime'],['#FF8A3D','Orange'],['#4CC9F0','Sky'],['#A78BFA','Violet'],['#FF5D8F','Pink'],['#3DDC97','Mint'],['#FFD23F','Yellow']];
+const MW_SVG = {
+  check:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  dots:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',
+  play:'<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+  hist:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8L4 8.5M4 4v4.5h4.5M12 8v4.5l3 1.8"/></svg>',
+  left:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
+  chev:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+};
+function isMobileUi(){ try{ return !!(window.matchMedia && window.matchMedia('(max-width: 860px)').matches); }catch(e){ return false; } }
+function mwEnabled(){ return state.settings.mobileWorkoutBeta !== false; }
+function mobileWorkoutActive(){ return mwEnabled() && isMobileUi() && state.view === 'training' && (state.trainingSection || 'today') === 'today'; }
+function mwAccent(){ const a = state.settings.mobileAccent; return MW_ACCENTS.some(x=>x[0]===a) ? a : MW_ACCENTS[0][0]; }
+function applyMobileWorkoutChrome(){
+  const on = mobileWorkoutActive();
+  document.body.classList.toggle('mw-focus', on);
+  document.body.classList.toggle('mw-dark', on);
+  document.documentElement.style.setProperty('--mw-accent', mwAccent());
+  if(on) mwStartClock(); else mwStopClock();
+}
+async function setMobileWorkoutBeta(on){ state.settings.mobileWorkoutBeta = !!on; await saveSettings(); renderMain(); }
+async function setMwAccent(c){ state.settings.mobileAccent = c; document.documentElement.style.setProperty('--mw-accent', mwAccent()); renderMain(); await saveSettings(); }
+
+/* ---- elapsed clock: derived from the first done set's timestamp, so it survives reloads ---- */
+let _mwClockHandle = null;
+function mwStartClock(){ if(!_mwClockHandle) _mwClockHandle = setInterval(mwTickClock, 1000); }
+function mwStopClock(){ if(_mwClockHandle){ clearInterval(_mwClockHandle); _mwClockHandle = null; } }
+function mwStamps(date){ return (state.training.sets||[]).filter(s=>s.date===date && s.done && s.loggedAt).map(s=>Date.parse(s.loggedAt)).filter(n=>!isNaN(n)); }
+function mwElapsedMs(date){
+  const ts = mwStamps(date);
+  if(!ts.length) return null;
+  const start = Math.min(...ts);
+  return (date === todayStr() ? Date.now() : Math.max(...ts)) - start;
+}
+function mwFmtClock(ms){
+  if(ms == null || ms < 0) return '0:00';
+  const t = Math.floor(ms/1000), h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
+  const p = n=>String(n).padStart(2,'0');
+  return h ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
+}
+function mwTickClock(){
+  const el = document.getElementById('mwElapsed');
+  if(el) el.textContent = mwFmtClock(mwElapsedMs(state.trainingSelectedDate));
+}
+
+/* ---- day preparation: same auto-plan / auto-fill / self-heal as the desktop day card ---- */
+function mwPrepareDay(date){
+  if(!autoPlannedDates.has(date) && getTrainingDayExerciseIds(date).length === 0){
+    autoPlannedDates.add(date);
+    const cal0 = getTrainingCalEntry(date);
+    const session0 = cal0 ? getTrainingSessionById(cal0.sessionId) : null;
+    if(session0 && session0.blocks && session0.blocks.length){
+      if(!state.trainingPendingAdds[date]) state.trainingPendingAdds[date] = [];
+      session0.blocks.forEach(b=>{
+        if(b.exerciseId && !state.trainingPendingAdds[date].includes(b.exerciseId)) state.trainingPendingAdds[date].push(b.exerciseId);
+      });
+      flushTrainingDrafts();
+    }
+  }
+  const exerciseIds = getTrainingDayExerciseIds(date);
+  if(exerciseIds.length) ensureFailureDayPlanned(date, exerciseIds);
+  const cal = getTrainingCalEntry(date);
+  const session = cal ? getTrainingSessionById(cal.sessionId) : null;
+  if(exerciseIds.length && session) ensureSetsAutoFilled(date, exerciseIds, session);
+  let healed = false;
+  exerciseIds.forEach(exId=>{ if(syncTrainingLogFromSets(date, exId)) healed = true; });
+  if(healed) saveTraining();
+  const blockMap = {};
+  if(session && session.blocks) session.blocks.forEach(b=>{ if(b.exerciseId) blockMap[b.exerciseId] = b; });
+  const order = {};
+  if(session && session.blocks) session.blocks.forEach((b,i)=>{ if(b.exerciseId != null && !(b.exerciseId in order)) order[b.exerciseId] = i; });
+  const ordered = [...exerciseIds].sort((a,b)=>{
+    const ai = order.hasOwnProperty(a) ? order[a] : Infinity, bi = order.hasOwnProperty(b) ? order[b] : Infinity;
+    return ai - bi;
+  });
+  return { exerciseIds: ordered, session, blockMap };
+}
+function mwExerciseDone(date, exId){
+  const w = getSetsForExercise(date, exId).filter(s=>!s.isWarmup);
+  return w.length > 0 && w.every(s=>s.done);
+}
+function mwCurrentIndex(date, ordered){
+  const stored = state.mwExIdx && state.mwExIdx[date];
+  if(stored != null) return Math.max(0, Math.min(ordered.length-1, stored));
+  const firstOpen = ordered.findIndex(id=>!mwExerciseDone(date, id));
+  return firstOpen >= 0 ? firstOpen : 0;
+}
+function mwGo(delta){
+  const date = state.trainingSelectedDate;
+  const { exerciseIds } = mwPrepareDay(date);
+  const idx = mwCurrentIndex(date, exerciseIds);
+  if(delta > 0 && idx >= exerciseIds.length - 1){ mwFinish(); return; }
+  if(!state.mwExIdx) state.mwExIdx = {};
+  state.mwExIdx[date] = Math.max(0, Math.min(exerciseIds.length-1, idx + delta));
+  renderMain();
+  try{ window.scrollTo(0, 0); }catch(e){}
+}
+function mwJump(i){
+  if(!state.mwExIdx) state.mwExIdx = {};
+  state.mwExIdx[state.trainingSelectedDate] = i;
+  renderMain();
+  try{ window.scrollTo(0, 0); }catch(e){}
+}
+function mwFinish(){
+  const date = state.trainingSelectedDate;
+  state.mwShowSummary = date;
+  if(state.trainingEditingDate === date) state.trainingEditingDate = null;
+  stopRestTimer();
+  saveTraining();
+  renderMain();
+  try{ window.scrollTo(0, 0); }catch(e){}
+}
+function mwBackToWorkout(){ state.mwShowSummary = null; state.trainingEditingDate = state.trainingSelectedDate; renderMain(); try{ window.scrollTo(0,0); }catch(e){} }
+function mwSummaryDone(){
+  const date = state.trainingSelectedDate;
+  state.mwShowSummary = null;
+  if(state.trainingEditingDate === date) state.trainingEditingDate = null;
+  if(isTrainingDayFullyLoggedV2(date)){ showToast('Workout saved'); setView('dashboard'); }
+  else { renderMain(); }
+}
+function mwAddSetFor(date, exId){ addSet(date, exId); }
+function mwRemoveLastSet(date, exId){
+  const sets = getSetsForExercise(date, exId);
+  if(!sets.length) return;
+  removeSet(date, exId, sets[sets.length-1].setNo);
+}
+
+/* ---- main render ---- */
+function mwTopBar(date, showClock){
+  const ms = mwElapsedMs(date);
+  return `<div class="mw-top">
+    <button class="mw-round" aria-label="Menu" onclick="openMwMenu()">${MW_SVG.dots}</button>
+    ${showClock ? `<div class="mw-clock" id="mwElapsed">${mwFmtClock(ms)}</div>` : '<div></div>'}
+    ${showClock ? `<button class="mw-finish" onclick="mwFinish()">Finish</button>` : '<span style="width:48px"></span>'}
+  </div>`;
+}
+function mwDayRow(date, session){
+  return `<button class="mw-dayrow" onclick="openMwDayPicker()">
+    <span>${escapeHtml(humanDateNoRelative(date))}${date===todayStr()?' · Today':''}</span>
+    ${session ? `<span class="mw-dayrow-sub">· ${escapeHtml(session.name)}</span>` : ''}
+    <span class="mw-dayrow-chev">${MW_SVG.chev}</span></button>`;
+}
+function renderMobileWorkout(){
+  const date = state.trainingSelectedDate;
+  const { exerciseIds, session, blockMap } = mwPrepareDay(date);
+  if(!exerciseIds.length) return mwEmptyHtml(date, session);
+  const fully = isTrainingDayFullyLoggedV2(date);
+  if((fully && state.trainingEditingDate !== date) || state.mwShowSummary === date) return mwSummaryHtml(date, exerciseIds, session, blockMap, fully);
+
+  const idx = mwCurrentIndex(date, exerciseIds);
+  const exId = exerciseIds[idx];
+  const ex = getTrainingExerciseById(exId);
+  const block = blockMap[exId] || { exerciseId:exId, reps:null, sets:null, notes:null };
+  const isWalking = !!(ex && ex.category === 'walking');
+  const segs = exerciseIds.map((id,i)=>`<button class="mw-seg ${mwExerciseDone(date,id)?'full':(i===idx?'cur':'')}" aria-label="Exercise ${i+1}" onclick="mwJump(${i})"></button>`).join('');
+  const prim = ex ? exMuscleGroups(ex,'primary').map(g=>MUSCLE_GROUP_LABELS[g]||g).slice(0,2).join(' · ') : '';
+  const suggested = parseSuggestedWeightKg((block.notes||'').trim());
+  const floor = (suggested != null && !isWalking) ? getWeightFloor(exId, date) : null;
+  const below = !!(floor && suggested < floor.weightKg - 1e-9);
+  const targetBits = [block.sets && block.reps ? `${block.sets} × ${block.reps}` : (block.sets ? `${block.sets} sets` : (block.reps ? `${block.reps} reps` : null)), suggested ? `${suggested} kg` : null].filter(Boolean).join(' · ');
+  const failure = !isWalking && (state.settings.trainingFailurePlan||{})[date] === exId;
+
+  let body;
+  if(isWalking){
+    body = `<div class="mw-walk">${renderTrainingExerciseLogRow(date, block, idx, idx+1)}</div>`;
+  } else {
+    const sets = getSetsForExercise(date, exId);
+    const lastSess = getLastCompletedSession(exId, date);
+    const lastWorking = lastSess ? lastSess.sets.filter(s=>!s.isWarmup) : [];
+    const defaultWeight = (lastSess && lastSess.topWeightKg != null) ? lastSess.topWeightKg : (lastWorking[0] ? lastWorking[0].weightKg : null);
+    const defaultReps = lastWorking[0] ? lastWorking[0].reps : (block.reps ? parseInt(String(block.reps).split('-')[0]) || null : null);
+    const restSec = defaultRestSec(ex);
+    const eid = escapeHtml(exId);
+    let n = 0;
+    const rows = sets.map(s=>{
+      if(!s.isWarmup) n++;
+      const label = s.isWarmup ? 'W' : String(n);
+      const rirTxt = s.toFailure ? 'F' : (s.rir != null ? String(s.rir) : '—');
+      return `<div class="mw-set ${s.done?'done':''} ${s.isWarmup?'warm':''}">
+        <button class="mw-tick" onclick="toggleSetDone('${date}','${eid}',${s.setNo},${restSec});" aria-label="${s.done?'Undo':'Complete'} set ${label}">${s.done ? MW_SVG.check : label}</button>
+        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" aria-label="Weight for set ${label}"><span>kg</span></label>
+        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" aria-label="Reps for set ${label}"><span>reps</span></label>
+        <button class="mw-rir ${s.toFailure?'fail':''}" onclick="openMwRirSheet('${date}','${eid}',${s.setNo})" aria-label="Effort for set ${label}"><small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></button>
+      </div>`;
+    }).join('');
+    body = `<div class="mw-sets">${rows}
+      <div class="mw-setbtns">
+        <button class="mw-ghost" onclick="mwAddSetFor('${date}','${eid}')">+ Add set</button>
+        ${sets.length ? `<button class="mw-ghost small" onclick="mwRemoveLastSet('${date}','${eid}')">− Remove last</button>` : ''}
+      </div></div>`;
+  }
+  const last = idx >= exerciseIds.length - 1;
+  return `<div class="mw">
+    ${mwTopBar(date, true)}
+    ${mwDayRow(date, session)}
+    <div class="mw-segs">${segs}</div>
+    <div class="mw-ex">
+      <div class="mw-eyebrow">EXERCISE ${idx+1} OF ${exerciseIds.length}</div>
+      <h1 class="mw-name">${ex ? escapeHtml(ex.name) : `⚠ missing exercise`}</h1>
+      <div class="mw-chips">
+        ${prim ? `<span class="mw-chip">${escapeHtml(prim)}</span>` : ''}
+        ${ex && ex.seatSetting ? `<span class="mw-chip">Seat ${escapeHtml(ex.seatSetting)}</span>` : ''}
+        <span style="flex:1"></span>
+        ${ex && exVideoUrls(ex).length ? `<button class="mw-round sm" aria-label="Form video" onclick="${exVideoUrls(ex).length===1 ? `window.open('${escapeHtml(exVideoUrls(ex)[0])}','_blank','noopener')` : `openExerciseVideoPicker('${ex.id}')`}">${MW_SVG.play}</button>` : ''}
+        ${ex ? `<button class="mw-round sm" aria-label="Exercise history" onclick="${isWalking ? `openExerciseHistoryModal('${ex.id}','${date}')` : `openExerciseCompletedHistoryModal('${ex.id}','${date}')`}">${MW_SVG.hist}</button>` : ''}
+      </div>
+      ${targetBits ? `<div class="mw-target">Target ${escapeHtml(targetBits)}${below ? ` <span class="mw-warn">below your last ${floor.weightKg} kg</span>` : ''}</div>` : ''}
+      ${failure ? `<div class="mw-banner">Failure day: push your last set to true failure, then mark it F.</div>` : ''}
+    </div>
+    ${body}
+    <div class="mw-dock">
+      <div id="restTimerDisplay"></div>
+      <div class="mw-nav">
+        <button class="mw-prev" onclick="mwGo(-1)" ${idx===0?'disabled':''} aria-label="Previous exercise">${MW_SVG.left}</button>
+        <button class="mw-next" onclick="mwGo(1)">${last ? 'Finish workout' : 'Next exercise'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+function mwEmptyHtml(date, session){
+  const rest = (state.settings.weekendDays||['Fri','Sat']).includes(DOW_ABBR[new Date(date+'T00:00:00').getDay()]);
+  return `<div class="mw">
+    ${mwTopBar(date, false)}
+    ${mwDayRow(date, session)}
+    <div class="mw-empty">
+      <h1 class="mw-name">${rest ? 'Rest day' : 'Nothing planned'}</h1>
+      <p class="mw-target">${rest ? 'No session is scheduled for today.' : 'No exercises are planned for this day yet.'}</p>
+      <button class="mw-next" onclick="openQuickAddExerciseModal('${date}')">Add exercise</button>
+      <button class="mw-ghost" onclick="openPlanDayModal('${date}')">Plan day</button>
+    </div>
+  </div>`;
+}
+function mwSummaryData(date, ordered, blockMap){
+  const done = (state.training.sets||[]).filter(s=>s.date===date && s.done && !s.isWarmup);
+  const volume = Math.round(done.reduce((t,s)=>t + (s.weightKg||0)*(s.reps||0), 0));
+  const stamps = mwStamps(date);
+  const ms = stamps.length > 1 ? Math.max(...stamps) - Math.min(...stamps) : null;
+  let bests = 0;
+  const rows = ordered.map(id=>{
+    const ex = getTrainingExerciseById(id);
+    const mine = done.filter(s=>s.exerciseId===id).sort((a,b)=>a.setNo-b.setNo);
+    const e1 = mine.length ? epley1RM(mine) : null, prev = bestE1RMForExercise(id, date);
+    const pr = !!(e1 && prev && e1 > prev);
+    if(pr) bests++;
+    const top = mine.reduce((m,s)=>Math.max(m, s.weightKg||0), 0);
+    const b = blockMap[id] || {};
+    let next = null;
+    const rm = String(b.reps||'').match(/(\d+)\s*[-–]\s*(\d+)/);
+    if(mine.length && rm){
+      const sug = doubleProgressionSuggestion(id, { repsMin:Number(rm[1]), repsMax:Number(rm[2]), weightKg:top||null }, mine);
+      if(sug) next = { type:sug.type, from:top, to:sug.newWeightKg };
+    }
+    return { name: ex ? ex.name : id, sets: mine.length, top, pr, next };
+  });
+  return { setsDone: done.length, volume, ms, bests, rows };
+}
+function mwSummaryHtml(date, ordered, session, blockMap, fully){
+  const d = mwSummaryData(date, ordered, blockMap);
+  const dur = d.ms != null ? mwFmtClock(d.ms) : '—';
+  return `<div class="mw">
+    ${mwTopBar(date, false)}
+    <div class="mw-ex">
+      <div class="mw-eyebrow mw-acc">${fully ? 'WORKOUT COMPLETE' : 'WORKOUT SO FAR'}</div>
+      <h1 class="mw-name big">${session ? escapeHtml(session.name) : 'Workout'}</h1>
+      <div class="mw-target">${escapeHtml(humanDateNoRelative(date))} · ${ordered.length} exercise${ordered.length===1?'':'s'}</div>
+    </div>
+    <div class="mw-stats">
+      <div class="mw-stat"><small>TIME</small><b>${dur}</b></div>
+      <div class="mw-stat"><small>SETS DONE</small><b>${d.setsDone}</b></div>
+      <div class="mw-stat"><small>VOLUME</small><b>${d.volume.toLocaleString()}<i> kg</i></b></div>
+      <div class="mw-stat acc"><small>NEW BESTS</small><b>${d.bests}</b></div>
+    </div>
+    <div class="mw-list">
+      <div class="mw-eyebrow">NEXT TIME</div>
+      ${d.rows.map(r=>`<div class="mw-listrow">
+        <span class="mw-ln">${escapeHtml(r.name)}${r.pr ? ' <em>PR</em>' : ''}</span>
+        ${r.next ? (r.next.type==='addWeight'
+            ? `<span class="mw-dim">${r.next.from} →</span><b class="mw-acc">${r.next.to} kg</b>`
+            : `<span class="mw-dim">${r.next.type==='hold'?'hold':'same'}</span><b>${r.next.to} kg</b>`)
+          : `<span class="mw-dim">${r.sets} set${r.sets===1?'':'s'}</span>`}
+      </div>`).join('')}
+    </div>
+    <div class="mw-dock"><div class="mw-nav">
+      <button class="mw-ghost wide" onclick="mwBackToWorkout()">${fully ? 'Edit log' : 'Back'}</button>
+      <button class="mw-next" onclick="mwSummaryDone()">${fully ? 'Done' : 'Keep going'}</button>
+    </div></div>
+  </div>`;
+}
+
+/* ---- sheets: menu, day picker, effort ---- */
+function mwSheet(id, html){
+  const old = document.getElementById(id); if(old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay mw-sheet-overlay'; ov.id = id;
+  ov.onclick = (e)=>{ if(e.target === ov) ov.remove(); };
+  ov.innerHTML = `<div class="mw-sheet"><div class="mw-grab"></div>${html}</div>`;
+  document.body.appendChild(ov);
+}
+function mwCloseSheet(id){ const el = document.getElementById(id); if(el) el.remove(); }
+function openMwMenu(){
+  const date = state.trainingSelectedDate;
+  const hasEx = getTrainingDayExerciseIds(date).length > 0;
+  const { exerciseIds } = hasEx ? mwPrepareDay(date) : { exerciseIds: [] };
+  const cur = exerciseIds.length ? exerciseIds[mwCurrentIndex(date, exerciseIds)] : null;
+  const item = (label, fn, sub)=>`<button class="mw-menuitem" onclick="mwCloseSheet('mwMenu'); ${fn}"><span>${label}${sub?`<small>${sub}</small>`:''}</span></button>`;
+  mwSheet('mwMenu', `
+    <div class="mw-eyebrow">THIS DAY</div>
+    <div class="mw-menugroup">
+      ${item('Add exercise', `openQuickAddExerciseModal('${date}')`)}
+      ${item('Plan day', `openPlanDayModal('${date}')`)}
+      ${cur ? item('Remove this exercise', `removeExerciseFromDay('${date}','${escapeHtml(cur)}')`) : ''}
+    </div>
+    <div class="mw-eyebrow">TRAINING PAGES</div>
+    <div class="mw-menugroup">
+      ${item('Calendar view', `setTrainingSection('calendar')`)}
+      ${item('Log history', `setTrainingSection('history')`)}
+      ${item('Session library', `setTrainingSection('sessions')`)}
+      ${item('Exercise library', `setTrainingSection('exercises')`)}
+      ${item('Resources', `setTrainingSection('resources')`)}
+      ${item('Export training data', `exportTrainingJson()`)}
+    </div>
+    <div class="mw-menugroup">
+      ${item('All CalendarOS pages', `openMobileNav()`, 'Dashboard, tasks, settings and the rest')}
+    </div>`);
+}
+function openMwDayPicker(){
+  const date = state.trainingSelectedDate;
+  mwSheet('mwDay', `
+    <div class="mw-eyebrow">CHOOSE A DAY</div>
+    <div class="mw-daybtns">
+      <button class="mw-ghost wide" onclick="mwCloseSheet('mwDay'); shiftTrainingDate(-1)">← Previous</button>
+      <button class="mw-ghost wide" onclick="mwCloseSheet('mwDay'); shiftTrainingDate(1)">Next →</button>
+    </div>
+    <button class="mw-menuitem" onclick="mwCloseSheet('mwDay'); setTrainingViewDate('${todayStr()}')"><span>Jump to today</span></button>
+    <input type="date" class="mw-date" value="${date}" onchange="mwCloseSheet('mwDay'); setTrainingViewDate(this.value)" aria-label="Pick a date">`);
+}
+function openMwRirSheet(date, exId, setNo){
+  const s = (state.training.sets||[]).find(x=>x.date===date && x.exerciseId===exId && x.setNo===setNo);
+  if(!s) return;
+  const eid = escapeHtml(exId);
+  const pill = (label, active, call, extra)=>`<button class="mw-pill ${active?'on':''} ${extra||''}" onclick="${call}">${label}</button>`;
+  mwSheet('mwRir', `
+    <div class="mw-eyebrow">EFFORT · ${s.isWarmup ? 'WARM-UP SET' : 'SET ' + setNo}</div>
+    <div class="mw-sheet-sub">Reps you could still have done. Picking one marks the set done.</div>
+    <div class="mw-pills">
+      ${[0,1,2,3,4].map(r=>pill(String(r), s.rir===r && !s.isWarmup, `mwPickMode('${date}','${eid}',${setNo},'rir',${r})`)).join('')}
+      ${pill('F', !!s.toFailure, `mwPickMode('${date}','${eid}',${setNo},'failure')`, 'fail')}
+    </div>
+    <div class="mw-daybtns">
+      ${pill('Warm-up set', !!s.isWarmup, `mwPickMode('${date}','${eid}',${setNo},'warmup')`, 'wide')}
+      <button class="mw-pill wide" onclick="mwCloseSheet('mwRir')">Close</button>
+    </div>`);
+}
+function mwPickMode(date, exId, setNo, mode, val){
+  setSetMode(date, exId, setNo, mode, val);
+  mwCloseSheet('mwRir');
+  renderMain();
+}
+/* −15 s / +15 s on the rest timer (shown only in the mobile workout) */
+function adjustRestTimer(deltaSec){
+  if(!_restTimerEnd) return;
+  _restTimerEnd = Math.max(Date.now() + 1000, _restTimerEnd + deltaSec*1000);
+  _restTimerLastTickSec = null;
+  _updateRestTimerUI();
+}
+
+if(typeof window !== 'undefined' && window.addEventListener){
+  window.addEventListener('resize', ()=>{
+    try{
+      const want = mobileWorkoutActive();
+      if(want !== document.body.classList.contains('mw-focus')) renderMain();
+    }catch(e){}
+  });
+}
 function renderTrainingToday(){
   const viewDate = state.trainingSelectedDate;
   return `
@@ -16833,6 +17355,22 @@ function renderSettingsAppearance(){
     </div>
 
     ${renderSettingsLocationRules()}
+
+    <div class="section">
+      <div class="section-head"><h2>Mobile workout (beta)</h2></div>
+      <div class="card" style="padding:16px;">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+          <input type="checkbox" ${mwEnabled()?'checked':''} onchange="setMobileWorkoutBeta(this.checked)">
+          <span><b>Full-screen workout on phones</b><br><span class="page-sub">Training opens straight into today's workout, one exercise at a time. Turn this off to go back to the old phone layout. Desktop is never affected.</span></span>
+        </label>
+        <div class="field" style="margin-top:14px;">
+          <label>Workout accent colour <span class="page-sub" style="font-weight:400;">\u2014 this device only</span></label>
+          <div class="swatch-row">
+            ${MW_ACCENTS.map(([c,n])=>`<div class="swatch ${mwAccent()===c?'selected':''}" style="background:${c};" title="${n}" onclick="setMwAccent('${c}')"></div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="section">
       <div class="section-head"><h2>Idle Session Lock</h2></div>
