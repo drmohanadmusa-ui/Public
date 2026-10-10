@@ -346,12 +346,17 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.53.0';
+const APP_VERSION = '4.54.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.54.0', date:'2026-10-10', changes:[
+    'Investments → new 💰 Collect Contributions: for pooled money from several people landing on one platform. Enter each person\u2019s SAR (pre-filled from what their Invested (Out) account shows but the tracker doesn\u2019t hold yet) or a total plus percentages, adjust the USD/USDT that actually arrived, and it records one Deposit split by person. Nothing is posted to the ledger \u2014 the bank / personal / Out JVs stay manual. Run it once per platform.',
+    'Transaction window → new \u2696 Split by platform cash on cash-funded buys: fills every person\u2019s units in proportion to their cash on that platform as of the buy date, including anything left over from earlier months. Untick anyone sitting a buy out and their share is spread across the rest. Typing one person\u2019s units by hand switches the auto-split off.',
+    'Cash-funded buys now also warn by name if one person\u2019s own share would take their cash on the platform negative, even when the platform total is fine.',
+  ]},
   {version:'4.53.0', date:'2026-09-21', changes:[
     'Reconciliation page: pressing Enter no longer kicks you out of the field a moment later. The Statement units/Cash inputs move focus immediately, same as before, but the save that follows used to trigger a full page re-render that silently discarded it — focus is now restored to the right field once that re-render completes.',
     'Reconciliation page: every platform now has an Expand/Collapse button and starts collapsed by default, independent of the main Investments page\'s own expand state.',
@@ -8067,6 +8072,54 @@ function invOwnerReconciliation(){
             linked: !!(o.outAcc||o.inAcc), ok: Math.abs(diff)<1};
   });
 }
+// ---- Pooled monthly contributions (v4.54.0) ----
+// "Available to place" per owner: what their Invested (Out) / Withdrawn (In) accounts say has gone
+// in, minus what the tracker already holds for them (positions + platform cash). This is exactly
+// the reconciliation gap, read the other way round — the money that has been recorded as invested
+// in the ledger but not yet deposited onto a platform. Recording the deposit closes the gap, so the
+// figure drops back to ~0 by itself once the contribution is collected. null = no Out account linked.
+function invOwnersAvailableSar(){
+  const out = {};
+  invOwnerReconciliation().forEach(r=>{
+    out[r.owner.id] = r.owner.outAcc? Math.round((r.ledgerNet - r.trackerCapital)*100)/100 : null;
+  });
+  return out;
+}
+// Splits a USD total across owners in proportion to their SAR weights, to the exact cent — any
+// rounding remainder goes to the largest contributor so the split always adds up to the total.
+function invSplitUsdBySar(totalUsd, rows){
+  const valid = (rows||[]).map(r=>({ownerId:r.ownerId, sar:Number(r.sar)||0})).filter(r=>r.sar>0);
+  const sumSar = valid.reduce((s,r)=>s+r.sar,0);
+  const cents = Math.round((Number(totalUsd)||0)*100);
+  if(!(sumSar>0) || !(cents>0)) return [];
+  const out = valid.map(r=>({ownerId:r.ownerId, cents:Math.round(cents*r.sar/sumSar)}));
+  const drift = cents - out.reduce((s,o)=>s+o.cents,0);
+  if(drift!==0){
+    let idx = 0;
+    for(let i=1;i<valid.length;i++) if(valid[i].sar>valid[idx].sar) idx = i;
+    out[idx].cents += drift;
+  }
+  return out.map(o=>({ownerId:o.ownerId, usd:o.cents/100}));
+}
+// Each owner's USD cash on one platform as of a date — the basis for "Split by platform cash".
+// Same-day deposits count (they're what funds that day's buy). When editing an existing
+// transaction, its own effect is added back so it doesn't skew its own split.
+function invOwnerCashForSplit(platformId, date, excludeTxId){
+  const {state} = invCashState(date||null);
+  const byOwner = {};
+  const p = state[platformId] || {};
+  for(const k in p) byOwner[k] = p[k].usd;
+  if(excludeTxId){
+    const t = (D.invTransactions||[]).find(x=>x.id===excludeTxId);
+    const tPos = t? invPositionById(t.positionId) : null;
+    if(t && t.cashSide==='cash' && tPos && tPos.platformId===platformId && (!date || t.date<=date)){
+      const at = invTxAttribution(t);
+      const fx = getInvFxRate();
+      for(const oid in at.cashSar) byOwner[oid] = (byOwner[oid]||0) + (t.kind==='sell'? -1 : 1)*(at.cashSar[oid]||0)/fx;
+    }
+  }
+  return byOwner;
+}
 // Platform reconciliation: what the platform's own statement says, against what the tracker
 // computes — units per position and the USD cash balance. Unit tolerance is deliberately tiny
 // (1e-9) and units are shown at full precision, so a small crypto allocation can't be rounded
@@ -8663,6 +8716,7 @@ function renderInvestmentsPage(){
     </div>
     <div class="panel noprint row" style="gap:6px;flex-wrap:wrap">
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('position')">+ Position</button>
+      <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('collect')" title="Pooled money from several people landing on a platform — recorded as one Deposit split by person">💰 Collect Contributions</button>
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('deposit')" title="Money wired from your bank onto a platform">↓ Deposit</button>
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('withdrawal')" title="Money taken off a platform back to your bank">↑ Withdraw</button>
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('transfer')" title="Move cash between platforms">⇄ Transfer</button>
@@ -9042,6 +9096,7 @@ function invPlatformsSorted(){
 const INV_PLATFORM_ACTIONS = {
   position:  {label:'+ Position',  open: platformId => openInvAddPosition(platformId)},
   deposit:   {label:'↓ Deposit',   open: platformId => openInvCashModal(platformId,'deposit')},
+  collect:   {label:'💰 Collect Contributions', open: platformId => openInvCollectModal(platformId)},
   withdrawal:{label:'↑ Withdraw',  open: platformId => openInvCashModal(platformId,'withdrawal')},
   transfer:  {label:'⇄ Transfer',  open: platformId => openInvCashModal(platformId,'transfer')},
   cashlog:   {label:'Cash log',    open: platformId => openInvCashLog(platformId)},
@@ -9527,7 +9582,7 @@ function renderInvTxModal(){
   showModal(`
     <h3 style="margin-top:0">${d.id?'Edit':'New'} Transaction — ${esc(pos?pos.name:'')}</h3>
     <div class="row" style="gap:10px">
-      <div style="flex:1"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="window._invTxDraft.date=this.value"></div>
+      <div style="flex:1"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="setInvTxDate(this.value)"></div>
       <div style="flex:1"><label class="fl">Type</label><select onchange="setInvTxKind(this.value)"><option value="buy" ${d.kind==='buy'?'selected':''}>Buy</option><option value="sell" ${d.kind==='sell'?'selected':''}>Sell</option></select></div>
     </div>
     <div class="row" style="gap:10px;margin-top:10px">
@@ -9564,6 +9619,7 @@ function renderInvTxModal(){
     <div class="mut" style="font-size:11.5px;margin-bottom:8px">${d.splitMode==='sar'
       ? 'Enter how much each person paid — the units are worked out from that. Any rounding remainder goes to the largest holder so the units always add up exactly.'
       : 'Split the units across owners. Ownership percentages are derived from this, so they stay correct as people buy in at different times.'}</div>
+    <div id="invTxCashSplitPanelWrap">${invTxCashSplitPanel(d)}</div>
     <table><thead><tr><th>Owner</th><th class="num">SAR</th><th class="num">Units</th></tr></thead>
     <tbody>${owners.map(o=>{
       const row = (d.owners||[]).find(x=>x.ownerId===o.id);
@@ -9576,7 +9632,7 @@ function renderInvTxModal(){
           : `<span class="mono mut" id="invTxDeriv_${o.id}">${unitsNum>0&&Number(d.totalSar)>0? money(invSarForUnits(unitsNum, Number(d.totalSar), uVal)) : '—'}</span>`}</td>
         <td class="num">${d.splitMode==='sar'
           ? `<span class="mono mut" id="invTxDeriv_${o.id}">${derivedUnits? invFmtUnits(derivedUnits.units) : '—'}</span>`
-          : `<input type="number" step="any" style="width:120px;text-align:right" value="${row? esc(row.units):''}" oninput="setInvTxOwnerUnits(${o.id}, this.value)">`}</td></tr>`;
+          : `<input type="number" step="any" id="invTxOwnerUnits_${o.id}" style="width:120px;text-align:right" value="${row? esc(row.units):''}" oninput="setInvTxOwnerUnits(${o.id}, this.value)">`}</td></tr>`;
     }).join('') || '<tr><td colspan="3" class="empty">Add owners first (Investments → Owners)</td></tr>'}</tbody></table>
     <div class="mut" id="invTxAllocSummary" style="font-size:11.5px;margin-top:6px;${(d.splitMode==='sar'?sarMismatch:mismatch)?'color:var(--red)':''}">${invTxAllocText(d)}</div>
     <label class="fl" style="margin-top:12px">Note</label><input value="${esc(d.note||'')}" oninput="window._invTxDraft.note=this.value">
@@ -9622,12 +9678,91 @@ function setInvTxKind(kind){
   if(!d) return;
   d.kind = kind;
   if(kind==='sell' && d.cashSide==='opening') d.cashSide = 'bank';
+  if(kind!=='buy' && d.cashSplit) d.cashSplit.active = false;
   renderInvTxModal();
+}
+// ---- Split by platform cash (v4.54.0) ----
+// Each included person gets units in proportion to their USD cash on this position's platform as of
+// the transaction date — so pooled money (this month's contributions plus anything left over from
+// before) buys every token in the same proportions, and everyone ends up with the same average price.
+function invTxComputeCashSplit(d){
+  const pos = invPositionById(d.positionId);
+  if(!pos) return {cash:{}, rows:[], owners:[], total:0};
+  const cash = invOwnerCashForSplit(pos.platformId, d.date, d.id||null);
+  const excluded = new Set(((d.cashSplit||{}).excluded)||[]);
+  const rows = (D.invOwners||[]).map(o=>({ownerId:o.id, cash:Number(cash[o.id])||0}))
+    .filter(r=>r.cash>0.005)
+    .map(r=>({...r, included: !excluded.has(r.ownerId)}));
+  const inc = rows.filter(r=>r.included);
+  const total = inc.reduce((s,r)=>s+r.cash,0);
+  const units = Number(d.units)||0;
+  // invDeriveUnitsFromSar is just a weighted split with exact-remainder handling — cash is the weight.
+  const owners = (units>0 && total>0)? invDeriveUnitsFromSar(units, inc.map(r=>({ownerId:r.ownerId, sar:r.cash})), total).filter(o=>o.units>0) : [];
+  return {cash, rows, owners, total};
+}
+function invTxCashSplitPanel(d){
+  if(d.kind!=='buy' || d.cashSide!=='cash') return '';
+  const active = !!(d.cashSplit && d.cashSplit.active);
+  if(!active){
+    return `<div class="row" style="gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <button class="btn ghost sm" onclick="applyInvTxCashSplit()">⚖ Split by platform cash</button>
+      <span class="mut" style="font-size:11.5px">Shares this buy by each person's cash on the platform, including any leftover from before.</span></div>`;
+  }
+  const s = invTxComputeCashSplit(d);
+  const incTotal = s.total;
+  return `<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+      <b style="font-size:12.5px">⚖ Split by platform cash <span class="mut" style="font-weight:400">· as of ${esc(d.date)}</span></b>
+      <button class="btn ghost sm" onclick="clearInvTxCashSplit()">Stop auto-split</button>
+    </div>
+    ${s.rows.length? `<table style="font-size:12px"><tbody>${s.rows.map(r=>{
+      const o = invOwnerById(r.ownerId);
+      return `<tr><td style="width:28px"><input type="checkbox" ${r.included?'checked':''} onchange="toggleInvTxCashSplitOwner(${r.ownerId}, this.checked)"></td>
+        <td>${esc(o? o.name : '#'+r.ownerId)}</td>
+        <td class="num mono">$${fmt2(r.cash)}</td>
+        <td class="num mono">${r.included && incTotal>0? (r.cash/incTotal*100).toFixed(2)+'%' : '<span class="mut">excluded</span>'}</td></tr>`;
+    }).join('')}</tbody></table>
+    <div class="mut" style="font-size:11px;margin-top:4px">Untick anyone not taking part in this buy — their share is spread across the rest.</div>`
+    : `<div class="mut" style="font-size:12px">No one has cash on this platform as of this date — record the contributions first.</div>`}
+  </div>`;
+}
+function applyInvTxCashSplit(){
+  const d = window._invTxDraft;
+  if(!d) return;
+  if(!((Number(d.units)||0)>0)){ toast('Enter the units first', true); return; }
+  d.cashSplit = d.cashSplit || {excluded:[]};
+  d.cashSplit.active = true;
+  d.splitMode = 'units';
+  d.owners = invTxComputeCashSplit(d).owners;
+  renderInvTxModal();
+}
+function toggleInvTxCashSplitOwner(ownerId, included){
+  const d = window._invTxDraft;
+  if(!d || !d.cashSplit) return;
+  const ex = new Set(d.cashSplit.excluded||[]);
+  if(included) ex.delete(ownerId); else ex.add(ownerId);
+  d.cashSplit.excluded = [...ex];
+  d.owners = invTxComputeCashSplit(d).owners;
+  renderInvTxModal();
+}
+function clearInvTxCashSplit(){
+  const d = window._invTxDraft;
+  if(!d) return;
+  if(d.cashSplit) d.cashSplit.active = false;
+  renderInvTxModal();
+}
+function setInvTxDate(val){
+  const d = window._invTxDraft;
+  if(!d) return;
+  d.date = val;
+  // Cash balances depend on the date, so an active split is recomputed for the new one.
+  if(d.cashSplit && d.cashSplit.active){ d.owners = invTxComputeCashSplit(d).owners; renderInvTxModal(); }
 }
 function setInvTxCashSide(side){
   const d = window._invTxDraft;
   if(!d) return;
   d.cashSide = (side==='cash'||side==='opening')? side : 'bank';
+  if(d.cashSide!=='cash' && d.cashSplit) d.cashSplit.active = false;
   if(d.cashSide==='cash'||d.cashSide==='opening'){
     // Coming from the bank side there may already be a SAR figure — seed USD from it rather than
     // blanking what was typed.
@@ -9647,6 +9782,7 @@ function setInvTxSplitMode(mode){
   const d = window._invTxDraft;
   if(!d) return;
   d.splitMode = mode;
+  if(d.cashSplit) d.cashSplit.active = false;
   // Carry the current split across so switching views doesn't discard what was already entered.
   const unitsNum = Number(d.units)||0, totalSar = Number(d.totalSar)||0;
   if(mode==='sar'){
@@ -9722,6 +9858,14 @@ function invTxAllocText(d){
 function invTxRefreshDerived(){
   const d = window._invTxDraft;
   if(!d) return;
+  if(d.cashSplit && d.cashSplit.active && d.splitMode!=='sar'){
+    d.owners = invTxComputeCashSplit(d).owners;
+    (D.invOwners||[]).forEach(o=>{
+      const el = document.getElementById('invTxOwnerUnits_'+o.id);
+      const row = d.owners.find(x=>x.ownerId===o.id);
+      if(el && el!==document.activeElement) el.value = row? row.units : '';
+    });
+  }
   const pos = invPositionById(d.positionId);
   const unitsNum = Number(d.units)||0, totalSar = Number(d.totalSar)||0;
   const ppu = document.getElementById('invTxPPU');
@@ -9751,6 +9895,12 @@ function invTxRefreshDerived(){
 }
 function setInvTxOwnerUnits(ownerId, val){
   const d = window._invTxDraft;
+  if(d.cashSplit && d.cashSplit.active){
+    // Overriding one person's units by hand turns the auto-split off, keeping the figures as they are.
+    d.cashSplit.active = false;
+    const panel = document.getElementById('invTxCashSplitPanelWrap');
+    if(panel) panel.innerHTML = invTxCashSplitPanel(d);
+  }
   d.owners = d.owners || [];
   const row = d.owners.find(x=>x.ownerId===ownerId);
   if(row) row.units = val; else d.owners.push({ownerId, units:val});
@@ -9821,6 +9971,14 @@ async function saveInvTx(){
     const avail = pos? invPlatformCash(pos.platformId).totalUsd : 0;
     const already = d.id? (Number((D.invTransactions||[]).find(t=>t.id===d.id)?.usdAmount)||0) : 0;
     if(usdAmount - already > avail + 0.005) toast('Heads up: this takes the platform cash balance negative', true);
+    else if(pos && units>0){
+      // The platform total can be fine while one person's own share is overspent — e.g. a buy split
+      // to someone who contributed less than their allocated portion. Name them so it's fixable.
+      const cash = invOwnerCashForSplit(pos.platformId, d.date, d.id||null);
+      const short = owners.filter(o=> usdAmount*(o.units/units) > (Number(cash[o.ownerId])||0) + 0.005)
+        .map(o=>{ const on = invOwnerById(o.ownerId); return on? on.name : '#'+o.ownerId; });
+      if(short.length) toast('Heads up: this takes '+short.join(', ')+'\'s cash on this platform negative', true);
+    }
   }
   const fields = {date:d.date, kind:d.kind, units, totalSar, owners, note:d.note||'', cashSide, usdAmount, feePct};
   if(d.id){
@@ -9978,6 +10136,170 @@ async function deleteInvCashMovement(id){
   D.invCashMovements = D.invCashMovements.filter(x=>x.id!==id);
   await syncWrite('pd_inv_cash_movements','delete',{id}, m.updated_at||null);
   persistLocal(); closeModal(); renderInvestmentsPage(); toast('Cash movement deleted');
+}
+/* ---- Investments: Collect Contributions (pooled monthly money → one split Deposit) ---- */
+// The ledger side (bank → personal → Invested (Out)) is posted manually; this only records the
+// money landing on the platform, split by person. Amounts are pre-filled from what each person
+// has invested per the ledger but not yet placed in the tracker, so the usual case is confirm-only.
+function openInvCollectModal(platformId){
+  const avail = invOwnersAvailableSar();
+  const rows = {};
+  (D.invOwners||[]).forEach(o=>{
+    const a = avail[o.id];
+    rows[o.id] = {sar: (a!==null && a>0.005)? a : '', pct:''};
+  });
+  window._invCollectDraft = {platformId, date:todayStr(), mode:'amount', totalSar:'', rows, usdReceived:'', usdTouched:false, note:'', avail};
+  renderInvCollectModal();
+}
+// The SAR each person is putting in this time, whichever way it was entered.
+function invCollectSarRows(d){
+  if(d.mode==='pct'){
+    const total = Number(d.totalSar)||0;
+    return (D.invOwners||[]).map(o=>({ownerId:o.id, sar: Math.round(total*(Number((d.rows[o.id]||{}).pct)||0)/100*100)/100})).filter(r=>r.sar>0);
+  }
+  return (D.invOwners||[]).map(o=>({ownerId:o.id, sar: Number((d.rows[o.id]||{}).sar)||0})).filter(r=>r.sar>0);
+}
+function invCollectTotals(d){
+  const rows = invCollectSarRows(d);
+  const totalSar = rows.reduce((s,r)=>s+r.sar,0);
+  const pctSum = d.mode==='pct'? (D.invOwners||[]).reduce((s,o)=>s+(Number((d.rows[o.id]||{}).pct)||0),0) : 100;
+  const usd = d.usdTouched? (Number(d.usdReceived)||0) : Math.round(totalSar/getInvFxRate()*100)/100;
+  return {rows, totalSar, pctSum, usd, split: invSplitUsdBySar(usd, rows)};
+}
+function renderInvCollectModal(){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  const p = invPlatformById(d.platformId);
+  const owners = D.invOwners||[];
+  const cash = invPlatformCash(d.platformId).byOwner;
+  const t = invCollectTotals(d);
+  const tab = (mode,label)=>`<button class="btn ghost sm" style="${d.mode===mode?'border-color:var(--accent);background:var(--chip);font-weight:600':''}" onclick="setInvCollectMode('${mode}')">${label}</button>`;
+  showModal(`
+    <h3 style="margin-top:0">💰 Collect Contributions — ${esc(p? p.name : '')}</h3>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Records the money landing on this platform as one Deposit, split by person. Post the bank / personal / Invested (Out) JVs yourself as usual — nothing is booked to the ledger from here.</div>
+    <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div style="width:160px"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="window._invCollectDraft.date=this.value"></div>
+      <div class="row" style="gap:4px;align-items:center"><span class="mut" style="font-size:11.5px">Enter by</span>${tab('amount','SAR amount')}${tab('pct','% of a total')}</div>
+      ${d.mode==='pct'? `<div style="width:160px"><label class="fl">Total SAR this time</label><input type="number" step="0.01" value="${esc(d.totalSar)}" oninput="window._invCollectDraft.totalSar=this.value; invCollectRefresh()"></div>` : ''}
+    </div>
+    <div style="overflow-x:auto;margin-top:10px"><table style="min-width:560px"><thead><tr>
+      <th>Person</th><th class="num" title="Invested per the ledger (Out − In) minus what the tracker already holds">Available</th><th class="num" title="Already sitting on this platform — rolls into the next buy's split automatically">Cash on platform</th>
+      <th class="num">${d.mode==='pct'? '%' : 'SAR'}</th><th class="num">Share</th><th class="num">USD</th>
+    </tr></thead><tbody>${owners.map(o=>{
+      const a = d.avail[o.id];
+      const r = d.rows[o.id] || {sar:'', pct:''};
+      const c = cash[o.id]? cash[o.id].usd : 0;
+      return `<tr><td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}</td>
+        <td class="num mono ${a!==null && a<-0.005?'r':''}">${a===null? '<span class="mut" title="No Invested (Out) account linked to this person">—</span>' : money(a)}</td>
+        <td class="num mono mut">${Math.abs(c)>0.005? '$'+fmt2(c) : '—'}</td>
+        <td class="num"><input type="number" step="${d.mode==='pct'?'0.01':'0.01'}" style="width:110px;text-align:right" value="${esc(d.mode==='pct'? r.pct : r.sar)}" oninput="setInvCollectRow(${o.id}, this.value)"></td>
+        <td class="num mono" id="invCollectPct_${o.id}">—</td>
+        <td class="num mono" id="invCollectUsd_${o.id}">—</td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">Add owners first (Investments → Owners)</td></tr>'}</tbody></table></div>
+    ${d.mode==='amount'? `<div class="row" style="gap:8px;margin-top:6px"><button class="btn ghost sm" onclick="invCollectUseAvailable()">Fill from Available</button><button class="btn ghost sm" onclick="invCollectClearRows()">Clear</button></div>` : ''}
+    <div class="row" style="gap:10px;align-items:flex-end;margin-top:12px;flex-wrap:wrap">
+      <div style="width:200px"><label class="fl">USD / USDT received on the platform</label><input type="number" step="0.01" id="invCollectUsdInput" value="${esc(d.usdTouched? d.usdReceived : (t.usd||''))}" oninput="setInvCollectUsd(this.value)"></div>
+      <div class="mut" style="font-size:11.5px;flex:1;min-width:220px">Defaults to the SAR total ÷ ${getInvFxRate()}. Change it to what actually arrived after the exchange's rate and fees — it's split by each person's SAR share.</div>
+    </div>
+    <div class="mut" id="invCollectSummary" style="font-size:12px;margin-top:10px"></div>
+    <label class="fl" style="margin-top:10px">Note</label><input value="${esc(d.note)}" placeholder="e.g. October contributions" oninput="window._invCollectDraft.note=this.value">
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn pri" onclick="saveInvCollect()">Record Deposit</button>
+    </div>`, true);
+  invCollectRefresh();
+}
+// Patches only the computed cells, so typing doesn't lose focus to a full re-render.
+function invCollectRefresh(){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  const t = invCollectTotals(d);
+  (D.invOwners||[]).forEach(o=>{
+    const r = t.rows.find(x=>x.ownerId===o.id);
+    const u = t.split.find(x=>x.ownerId===o.id);
+    const pEl = document.getElementById('invCollectPct_'+o.id);
+    const uEl = document.getElementById('invCollectUsd_'+o.id);
+    if(pEl) pEl.textContent = r && t.totalSar>0? (r.sar/t.totalSar*100).toFixed(2)+'%' : '—';
+    if(uEl) uEl.textContent = u? '$'+fmt2(u.usd) : '—';
+  });
+  const usdEl = document.getElementById('invCollectUsdInput');
+  if(usdEl && !d.usdTouched) usdEl.value = t.usd>0? t.usd : '';
+  const sum = document.getElementById('invCollectSummary');
+  if(sum){
+    const pctBad = d.mode==='pct' && Math.abs(t.pctSum-100)>0.005;
+    sum.innerHTML = `Total: <b class="mono">${money(t.totalSar)} SAR</b> from ${t.rows.length} ${t.rows.length===1?'person':'people'} → <b class="mono">$${fmt2(t.usd)}</b>`+
+      (pctBad? ` <span style="color:var(--red)">· percentages add up to ${t.pctSum.toFixed(2)}%, they must total 100%</span>` : '');
+  }
+}
+function setInvCollectMode(mode){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  if(mode==='pct' && d.mode!=='pct'){
+    // Carry the amounts across as percentages, so switching views doesn't discard them.
+    const t = invCollectTotals(d);
+    d.totalSar = t.totalSar>0? t.totalSar : '';
+    (D.invOwners||[]).forEach(o=>{
+      const r = t.rows.find(x=>x.ownerId===o.id);
+      d.rows[o.id] = d.rows[o.id] || {sar:'', pct:''};
+      d.rows[o.id].pct = (r && t.totalSar>0)? Math.round(r.sar/t.totalSar*10000)/100 : '';
+    });
+  } else if(mode==='amount' && d.mode!=='amount'){
+    const t = invCollectTotals(d);
+    (D.invOwners||[]).forEach(o=>{
+      const r = t.rows.find(x=>x.ownerId===o.id);
+      d.rows[o.id] = d.rows[o.id] || {sar:'', pct:''};
+      d.rows[o.id].sar = r? r.sar : '';
+    });
+  }
+  d.mode = mode==='pct'? 'pct' : 'amount';
+  renderInvCollectModal();
+}
+function setInvCollectRow(ownerId, val){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  d.rows[ownerId] = d.rows[ownerId] || {sar:'', pct:''};
+  d.rows[ownerId][d.mode==='pct'? 'pct' : 'sar'] = val;
+  invCollectRefresh();
+}
+function setInvCollectUsd(val){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  d.usdReceived = val;
+  d.usdTouched = String(val).trim()!=='';
+  invCollectRefresh();
+}
+function invCollectUseAvailable(){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  (D.invOwners||[]).forEach(o=>{
+    const a = d.avail[o.id];
+    d.rows[o.id] = d.rows[o.id] || {sar:'', pct:''};
+    d.rows[o.id].sar = (a!==null && a>0.005)? a : '';
+  });
+  renderInvCollectModal();
+}
+function invCollectClearRows(){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  (D.invOwners||[]).forEach(o=>{ d.rows[o.id] = {sar:'', pct:''}; });
+  renderInvCollectModal();
+}
+async function saveInvCollect(){
+  const d = window._invCollectDraft;
+  if(!d) return;
+  const t = invCollectTotals(d);
+  if(!t.rows.length || !(t.totalSar>0)){ toast('Enter at least one person\'s contribution', true); return; }
+  if(d.mode==='pct' && Math.abs(t.pctSum-100)>0.005){ toast('The percentages must add up to 100%', true); return; }
+  if(!(t.usd>0)){ toast('Enter the USD amount received on the platform', true); return; }
+  if(!t.split.length){ toast('Could not split the USD amount', true); return; }
+  const note = (d.note||'').trim() || 'Contributions';
+  const rec = {id: invNextId(D.invCashMovements), updated_at:null, platformId:d.platformId, date:d.date, kind:'deposit',
+               usdAmount: Math.round(t.usd*100)/100, toPlatformId:null, feeUsd:0, capitalUsd:0, profitUsd:0,
+               owners: t.split, note};
+  D.invCashMovements.push(rec);
+  await persistInvCashMovement(rec);
+  closeModal(); renderInvestmentsPage();
+  toast('Contributions recorded ✓ — $'+fmt2(rec.usdAmount)+' split across '+t.split.length+' '+(t.split.length===1?'person':'people'));
 }
 function openInvCashLog(platformId){
   const plat = invPlatformById(platformId);
