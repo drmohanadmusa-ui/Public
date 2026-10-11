@@ -697,17 +697,9 @@ select.filter-select, input.filter-date{
 .set-num-input{ width:62px; text-align:center; }
 /* v4.65.0 reps/weight scroll-wheel picker */
 .num-pick{cursor:pointer; caret-color:transparent;}
-.np-modal{max-width:340px; padding:20px;}
-.np-wheels{position:relative; display:flex; justify-content:center; align-items:center; gap:4px; height:200px;}
-.np-band{position:absolute; left:0; right:0; top:80px; height:40px; background:var(--paper-dim); border-radius:8px; pointer-events:none;}
-.np-wheel{position:relative; z-index:1; height:200px; width:96px; overflow-y:auto; scroll-snap-type:y mandatory; -webkit-overflow-scrolling:touch; scrollbar-width:none; overscroll-behavior:contain; touch-action:pan-y;}
-.np-wheel::-webkit-scrollbar{display:none;}
-.np-pad{height:80px;}
-.np-item{height:40px; line-height:40px; text-align:center; scroll-snap-align:center; font-size:22px; color:var(--ink-soft); cursor:pointer;}
-.np-item.np-sel{color:var(--ink); font-weight:700;}
-.np-dot{z-index:1; font-size:26px; font-weight:700;}
-.np-actions{display:flex; gap:6px; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap;}
-.np-actions .btn.brass{min-width:72px;}
+.num-pick.np-armed{background:var(--paper-dim) !important; box-shadow:0 0 0 2px var(--brass,#b8893b); border-radius:8px; touch-action:none; user-select:none; -webkit-user-select:none;}
+body.mw-dark .mw-tile:has(input.np-armed){ background:#1F2318; box-shadow:0 0 0 2px var(--mw-accent,#D3F53D); touch-action:none; }
+body.mw-dark input.mw-num.np-armed{ box-shadow:none; background:transparent !important; color:var(--mw-accent,#D3F53D); }
 /* ===== v4.66.0 mobile workout (beta) ===== */
 @media (max-width: 860px){ .train-desk-only{display:none !important;} }
 html body.mw-dark{
@@ -822,18 +814,6 @@ body.mw-focus .rest-timer-count{ font-size:32px; min-width:0; }
 body.mw-focus .rest-timer-label{ font-size:11px; }
 body.mw-focus .rest-timer-box .btn{ padding:0 12px; }
 body.mw-focus .modal-overlay{ z-index:400; }
-body.mw-dark .np-overlay{ align-items:flex-end; padding:0; }
-body.mw-dark .np-modal{ max-width:520px; border-radius:28px 28px 0 0; padding:16px 20px calc(env(safe-area-inset-bottom,0px) + 24px); }
-body.mw-dark .np-modal h3{ font-family:'Instrument Sans',var(--font-body),sans-serif; font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft); }
-body.mw-dark .np-wheels{ height:220px; }
-body.mw-dark .np-wheel{ height:220px; }
-body.mw-dark .np-pad{ height:90px; }
-body.mw-dark .np-band{ top:90px; height:40px; background:#23262B; }
-body.mw-dark .np-item{ font-size:24px; }
-body.mw-dark .np-actions{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; margin-top:14px; }
-body.mw-dark .np-actions .btn{ justify-content:center; text-align:center; display:inline-flex; align-items:center; }
-body.mw-dark .np-actions .btn.ghost{ height:48px; border-radius:16px; background:#202328; border:0; color:#F3F2EE; font-weight:600; font-size:15px; padding:0 6px; }
-body.mw-dark .np-actions .btn.brass{ grid-column:1 / -1; grid-row:2; height:64px; border-radius:20px; font-family:'Archivo',sans-serif; font-stretch:105%; font-weight:800; font-size:20px; background:var(--mw-accent,#D3F53D); border:0; color:#0E0F11; }
 input.mw-date{ width:100%; height:56px; box-sizing:border-box; background:#202328; color:#F3F2EE; border:0; border-radius:16px; font-size:17px; padding:0 16px; color-scheme:dark; margin-top:10px; }
 
 
@@ -2356,7 +2336,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.66.0';
+const APP_VERSION = '4.67.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2364,6 +2344,16 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.67.0', changes: [
+    'No SQL migration needed \u2014 front-end only. Nothing in the database changed. The old hydration columns and table stay where they are, unused.',
+    'NEW \u2014 Drag scrubber replaces the wheel. Tap the weight or reps number to light it up, then drag up or down on it to change it live (about one step per 20px, up = more); it saves when you let go. Weight moves by that exercise\u2019s own machine step (2.5 / 5 / 10 / 20 kg), reps by 1, and an off-grid weight snaps to the nearest valid one. Tap the lit number again to type it instead; tapping anywhere else switches it off.',
+    'NEW \u2014 Changing a set\u2019s weight or reps now carries down to the later, not-yet-done working sets of that same exercise (phone workout and the old layout). Done sets, the warm-up, other exercises and your history are never touched.',
+    'CHANGED (phone workout) \u2014 Tap a set\u2019s number to finish it and the effort sheet opens straight away (0\u20134 RIR, F, or Warm-up set; \u201cDone, no RIR\u201d skips it). Warm-up sets finish immediately. Tap a finished set to undo it; hold it to change its RIR. The separate RIR button is gone.',
+    'NEW (phone workout) \u2014 Swap this exercise (menu): lists library exercises that share the same primary muscle. Sets already done stay on the old exercise; the new one gets the remaining sets (target minus done) at its own last-completed weight, and replaces the old one in the plan for this day and every later day.',
+    'NEW \u2014 Missing-data alarm before Copy Review Pack: checks the last 30 days (today excluded, rest days included) for empty health-log metrics and lists them, with Go fill in and Copy anyway. Days before your first ever health entry are not counted.',
+    'CHANGED \u2014 Review Pack prompt: the AI now acts as a blunt, world-class muscle-building coach; sense-checks the data first and names anything nonsensical or missing; suggests extra data that would help; gives a rationale for every planned day in its reply; and checks its plan against all your rules before writing the JSON. The pack also carries missingHealthData.',
+    'REMOVED \u2014 Hydration tracker (Health page section, containers, goal, New Day water row and the water figure in the review pack). Your existing Water Intake metric card is a normal health metric and is untouched; hide or delete it from Manage Metrics if you do not want it.',
+  ]},
   { v:'4.66.0', changes: [
     'No SQL migration needed \u2014 front-end only. The two new settings (beta switch, accent colour) are stored on the device only, which is what you want: phone and desktop can differ.',
     'NEW \u2014 Mobile workout (beta). On a phone, Training now opens straight into a full-screen, dark, one-exercise-at-a-time workout screen: large tick buttons, big weight and reps tiles (tap one for the scroll wheel), an effort (RIR/F/warm-up) sheet, a segmented progress bar across the exercises, Previous and a big Next exercise button, and your rest timer in a bottom dock with \u221215s / +15s / Done early. The elapsed clock starts at your first ticked set. There is no Start button.',
@@ -8853,32 +8843,6 @@ function coreFieldFor(metricId){
 // ever, tracked by a persisted flag. Without this guard, deleting a core
 // metric would just get it silently re-added the next time this runs (e.g.
 // on the next page render), since it'd still look "missing".
-const HYDRATION_ICON_CHOICES = [
-  // Water & plain
-  '💧','🥛','🍶','🧴','🚰','🫗',
-  // Coffee & hot drinks
-  '☕','🍵','🫖','🧋',
-  // Cold, juice & soft drinks
-  '🥤','🧃','🍹','🍸','🥥','🍋','🍊','🍓',
-  // Ice & chilled
-  '🧊','❄️',
-  // Sport / energy / other
-  '⚡','🏺','🍯','🥂',
-];
-function ensureHydrationDefaults(){
-  if(!state.settings.hydrationDefaultsSeeded){
-    if(!state.settings.hydrationContainers.length){
-      state.settings.hydrationContainers = [
-        { id:'cont_glass', name:'Glass', icon:'🥛' },
-        { id:'cont_bottle_s', name:'Small Bottle', icon:'🍶' },
-        { id:'cont_bottle_l', name:'Large Bottle', icon:'🧴' },
-        { id:'cont_mug', name:'Mug', icon:'☕' },
-      ];
-    }
-    state.settings.hydrationDefaultsSeeded = true;
-    saveSettings();
-  }
-}
 function ensureCoreMetricDefs(){
   if(!state.settings.healthCoreMetricsSeeded){
     CORE_METRIC_DEFAULTS.forEach((def, i)=>{
@@ -8916,285 +8880,6 @@ function getHealthEntry(dateStr){
 
 if(!state.healthViewDate) state.healthViewDate = todayStr();
 
-/* =========================================================
-   HYDRATION TRACKER
-   ========================================================= */
-function getHydrationLogsForDate(date){
-  return state.hydrationLogs.filter(l=>l.date===date);
-}
-function getHydrationTotalForDate(date){
-  return getHydrationLogsForDate(date).reduce((sum,l)=> sum+(l.ml||0), 0);
-}
-// Amount is now entered per-log rather than fixed per container, so the same
-// container can record 330ml once and 660ml the next time. Each hydration_logs
-// row already carried its own `ml` column, so this needed no schema change —
-// and existing logs keep whatever amount they were recorded with.
-async function logHydration(date, containerId, ml){
-  const container = state.settings.hydrationContainers.find(c=>c.id===containerId);
-  if(!container) return;
-  const amount = Math.round(Number(ml));
-  if(!isFinite(amount) || amount <= 0){ showToast('Enter an amount in ml'); return; }
-  if(amount > 20000){ showToast('That looks too large — check the amount'); return; }
-  state.hydrationLogs.push({ id:newId('hyd'), date, containerId, ml:amount, loggedAt:new Date().toISOString() });
-  await saveHydration();
-  renderMain();
-  showToast(`Logged ${amount}ml — ${container.name}`);
-}
-
-/* ---------- Inline amount entry ----------
-   Tapping a container reveals an inline ml input instead of logging a fixed
-   amount. Kept as direct DOM work rather than a re-render so the field keeps
-   focus while typing. Enter saves, Escape cancels. */
-function openHydrationAmountInput(date, containerId){
-  const container = state.settings.hydrationContainers.find(c=>c.id===containerId);
-  if(!container) return;
-  const host = document.getElementById('hydAmountRow');
-  if(!host) return;
-  host.innerHTML = `
-    <div class="hyd-amount-entry">
-      <span class="hyd-amount-label">${container.icon} ${escapeHtml(container.name)}</span>
-      <input type="number" inputmode="numeric" min="1" step="10" id="hydAmountInput"
-             placeholder="ml" autocomplete="off"
-             onkeydown="handleHydrationAmountKey(event, '${date}', '${containerId}')">
-      <span class="page-sub">ml</span>
-      <button class="btn brass sm" onclick="submitHydrationAmount('${date}','${containerId}')">Add</button>
-      <button class="btn secondary sm" onclick="cancelHydrationAmount()">Cancel</button>
-    </div>
-  `;
-  host.style.display = '';
-  const el = document.getElementById('hydAmountInput');
-  if(el){ el.focus(); el.select(); }
-  // Highlight which container is being logged.
-  document.querySelectorAll('#hydQuickLog .hyd-container-btn').forEach(b=>{
-    b.classList.toggle('active', b.getAttribute('data-cid') === containerId);
-  });
-}
-function handleHydrationAmountKey(event, date, containerId){
-  if(event.key === 'Enter'){ event.preventDefault(); submitHydrationAmount(date, containerId); }
-  else if(event.key === 'Escape'){ event.preventDefault(); cancelHydrationAmount(); }
-}
-async function submitHydrationAmount(date, containerId){
-  const el = document.getElementById('hydAmountInput');
-  if(!el) return;
-  const val = el.value;
-  if(!String(val).trim()){ showToast('Enter an amount in ml'); el.focus(); return; }
-  const amount = Math.round(Number(val));
-  if(!isFinite(amount) || amount <= 0){ showToast('Enter a valid amount in ml'); el.select(); return; }
-  await logHydration(date, containerId, amount);
-}
-function cancelHydrationAmount(){
-  const host = document.getElementById('hydAmountRow');
-  if(host){ host.innerHTML = ''; host.style.display = 'none'; }
-  document.querySelectorAll('#hydQuickLog .hyd-container-btn').forEach(b=> b.classList.remove('active'));
-}
-async function deleteHydrationLog(id){
-  state.hydrationLogs = state.hydrationLogs.filter(l=>l.id!==id);
-  pendingHydrationDeletes.push({ table:'hydration_logs', match:{ id } });
-  await saveHydration();
-  renderMain();
-}
-// The daily log now shows one consolidated line per container (e.g. "Glass
-// ×5") instead of 5 separate lines — this removes just the most recently
-// logged occurrence in that group, decrementing the count by one, rather
-// than clearing the whole group at once.
-async function deleteHydrationLogOccurrence(date, containerId){
-  const matches = state.hydrationLogs.filter(l=>l.date===date && l.containerId===containerId);
-  if(!matches.length) return;
-  const mostRecent = matches.reduce((a,b)=> (a.loggedAt||'') > (b.loggedAt||'') ? a : b);
-  await deleteHydrationLog(mostRecent.id);
-}
-async function setHydrationGoal(ml){
-  const n = Number(ml);
-  if(!n || n<=0) return;
-  state.settings.hydrationGoalMl = n;
-  await saveSettings();
-  renderMain();
-}
-
-let hydrationContainerDraftIcon = null;
-function openHydrationContainerModal(existingId){
-  const existing = existingId ? state.settings.hydrationContainers.find(c=>c.id===existingId) : null;
-  hydrationContainerDraftIcon = existing ? existing.icon : HYDRATION_ICON_CHOICES[0];
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.id = 'hydContainerOverlay';
-  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>${existing?'Edit':'Add'} Container</h3>
-      <div class="field"><label>Name</label><input type="text" id="hydContName" value="${existing?escapeHtml(existing.name):''}" placeholder="e.g. My Gym Bottle"></div>
-      <div class="field">
-        <label>Icon</label>
-        <div class="radio-pills" id="hydContIconPills" style="display:flex; flex-wrap:wrap; gap:5px; max-height:150px; overflow-y:auto;">
-          ${HYDRATION_ICON_CHOICES.map(icon=>`<button type="button" class="radio-pill ${hydrationContainerDraftIcon===icon?'active':''}" style="font-size:17px; padding:5px 9px;" onclick="pickHydrationIcon('${icon}')">${icon}</button>`).join('')}
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button class="btn secondary" onclick="document.getElementById('hydContainerOverlay').remove();">Cancel</button>
-        <button class="btn brass" onclick="submitHydrationContainer('${existingId||''}')">${existing?'Save':'Add'}</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  setTimeout(()=>{ const el = document.getElementById('hydContName'); if(el) el.focus(); }, 50);
-}
-function pickHydrationIcon(icon){
-  hydrationContainerDraftIcon = icon;
-  document.querySelectorAll('#hydContIconPills .radio-pill').forEach(b=> b.classList.toggle('active', b.textContent===icon));
-}
-async function submitHydrationContainer(existingId){
-  const name = (document.getElementById('hydContName').value||'').trim();
-  if(!name){ showToast('Give the container a name'); return; }
-  if(existingId){
-    const c = state.settings.hydrationContainers.find(c=>c.id===existingId);
-    // c.ml is deliberately left untouched rather than deleted: containers no
-    // longer carry a size, but stripping the old value would be a pointless
-    // destructive write to synced settings. It is simply unused.
-    c.name = name; c.icon = hydrationContainerDraftIcon;
-  } else {
-    state.settings.hydrationContainers.push({ id:newId('cont'), name, icon:hydrationContainerDraftIcon });
-  }
-  await saveSettings();
-  const overlay = document.getElementById('hydContainerOverlay');
-  if(overlay) overlay.remove();
-  renderMain();
-  refreshHydrationSettingsModalIfOpen();
-  showToast(existingId?'Container updated':'Container added');
-}
-async function deleteHydrationContainer(id){
-  if(!confirm('Delete this container? Past log entries using it are kept, just without a matching container anymore.')) return;
-  state.settings.hydrationContainers = state.settings.hydrationContainers.filter(c=>c.id!==id);
-  await saveSettings();
-  renderMain();
-  refreshHydrationSettingsModalIfOpen();
-}
-
-function renderHydrationBottleSvg(pct){
-  const clamped = Math.max(0, Math.min(100, pct));
-  const bottleTop = 10, bottleBottom = 195, bottleHeight = bottleBottom - bottleTop;
-  const fillHeight = (clamped/100) * bottleHeight;
-  const fillY = bottleBottom - fillHeight;
-  const bottlePath = 'M45,10 L75,10 L75,30 Q95,40 95,70 L95,180 Q95,195 80,195 L40,195 Q25,195 25,180 L25,70 Q25,40 45,30 Z';
-  return `
-    <svg viewBox="0 0 120 205" width="110" height="188" style="flex-shrink:0;">
-      <defs><clipPath id="hydBottleClip"><path d="${bottlePath}"/></clipPath></defs>
-      <rect x="20" y="${fillY}" width="80" height="${fillHeight}" fill="var(--teal)" clip-path="url(#hydBottleClip)" style="transition: y 0.5s ease, height 0.5s ease;"/>
-      <path d="${bottlePath}" fill="none" stroke="var(--line)" stroke-width="3"/>
-      <text x="60" y="105" text-anchor="middle" font-size="20" font-weight="700" fill="var(--ink)" font-family="var(--font-display)">${Math.round(clamped)}%</text>
-    </svg>
-  `;
-}
-
-function renderHydrationSection(date){
-  ensureHydrationDefaults();
-  const containers = state.settings.hydrationContainers;
-  const goal = state.settings.hydrationGoalMl || 2500;
-  const total = getHydrationTotalForDate(date);
-  const pct = goal>0 ? (total/goal)*100 : 0;
-  const logs = getHydrationLogsForDate(date);
-
-  // Consolidate today's entries into one line per container (e.g. "Glass
-  // ×5 — 1250ml") instead of a separate line for every single tap.
-  const groups = {};
-  const groupOrder = [];
-  logs.forEach(l=>{
-    const key = l.containerId || 'unknown';
-    if(!groups[key]){ groups[key] = { containerId:l.containerId, count:0, totalMl:0 }; groupOrder.push(key); }
-    groups[key].count++;
-    groups[key].totalMl += l.ml||0;
-  });
-
-  return `
-    <div class="section">
-      <div class="section-head">
-        <h2>Hydration</h2>
-        <button class="icon-btn" title="Manage containers" onclick="openHydrationSettingsModal()">⚙</button>
-      </div>
-      <div class="card" style="padding:18px;">
-        <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
-          ${renderHydrationBottleSvg(pct)}
-          <div style="flex:1; min-width:200px;">
-            <div style="font-family:var(--font-display); font-size:22px;">${total}ml <span class="page-sub" style="font-size:14px;">/ ${goal}ml goal</span></div>
-            <div class="page-sub" style="margin:4px 0 12px;">${pct>=100?'Goal reached — nice work.':`${Math.max(0,goal-total)}ml to go`}</div>
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
-              <span class="page-sub">Daily goal (ml)</span>
-              <input type="number" min="1" value="${goal}" style="width:90px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; font-size:12.5px; background:var(--paper); color:var(--ink);" onchange="setHydrationGoal(this.value)">
-            </div>
-            ${containers.length ? `
-              <div class="page-sub" style="margin-bottom:6px;">Quick log — pick a container, then enter the amount:</div>
-              <div style="display:flex; gap:8px; flex-wrap:wrap;" id="hydQuickLog">
-                ${containers.map(c=>`
-                  <button class="btn secondary sm hyd-container-btn" data-cid="${escapeHtml(c.id)}" style="display:flex; align-items:center; gap:6px;" onclick="openHydrationAmountInput('${date}','${c.id}')" title="Log ${escapeHtml(c.name)}">
-                    <span style="font-size:15px;">${c.icon}</span> ${escapeHtml(c.name)}
-                  </button>
-                `).join('')}
-              </div>
-              <div id="hydAmountRow" style="display:none; margin-top:10px;"></div>
-            ` : `<div class="page-sub">No containers yet — open ⚙ above to add one.</div>`}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    ${groupOrder.length ? `
-      <div class="section">
-        <div class="section-head"><h2>Today's Log</h2></div>
-        <div class="card" style="padding:4px 16px;">
-          ${groupOrder.map(key=>{
-            const g = groups[key];
-            const container = containers.find(c=>c.id===g.containerId);
-            return `
-              <div class="metric-manage-row">
-                <span class="metric-manage-name">${container?container.icon:'💧'} ${container?escapeHtml(container.name):'Unknown container'} ${g.count>1?`<span class="page-sub">×${g.count}</span>`:''} <span class="page-sub">${g.totalMl}ml</span></span>
-                <button class="icon-btn" title="Remove one" onclick="deleteHydrationLogOccurrence('${date}','${g.containerId}')">✕</button>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      </div>
-    ` : ''}
-  `;
-}
-function renderHydrationSettingsModalBody(){
-  const containers = state.settings.hydrationContainers;
-  return `
-    <div class="modal">
-      <h3>Manage Containers</h3>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-        <b class="page-sub" style="text-transform:uppercase; font-size:11px;">Containers</b>
-        <button class="btn secondary sm" onclick="openHydrationContainerModal()">+ Add Container</button>
-      </div>
-      ${containers.map(c=>`
-        <div class="metric-manage-row">
-          <span class="metric-manage-name">${c.icon} ${escapeHtml(c.name)}</span>
-          <button class="icon-btn" title="Edit" onclick="openHydrationContainerModal('${c.id}')">✎</button>
-          <button class="icon-btn" title="Delete" onclick="deleteHydrationContainer('${c.id}')">✕</button>
-        </div>
-      `).join('') || `<div class="page-sub" style="padding:6px 0;">No containers yet.</div>`}
-
-      <div class="modal-actions">
-        <button class="btn secondary" onclick="document.getElementById('hydSettingsOverlay').remove();">Done</button>
-      </div>
-    </div>
-  `;
-}
-function openHydrationSettingsModal(){
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.id = 'hydSettingsOverlay';
-  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
-  overlay.innerHTML = renderHydrationSettingsModalBody();
-  document.body.appendChild(overlay);
-}
-// Re-render just the settings modal body (not the whole page) after an
-// edit made from within it, so it stays open and in sync — container/
-// liquid-type add/edit/delete already call renderMain() for the page
-// behind it; this keeps the modal itself current too.
-function refreshHydrationSettingsModalIfOpen(){
-  const overlay = document.getElementById('hydSettingsOverlay');
-  if(overlay) overlay.innerHTML = renderHydrationSettingsModalBody();
-}
-
 function renderHealthView(){
   ensureCoreMetricDefs();
   const viewDate = state.healthViewDate;
@@ -9219,8 +8904,6 @@ function renderHealthView(){
       ${viewDate!==todayStr() ? `<button class="btn ghost sm" onclick="setHealthViewDate(todayStr())">↺ Jump to Today</button>` : ''}
       <span class="page-sub" style="margin-left:auto;">${fullDate(viewDate)}</span>
     </div>
-
-    ${renderHydrationSection(viewDate)}
 
     <div class="health-grid">
       ${visibleMetrics.map(m=>renderMetricCard(m, entry)).join('')}
@@ -10596,10 +10279,10 @@ function renderMobileWorkout(){
       const label = s.isWarmup ? 'W' : String(n);
       const rirTxt = s.toFailure ? 'F' : (s.rir != null ? String(s.rir) : '—');
       return `<div class="mw-set ${s.done?'done':''} ${s.isWarmup?'warm':''}">
-        <button class="mw-tick" onclick="toggleSetDone('${date}','${eid}',${s.setNo},${restSec});" aria-label="${s.done?'Undo':'Complete'} set ${label}">${s.done ? MW_SVG.check : label}</button>
-        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" aria-label="Weight for set ${label}"><span>kg</span></label>
-        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" aria-label="Reps for set ${label}"><span>reps</span></label>
-        <button class="mw-rir ${s.toFailure?'fail':''}" onclick="openMwRirSheet('${date}','${eid}',${s.setNo})" aria-label="Effort for set ${label}"><small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></button>
+        <button class="mw-tick" data-mw-set="${date}|${eid}|${s.setNo}" onclick="mwTickTap('${date}','${eid}',${s.setNo},${restSec});" aria-label="${s.done?'Undo':'Complete'} set ${label}">${s.done ? MW_SVG.check : label}</button>
+        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|weightKg" aria-label="Weight for set ${label}"><span>kg</span></label>
+        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|reps" aria-label="Reps for set ${label}"><span>reps</span></label>
+        <div class="mw-rir ${s.toFailure?'fail':''}" aria-label="Effort for set ${label}"><small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></div>
       </div>`;
     }).join('');
     body = `<div class="mw-sets">${rows}
@@ -10727,6 +10410,7 @@ function openMwMenu(){
     <div class="mw-menugroup">
       ${item('Add exercise', `openQuickAddExerciseModal('${date}')`)}
       ${item('Plan day', `openPlanDayModal('${date}')`)}
+      ${cur ? item('Swap this exercise', `openMwSwapSheet('${date}','${escapeHtml(cur)}')`, 'Same primary muscle') : ''}
       ${cur ? item('Remove this exercise', `removeExerciseFromDay('${date}','${escapeHtml(cur)}')`) : ''}
     </div>
     <div class="mw-eyebrow">TRAINING PAGES</div>
@@ -10742,6 +10426,111 @@ function openMwMenu(){
       ${item('All CalendarOS pages', `openMobileNav()`, 'Dashboard, tasks, settings and the rest')}
     </div>`);
 }
+/* ---------- v4.67.0: swap an exercise mid-workout ----------
+   Offers library exercises that share the current one's PRIMARY muscle. Sets
+   already done stay on the old exercise; the new one gets the remaining sets
+   (target sets - done sets) at its own last-completed weight. The swap also
+   replaces the exercise in the session plan for this day and every later day. */
+function mwSwapCandidates(date, exId){
+  const cur = getTrainingExerciseById(exId);
+  if(!cur) return [];
+  const prim = new Set(exMuscleGroups(cur, 'primary'));
+  if(!prim.size) return [];
+  const onDay = new Set(getTrainingDayExerciseIds(date));
+  return state.training.exercises
+    .filter(e=> e.id!==exId && e.category!=='walking' && !onDay.has(e.id) && exMuscleGroups(e,'primary').some(m=>prim.has(m)))
+    .sort((a,b)=> String(a.name).localeCompare(String(b.name)));
+}
+function openMwSwapSheet(date, exId){
+  const cur = getTrainingExerciseById(exId);
+  if(!cur || cur.category==='walking'){ showToast('Walking cannot be swapped'); return; }
+  const cands = mwSwapCandidates(date, exId);
+  const rows = cands.map(e=>{
+    const l = getLastCompletedSession(e.id, null);
+    const sub = l && l.topWeightKg!=null ? `Last: ${l.topWeightKg} kg` : 'No history yet';
+    return `<button class="mw-menuitem" onclick="mwCloseSheet('mwSwap'); mwSwapExercise('${date}','${escapeHtml(exId)}','${escapeHtml(e.id)}')"><span>${escapeHtml(e.name)}<small>${sub}</small></span></button>`;
+  }).join('');
+  mwSheet('mwSwap', `
+    <div class="mw-eyebrow">SWAP ${escapeHtml(cur.name).toUpperCase()}</div>
+    <div class="mw-sheet-sub">Same primary muscle. Sets you have already done stay on ${escapeHtml(cur.name)}; the new exercise takes the remaining sets and replaces it in the plan for this day and later days.</div>
+    ${rows || '<div class="mw-sheet-sub">No other exercise in your library shares this primary muscle.</div>'}`);
+}
+function mwSwapExercise(date, oldId, newId){
+  const oldEx = getTrainingExerciseById(oldId), newEx = getTrainingExerciseById(newId);
+  if(!oldEx || !newEx || oldId===newId) return false;
+  if(getTrainingDayExerciseIds(date).includes(newId)){ showToast('Already on this day'); return false; }
+  if(!state.training.sets) state.training.sets = [];
+  const cal = getTrainingCalEntry(date);
+  const session = cal ? getTrainingSessionById(cal.sessionId) : null;
+  const block = session && session.blocks ? session.blocks.find(b=>b.exerciseId===oldId) : null;
+  const oldSets = getSetsForExercise(date, oldId);
+  const doneWork = oldSets.filter(x=>x.done && !x.isWarmup).length;
+  const target = (block && Number(block.sets)) || oldSets.filter(x=>!x.isWarmup).length || 3;
+  const remaining = Math.max(0, target - doneWork);
+  if(remaining === 0){ showToast('All sets already done — nothing left to swap'); return false; }
+
+  // 1. old exercise: keep done sets, drop the rest
+  const keep = oldSets.filter(x=>x.done);
+  deleteTrainingSetsForExercise(date, oldId);
+  pendingTrainingDeletes.push({ table:'training_sets', match:{ log_date:date, exercise_id:oldId } });
+  keep.forEach((x,i)=>{ x.setNo = i+1; state.training.sets.push(x); });
+  if(keep.length){ syncTrainingLogFromSets(date, oldId); }
+  else {
+    state.training.logs = state.training.logs.filter(l=> !(l.date===date && l.exerciseId===oldId));
+    pendingTrainingDeletes.push({ table:'training_logs', match:{ log_date:date, exercise_id:oldId } });
+    if(state.trainingPendingAdds[date]) state.trainingPendingAdds[date] = state.trainingPendingAdds[date].filter(id=>id!==oldId);
+    delete state.trainingDraftValues[trainingDraftKey(date, oldId)];
+  }
+
+  // 2. new exercise: remaining sets at its own last-completed weight
+  const last = getLastCompletedSession(newId, date);
+  const lastWork = last ? last.sets.filter(x=>!x.isWarmup) : [];
+  let weight = last && last.topWeightKg!=null ? last.topWeightKg : (lastWork[0] ? lastWork[0].weightKg : null);
+  if(weight==null){ const fb = (state.settings.exerciseSuggestions||{})[newId]; if(fb && fb.weightKg!=null) weight = fb.weightKg; }
+  const reps = lastWork[0] ? lastWork[0].reps : ((block && block.reps) ? (parseInt(String(block.reps).split('-')[0])||10) : 10);
+  for(let i=0;i<remaining;i++){
+    upsertTrainingSet({ date, exerciseId:newId, setNo:i+1, reps, weightKg:weight, done:false, rir:null, toFailure:false, isWarmup:false, restTakenSec:null, loggedAt:null });
+  }
+  if(!state.trainingPendingAdds[date]) state.trainingPendingAdds[date] = [];
+  if(!state.trainingPendingAdds[date].includes(newId)) state.trainingPendingAdds[date].push(newId);
+
+  // 3. plan: this day's session and every later day's session
+  const seen = new Set();
+  const swapBlock = (sess)=>{
+    if(!sess || !sess.blocks || seen.has(sess.id)) return null;
+    seen.add(sess.id);
+    if(sess.blocks.some(b=>b.exerciseId===newId)) return null;
+    const b = sess.blocks.find(x=>x.exerciseId===oldId);
+    if(!b) return null;
+    b.exerciseId = newId;
+    recomputeBlockPlanForSwap(b);
+    return b;
+  };
+  swapBlock(session);
+  state.training.calendar.filter(c=>c.date>date && c.sessionId).forEach(c=>{
+    const sess = getTrainingSessionById(c.sessionId);
+    const alreadySeen = sess && seen.has(sess.id);
+    const had = (state.training.sets||[]).some(x=>x.date===c.date && x.exerciseId===oldId && !x.done);
+    const b = alreadySeen ? (sess.blocks||[]).find(x=>x.exerciseId===newId) : swapBlock(sess);
+    if(had){
+      deleteTrainingSetsForExercise(c.date, oldId);
+      pendingTrainingDeletes.push({ table:'training_sets', match:{ log_date:c.date, exercise_id:oldId } });
+      if(b && sess) ensureSetsAutoFilled(c.date, [newId], sess);
+    }
+  });
+
+  if(!state.mwExIdx) state.mwExIdx = {};
+  const ordered = mwPrepareDay(date).exerciseIds;
+  const ni = ordered.indexOf(newId);
+  if(ni >= 0) state.mwExIdx[date] = ni;
+  scheduleTrainingDraftSave();
+  flushTrainingDrafts();
+  saveTraining();
+  renderMain();
+  showToast(`Swapped to ${newEx.name}`);
+  return true;
+}
+
 function openMwDayPicker(){
   const date = state.trainingSelectedDate;
   mwSheet('mwDay', `
@@ -10753,24 +10542,42 @@ function openMwDayPicker(){
     <button class="mw-menuitem" onclick="mwCloseSheet('mwDay'); setTrainingViewDate('${todayStr()}')"><span>Jump to today</span></button>
     <input type="date" class="mw-date" value="${date}" onchange="mwCloseSheet('mwDay'); setTrainingViewDate(this.value)" aria-label="Pick a date">`);
 }
-function openMwRirSheet(date, exId, setNo){
+function mwTickTap(date, exId, setNo, restSec){
+  if(_mwLongFired){ _mwLongFired = false; return; }
+  const s = (state.training.sets||[]).find(x=>x.date===date && x.exerciseId===exId && x.setNo===setNo);
+  if(!s) return;
+  if(s.done || s.isWarmup){ toggleSetDone(date, exId, setNo, restSec); return; }   // undo, or finish a warm-up straight away
+  openMwRirSheet(date, exId, setNo, true);
+}
+function openMwRirSheet(date, exId, setNo, completing){
   const s = (state.training.sets||[]).find(x=>x.date===date && x.exerciseId===exId && x.setNo===setNo);
   if(!s) return;
   const eid = escapeHtml(exId);
   const pill = (label, active, call, extra)=>`<button class="mw-pill ${active?'on':''} ${extra||''}" onclick="${call}">${label}</button>`;
+  const restSec = defaultRestSec(getTrainingExerciseById(exId)) || 90;
+  const skip = (completing && !s.done) ? `<button class="mw-pill wide" onclick="mwDoneNoRir('${date}','${eid}',${setNo},${restSec})">Done, no RIR</button>` : '';
   mwSheet('mwRir', `
     <div class="mw-eyebrow">EFFORT · ${s.isWarmup ? 'WARM-UP SET' : 'SET ' + setNo}</div>
-    <div class="mw-sheet-sub">Reps you could still have done. Picking one marks the set done.</div>
+    <div class="mw-sheet-sub">${completing && !s.done ? 'Reps you could still have done. Picking one completes the set.' : 'Change the effort logged for this set.'}</div>
     <div class="mw-pills">
       ${[0,1,2,3,4].map(r=>pill(String(r), s.rir===r && !s.isWarmup, `mwPickMode('${date}','${eid}',${setNo},'rir',${r})`)).join('')}
       ${pill('F', !!s.toFailure, `mwPickMode('${date}','${eid}',${setNo},'failure')`, 'fail')}
     </div>
     <div class="mw-daybtns">
       ${pill('Warm-up set', !!s.isWarmup, `mwPickMode('${date}','${eid}',${setNo},'warmup')`, 'wide')}
+      ${skip}
       <button class="mw-pill wide" onclick="mwCloseSheet('mwRir')">Close</button>
     </div>`);
 }
+function mwDoneNoRir(date, exId, setNo, restSec){
+  mwCloseSheet('mwRir');
+  const s = (state.training.sets||[]).find(x=>x.date===date && x.exerciseId===exId && x.setNo===setNo);
+  if(s && !s.done) toggleSetDone(date, exId, setNo, restSec);
+}
 function mwPickMode(date, exId, setNo, mode, val){
+  const s = (state.training.sets||[]).find(x=>x.date===date && x.exerciseId===exId && x.setNo===setNo);
+  // re-picking the value a finished set already has must not silently un-finish it
+  if(s && s.done && ((mode==='rir' && s.rir===val) || (mode==='failure' && s.toFailure) || (mode==='warmup' && s.isWarmup))){ mwCloseSheet('mwRir'); return; }
   setSetMode(date, exId, setNo, mode, val);
   mwCloseSheet('mwRir');
   renderMain();
@@ -11056,14 +10863,14 @@ function renderTrainingExerciseLogRow(date, block, index, orderNum){
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <input type="number" min="0" step="1" value="${s.reps||''}" placeholder="${defaultReps||'reps'}"
             class="train-input set-num-input num-pick"
-            inputmode="none" readonly onclick="openNumPicker(this,'reps','${date}','${escapeHtml(block.exerciseId)}',${s.setNo})"
+            inputmode="none" readonly onclick="openNumPicker(this,'reps','${date}','${escapeHtml(block.exerciseId)}',${s.setNo})" data-np="${date}|${escapeHtml(block.exerciseId)}|${s.setNo}|reps"
             onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextTrainInput(this);}"
             oninput="updateSetField('${date}','${escapeHtml(block.exerciseId)}',${s.setNo},'reps',this.value===''?null:Number(this.value));"
             aria-label="Reps for set ${s.setNo}">
           <span class="set-unit">reps</span>
           <input type="number" min="0" step="0.5" value="${s.weightKg||''}" placeholder="${defaultWeight||'kg'}"
             class="train-input set-num-input num-pick"
-            inputmode="none" readonly onclick="openNumPicker(this,'weightKg','${date}','${escapeHtml(block.exerciseId)}',${s.setNo})"
+            inputmode="none" readonly onclick="openNumPicker(this,'weightKg','${date}','${escapeHtml(block.exerciseId)}',${s.setNo})" data-np="${date}|${escapeHtml(block.exerciseId)}|${s.setNo}|weightKg"
             onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextTrainInput(this);}"
             oninput="updateSetField('${date}','${escapeHtml(block.exerciseId)}',${s.setNo},'weightKg',this.value===''?null:Number(this.value));"
             aria-label="Weight for set ${s.setNo}">
@@ -11339,100 +11146,113 @@ function setSetMode(date, exId, setNo, mode, rirValue){
   }
   updateTrainingDayAggPreview();
 }
-/* ---------- v4.65.0: iPhone-style scroll-wheel picker for reps / weight ----------
-   Replaces the full on-screen keyboard. Reps = one wheel (0-60). Weight = two
-   wheels: whole kg (0-300) and a fraction (.00/.25/.50/.75). Scroll-snap
-   wheels, OK commits, Clear empties, "Use keyboard" falls back to typing. */
-const NUMPICK_ITEM_H = 40;
-let _numPick = null;
-function _npWheel(id, items, selIdx){
-  return `<div class="np-wheel" id="${id}" data-n="${items.length}">
-    <div class="np-pad"></div>
-    ${items.map((t,i)=>`<div class="np-item ${i===selIdx?'np-sel':''}" data-i="${i}" onclick="numPickTap('${id}',${i})">${t}</div>`).join('')}
-    <div class="np-pad"></div></div>`;
+/* ---------- v4.67.0: window-less drag scrubber for reps / weight ----------
+   Tap a number to arm it (it lights up), then drag up/down on it to change it
+   live — about one step per 20px, up = more. Weight steps by that exercise's
+   own machine increment (2.5/5/10/20kg), reps by 1. The value saves on
+   release. Tapping an armed number again, or tapping anywhere else, gives
+   typing / disarms. Replaces the v4.65.0 wheel popup. */
+const NP_PX_PER_STEP = 20;
+let _npArmed = null;   // { el, kind, date, exId, setNo }
+let _npDrag = null;    // { y0, v0, step, moved }
+let _npSuppressUntil = 0;
+function _npFmt(v){ return String(Math.round(v*100)/100); }
+function _npStepFor(kind, exId){ return kind === 'reps' ? 1 : getExerciseWeightIncrement(exId); }
+function _npCurrent(el, kind){
+  if(el.value !== '' && !isNaN(Number(el.value))) return Number(el.value);
+  if(el.placeholder !== '' && !isNaN(Number(el.placeholder))) return Number(el.placeholder);
+  return kind === 'reps' ? 10 : 0;
 }
-function openNumPicker(inputEl, kind, date, exId, setNo){
-  if(_numPick) closeNumPicker(true);
-  const isReps = kind === 'reps';
-  const cur = inputEl.value !== '' ? Number(inputEl.value) : (inputEl.placeholder !== '' && !isNaN(Number(inputEl.placeholder)) ? Number(inputEl.placeholder) : (isReps ? 10 : 20));
-  _numPick = { inputEl, kind, date, exId, setNo };
-  let body, title;
-  if(isReps){
-    title = 'Reps';
-    const v = Math.max(0, Math.min(60, Math.round(cur)));
-    body = _npWheel('npW1', Array.from({length:61}, (_,i)=>String(i)), v);
-    _numPick.init = [v];
-  } else {
-    title = 'Weight (kg)';
-    const whole = Math.max(0, Math.min(300, Math.floor(cur + 1e-9)));
-    const fracIdx = Math.max(0, Math.min(3, Math.round((cur - whole) * 4)));
-    body = _npWheel('npW1', Array.from({length:301}, (_,i)=>String(i)), whole)
-         + '<div class="np-dot">.</div>'
-         + _npWheel('npW2', ['00','25','50','75'], fracIdx);
-    _numPick.init = [whole, fracIdx];
-  }
-  const ov = document.createElement('div');
-  ov.className = 'modal-overlay np-overlay'; ov.id = 'numPickOverlay';
-  ov.onclick = (e)=>{ if(e.target === ov) closeNumPicker(true); };
-  ov.innerHTML = `<div class="modal np-modal">
-    <h3 style="margin-bottom:10px;text-align:center;">${title}</h3>
-    <div class="np-wheels"><div class="np-band"></div>${body}</div>
-    <div class="np-actions">
-      <button type="button" class="btn ghost sm" onclick="numPickClear()">Clear</button>
-      <button type="button" class="btn ghost sm" onclick="numPickKeyboard()">Use keyboard</button>
-      <button type="button" class="btn ghost sm" onclick="closeNumPicker(true)">Cancel</button>
-      <button type="button" class="btn brass" onclick="numPickOk()">OK</button>
-    </div></div>`;
-  document.body.appendChild(ov);
-  _numPick.init.forEach((idx, k)=>{
-    const w = document.getElementById('npW'+(k+1));
-    if(w){
-      w.scrollTop = idx * NUMPICK_ITEM_H;
-      let t = null;
-      w.addEventListener('scroll', ()=>{
-        clearTimeout(t);
-        t = setTimeout(()=>{
-          const i = _npIndex(w.id);
-          w.querySelectorAll('.np-item').forEach(el=>el.classList.toggle('np-sel', Number(el.dataset.i) === i));
-        }, 60);
-      });
-    }
-  });
+function numPickDisarm(){
+  if(_npArmed && _npArmed.el) _npArmed.el.classList.remove('np-armed');
+  _npArmed = null; _npDrag = null;
 }
-function _npIndex(id){
-  const w = document.getElementById(id); if(!w) return 0;
-  const n = Number(w.dataset.n) || 1;
-  return Math.max(0, Math.min(n-1, Math.round(w.scrollTop / NUMPICK_ITEM_H)));
+function _npCoarse(){
+  try{ return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }catch(e){ return true; }
 }
-function numPickTap(id, i){ const w = document.getElementById(id); if(w) w.scrollTo ? w.scrollTo({top:i*NUMPICK_ITEM_H, behavior:'smooth'}) : (w.scrollTop = i*NUMPICK_ITEM_H); }
-function _numPickValue(){
-  if(!_numPick) return null;
-  if(_numPick.kind === 'reps') return _npIndex('npW1');
-  return _npIndex('npW1') + _npIndex('npW2') * 0.25;
+function openNumPicker(el, kind, date, exId, setNo){
+  if(Date.now() < _npSuppressUntil) return;           // the click that follows a drag
+  if(_npArmed && _npArmed.el === el){ numPickKeyboard(); return; }   // second tap = type
+  if(!_npCoarse() && !(typeof isMobileUi === 'function' && isMobileUi())){ _npArmed = { el, kind, date, exId, setNo }; numPickKeyboard(); return; } // desktop mouse: just type
+  numPickDisarm();
+  el.classList.add('np-armed');
+  _npArmed = { el, kind, date, exId, setNo };
 }
-function _numPickCommit(v){
-  const np = _numPick; if(!np) return;
-  np.inputEl.value = v == null ? '' : String(v);
-  updateSetField(np.date, np.exId, np.setNo, np.kind, v);
-}
-function numPickOk(){
-  const v = _numPickValue();
-  _numPickCommit(v === 0 ? null : v);
-  closeNumPicker(true);
-}
-function numPickClear(){ _numPickCommit(null); closeNumPicker(true); }
 function numPickKeyboard(){
-  const el = _numPick && _numPick.inputEl; if(!el) return;
-  const np = _numPick; closeNumPicker(true);
+  const np = _npArmed; if(!np) return;
+  const el = np.el; numPickDisarm();
   el.removeAttribute('readonly'); el.setAttribute('inputmode', np.kind === 'reps' ? 'numeric' : 'decimal');
   el.onclick = null;
   el.oninput = ()=> updateSetField(np.date, np.exId, np.setNo, np.kind, el.value === '' ? null : Number(el.value));
   el.onblur = ()=>{ el.setAttribute('readonly',''); el.setAttribute('inputmode','none'); };
   el.focus();
 }
-function closeNumPicker(){
-  const ov = document.getElementById('numPickOverlay'); if(ov) ov.remove();
-  _numPick = null;
+function _npValueAt(dy){
+  const d = _npDrag, np = _npArmed; if(!d || !np) return null;
+  const steps = Math.round(dy / NP_PX_PER_STEP);
+  let v = d.v0 + steps * d.step;
+  v = Math.max(0, Math.min(np.kind === 'reps' ? 100 : 500, v));
+  return Math.round(v*100)/100;
+}
+function _npTarget(t){
+  if(!t || !t.closest) return null;
+  const tile = t.closest('.mw-tile');
+  return tile ? tile.querySelector('input.num-pick') : t.closest('input.num-pick');
+}
+function _npDown(e){
+  const inp = _npTarget(e.target);
+  if(_npArmed && inp === _npArmed.el){
+    const step = _npStepFor(_npArmed.kind, _npArmed.exId);
+    let v0 = _npCurrent(inp, _npArmed.kind);
+    if(_npArmed.kind !== 'reps') v0 = snapToIncrement(v0, step);   // off-grid weights snap onto the machine's grid
+    _npDrag = { y0: e.clientY, v0, step, moved:false };
+    try{ inp.setPointerCapture && e.pointerId != null && inp.setPointerCapture(e.pointerId); }catch(err){}
+  } else if(_npArmed){
+    numPickDisarm();
+  }
+}
+function _npMove(e){
+  if(!_npDrag || !_npArmed) return;
+  const dy = _npDrag.y0 - e.clientY;
+  if(!_npDrag.moved && Math.abs(dy) < 8) return;
+  _npDrag.moved = true;
+  const v = _npValueAt(dy);
+  if(v != null) _npArmed.el.value = _npFmt(v);
+  if(e.cancelable) e.preventDefault();
+}
+function _npUp(){
+  const d = _npDrag, np = _npArmed;
+  _npDrag = null;
+  if(!d || !np || !d.moved) return;
+  _npSuppressUntil = Date.now() + 400;
+  const raw = np.el.value === '' ? null : Number(np.el.value);
+  const v = (raw === 0 || raw == null) ? null : raw;
+  np.el.value = v == null ? '' : _npFmt(v);
+  updateSetField(np.date, np.exId, np.setNo, np.kind, v);
+}
+/* long-press a set's tick to reopen its effort sheet (edit RIR after the fact) */
+let _mwLongTimer = null, _mwLongFired = false;
+function _mwTickDown(e){
+  const t = e.target && e.target.closest ? e.target.closest('.mw-tick') : null;
+  if(!t || !t.dataset.mwSet) return;
+  clearTimeout(_mwLongTimer);
+  _mwLongTimer = setTimeout(()=>{
+    _mwLongFired = true; setTimeout(()=>{ _mwLongFired = false; }, 700);
+    const [date, exId, setNo] = t.dataset.mwSet.split('|');
+    openMwRirSheet(date, exId, Number(setNo), false);
+  }, 500);
+}
+function _mwTickUp(){ clearTimeout(_mwLongTimer); }
+if(typeof document !== 'undefined' && document.addEventListener && !(typeof window !== 'undefined' && window.__npBound)){
+  if(typeof window !== 'undefined') window.__npBound = true;
+  document.addEventListener('pointerdown', _npDown, true);
+  document.addEventListener('pointermove', _npMove, {capture:true, passive:false});
+  document.addEventListener('pointerup', _npUp, true);
+  document.addEventListener('pointercancel', _npUp, true);
+  document.addEventListener('pointerdown', _mwTickDown, true);
+  document.addEventListener('pointerup', _mwTickUp, true);
+  document.addEventListener('pointercancel', _mwTickUp, true);
+  document.addEventListener('pointermove', (e)=>{ if(_mwLongTimer && Math.abs(e.movementY||0) + Math.abs(e.movementX||0) > 12) clearTimeout(_mwLongTimer); }, true);
 }
 
 function updateSetField(date, exId, setNo, field, value){
@@ -11440,6 +11260,20 @@ function updateSetField(date, exId, setNo, field, value){
   const s = state.training.sets.find(s=>s.date===date&&s.exerciseId===exId&&s.setNo===setNo);
   if(!s) return;
   s[field] = value;
+  // v4.67.0 cascade: a weight/rep change on a working set carries down to the
+  // LATER, not-yet-done, non-warm-up sets of this same exercise on this day.
+  // Done sets, warm-ups, other exercises and every other day are never touched.
+  if((field === 'weightKg' || field === 'reps') && value != null && !s.isWarmup){
+    state.training.sets.forEach(o=>{
+      if(o.date===date && o.exerciseId===exId && o.setNo>setNo && !o.done && !o.isWarmup){
+        o[field] = value;
+        try{
+          const key = `${date}|${exId}|${o.setNo}|${field}`;
+          document.querySelectorAll('[data-np]').forEach(el=>{ if(el.dataset.np === key && document.activeElement !== el) el.value = String(value); });
+        }catch(e){}
+      }
+    });
+  }
   scheduleTrainingDraftSave();
   // Partial re-render of just the set row to avoid losing focus.
   updateTrainingDayAggPreview();
@@ -14792,6 +14626,7 @@ function buildTrainingReviewPack(){
     .map(h=>{
       const values = {};
       state.healthMetricDefs.forEach(m=>{
+        if(m.id==='core_water') return;   // v4.67.0: hydration removed
         const v = getMetricValue(h,m);
         if(v===null || v===undefined || v==='') return;
         values[m.name] = m.unit ? `${v} ${m.unit}` : v;
@@ -14800,6 +14635,8 @@ function buildTrainingReviewPack(){
     })
     .filter(h=> Object.keys(h.values).length)
     .sort((a,b)=>a.date<b.date?-1:1);
+
+  const missingHealthData = reviewPackMissingData();
 
   // --- Adherence ---
   const calendarDates = state.training.calendar.filter(c=>c.date>=sinceDate&&c.date<=today);
@@ -14837,6 +14674,7 @@ function buildTrainingReviewPack(){
     reviewPeriod: { from:sinceDate, to:today },
     goals: { weightLossTargetKg: 20, targetWeightKg: 85, weeklyTrainingDays: 7-restDayAbbrs.length },
     bodyMetrics,
+    missingHealthData,
     adherence,
     weeklyVolumeByMuscle: volumeByMuscle,
     plannedRemainingVolumeByMuscle,
@@ -14888,7 +14726,54 @@ async function saveTrainingGoalsAndCopyPack(){
   await saveSettings();
   const overlay = document.getElementById('trainingGoalsOverlay');
   if(overlay) overlay.remove();
+  const missing = reviewPackMissingData();
+  if(missing.length){ openMissingDataModal(missing); return; }
   copyTrainingReviewPack();
+}
+/* v4.67.0: before the pack is copied, check the last 30 days (today excluded)
+   for health-log metrics left empty. Every visible metric counts, rest days
+   included. Days before the first ever health entry are not "missing". */
+function reviewPackMissingData(){
+  const today = todayStr();
+  const defs = [...state.healthMetricDefs].filter(m=>m.visible!==false && m.id!=='core_water').sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  if(!defs.length) return [];
+  const entries = state.health.filter(h=> defs.some(m=>{ const v=getMetricValue(h,m); return !(v===null||v===undefined||v===''); }));
+  if(!entries.length) return [];
+  const first = entries.map(h=>h.date).sort()[0];
+  const out = [];
+  for(let i=1;i<=30;i++){
+    const d = addDays(today, -i);
+    if(d < first) break;
+    const h = state.health.find(x=>x.date===d);
+    const miss = defs.filter(m=>{ const v = h ? getMetricValue(h,m) : undefined; return v===null||v===undefined||v===''; }).map(m=>m.name);
+    if(miss.length) out.push({ date:d, missing:miss });
+  }
+  return out;
+}
+function openMissingDataModal(missing){
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.id = 'missingDataOverlay';
+  ov.onclick = (e)=>{ if(e.target===ov) ov.remove(); };
+  ov.innerHTML = `<div class="modal" style="max-width:520px;">
+    <h3>Health data missing</h3>
+    <div class="page-sub" style="margin-bottom:10px;">${missing.length} of the last 30 days have empty health-log metrics. The AI review is only as good as the data, so fill these in first if you can.</div>
+    <div style="max-height:46vh; overflow:auto; margin-bottom:12px;">
+      ${missing.map(m=>`<div class="row" style="align-items:flex-start;"><b style="min-width:110px;">${escapeHtml(humanDate(m.date))}</b><span class="page-sub">${m.missing.map(escapeHtml).join(', ')}</span></div>`).join('')}
+    </div>
+    <div class="modal-actions">
+      <button class="btn secondary" onclick="copyReviewPackAnyway()">Copy anyway</button>
+      <button class="btn brass" onclick="goFillMissingData('${missing[0].date}')">Go fill in</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+}
+function copyReviewPackAnyway(){
+  const ov = document.getElementById('missingDataOverlay'); if(ov) ov.remove();
+  copyTrainingReviewPack();
+}
+function goFillMissingData(date){
+  const ov = document.getElementById('missingDataOverlay'); if(ov) ov.remove();
+  state.healthViewDate = date;
+  setView('health');
 }
 function copyTrainingReviewPack(){
   const pack = buildTrainingReviewPack();
@@ -14906,7 +14791,7 @@ function copyTrainingReviewPack(){
   const priorityMuscleLabels = (trainingGoals.priorityMuscles||[]).map(mg=>MUSCLE_GROUP_LABELS[mg]||mg);
   const band = state.settings.muscleBand || MUSCLE_BAND_DEFAULT;
 
-  const prompt = `You are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
+  const prompt = `You are my coach: a world-class strength and hypertrophy coach with an excellent track record of building muscle in real people, and deep, current knowledge of programming, recovery and nutrition. Be direct. Do not sugar-coat anything, do not flatter me, and do not soften bad news: tell me exactly how it is, including when my own plan, rules or logging are the problem. If a rule I set looks wrong for my goal, say so plainly and still follow it in the plan unless it is physically impossible.\n\nYou are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
 
 MY GOALS: lose ~${pack.goals.weightLossTargetKg}kg (current target ${pack.goals.targetWeightKg}kg), build muscle, train ${pack.goals.weeklyTrainingDays} days/week.
 
@@ -14930,15 +14815,21 @@ ${packJson}
 
 WHAT I NEED FROM YOU:
 
+0. **Data sense-check (do this first, before anything else).** Go through the data pack and the library critically. List, bluntly, anything that does not make sense or looks wrong: impossible or implausible values (a weight or rep count that jumps wildly, a bodyweight that moves several kg in a day, sets with no weight or reps), sessions or days that contradict each other, exercises with no history, and any missing information. missingHealthData in the pack lists days where health-log metrics were left empty; say how much that weakens your conclusions. Do not quietly work around bad data: name it and say what you assumed. Then say what EXTRA data (a metric, a measurement, a log habit, a test) would let you coach me better and speed up my progress. If everything is clean, say so in one line.
+
 1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the ${band.min}–${band.max} set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. ${state.settings.includeSecondaryMuscles ? "Secondary muscles are currently included at half credit per set (toggled on in the app) — a muscle only hit as a secondary target is already reflected fractionally in these numbers, you don't need to add anything for it separately." : "Secondary muscles are currently excluded entirely (toggled off in the app) — these numbers only reflect each exercise's primary target muscles, so a muscle that's only ever hit as a secondary target on my current exercises will read as under-volume even if it's getting real indirect work; keep that in mind rather than treating a low secondary-only muscle as purely neglected."} Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
 
 3. **Failure-test calibration.** My app automatically schedules one isolation exercise's last set as a true push-to-failure test roughly every 12 days — see \`failureTests\` in the data pack. This is the strongest signal available for whether an exercise's working weight is right: if a failure set logged well above its \`currentTargetRepRange\`, the working weight is too light and should increase; well below it, ease back. Call out any exercise where this happened, and reflect it directly in the weights/rep ranges you recommend for that exercise below. (The app keeps scheduling these failure tests on its own in future sessions regardless of what's in the imported plan — you don't need to add anything to make that happen, just use the results already collected.)
 
-4. **Two-week plan as a CalendarOS import file.** This is the most important output. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
+4. **Two-week plan as a CalendarOS import file.** This is the most important output. Put the day-by-day rationale (item 6) and the rules check (item 7) BEFORE the JSON code block, so the JSON block is the last thing in your reply apart from item 5. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
 
 5. **Suggested new exercise types, if any — separately, in prose, never in the JSON.** If you think a specific movement not currently in my library would genuinely help (fills a real gap, not just variety for its own sake), name it and explain why in a short paragraph after the JSON block. I'll decide whether to add it to my library myself. Do not add it to the plan or the JSON either way.
+
+6. **Rationale for every planned day.** For each training day in the plan, give two or three lines in your reply (NOT inside the JSON): why these exercises on this day, why this order, and why these weights. Name the muscle-volume or progression reason, not generic filler. Rest days need one line too.
+
+7. **Rules check against my rules.** Before you write the JSON, check your own plan against EVERY rule in this prompt: my fixed rest days, the weekly set floor for every muscle, priority-muscle frequency, exactly 3 working sets per exercise, one weight per exercise per day, weight never backward, each exercise's weightIncrementKg grid, once per week per exercise, no same primary muscle on consecutive training days, block ordering, and the unique dated session names. Give a short pass/fail line per rule. If anything fails, fix the plan, then re-check. Do not output a plan that breaks a rule unless you flag the exception explicitly and say why.
 
 The JSON must follow this exact schema (the same format the app already accepts via Paste & Import):
 \`\`\`
@@ -18354,10 +18245,7 @@ function computeNewDaySummary(last){
   const total = dueOneTime.length + (dueRecurring.length - missedRecurring);
   const rating = total > 0 ? Math.round((done/total)*100) : null;
 
-  const hydrationTotal = getHydrationTotalForDate(last);
-  const hydrationGoal = state.settings.hydrationGoalMl || 2500;
-
-  return { dueOneTime: dueOneTime.length, doneOneTime, dueRecurring: dueRecurring.length, doneRecurring, overdueCleared, done, total, rating, hydrationTotal, hydrationGoal };
+  return { dueOneTime: dueOneTime.length, doneOneTime, dueRecurring: dueRecurring.length, doneRecurring, overdueCleared, done, total, rating };
 }
 
 // Review list for the New Day screen: everything currently overdue (one-time),
@@ -18682,13 +18570,6 @@ function newDaySummaryRowsHtml(s){
     <div class="row"><span>Recurring tasks completed</span><b>${s.doneRecurring} / ${s.dueRecurring}</b></div>
     <div class="row"><span>Overdue tasks cleared that day</span><b>${s.overdueCleared}</b></div>
     <div class="row newday-rating-row"><span>Day rating</span><b>${s.rating===null?'—':s.rating+'%'}</b></div>
-    <div class="row">
-      <span>Water intake</span>
-      <b>${s.hydrationTotal}ml <span class="page-sub">/ ${s.hydrationGoal}ml</span></b>
-    </div>
-    <div style="height:6px; background:var(--paper-dim); border-radius:999px; overflow:hidden; margin-top:-6px; margin-bottom:4px;">
-      <div style="height:100%; width:${Math.min(100, s.hydrationGoal>0?(s.hydrationTotal/s.hydrationGoal)*100:0)}%; background:var(--teal); border-radius:999px;"></div>
-    </div>
   `;
 }
 // Called after any checkbox/missed toggle while this modal is open, so the
