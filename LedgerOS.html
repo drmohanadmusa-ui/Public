@@ -346,12 +346,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.54.0';
+const APP_VERSION = '4.55.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.55.0', date:'2026-10-19', changes:[
+    'FIXED: the Forecast "Export Grid" (wide) CSV had no Source information at all, even though v3.13.0 said it did. Every month column is now followed by a "<month> Source" column saying where that figure came from (Manual entry / Provisions / Budget / Auto-clear / Actual (historical)). For a Smart Rule it names the rule and spells it out in plain English (e.g. \u201CSmart Rule \u201CInsurance sweep\u201D: Balance of 20301 \u2014 Insurance Accrual (reversed)\u201D, or \u201Cheld at 0 until 2026-12\u201D for the months before its target). Re-importing the grid still works: the importer only reads the plain month columns.',
+    'NEW: Reconcile mode (New JV) now shows a collapsible \u201CLast 3 JVs on this account\u201D pane under the reconcile banner \u2014 posted JVs only (never the draft), newest by JV date, only the line that hits the account being reconciled: date, JV#, description, amount. Collapsed by default; click a row to open the JV.',
+    'NEW: Jamiah \u2192 Transactions to Tag now shows this calendar month\u2019s net total of the unallocated transactions listed there, with the count, under the heading.',
+    'NEW: Budget (Plan vs Actual table) and P&L now show an \u201CAccrued\u201D amount next to every expense sub category that has an Accrual Mapping \u2014 the balance of its mapped accrual liability account as of the end of the month shown (P&L: end of the period shown). It also appears on the mapped accrual expense line (e.g. 60199 Government & Banks \u2013 Accrual). Shown as a positive figure when money is genuinely accrued.',
+    'NEW: Budget \u2192 Export Grid now asks what to export: \u201CFuture only\u201D (current month onward, budget figures, as before) or \u201CHistorical + future\u201D (from the earliest ledger month; past months show ACTUAL spend). The importer still ignores every past month, so a historical export is for reference rather than round-tripping.',
+  ]},
   {version:'4.54.0', date:'2026-10-10', changes:[
     'Investments → new 💰 Collect Contributions: for pooled money from several people landing on one platform. Enter each person\u2019s SAR (pre-filled from what their Invested (Out) account shows but the tracker doesn\u2019t hold yet) or a total plus percentages, adjust the USD/USDT that actually arrived, and it records one Deposit split by person. Nothing is posted to the ledger \u2014 the bank / personal / Out JVs stay manual. Run it once per platform.',
     'Transaction window → new \u2696 Split by platform cash on cash-funded buys: fills every person\u2019s units in proportion to their cash on that platform as of the buy date, including anything left over from earlier months. Untick anyone sitting a buy out and their share is spread across the rest. Typing one person\u2019s units by hand switches the auto-split off.',
@@ -3188,11 +3195,32 @@ function exportCashPositionCSV(){
   toast('Exported Cash Position ('+months[0]+' → '+months[months.length-1]+') to CSV');
   logActivity('action', 'Exported Cash Position CSV ('+months.length+' months, '+startMonth+' to '+getGridEndMonth()+')');
 }
+// Plain-English description of a Smart Rule's effect on one month. Single wording source for the
+// Forecast wide export's Source column.
+function forecastSmartRuleDetail(accId, mk, currentMonth){
+  const rule = (D.forecastAccountRules||[]).find(r=>r.account===accId);
+  if(!rule) return forecastSourceLabel('smart_rule');
+  const offset = rule.targetOffset||0;
+  const target = shiftMonthKey(currentMonth, offset);
+  const expr = smartRuleExprLabel({...rule.rule, account: rule.account});
+  const head = 'Smart Rule "'+rule.name+'": ';
+  if(mk===target) return head + expr + (offset? ' (lands on '+target+')' : ' (current month only)');
+  if(mk<target) return head + 'held at 0 until '+target+', when it becomes '+expr;
+  return head + 'frozen at 0 after '+target+' ('+expr+' applies in '+target+')';
+}
+function forecastSourceDetail(cell, accId, mk, currentMonth){
+  if(!cell) return '';
+  if(cell.source==='smart_rule') return forecastSmartRuleDetail(accId, mk, currentMonth);
+  return forecastSourceLabel(cell.source);
+}
 function exportForecastGridCSV(){
   const currentMonth = todayStr().slice(0,7);
   const accs = allExportableAccounts();
   const months = forecastExportMonthKeys(currentMonth);
-  const header = ['Account ID','Account Name','COA Category','Status','Sub-Category','Current Balance', ...months];
+  // Each month column is followed by its own "<month> Source" column. The importer only reads
+  // columns whose header is exactly YYYY-MM, so the Source columns are ignored on re-import.
+  const header = ['Account ID','Account Name','COA Category','Status','Sub-Category','Current Balance'];
+  months.forEach(mk=>{ header.push(mk, mk+' Source'); });
   const lines = [header.map(csvEscape).join(',')];
   accs.forEach(a=>{
     const cat = getForecastCategory(a);
@@ -3200,11 +3228,12 @@ function exportForecastGridCSV(){
     const row = [a.id, accShort(a.id), a.category||'', a.status||'Active', forecastCategoryCsvLabel(cat), accountBalance(a.id)];
     months.forEach(mk=>{
       if(mk<=currentMonth){
-        row.push(forecastActual(a.id, mk)); // historical + current month: reference only
+        row.push(forecastActual(a.id, mk), forecastSourceLabel('actual')); // historical + current month: reference only
       } else if(!isBank && cat && cat!=='ignore'){
-        row.push(computeForecastCell(a, mk, currentMonth).plan);
+        const c = computeForecastCell(a, mk, currentMonth);
+        row.push(c.plan, forecastSourceDetail(c, a.id, mk, currentMonth));
       } else {
-        row.push(''); // Bank Accounts / uncategorized: no forecast projection to show here
+        row.push('', ''); // Bank Accounts / uncategorized: no forecast projection to show here
       }
     });
     lines.push(row.map(csvEscape).join(','));
@@ -4178,6 +4207,25 @@ function reconcileProjected(){
   const draft = jvDraft.lines.filter(l=>Number(l.acc)===reconcileAcc).reduce((s,l)=>s+(Number(l.amt)||0),0);
   return posted + draft;
 }
+// Last n posted JVs (newest by JV date) that touch the account being reconciled — only the line(s)
+// hitting that account. Reads D.ledger only, so an unposted draft never appears here.
+function reconcileRecentJvLines(accId, n){
+  n = n||3;
+  const lines = D.ledger.filter(l=>l.acc===accId);
+  const jvDate = new Map();
+  lines.forEach(l=>{ if(!jvDate.has(l.jv) || l.date>jvDate.get(l.jv)) jvDate.set(l.jv, l.date); });
+  const top = [...jvDate.entries()].sort((a,b)=> b[1].localeCompare(a[1]) || (Number(b[0])-Number(a[0]))).slice(0,n).map(e=>e[0]);
+  const rank = new Map(top.map((jv,i)=>[jv,i]));
+  return lines.filter(l=>rank.has(l.jv)).sort((a,b)=> rank.get(a.jv)-rank.get(b.jv) || (Number(a.id)-Number(b.id)));
+}
+let reconcileJvPaneOpen = false;
+function reconcileRecentJvsHTML(){
+  const rows = reconcileRecentJvLines(reconcileAcc, 3);
+  return `<details id="reconcileJvPane" class="panel" ${reconcileJvPaneOpen?'open':''} ontoggle="reconcileJvPaneOpen=this.open">
+    <summary style="cursor:pointer;font-weight:600">Last 3 JVs on this account</summary>
+    ${rows.length? `<table style="margin-top:8px"><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>${rows.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono">${esc(l.date)}</td><td class="mono">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('')}</tbody></table>` : `<div class="mut" style="font-size:12px;margin-top:8px">No posted JVs on this account yet.</div>`}
+  </details>`;
+}
 function reconcileBannerHTML(){
   if(!reconcileAcc) return '';
   const a = ACC_BY_ID[reconcileAcc];
@@ -4196,7 +4244,7 @@ function reconcileBannerHTML(){
       </div>
       <button class="x noprint" onclick="reconcileAcc=null; renderNewJV()" title="Exit reconciliation">✕</button>
     </div>
-  </div>`;
+  </div>` + reconcileRecentJvsHTML();
 }
 function updateReconcileBanner(){
   if(!reconcileAcc) return;
@@ -4563,6 +4611,24 @@ let accrualPanelOpen = false;
 let accrualMonth = todayStr().slice(0,7);
 let accrualExplanation = [];
 function getAccrualMappings(){ return D.accrualMappings||[]; }
+// "Accrued" for an expense sub category = balance of the accrual LIABILITY account mapped to it in
+// Settings → Accrual Mappings, as of a date. Liabilities are stored negative, so it's shown as the
+// negated balance (positive = money genuinely accrued). null when the category has no mapping.
+function monthEndDateStr(mk){ const [y,m] = mk.split('-').map(Number); return mk+'-'+String(new Date(Date.UTC(y,m,0)).getUTCDate()).padStart(2,'0'); }
+function accruedForCategory(cat, asOfDate){
+  const m = (D.accrualMappings||[]).find(x=>x.category===cat);
+  if(!m || !m.liabilityAcc) return null;
+  return -sumAcc(l=>l.acc===m.liabilityAcc, null, asOfDate);
+}
+function accruedChipHTML(cat, asOfDate){
+  const v = accruedForCategory(cat, asOfDate);
+  if(v===null) return '';
+  return ` <span class="mut accrued-chip" data-accrued-cat="${esc(cat)}" title="Balance of the mapped accrual liability account as of ${esc(asOfDate)}" style="font-weight:400;font-size:12px">\u00B7 Accrued: <b class="mono">${money(v)}</b></span>`;
+}
+function accruedChipForExpenseAcc(accId, asOfDate){
+  const m = (D.accrualMappings||[]).find(x=>x.expenseAcc===accId);
+  return m? accruedChipHTML(m.category, asOfDate) : '';
+}
 function expenseCategoriesList(){
   const cats = [...new Set(D.accounts.filter(a=>firstDigit(a.id)===6 && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account')).map(a=>a.category))].filter(Boolean);
   return cats.sort();
@@ -5963,7 +6029,7 @@ function renderBudgetControls(){
     <div class="panel noprint row" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
       <div><label class="fl">Month</label><input type="month" value="${budgetMonth}" style="width:180px" onchange="budgetMonth=this.value; renderBudgetSummaryTable(); renderBudgetCharts()"></div>
       <div class="row" style="gap:6px">
-        <button class="btn ghost sm" onclick="exportBudgetGridCSV()">⬇ Export Grid</button>
+        <button class="btn ghost sm" onclick="openBudgetExportChoice()">⬇ Export Grid</button>
         <button class="btn ghost sm" onclick="document.getElementById('budgetGridImportInput').click()">⬆ Import Grid</button>
         <input id="budgetGridImportInput" type="file" accept=".csv" style="display:none" onchange="handleBudgetGridImport(this)">
       </div>
@@ -6086,10 +6152,10 @@ function renderBudgetSummaryTable(){
       <tbody>${rowCats.map(cat=>{
         const items = rowsByCat[cat];
         const cp = items.reduce((s,r)=>s+r.planned,0), ca = items.reduce((s,r)=>s+r.actual,0);
-        return `<tr style="background:var(--chip)"><td colspan="2" style="font-weight:700;color:var(--accent)">${esc(cat)}</td>
+        return `<tr style="background:var(--chip)"><td colspan="2" style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, monthEndDateStr(budgetMonth))}</td>
             <td class="num mono" style="font-weight:700">${money(cp)}</td><td class="num mono" style="font-weight:700">${money(ca)}</td>
             <td class="num mono ${budgetVarClass(ca-cp)}" style="font-weight:700">${money(ca-cp)}</td></tr>` +
-          items.map(r=>`<tr class="click" onclick="viewBudgetAccountMonth(${r.acc})"><td class="mono" style="padding-left:18px">${r.acc}</td><td>${esc(accShort(r.acc))}</td>
+          items.map(r=>`<tr class="click" onclick="viewBudgetAccountMonth(${r.acc})"><td class="mono" style="padding-left:18px">${r.acc}</td><td>${esc(accShort(r.acc))}${accruedChipForExpenseAcc(r.acc, monthEndDateStr(budgetMonth))}</td>
             <td class="num mono">${money(r.planned)}</td><td class="num mono">${money(r.actual)}</td>
             <td class="num mono ${budgetVarClass(r.variance)}">${money(r.variance)}</td></tr>`).join('');
       }).join('') || '<tr><td colspan="5" class="empty">No budget or actuals for this month</td></tr>'}</tbody>
@@ -6126,16 +6192,30 @@ function renderBudgetGrid(){
     endForecastFastPath();
   }
 }
-function exportBudgetGridCSV(){
+function openBudgetExportChoice(){
+  showModal(`
+    <h3>Export Budget Grid</h3>
+    <div class="mut" style="font-size:12.5px;margin-bottom:12px">What should the export include?</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn pri" id="budgetExportFuture" onclick="closeModal(); exportBudgetGridCSV(false)" style="text-align:left">Future only<div style="font-size:11.5px;font-weight:400;opacity:.85">Current month onward \u2014 budget figures you can edit and re-import.</div></button>
+      <button class="btn ghost" id="budgetExportHistory" onclick="closeModal(); exportBudgetGridCSV(true)" style="text-align:left">Historical + future<div style="font-size:11.5px;font-weight:400">From the earliest ledger month. Past months show ACTUAL spend; the importer ignores them.</div></button>
+    </div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Cancel</button></div>`);
+}
+function exportBudgetGridCSV(includeHistory){
   const currentMonth = todayStr().slice(0,7);
   const accs = expenseAccountsList().sort((a,b)=>a.id-b.id);
   // Deliberately its OWN month list, not the shared forecastExportMonthKeys — that one is built
   // for the Forecast Grid's reference-only export, which is meant to include full history. This
   // export is for round-trip EDITING, where past months are read-only anyway and just add noise;
   // current + future is the only range that's ever actually useful to touch here.
-  const months = [];
-  { let mk = currentMonth; const end = getGridEndMonth(); let guard = 0;
-    while(mk<=end && guard<600){ months.push(mk); mk = nextMonthKeyPlain(mk); guard++; } }
+  let months = [];
+  if(includeHistory===true){
+    months = forecastExportMonthKeys(currentMonth); // earliest ledger month \u2192 grid end
+  } else {
+    let mk = currentMonth; const end = getGridEndMonth(); let guard = 0;
+    while(mk<=end && guard<600){ months.push(mk); mk = nextMonthKeyPlain(mk); guard++; }
+  }
   const header = ['Account ID','Account Name','COA Category','Status','Current Balance', ...months];
   const lines = [header.map(csvEscape).join(',')];
   accs.forEach(a=>{
@@ -6144,12 +6224,13 @@ function exportBudgetGridCSV(){
       // The current month is still editable budget, same as every future month — showing
       // forecastActual (partial real spend so far this month) here was the bug: it looked like a
       // real, editable figure, but re-importing it back would silently do nothing (see below).
+      if(includeHistory===true && mk<currentMonth){ row.push(forecastActual(a.id, mk)); return; } // past months: ACTUAL spend, reference only
       const c = resolvedBudgetCell(a.id, mk); row.push(c.plan!==null? c.plan : '');
     });
     lines.push(row.map(csvEscape).join(','));
   });
   const blob = new Blob([lines.join('\n')], {type:'text/csv'});
-  const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob); dl.download = 'Budget Grid - '+todayStr()+'.csv'; dl.click();
+  const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob); dl.download = 'Budget Grid'+(includeHistory===true?' (with history)':'')+' - '+todayStr()+'.csv'; dl.click();
   toast('Exported '+accs.length.toLocaleString()+' expense accounts to CSV');
 }
 async function handleBudgetGridImport(inputEl){
@@ -6337,8 +6418,8 @@ function renderPnL(){
   // since expTotal isn't final until every category has been summed above.
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
-    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${budgetedCats.has(cat)? ` <span class="mut" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
-      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
+    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
+      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${accruedChipForExpenseAcc(i.a.id, pnlTo)}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
   // Net Result is always Income minus the magnitude of Expenses — matching standard P&L
@@ -11153,8 +11234,12 @@ function renderJamiahUntagged(j){
   const lines = D.ledger.filter(l=>l.acc===j.account && ACC_BY_ID[l.acc]?.is_allocatable && !l.alloc).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const paidByPartRound = jamiahPaidByPartRound(j);
   const taggedCount = lines.filter(l=>j.tags[l.id]).length;
+  const thisMonthKey = todayStr().slice(0,7);
+  const monthLines = lines.filter(l=>monthOf(l.date)===thisMonthKey);
+  const monthNet = monthLines.reduce((s,l)=>s+Number(l.amt),0);
   return `<div class="panel">
     <h3>Transactions to Tag <span class="mut" style="font-size:12px;font-weight:400">(${lines.length} unallocated in ${esc(accShort(j.account))} — ${taggedCount} tagged, ${lines.length-taggedCount} left)</span></h3>
+    <div class="mut" id="jamiahMonthTotal" style="font-size:12.5px;margin-bottom:8px">This month (${esc(monthLabel(thisMonthKey))}): <b class="mono ${moneyClass(monthNet)}">${money(monthNet)}</b> net across ${monthLines.length} unallocated transaction${monthLines.length===1?'':'s'}</div>
     ${notFlagged? `<div class="mut" style="font-size:12px;margin-bottom:8px;color:var(--red)">This account isn't flagged Allocatable, so nothing will ever show up here — flag it in Accounts → edit.</div>` : ''}
     <div class="mut" style="font-size:11.5px;margin-bottom:8px">These stay listed until you actually allocate them on the Allocations page, so a mis-tag is always easy to fix here. Once someone's fully paid a round, they drop out of the dropdown for other transactions in that same round.</div>
     <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th><th style="width:220px">Tag to</th></tr></thead>
