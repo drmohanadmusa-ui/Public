@@ -633,7 +633,7 @@ select.filter-select, input.filter-date{
   font-size:13.5px; background:var(--paper); color:var(--ink);
 }
 .field textarea{resize:vertical; min-height:60px;}
-.quick-date-row{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px;}
+.quick-date-row{display:flex; flex-wrap:wrap; gap:5px; margin:2px 0 8px;}
 .quick-date-btn{
   padding:4px 9px; border-radius:999px; border:1px solid var(--line);
   background:var(--paper); color:var(--slate); font-size:11px; font-weight:500;
@@ -1197,6 +1197,14 @@ table.log-table tr.log-row-active td{background:var(--teal-soft);}
   padding:10px 0; border-bottom:1px solid var(--paper-dim);
 }
 .metric-manage-row:last-child{border-bottom:none;}
+.metric-manage-row.dragging{opacity:.4;}
+.metric-manage-row{gap:8px;}
+.metric-manage-row .metric-manage-name{flex:1; min-width:0;}
+@media (max-width:860px){ .metric-manage-row .toggle-switch-row .page-sub{display:none;} }
+.metric-manage-row .metric-drag{opacity:.6; cursor:grab; margin-right:8px; flex:none;}
+.metric-manage-row .icon-btn[disabled]{opacity:.25; cursor:default;}
+.dash-silo-bar{margin-top:-4px;}
+.dash-silo-bar .chip-select{flex-wrap:wrap;}
 .metric-manage-name{flex:1; font-size:13px; font-weight:500;}
 
 .changelog-entry{padding:14px 18px; margin-bottom:10px;}
@@ -2336,7 +2344,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.67.0';
+const APP_VERSION = '4.68.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2344,6 +2352,13 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.68.0', changes: [
+    'No SQL migration needed \u2014 front-end only. Nothing in the database changed.',
+    'NEW \u2014 Dashboard silo filter. A row of silo chips (All plus one per silo) sits under the filter bar; tap one to show only that silo\u2019s tasks. It filters the task list only \u2014 the Due Today / Completed / Overdue numbers and rings still show your overall totals. Your choice is remembered on this device.',
+    'NEW \u2014 Reorder health metrics. In Health Log \u2192 Manage Metrics every metric (built-in ones too) has a drag handle and \u25b2/\u25bc arrows. The new order is used for the entry cards and for the History table columns, and it syncs between your devices.',
+    'CHANGED \u2014 New tasks start with Location and Silo empty (\u201cSelect location\u2026\u201d / \u201cSelect silo\u2026\u201d) and you must pick both before saving. Editing an existing task keeps its values. The quick-add box is unchanged.',
+    'CHANGED \u2014 The quick date bubbles (Tomorrow, In 3 days, \u2026) now sit above the date field, for both the due date and \u201cMove This Occurrence\u201d. Pick a bubble, or type the date yourself.',
+  ]},
   { v:'4.67.0', changes: [
     'No SQL migration needed \u2014 front-end only. Nothing in the database changed. The old hydration columns and table stay where they are, unused.',
     'NEW \u2014 Drag scrubber replaces the wheel. Tap the weight or reps number to light it up, then drag up or down on it to change it live (about one step per 20px, up = more); it saves when you let go. Weight moves by that exercise\u2019s own machine step (2.5 / 5 / 10 / 20 kg), reps by 1, and an off-grid weight snaps to the nearest valid one. Tap the lit number again to type it instead; tapping anywhere else switches it off.',
@@ -7180,6 +7195,8 @@ async function repairSettingsAndRetry(){
    ========================================================= */
 function renderDashboard(){
   let allRows = getDashboardTasks();
+  const dashSilo = dashboardSilo();
+  if(dashSilo !== 'All') allRows = allRows.filter(r=> r.task.silo === dashSilo);
   let rows = state.settings.hideCompleted ? allRows.filter(r=>!isRowCompleted(r)) : allRows;
   const overdueN = getOverdueOneTime().length;
   const doneToday = state.tasks.oneTime.filter(t=>t.done && t.due===todayStr()).length +
@@ -7249,6 +7266,12 @@ function renderDashboard(){
       <div class="toggle-switch-row" style="margin-left:auto;">
         <span>Group by location</span>
         <div class="toggle-switch ${state.groupByLocation?'on':''}" onclick="toggleGroupByLocation()"><div class="knob"></div></div>
+      </div>
+    </div>
+
+    <div class="filter-bar dash-silo-bar">
+      <div class="chip-select">
+        ${['All', ...state.settings.silos].map(s=>`<button class="${dashSilo===s?'active':''}" onclick="setDashboardSilo(this.dataset.silo)" data-silo="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join('')}
       </div>
     </div>
 
@@ -7493,6 +7516,16 @@ function onSearch(v){
   if(inp){ inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
 }
 function setDashboardFilter(f){ state.dashboardFilter = f; renderMain(); }
+/* v4.68.0: Dashboard silo filter. Device-local (stored in settings, no DB column). */
+function dashboardSilo(){
+  const s = state.settings.dashboardSilo;
+  return (s && state.settings.silos.includes(s)) ? s : 'All';
+}
+async function setDashboardSilo(s){
+  state.settings.dashboardSilo = (s && s!=='All') ? s : null;
+  renderMain();
+  await saveSettings();
+}
 function setSelectedDate(v){ state.selectedDate = v; renderMain(); }
 function setLocationFilter(v){ state.locationFilter = v; renderMain(); }
 
@@ -8913,13 +8946,17 @@ function renderHealthView(){
     <div class="section">
       <div class="section-head"><h2>Manage Metrics</h2></div>
       <div class="card" style="padding:4px 16px;">
-        ${sortedMetrics.map(m=>`
-          <div class="metric-manage-row">
+        ${sortedMetrics.map((m,i)=>`
+          <div class="metric-manage-row" draggable="true" data-metric-id="${m.id}"
+               ondragstart="onMetricDragStart(event)" ondragover="onDragOver(event)" ondrop="onMetricDrop(event)" ondragend="onMetricDragEnd(event)">
+            <span class="drag-handle-sm metric-drag" title="Drag to reorder">\u283f</span>
             <span class="metric-manage-name">${escapeHtml(m.name)}${m.core?' <span class="ptr-locked">built-in</span>':''}</span>
             <div class="toggle-switch-row">
               <span class="page-sub">Show</span>
               <div class="toggle-switch ${m.visible!==false?'on':''}" onclick="toggleMetricVisible('${m.id}')"><div class="knob"></div></div>
             </div>
+            <button class="icon-btn" title="Move up" ${i===0?'disabled':''} onclick="moveMetric('${m.id}',-1)">\u25b2</button>
+            <button class="icon-btn" title="Move down" ${i===sortedMetrics.length-1?'disabled':''} onclick="moveMetric('${m.id}',1)">\u25bc</button>
             <button class="icon-btn" title="Edit" onclick="openMetricModal('${m.id}')">✎</button>
             <button class="icon-btn" title="Delete" onclick="deleteMetricDef('${m.id}')">✕</button>
           </div>
@@ -9043,6 +9080,39 @@ async function setMetricValue(metricId, value){
     renderMain();
   }
 }
+/* v4.68.0: reorder health metrics (drag or arrows). Renumbers sortOrder 0..n-1 for every metric. */
+async function reorderMetrics(fromId, toIndex){
+  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  const from = sorted.findIndex(m=>m.id===fromId);
+  if(from<0 || toIndex<0 || toIndex>=sorted.length || from===toIndex) return;
+  const [moved] = sorted.splice(from,1);
+  sorted.splice(toIndex,0,moved);
+  sorted.forEach((m,i)=>{ m.sortOrder = i; });
+  await saveHealthMetricDefs();
+  renderMain();
+}
+async function moveMetric(metricId, delta){
+  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  const i = sorted.findIndex(m=>m.id===metricId);
+  if(i<0) return;
+  await reorderMetrics(metricId, i+delta);
+}
+let metricDragId = null;
+function onMetricDragStart(e){
+  metricDragId = e.currentTarget.dataset.metricId;
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+async function onMetricDrop(e){
+  e.preventDefault();
+  const toId = e.currentTarget.dataset.metricId;
+  const fromId = metricDragId; metricDragId = null;
+  if(!fromId || fromId===toId) return;
+  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  await reorderMetrics(fromId, sorted.findIndex(m=>m.id===toId));
+}
+function onMetricDragEnd(e){ e.currentTarget.classList.remove('dragging'); metricDragId = null; }
+
 async function toggleMetricVisible(metricId){
   const m = state.healthMetricDefs.find(x=>x.id===metricId);
   if(!m) return;
@@ -17968,13 +18038,17 @@ function openTaskModal(kind, taskId, occurrenceDate){
 function buildTaskModalHtml(kind, t){
   const isEdit = !!t;
   const name = t?.name || '';
-  const location = t?.location || state.settings.locations[0];
-  const silo = t?.silo || state.settings.silos[0];
+  const location = t?.location || '';
+  const silo = t?.silo || '';
   const priority = t?.priority || 'Medium';
   const notes = t?.notes || '';
 
-  const locOptions = state.settings.locations.map(l=>`<option value="${escapeHtml(l)}" ${l===location?'selected':''}>${escapeHtml(l)}</option>`).join('');
-  const siloOptions = state.settings.silos.map(s=>`<option value="${escapeHtml(s)}" ${s===silo?'selected':''}>${escapeHtml(s)}</option>`).join('');
+  // v4.68.0: new tasks start with Location/Silo empty (placeholder); a saved
+  // value that is no longer in the managed list is still offered so editing keeps it.
+  const locList = (location && !state.settings.locations.includes(location)) ? [...state.settings.locations, location] : state.settings.locations;
+  const siloList = (silo && !state.settings.silos.includes(silo)) ? [...state.settings.silos, silo] : state.settings.silos;
+  const locOptions = `<option value="" disabled ${location?'':'selected'}>Select location\u2026</option>` + locList.map(l=>`<option value="${escapeHtml(l)}" ${l===location?'selected':''}>${escapeHtml(l)}</option>`).join('');
+  const siloOptions = `<option value="" disabled ${silo?'':'selected'}>Select silo\u2026</option>` + siloList.map(s=>`<option value="${escapeHtml(s)}" ${s===silo?'selected':''}>${escapeHtml(s)}</option>`).join('');
   const priOptions = PRIORITIES.map(p=>`<option value="${p}" ${p===priority?'selected':''}>${p}</option>`).join('');
 
   let typeSpecificFields = '';
@@ -17983,8 +18057,8 @@ function buildTaskModalHtml(kind, t){
     typeSpecificFields = `
       <div class="field">
         <label>Due Date</label>
-        <input type="date" id="f_due" value="${due}">
         ${quickDateButtonsHtml('f_due')}
+        <input type="date" id="f_due" value="${due}">
       </div>
     `;
   } else {
@@ -18046,8 +18120,8 @@ function buildTaskModalHtml(kind, t){
       ${(kind==='recurring' && isEdit && modalOccurrenceDate) ? `
         <div class="field">
           <label>Move This Occurrence (${humanDate(modalOccurrenceDate)}) To</label>
-          <input type="date" id="f_reschedule_to" value="${addDays(modalOccurrenceDate,1)}">
           ${quickDateButtonsHtml('f_reschedule_to')}
+          <input type="date" id="f_reschedule_to" value="${addDays(modalOccurrenceDate,1)}">
           <button type="button" class="btn secondary sm" style="margin-top:8px;" onclick="submitRescheduleOccurrence()">Move It</button>
           <div class="page-sub" style="margin-top:6px;">${humanDate(modalOccurrenceDate)} will be marked missed. The recurring pattern is unaffected.</div>
         </div>
@@ -18193,6 +18267,7 @@ async function saveTaskModal(){
   const silo = document.getElementById('f_silo').value;
   const priority = document.getElementById('f_priority').value;
   const notes = document.getElementById('f_notes').value;
+  if(!modalEditingId && (!location || !silo)){ showToast(!location && !silo ? 'Pick a location and a silo' : (!location ? 'Pick a location' : 'Pick a silo')); return; }
 
   if(modalKind === 'oneTime'){
     const due = document.getElementById('f_due').value;
