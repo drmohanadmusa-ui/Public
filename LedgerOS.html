@@ -346,12 +346,17 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.55.0';
+const APP_VERSION = '4.56.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.56.0', date:'2026-10-24', changes:[
+    'Forecast \u2192 Export Grid: replaced v4.55.0\u2019s Source column after every month with ONE \u201CSource\u201D column, placed after Sub-Category and before Current Balance, describing the FUTURE months only (past and current months are always actuals). Where the source changes over time it lists each one with its month range, e.g. \u201CProvisions (2026-11 to 2027-06); Budget (2027-07 to 2030-12)\u201D. A Smart Rule is named and described once, e.g. \u201CSmart Rule \u201CQuarterly sweep\u201D (2026-11 to 2026-12): Fixed 100.00, held at 0 until 2026-12\u201D. Ranges use \u201Cto\u201D rather than an arrow because Excel garbles the arrow in this CSV. Re-import is unaffected; the Pivot export keeps its per-row Source.',
+    'FIXED: Budget \u2192 Import Grid could give a NEW budget entry the same ID as one it was deleting in the same import (clearing the newest entry while adding another). Both were synced at once, so the cloud could end up deleting the new entry \u2014 it would then vanish on the next load. New entries now always get fresh IDs.',
+    'FIXED: Budget \u2192 Import Grid re-wrote and re-synced EVERY non-blank cell in the file, even ones you never touched (50 edits synced ~3,500 rows). It now compares each cell with what is stored and only writes and syncs the ones that actually changed; a difference under half a halala (e.g. Excel rounding 333.3333 to 333.33) counts as unchanged. Clearing a cell still deletes that budget entry. The finish message now reads e.g. \u201C50 changed, 3,450 unchanged (skipped)\u201D.',
+  ]},
   {version:'4.55.0', date:'2026-10-19', changes:[
     'FIXED: the Forecast "Export Grid" (wide) CSV had no Source information at all, even though v3.13.0 said it did. Every month column is now followed by a "<month> Source" column saying where that figure came from (Manual entry / Provisions / Budget / Auto-clear / Actual (historical)). For a Smart Rule it names the rule and spells it out in plain English (e.g. \u201CSmart Rule \u201CInsurance sweep\u201D: Balance of 20301 \u2014 Insurance Accrual (reversed)\u201D, or \u201Cheld at 0 until 2026-12\u201D for the months before its target). Re-importing the grid still works: the importer only reads the plain month columns.',
     'NEW: Reconcile mode (New JV) now shows a collapsible \u201CLast 3 JVs on this account\u201D pane under the reconcile banner \u2014 posted JVs only (never the draft), newest by JV date, only the line that hits the account being reconciled: date, JV#, description, amount. Collapsed by default; click a row to open the JV.',
@@ -3195,47 +3200,57 @@ function exportCashPositionCSV(){
   toast('Exported Cash Position ('+months[0]+' → '+months[months.length-1]+') to CSV');
   logActivity('action', 'Exported Cash Position CSV ('+months.length+' months, '+startMonth+' to '+getGridEndMonth()+')');
 }
-// Plain-English description of a Smart Rule's effect on one month. Single wording source for the
-// Forecast wide export's Source column.
-function forecastSmartRuleDetail(accId, mk, currentMonth){
+// One-cell summary of where an account's FUTURE forecast months come from, for the Forecast wide
+// export's single Source column. Consecutive months with the same source collapse into one
+// "Label (start to end)" range; months with no source at all are skipped. A Smart Rule range is
+// described once (name + what it computes + its hold/freeze behaviour). "to" rather than an arrow
+// because this CSV is written without a BOM, so Excel would garble a non-ASCII arrow.
+function forecastSmartRuleSummary(accId, currentMonth, seg, range){
   const rule = (D.forecastAccountRules||[]).find(r=>r.account===accId);
-  if(!rule) return forecastSourceLabel('smart_rule');
+  if(!rule) return forecastSourceLabel('smart_rule') + range;
   const offset = rule.targetOffset||0;
   const target = shiftMonthKey(currentMonth, offset);
-  const expr = smartRuleExprLabel({...rule.rule, account: rule.account});
-  const head = 'Smart Rule "'+rule.name+'": ';
-  if(mk===target) return head + expr + (offset? ' (lands on '+target+')' : ' (current month only)');
-  if(mk<target) return head + 'held at 0 until '+target+', when it becomes '+expr;
-  return head + 'frozen at 0 after '+target+' ('+expr+' applies in '+target+')';
+  const parts = [smartRuleExprLabel({...rule.rule, account: rule.account})];
+  parts.push(offset>0? 'held at 0 until '+target : 'applies to '+target+' only');
+  if(rule.freezeAfterTarget && seg.end>target) parts.push('frozen at 0 after '+target);
+  return 'Smart Rule "'+rule.name+'"'+range+': '+parts.join(', ');
 }
-function forecastSourceDetail(cell, accId, mk, currentMonth){
-  if(!cell) return '';
-  if(cell.source==='smart_rule') return forecastSmartRuleDetail(accId, mk, currentMonth);
-  return forecastSourceLabel(cell.source);
+function forecastFutureSourceSummary(accId, futureCells, currentMonth){
+  const segs = [];
+  futureCells.forEach(({mk, c})=>{
+    const key = (c && c.source) || '';
+    const last = segs[segs.length-1];
+    if(last && last.key===key) last.end = mk; else segs.push({key, start:mk, end:mk});
+  });
+  return segs.filter(sg=>sg.key).map(sg=>{
+    const range = ' ('+sg.start+' to '+sg.end+')';
+    if(sg.key==='smart_rule') return forecastSmartRuleSummary(accId, currentMonth, sg, range);
+    return forecastSourceLabel(sg.key) + range;
+  }).join('; ');
 }
 function exportForecastGridCSV(){
   const currentMonth = todayStr().slice(0,7);
   const accs = allExportableAccounts();
   const months = forecastExportMonthKeys(currentMonth);
-  // Each month column is followed by its own "<month> Source" column. The importer only reads
-  // columns whose header is exactly YYYY-MM, so the Source columns are ignored on re-import.
-  const header = ['Account ID','Account Name','COA Category','Status','Sub-Category','Current Balance'];
-  months.forEach(mk=>{ header.push(mk, mk+' Source'); });
+  // One Source column (future months only) between Sub-Category and Current Balance. The importer
+  // reads Sub-Category and the YYYY-MM columns by name, so this column is ignored on re-import.
+  const header = ['Account ID','Account Name','COA Category','Status','Sub-Category','Source','Current Balance', ...months];
   const lines = [header.map(csvEscape).join(',')];
   accs.forEach(a=>{
     const cat = getForecastCategory(a);
     const isBank = a.category==='Bank Accounts';
-    const row = [a.id, accShort(a.id), a.category||'', a.status||'Active', forecastCategoryCsvLabel(cat), accountBalance(a.id)];
+    const amounts = [], futureCells = [];
     months.forEach(mk=>{
       if(mk<=currentMonth){
-        row.push(forecastActual(a.id, mk), forecastSourceLabel('actual')); // historical + current month: reference only
+        amounts.push(forecastActual(a.id, mk)); // historical + current month: reference only
       } else if(!isBank && cat && cat!=='ignore'){
         const c = computeForecastCell(a, mk, currentMonth);
-        row.push(c.plan, forecastSourceDetail(c, a.id, mk, currentMonth));
+        amounts.push(c.plan); futureCells.push({mk, c});
       } else {
-        row.push('', ''); // Bank Accounts / uncategorized: no forecast projection to show here
+        amounts.push(''); // Bank Accounts / uncategorized: no forecast projection to show here
       }
     });
+    const row = [a.id, accShort(a.id), a.category||'', a.status||'Active', forecastCategoryCsvLabel(cat), forecastFutureSourceSummary(a.id, futureCells, currentMonth), accountBalance(a.id), ...amounts];
     lines.push(row.map(csvEscape).join(','));
   });
   const blob = new Blob([lines.join('\n')], {type:'text/csv'});
@@ -6250,9 +6265,13 @@ async function importBudgetGridCSV(rows){
   const currentMonth = todayStr().slice(0,7);
   const sampleKeys = Object.keys(rows[0]||{});
   const monthCols = sampleKeys.filter(k=>/^\d{4}-\d{2}$/.test(k) && k>=currentMonth);
-  if(!confirm('Import '+rows.length+' rows? This will replace current and future budget entries ('+monthCols.length+' month columns detected) for every matched account. Historical columns are always ignored.')) return;
-  let matched=0, unmatched=0, planWritten=0; const mismatches=[];
+  if(!confirm('Import '+rows.length+' rows? Current and future budget cells ('+monthCols.length+' month columns detected) that differ from what is stored will be updated; unchanged cells are skipped. Historical columns are always ignored.')) return;
+  let matched=0, unmatched=0, planWritten=0, unchanged=0; const mismatches=[];
   const touchedUpserts=[], touchedDeletes=[];
+  // New rows take IDs counted up from the max at the START of the import. nextBudgetId() alone
+  // would hand a just-deleted max ID straight back out, and since the delete and the new row's
+  // upsert are synced concurrently, the cloud could end up with the delete winning.
+  let nextNewBudgetId = nextBudgetId();
   showImportProgress('Importing Budget Grid…');
   let processed=0;
   for(const r of rows){
@@ -6277,8 +6296,11 @@ async function importBudgetGridCSV(rows){
       } else {
         const val = Number(clean);
         if(isNaN(val)) continue;
+        // Only write cells that actually changed. Under half a halala counts as the same value, so
+        // Excel rounding a stored 333.3333 to 333.33 on save isn't mistaken for an edit.
+        if(existing && Math.abs(Number(existing.amt)-val) < 0.005){ unchanged++; continue; }
         if(existing){ existing.amt = val; touchedUpserts.push(existing); }
-        else { const row = {id: nextBudgetId(), date: mk+'-01', acc: a.id, descr: 'Budget - '+monthLabel(mk), amt: val}; D.budget.push(row); touchedUpserts.push(row); }
+        else { const row = {id: nextNewBudgetId++, date: mk+'-01', acc: a.id, descr: 'Budget - '+monthLabel(mk), amt: val}; D.budget.push(row); touchedUpserts.push(row); }
         planWritten++;
       }
     }
@@ -6298,7 +6320,7 @@ async function importBudgetGridCSV(rows){
     await syncWriteMany(syncOps, {concurrency:6, onProgress:(done,total)=>updateImportProgress(done,total,'Syncing to cloud')});
   }
   const elapsedSec = ((Date.now()-startTime)/1000).toFixed(1);
-  let msg = 'Import complete: '+matched.toLocaleString()+' matched, '+planWritten.toLocaleString()+' month values written';
+  let msg = 'Import complete: '+matched.toLocaleString()+' accounts matched \u2014 '+planWritten.toLocaleString()+' changed, '+unchanged.toLocaleString()+' unchanged (skipped)';
   msg += '\nTook '+elapsedSec+'s';
   if(unmatched) msg += '\n'+unmatched.toLocaleString()+' row(s) skipped (no matching account)';
   if(mismatches.length){
