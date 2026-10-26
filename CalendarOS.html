@@ -743,6 +743,12 @@ body.mw-focus .main{ padding:0 !important; max-width:none !important; }
 .mw-warn{ color:#FF7A59; font-weight:600; }
 .mw-banner{ margin-top:12px; padding:12px 14px; border-radius:16px; background:#2A1E1A; color:#FFB09B; font-size:14px; font-weight:600; }
 .mw-sets{ margin-top:16px; }
+.mw-rir.tap{ cursor:pointer; -webkit-tap-highlight-color:transparent; }
+html:has(.mw-lock), body:has(.mw-lock){ overflow:hidden; overscroll-behavior:none; }
+.mw.mw-lock{ height:100vh; height:100dvh; min-height:0; overflow:hidden; display:flex; flex-direction:column; padding-bottom:0; }
+.mw.mw-lock > *{ flex:none; }
+.mw.mw-lock > .mw-sets, .mw.mw-lock > .mw-walk{ flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding-bottom:230px; }
+.mw.mw-lock > .mw-dock{ flex:none; }
 .mw-set{ display:flex; align-items:center; gap:10px; height:72px; margin-bottom:10px; }
 .mw-tick{ width:60px; height:72px; border-radius:20px; flex-shrink:0; border:2px solid #2F3238 !important; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; color:#F3F2EE; }
 .mw-set.warm .mw-tick{ color:#F2B33D; border-color:#5A4720 !important; }
@@ -788,7 +794,7 @@ body.mw-focus .rest-timer-label{ color:#A1A5AD; font-weight:700; letter-spacing:
 body.mw-focus .rest-timer-count{ font-family:'Archivo',sans-serif; font-stretch:90%; font-size:34px; font-weight:800; color:var(--mw-accent,#D3F53D); margin-right:auto; }
 body.mw-focus .rest-timer-box .btn{ height:48px; border-radius:24px; background:#1A1C20; border:0; color:#F3F2EE; padding:0 14px; font-weight:700; font-size:15px; }
 body.mw-focus .rest-timer-box .rest-adj{ display:inline-flex; align-items:center; }
-body.mw-focus .rest-timer-tip{ display:none; }
+body.mw-focus .rest-timer-tip{ display:block; flex:0 0 100%; order:10; margin-top:6px; font-size:12px; line-height:1.35; color:#A1A5AD; }
 /* bottom sheets */
 .mw-sheet-overlay{ align-items:flex-end !important; padding:0 !important; z-index:400; }
 .mw-sheet{ width:100%; max-width:520px; max-height:88vh; overflow-y:auto; box-sizing:border-box; background:#17191C; color:#F3F2EE; border-radius:28px 28px 0 0; padding:12px 20px calc(env(safe-area-inset-bottom,0px) + 28px); font-family:'Instrument Sans',var(--font-body),sans-serif; }
@@ -809,7 +815,7 @@ body.mw-focus .rest-timer-tip{ display:none; }
 .rest-timer-box .rd-short{ display:none; }
 body.mw-focus .rest-timer-box .rd-long{ display:none; }
 body.mw-focus .rest-timer-box .rd-short{ display:inline; }
-body.mw-focus .rest-timer-box{ flex-wrap:nowrap; }
+body.mw-focus .rest-timer-box{ flex-wrap:wrap; }
 body.mw-focus .rest-timer-count{ font-size:32px; min-width:0; }
 body.mw-focus .rest-timer-label{ font-size:11px; }
 body.mw-focus .rest-timer-box .btn{ padding:0 12px; }
@@ -2344,7 +2350,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.68.0';
+const APP_VERSION = '4.69.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2352,6 +2358,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.69.0', changes: [
+    'No SQL migration needed \u2014 front-end only. Nothing in the database changed.',
+    'NEW \u2014 Duplicate a task. While a task window is open for editing, a Duplicate button closes it and opens a new-task form with the same name (ending in \u201c(copy)\u201d), location, silo, priority, notes and date / schedule. Nothing is created until you press Create Task.',
+    'CHANGED \u2014 Training reps now default to the TOP of the range (12 for 8\u201312, 15 for 10\u201315). This was why a set showed 8 when you had managed 12: the app filled in the bottom of the range and ignored your last session. New days start at the top. One time only, days already opened (today and later) that still show the bottom number on not-done sets are raised to the top; sets you edited or finished are not touched. The warm-up is unchanged. The Review Pack now tells the AI about this.',
+    'FIX \u2014 Phone workout screen no longer scrolls or bounces when you drag on empty space. The header and bottom bar stay put and only the list of sets scrolls (when there are more sets than fit). The number slider works as before.',
+    'NEW \u2014 Rest tips are back in the phone workout\u2019s bottom bar while the rest timer runs.',
+    'NEW \u2014 On the phone workout, tap the RIR number of a completed set to change it (0\u20134, F or Done, no RIR). The set stays done; no need to un-complete it first. Warm-ups are excluded.',
+  ]},
   { v:'4.68.0', changes: [
     'No SQL migration needed \u2014 front-end only. Nothing in the database changed.',
     'NEW \u2014 Dashboard silo filter. A row of silo chips (All plus one per silo) sits under the filter bar; tap one to show only that silo\u2019s tasks. It filters the task list only \u2014 the Due Today / Completed / Overdue numbers and rings still show your overall totals. Your choice is remembered on this device.',
@@ -9910,8 +9924,34 @@ function ensureFailureDayPlanned(date, stagedExerciseIds){
    only added when a suggested weight is actually available to compute it
    from; working sets default to the bottom of the target rep range, which
    is the one number a double-progression scheme actually needs going in. */
+// v4.69.0: "8-12" -> {min:8, top:12}; "12" -> {min:12, top:12}; anything unparseable -> nulls.
+function parseRepRange(r){
+  const m = String(r==null?'':r).match(/\d+/g);
+  if(!m) return { min:null, top:null };
+  return { min:parseInt(m[0]), top:parseInt(m[m.length-1]) };
+}
+// v4.69.0 one-time: not-done working sets from today onward that still show the
+// bottom of their block's range are raised to the top. Done and warm-up sets never change.
+function migrateRepsToTopOfRange(){
+  if(state.settings.repsTopMigrated469) return;
+  state.settings.repsTopMigrated469 = true;
+  const today = todayStr();
+  let changed = 0;
+  (state.training.sets||[]).forEach(s=>{
+    if(s.done || s.isWarmup || s.date < today) return;
+    const cal = getTrainingCalEntry(s.date);
+    const sess = cal ? getTrainingSessionById(cal.sessionId) : null;
+    const block = sess && sess.blocks ? sess.blocks.find(b=>b.exerciseId===s.exerciseId) : null;
+    if(!block || !block.reps) return;
+    const r = parseRepRange(block.reps);
+    if(r.min!=null && r.top!=null && r.top>r.min && s.reps===r.min){ s.reps = r.top; changed++; }
+  });
+  if(changed){ scheduleTrainingDraftSave(); }
+  try{ saveSettings(); }catch(e){}
+}
 function ensureSetsAutoFilled(date, exerciseIds, session){
   if(!session || !session.blocks) return;
+  migrateRepsToTopOfRange();
   (exerciseIds||[]).forEach(exId=>{
     const ex = getTrainingExerciseById(exId);
     if(!ex || ex.category==='walking') return;
@@ -9919,7 +9959,7 @@ function ensureSetsAutoFilled(date, exerciseIds, session){
     if(!block || !block.sets) return;
     if(getSetsForExercise(date, exId).length) return;
     const suggestedWeightKg = parseSuggestedWeightKg(block.notes);
-    const repsMin = block.reps ? (parseInt(String(block.reps).split('-')[0])||null) : null;
+    const repsMin = parseRepRange(block.reps).top;   // v4.69.0: top of the range (name kept for the diff)
     let setNo = 1;
     if(suggestedWeightKg!=null){
       upsertTrainingSet({
@@ -10340,7 +10380,7 @@ function renderMobileWorkout(){
     const lastSess = getLastCompletedSession(exId, date);
     const lastWorking = lastSess ? lastSess.sets.filter(s=>!s.isWarmup) : [];
     const defaultWeight = (lastSess && lastSess.topWeightKg != null) ? lastSess.topWeightKg : (lastWorking[0] ? lastWorking[0].weightKg : null);
-    const defaultReps = lastWorking[0] ? lastWorking[0].reps : (block.reps ? parseInt(String(block.reps).split('-')[0]) || null : null);
+    const defaultReps = lastWorking[0] ? lastWorking[0].reps : parseRepRange(block.reps).top;
     const restSec = defaultRestSec(ex);
     const eid = escapeHtml(exId);
     let n = 0;
@@ -10352,7 +10392,7 @@ function renderMobileWorkout(){
         <button class="mw-tick" data-mw-set="${date}|${eid}|${s.setNo}" onclick="mwTickTap('${date}','${eid}',${s.setNo},${restSec});" aria-label="${s.done?'Undo':'Complete'} set ${label}">${s.done ? MW_SVG.check : label}</button>
         <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|weightKg" aria-label="Weight for set ${label}"><span>kg</span></label>
         <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|reps" aria-label="Reps for set ${label}"><span>reps</span></label>
-        <div class="mw-rir ${s.toFailure?'fail':''}" aria-label="Effort for set ${label}"><small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></div>
+        <div class="mw-rir ${s.toFailure?'fail':''} ${(s.done && !s.isWarmup)?'tap':''}" ${(s.done && !s.isWarmup)?`role="button" tabindex="0" onclick="openMwRirSheet('${date}','${eid}',${s.setNo},false)"`:''} aria-label="Effort for set ${label}"><small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></div>
       </div>`;
     }).join('');
     body = `<div class="mw-sets">${rows}
@@ -10362,7 +10402,7 @@ function renderMobileWorkout(){
       </div></div>`;
   }
   const last = idx >= exerciseIds.length - 1;
-  return `<div class="mw">
+  return `<div class="mw mw-lock">
     ${mwTopBar(date, true)}
     ${mwDayRow(date, session)}
     <div class="mw-segs">${segs}</div>
@@ -11301,6 +11341,16 @@ function _npUp(){
   updateSetField(np.date, np.exId, np.setNo, np.kind, v);
 }
 /* long-press a set's tick to reopen its effort sheet (edit RIR after the fact) */
+/* v4.69.0: on the phone workout screen, drags that start outside the set list (or walk row) must not scroll or bounce the page. */
+if(typeof document !== 'undefined' && document.addEventListener && !(typeof window !== 'undefined' && window.__mwLockBound)){
+  if(typeof window !== 'undefined') window.__mwLockBound = true;
+  document.addEventListener('touchmove', function(e){
+    const t = e.target;
+    if(!t || !t.closest || !t.closest('.mw-lock')) return;
+    if(t.closest('.mw-sets, .mw-walk')) return;
+    if(e.cancelable) e.preventDefault();
+  }, { passive:false });
+}
 let _mwLongTimer = null, _mwLongFired = false;
 function _mwTickDown(e){
   const t = e.target && e.target.closest ? e.target.closest('.mw-tick') : null;
@@ -14931,6 +14981,7 @@ RULES for the plan:
 - Use every strength exercise in my library once per calendar week (Sunday through Saturday) across the weeks this plan covers: each exercise should appear on exactly one training day per week, and only appear a second time in the same week if that is genuinely necessary to reach a muscle's weekly set floor — and in that case choose a different exercise for that muscle first. exerciseUsageCurrentWeek in the data pack shows, for the current week, how many days each exercise has already been done (doneDays — fixed, count these toward the once-per-week target) and how many days it is currently planned (currentlyPlannedDays — that is the old plan, which your new plan replaces for any day not already logged, so ignore it). If some exercises genuinely cannot fit in a week, list which ones and why in your summary rather than silently dropping them.
 - Rep target framing, for both planning and reviewing past sessions in your summary: the TOP of a range is what I'm aiming for, not a bar I have to clear. Landing under it at real effort (roughly RIR 1-3) is a normal, expected outcome — I'm firmly in the intended effort zone — not a shortfall, don't flag it as underperformance (e.g. a target of 15 and I land at 12 is fine on its own). The one exception: the first session after a weight increase on an exercise (this session's weight is higher than that exercise's prior session), where the BOTTOM of the range is what's actually expected and appropriate — that's the point of dropping back down after adding weight, so hitting the bottom of the range right after a bump is the success case there, not a miss. Only flag a genuine concern when reps land meaningfully below even the bottom of the range, or a stall pattern per the Flags section above.
 - Within a single week, prefer varying WHICH exercise targets a given muscle across different training days rather than repeating the identical exercise every time that muscle comes up — e.g. two chest days in a week should generally use two different chest exercises/machines, not the same one twice, unless there's a genuine reason not to (limited equipment options for that muscle in my library, or a specific weakness being deliberately grooved with repetition). This is about variety of stimulus, not frequency — training the same MUSCLE multiple times a week is expected and good; this rule is only about not defaulting to the identical movement each time.
+- Rep defaults in the app: every working set is pre-filled with the TOP of that exercise's rep range (e.g. 12 for "8-12"); I then adjust to what I actually did. So the top of the range is my aim each set, and reps I log under it are real results, not planned ones.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
 - Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
@@ -18017,7 +18068,7 @@ let modalKind = 'oneTime';
 let modalRecurType = 'Daily';
 
 let modalOccurrenceDate = null;
-function openTaskModal(kind, taskId, occurrenceDate){
+function openTaskModal(kind, taskId, occurrenceDate, dupSource){
   modalKind = kind;
   modalEditingId = taskId || null;
   modalOccurrenceDate = occurrenceDate || null;
@@ -18025,18 +18076,19 @@ function openTaskModal(kind, taskId, occurrenceDate){
   if(taskId){
     t = (kind==='oneTime' ? state.tasks.oneTime : state.tasks.recurring).find(x=>x.id===taskId);
   }
+  if(dupSource){ t = dupSource; modalEditingId = null; modalOccurrenceDate = null; }   // v4.69.0 duplicate: new-task form pre-filled
   modalRecurType = t?.type || 'Daily';
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'modalOverlay';
   overlay.onclick = (e)=>{ if(e.target === overlay) closeModal(); };
-  overlay.innerHTML = buildTaskModalHtml(kind, t);
+  overlay.innerHTML = buildTaskModalHtml(kind, t, !!dupSource);
   document.body.appendChild(overlay);
 }
 
-function buildTaskModalHtml(kind, t){
-  const isEdit = !!t;
+function buildTaskModalHtml(kind, t, isDup){
+  const isEdit = !!t && !isDup;
   const name = t?.name || '';
   const location = t?.location || '';
   const silo = t?.silo || '';
@@ -18129,6 +18181,7 @@ function buildTaskModalHtml(kind, t){
 
       <div class="modal-actions">
         <button class="btn secondary" onclick="closeModal()">Cancel</button>
+        ${isEdit ? `<button class="btn secondary" onclick="duplicateTaskFromModal()" title="Open a new task pre-filled with these values">Duplicate</button>` : ''}
         <button class="btn brass" onclick="saveTaskModal()">${isEdit?'Save Changes':'Create Task'}</button>
       </div>
     </div>
@@ -18258,6 +18311,20 @@ function showRescheduleHistory(taskId){
     </div>
   `;
   document.body.appendChild(overlay);
+}
+
+/* v4.69.0: Duplicate — reads the form as it is right now, closes it, and opens a new-task form with those values. */
+function duplicateTaskFromModal(){
+  const kind = modalKind;
+  const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const src = {
+    name: (g('f_name').trim() || 'Untitled') + ' (copy)',
+    location: g('f_location'), silo: g('f_silo'), priority: g('f_priority') || 'Medium', notes: g('f_notes'),
+  };
+  if(kind === 'oneTime'){ src.due = g('f_due') || todayStr(); }
+  else { src.type = modalRecurType; src.detail = readRecurDetail(); src.start = g('f_start') || todayStr(); src.end = g('f_end') || ''; }
+  closeModal();
+  openTaskModal(kind, null, null, src);
 }
 
 async function saveTaskModal(){
