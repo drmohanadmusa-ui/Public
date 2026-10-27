@@ -346,12 +346,22 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.56.0';
+const APP_VERSION = '4.57.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.57.0', date:'2026-10-27', changes:[
+    'Investments: platform cash now carries its REAL exchange rate. Every person\u2019s USD on a platform keeps the SAR it actually cost, so a deposit of 400 SAR that arrives as $100 is recorded at 4.00, not at the standard 3.75 \u2014 and their Available / reconciliation close to zero instead of leaving a false gap.',
+    '\uD83D\uDCB0 Collect Contributions now records each person\u2019s full SAR with the deposit, and shows the effective rate (SAR \u00F7 USD received) for information. Enter the USD that actually arrived; the rate is worked out from it.',
+    'Buys paid from platform cash are now costed at each person\u2019s own cash rate on that platform (what their USD actually cost them in SAR), worked out when you save the buy and shown in the form.',
+    'Bank-funded buys, sells and opening balances entered in USD now have a Rate (SAR/USD) field, pre-filled with your standard rate \u2014 type the rate on the day. A sell into platform cash puts the proceeds into cash at that rate.',
+    'Withdrawals: new optional \u201CSAR received\u201D field. It shows the rate for information and tells you exactly how many SAR to book to the Withdrawn (In) account and how many to the Profit account, so the reconciliation stays exact (any exchange-rate gain or loss lands in Profit).',
+    'Where the USD is: each platform\u2019s table now has a \uD83D\uDCB5 USD cash row (cost in SAR, value, USD) \u2014 click it for the per-person split and a link to the Cash log to edit or delete. The \uD83D\uDC65 By Owner table has a Cash (USD) column, and each person\u2019s \uD83D\uDCC4 Statement lists their cash on every platform.',
+    '\uD83D\uDCC4 Statement: positions are now grouped by platform (sorted by platform name, then position name), with that person\u2019s cash on each platform listed alongside and included in the totals.',
+    'History is unchanged: deposits and transactions recorded before this version keep the standard rate. No database change is needed.',
+  ]},
   {version:'4.56.0', date:'2026-10-24', changes:[
     'Forecast \u2192 Export Grid: replaced v4.55.0\u2019s Source column after every month with ONE \u201CSource\u201D column, placed after Sub-Category and before Current Balance, describing the FUTURE months only (past and current months are always actuals). Where the source changes over time it lists each one with its month range, e.g. \u201CProvisions (2026-11 to 2027-06); Budget (2027-07 to 2030-12)\u201D. A Smart Rule is named and described once, e.g. \u201CSmart Rule \u201CQuarterly sweep\u201D (2026-11 to 2026-12): Fixed 100.00, held at 0 until 2026-12\u201D. Ranges use \u201Cto\u201D rather than an arrow because Excel garbles the arrow in this CSV. Re-import is unaffected; the Pivot export keeps its per-row Source.',
     'FIXED: Budget \u2192 Import Grid could give a NEW budget entry the same ID as one it was deleting in the same import (clearing the newest entry while adding another). Both were synced at once, so the cloud could end up deleting the new entry \u2014 it would then vanish on the next load. New entries now always get fresh IDs.',
@@ -7661,21 +7671,33 @@ function invTxAttribution(t){
   const selfId = invSelfOwnerId();
   const totalUnits = Math.abs(Number(t.units)||0);
   const totalSar = Math.abs(Number(t.totalSar)||0);
+  const optNum = v => (v===undefined||v===null||v==='')? null : Math.abs(Number(v)||0);
   let alloc = (Array.isArray(t.owners) && t.owners.length)
-    ? t.owners.map(a=>({ownerId:a.ownerId, units:Math.abs(Number(a.units)||0)}))
+    ? t.owners.map(a=>({ownerId:a.ownerId, units:Math.abs(Number(a.units)||0), sar:optNum(a.sar), usd:optNum(a.usd)}))
     : [];
   // Older or partially-entered transactions with no attribution fall back to the self owner, so
   // they still compute instead of silently vanishing from every total.
-  if(!alloc.length && selfId!==null) alloc = [{ownerId:selfId, units:totalUnits}];
+  if(!alloc.length && selfId!==null) alloc = [{ownerId:selfId, units:totalUnits, sar:null, usd:null}];
   const allocUnits = alloc.reduce((s,a)=>s+a.units, 0);
-  if(!(allocUnits>0)) return {units:{}, moneySar:{}, cashSar:{}, feeSar:0, feeUnits:0, selfId, valid:false};
+  if(!(allocUnits>0)) return {units:{}, moneySar:{}, cashSar:{}, cashUsd:{}, feeSar:0, feeUnits:0, selfId, valid:false, txRate:getInvFxRate()};
+  // v4.57.0 actual-rate cash. A buy paid from platform cash stores each person's own SAR cost
+  // (their USD share × their cash rate at the time) — used as-is when every owner carries it.
+  // Transactions entered in USD store each person's USD share, which gives the transaction's own
+  // rate. Older records carry neither and fall back to the standard rate, exactly as before.
+  const perOwnerSar = alloc.every(a=>a.sar!==null);
+  const usdKnown = alloc.every(a=>a.usd!==null) && alloc.reduce((s,a)=>s+a.usd,0)>0;
+  const sumUsd = usdKnown? alloc.reduce((s,a)=>s+a.usd,0) : 0;
+  const sumSar = perOwnerSar? alloc.reduce((s,a)=>s+a.sar,0) : totalSar;
+  const txRate = usdKnown && sumSar>0? sumSar/sumUsd : getInvFxRate();
+  const ownerRate = {};
+  alloc.forEach(a=>{ ownerRate[a.ownerId] = (a.usd>0 && a.sar!==null && a.sar>0)? a.sar/a.usd : txRate; });
 
   const units={}, moneySar={}, cashSar={};
   let feeSar=0, feeUnits=0;
   for(const a of alloc){
     const oUnits = a.units;
     if(oUnits<=0) continue;
-    const oSar = totalSar*(oUnits/allocUnits);
+    const oSar = perOwnerSar? a.sar : totalSar*(oUnits/allocUnits);
     const isFamily = selfId!==null && a.ownerId!==selfId;
     units[a.ownerId]    = (units[a.ownerId]||0) + oUnits;
     moneySar[a.ownerId] = (moneySar[a.ownerId]||0) + oSar;
@@ -7700,7 +7722,9 @@ function invTxAttribution(t){
     if(feeSar>0)   cashSar[selfId] = (cashSar[selfId]||0) + feeSar;
   }
   for(const k in units) units[k] = invRoundUnits(units[k]);
-  return {units, moneySar, cashSar, feeSar, feeUnits, selfId, valid:true};
+  const cashUsd = {};
+  for(const k in cashSar) cashUsd[k] = cashSar[k] / (ownerRate[k] || txRate);
+  return {units, moneySar, cashSar, cashUsd, feeSar, feeUnits, selfId, valid:true, txRate};
 }
 // The units as entered, before any fee adjustment. A sell removes what each owner actually
 // holds — the fee comes out of the proceeds, not out of the units leaving — so the unit movement
@@ -7998,67 +8022,90 @@ function invOwnerTotals(){
                   in platform cash has to be excluded when comparing the two.
    Buys funded from cash deliberately do NOT consume profitUsd — reinvested profit stays flagged
    as profit, which is what keeps the bridge balanced when gains are rolled back into positions. */
-function invCashEvents(asOfDate){
+// opts.excludeTxId / opts.excludeMoveId leave one record out — used when editing it, so its own
+// effect doesn't skew the figures it is being checked against.
+function invCashEvents(asOfDate, opts){
   const events = [];
-  const fx = getInvFxRate();
+  const exTx = opts && opts.excludeTxId, exMove = opts && opts.excludeMoveId;
   for(const pos of (D.invPositions||[])){
-    const txs = invTxForPosition(pos.id).filter(t=>t.cashSide==='cash');
+    const txs = invTxForPosition(pos.id).filter(t=>t.cashSide==='cash' && !(exTx && t.id===exTx));
     if(!txs.length) continue;
     const st = computePositionState(pos.id);
     for(const t of txs){
       const at = invTxAttribution(t);
       if(!at.valid) continue;
       const realised = (st.realizedByTx||{})[t.id] || {};
-      const deltas = {};
+      // A buy takes money off the platform; a sell puts it on. Each side moves both the USD and
+      // the SAR it cost — at the person's own cash rate for a buy, at the sale's rate for a sell.
+      const sgn = t.kind==='sell'? 1 : -1;
+      const deltas = {}, sarDeltas = {};
       for(const oid in at.cashSar){
-        const sar = at.cashSar[oid]||0;
-        // A buy takes money off the platform; a sell puts it on.
-        deltas[oid] = (t.kind==='sell'? sar : -sar)/fx;
+        deltas[oid] = sgn*(at.cashUsd[oid]||0);
+        sarDeltas[oid] = sgn*(at.cashSar[oid]||0);
       }
-      const profitDeltas = {};
-      if(t.kind==='sell'){ for(const oid in realised) profitDeltas[oid] = (realised[oid]||0)/fx; }
-      events.push({date:t.date, id:t.id, seq:0, platformId:pos.platformId, type:'tx', deltas, profitDeltas});
+      const profitDeltas = {}, profitSarDeltas = {};
+      if(t.kind==='sell'){ for(const oid in realised){ const r = realised[oid]||0; profitDeltas[oid] = r/at.txRate; profitSarDeltas[oid] = r; } }
+      events.push({date:t.date, id:t.id, seq:0, platformId:pos.platformId, type:'tx', deltas, sarDeltas, profitDeltas, profitSarDeltas});
     }
   }
   for(const m of (D.invCashMovements||[])){
+    if(exMove && m.id===exMove) continue;
     events.push({date:m.date, id:m.id, seq:1, type:'move', move:m});
   }
   events.sort((a,b)=> a.date===b.date? (a.seq-b.seq || a.id-b.id) : (a.date<b.date? -1:1));
   return asOfDate? events.filter(e=>e.date<=asOfDate) : events;
 }
-function invCashState(asOfDate){
-  const state = {}; // platformId -> ownerId -> {usd, profitUsd}
+// Each person's cash per platform: {usd, sar, profitUsd, profitSar}. `sar` is what that USD
+// actually cost in SAR (v4.57.0), so sar ÷ usd is their average rate. Records with no rate stored
+// use the standard rate, which keeps sar = usd × standard rate for all older history — identical
+// to the pre-4.57 figures.
+function invCashAvgRate(c){ return (c && Math.abs(c.usd)>1e-9)? c.sar/c.usd : getInvFxRate(); }
+function invCashProfitRate(c){ return (c && Math.abs(c.profitUsd)>1e-9)? c.profitSar/c.profitUsd : invCashAvgRate(c); }
+function invCashState(asOfDate, opts){
+  const state = {}; // platformId -> ownerId -> {usd, sar, profitUsd, profitSar}
   let feesUsd = 0;
+  const fx = getInvFxRate();
   const cell = (pid, oid) => {
     const p = state[pid] = state[pid] || {};
-    return p[oid] = p[oid] || {usd:0, profitUsd:0};
+    return p[oid] = p[oid] || {usd:0, sar:0, profitUsd:0, profitSar:0};
   };
   const allocOf = m => {
-    const rows = (Array.isArray(m.owners)? m.owners : []).map(a=>({ownerId:a.ownerId, usd:Number(a.usd)||0})).filter(a=>a.usd!==0);
+    const rows = (Array.isArray(m.owners)? m.owners : []).map(a=>({ownerId:a.ownerId, usd:Number(a.usd)||0,
+      sar:(a.sar===undefined||a.sar===null||a.sar==='')? null : Math.abs(Number(a.sar)||0)})).filter(a=>a.usd!==0);
     if(rows.length) return rows;
     const selfId = invSelfOwnerId();
-    return selfId!==null? [{ownerId:selfId, usd:Math.abs(Number(m.usdAmount)||0)}] : [];
+    return selfId!==null? [{ownerId:selfId, usd:Math.abs(Number(m.usdAmount)||0), sar:null}] : [];
   };
-  for(const ev of invCashEvents(asOfDate)){
+  for(const ev of invCashEvents(asOfDate, opts)){
     if(ev.type==='tx'){
-      for(const oid in ev.deltas) cell(ev.platformId, oid).usd += ev.deltas[oid];
-      for(const oid in ev.profitDeltas) cell(ev.platformId, oid).profitUsd += ev.profitDeltas[oid];
+      for(const oid in ev.deltas){ const c = cell(ev.platformId, oid); c.usd += ev.deltas[oid]; c.sar += ev.sarDeltas[oid]; }
+      for(const oid in ev.profitDeltas){ const c = cell(ev.platformId, oid); c.profitUsd += ev.profitDeltas[oid]; c.profitSar += ev.profitSarDeltas[oid]; }
       continue;
     }
     const m = ev.move;
     const rows = allocOf(m);
     const totalAlloc = rows.reduce((s,a)=>s+Math.abs(a.usd),0);
     if(m.kind==='deposit'){
-      for(const a of rows) cell(m.platformId, a.ownerId).usd += Math.abs(a.usd);
+      // A deposit with each person's SAR stored (Collect Contributions) is taken at that real rate.
+      for(const a of rows){
+        const c = cell(m.platformId, a.ownerId);
+        const u = Math.abs(a.usd);
+        c.usd += u;
+        c.sar += a.sar!==null? a.sar : u*fx;
+      }
     } else if(m.kind==='withdrawal'){
       // The capital/profit split mirrors how the JV is booked (capital to the In account, profit
       // to the Profit account), so the bridge stays exact whichever way the money is taken out.
+      // USD leaves at the person's average cost rate; any rate gain/loss on the way to the bank is
+      // the difference the Profit account absorbs (see invWithdrawalBooking).
       const profitTotal = Math.abs(Number(m.profitUsd)||0);
       for(const a of rows){
         const c = cell(m.platformId, a.ownerId);
         const amt = Math.abs(a.usd);
-        c.usd -= amt;
-        c.profitUsd -= totalAlloc>0? profitTotal*(amt/totalAlloc) : 0;
+        const pTake = totalAlloc>0? profitTotal*(amt/totalAlloc) : 0;
+        const r = invCashAvgRate(c), pr = invCashProfitRate(c);
+        c.usd -= amt; c.sar -= amt*r;
+        c.profitUsd -= pTake; c.profitSar -= pTake*pr;
       }
     } else if(m.kind==='transfer'){
       for(const a of rows){
@@ -8066,22 +8113,23 @@ function invCashState(asOfDate){
         const from = cell(m.platformId, a.ownerId);
         // Profit travels with the money in the same proportion it sits in the balance being
         // drawn from — otherwise moving cash between platforms would quietly reclassify profit
-        // as capital and break the reconciliation.
+        // as capital and break the reconciliation. The SAR cost travels at the average rate.
         const ratio = from.usd>0? Math.min(1, amt/from.usd) : 0;
-        const profitMoved = from.profitUsd*ratio;
-        from.usd -= amt;
-        from.profitUsd -= profitMoved;
+        const r = invCashAvgRate(from);
+        const profitMoved = from.profitUsd*ratio, profitSarMoved = from.profitSar*ratio;
+        from.usd -= amt; from.sar -= amt*r;
+        from.profitUsd -= profitMoved; from.profitSar -= profitSarMoved;
         if(m.toPlatformId){
           const to = cell(m.toPlatformId, a.ownerId);
-          to.usd += amt;
-          to.profitUsd += profitMoved;
+          to.usd += amt; to.sar += amt*r;
+          to.profitUsd += profitMoved; to.profitSar += profitSarMoved;
         }
       }
       const fee = Math.abs(Number(m.feeUsd)||0);
       if(fee>0){
         // Transfer fees are borne by you alone, not shared with the family owners.
         const selfId = invSelfOwnerId();
-        if(selfId!==null) cell(m.platformId, selfId).usd -= fee;
+        if(selfId!==null){ const c = cell(m.platformId, selfId); const r = invCashAvgRate(c); c.usd -= fee; c.sar -= fee*r; }
         feesUsd += fee;
       }
     }
@@ -8091,21 +8139,21 @@ function invCashState(asOfDate){
 function invPlatformCash(platformId, asOfDate){
   const {state} = invCashState(asOfDate);
   const byOwner = state[platformId] || {};
-  let totalUsd=0, profitUsd=0;
-  for(const k in byOwner){ totalUsd += byOwner[k].usd; profitUsd += byOwner[k].profitUsd; }
-  return {byOwner, totalUsd, profitUsd};
+  let totalUsd=0, profitUsd=0, totalSar=0;
+  for(const k in byOwner){ totalUsd += byOwner[k].usd; profitUsd += byOwner[k].profitUsd; totalSar += byOwner[k].sar; }
+  return {byOwner, totalUsd, profitUsd, totalSar};
 }
 // An owner's cash across every platform, in SAR.
 function invOwnerCashSar(ownerId, asOfDate){
   const {state} = invCashState(asOfDate);
-  const fx = getInvFxRate();
-  let usd=0, profit=0;
+  let usd=0, profit=0, sar=0, profitSar=0;
   for(const pid in state){
     const c = state[pid][ownerId];
     if(!c) continue;
-    usd += c.usd; profit += c.profitUsd;
+    usd += c.usd; profit += c.profitUsd; sar += c.sar; profitSar += c.profitSar;
   }
-  return {cashSar: usd*fx, profitSar: profit*fx, cashUsd: usd, profitUsd: profit};
+  // SAR at what the cash actually cost (v4.57.0), not USD × the standard rate.
+  return {cashSar: sar, profitSar, cashUsd: usd, profitUsd: profit};
 }
 
 // Reconciliation: the tracker's remaining cost basis for an owner should equal what the ledger
@@ -8208,20 +8256,34 @@ function invSplitUsdBySar(totalUsd, rows){
 // Same-day deposits count (they're what funds that day's buy). When editing an existing
 // transaction, its own effect is added back so it doesn't skew its own split.
 function invOwnerCashForSplit(platformId, date, excludeTxId){
-  const {state} = invCashState(date||null);
   const byOwner = {};
-  const p = state[platformId] || {};
-  for(const k in p) byOwner[k] = p[k].usd;
-  if(excludeTxId){
-    const t = (D.invTransactions||[]).find(x=>x.id===excludeTxId);
-    const tPos = t? invPositionById(t.positionId) : null;
-    if(t && t.cashSide==='cash' && tPos && tPos.platformId===platformId && (!date || t.date<=date)){
-      const at = invTxAttribution(t);
-      const fx = getInvFxRate();
-      for(const oid in at.cashSar) byOwner[oid] = (byOwner[oid]||0) + (t.kind==='sell'? -1 : 1)*(at.cashSar[oid]||0)/fx;
-    }
-  }
+  const cells = invOwnerCashCellsForSplit(platformId, date, excludeTxId);
+  for(const k in cells) byOwner[k] = cells[k].usd;
   return byOwner;
+}
+// Same, but each person's full cash cell {usd, sar, ...} — sar/usd is their rate on that platform.
+function invOwnerCashCellsForSplit(platformId, date, excludeTxId){
+  const {state} = invCashState(date||null, excludeTxId? {excludeTxId} : null);
+  return state[platformId] || {};
+}
+// What a buy paid from platform cash costs each person in SAR: their USD share (split by units, to
+// the cent) × their own cash rate on that platform as of the buy date. Stored on the transaction
+// when it is saved, so the position's cost and the cash it used up are always the same SAR figure.
+function invCashBuyOwnerCost(platformId, date, excludeTxId, usdAmount, owners){
+  const cells = invOwnerCashCellsForSplit(platformId, date, excludeTxId);
+  // Exact shares, not rounded to the cent: rounding a small person's slice of each buy would
+  // nudge their average price away from everyone else's for no reason.
+  const totalUnits = (owners||[]).reduce((s,o)=>s+(Number(o.units)||0),0);
+  const rows = (owners||[]).map(o=>{
+    const u = Number(o.units)||0;
+    const usd = totalUnits>0? usdAmount*u/totalUnits : 0;
+    const c = cells[o.ownerId];
+    const rate = (c && c.usd>1e-9 && c.sar>0)? c.sar/c.usd : getInvFxRate();
+    return {ownerId:o.ownerId, units:u, usd, sar: usd*rate, rate};
+  });
+  const totalSar = rows.reduce((s,r)=>s+r.sar,0);
+  return {owners: rows.map(r=>({ownerId:r.ownerId, units:r.units, usd:r.usd, sar:r.sar})), rows, totalSar,
+          rate: usdAmount>0? totalSar/usdAmount : getInvFxRate()};
 }
 // Platform reconciliation: what the platform's own statement says, against what the tracker
 // computes — units per position and the USD cash balance. Unit tolerance is deliberately tiny
@@ -9362,13 +9424,13 @@ function renderInvPlatformSection(p){
     ${expanded? `<div class="row" style="justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:6px;flex-wrap:wrap;gap:6px">
       <div style="font-size:12.5px">💵 Cash balance
         <b class="mono ${cash.totalUsd<-0.005?'r':''}" style="margin-left:6px">$${fmt2(cash.totalUsd)}</b>
-        <span class="mut">· ${money(cash.totalUsd*fx)} SAR</span>
+        <span class="mut">· ${money(cash.totalSar)} SAR at cost</span>
         ${Math.abs(cash.profitUsd)>0.005? `<span class="mut" title="Realised gain still sitting on the platform. It has never passed through your bank, so it is excluded from the reconciliation against the Invested/Withdrawn accounts."> · of which $${fmt2(cash.profitUsd)} is realised profit</span>`:''}
       </div>
       <div style="font-size:12.5px">📈 Portfolio value <b class="mono" style="margin-left:6px">$${fmt2(portfolioUsd)}</b><span class="mut">· ${money(tot.m)} SAR</span></div>
     </div>
     <div class="mut" style="font-size:11.5px;margin-bottom:6px">
-      Portfolio + Cash: <b class="mono">$${fmt2(portfolioUsd+cash.totalUsd)}</b> <span class="mut">· ${money(tot.m+cash.totalUsd*fx)} SAR</span>
+      Portfolio + Cash: <b class="mono">$${fmt2(portfolioUsd+cash.totalUsd)}</b> <span class="mut">· ${money(tot.m+cash.totalSar)} SAR</span>
       <span class="mut" title="For a quick eyeball comparison against Invested (Out) below"> (compare against Invested (Out))</span>
     </div>
     <div class="mut" style="font-size:11.5px;margin-bottom:10px">
@@ -9380,9 +9442,39 @@ function renderInvPlatformSection(p){
       <th>Position</th><th class="num">Units</th><th class="num">Cost (SAR)</th><th class="num">Price</th><th class="num">Value (SAR)</th><th class="num">Value (USD)</th><th class="num">Unrealised</th><th class="num">%</th><th class="num">Realised</th>
     </tr></thead>
     <tbody>${rows || '<tr><td colspan="9" class="empty">No positions yet</td></tr>'}</tbody>
-    ${positions.length? `<tfoot><tr style="font-weight:700"><td>Total</td><td></td><td class="num mono">${money(tot.c)}</td><td></td><td class="num mono">${money(tot.m)}</td><td class="num mono">$${fmt2(portfolioUsd)}</td><td class="num mono ${moneyClass(tot.m-tot.c)}">${money(tot.m-tot.c)}</td><td class="num mono">${invPctText(tot.c,tot.m,true)}</td><td class="num mono ${moneyClass(tot.r)}">${Math.abs(tot.r)>0.005?money(tot.r):'—'}</td></tr></tfoot>`:''}
+    ${positions.length? `<tfoot><tr style="font-weight:700"><td>Total</td><td></td><td class="num mono">${money(tot.c)}</td><td></td><td class="num mono">${money(tot.m)}</td><td class="num mono">$${fmt2(portfolioUsd)}</td><td class="num mono ${moneyClass(tot.m-tot.c)}">${money(tot.m-tot.c)}</td><td class="num mono">${invPctText(tot.c,tot.m,true)}</td><td class="num mono ${moneyClass(tot.r)}">${Math.abs(tot.r)>0.005?money(tot.r):'—'}</td></tr>${invPlatformCashRowHTML(p.id, cash, fx)}</tfoot>` : `<tfoot>${invPlatformCashRowHTML(p.id, cash, fx)}</tfoot>`}
     </table></div>` : ''}
   </div>`;
+}
+// The platform's USD cash as a row of its positions table — so money waiting to be invested is
+// visible right next to the positions. Click for the per-person split and the Cash log.
+function invPlatformCashRowHTML(platformId, cash, fx){
+  if(!cash || (Math.abs(cash.totalUsd)<0.005 && Math.abs(cash.totalSar)<0.005)) return '';
+  const value = cash.totalUsd*fx;
+  return `<tr class="click" id="invCashRow_${platformId}" style="cursor:pointer" onclick="openInvPlatformCashOwners(${platformId})">
+    <td>\uD83D\uDCB5 USD cash <span class="mut" style="font-size:11px">\u25B8 per person</span></td><td></td>
+    <td class="num mono">${money(cash.totalSar)}</td><td class="num mono mut">${Math.abs(cash.totalUsd)>1e-9? (cash.totalSar/cash.totalUsd).toFixed(4)+' SAR/USD' : '\u2014'}</td>
+    <td class="num mono">${money(value)}</td><td class="num mono ${cash.totalUsd<-0.005?'r':''}">$${fmt2(cash.totalUsd)}</td>
+    <td class="num mono ${moneyClass(value-cash.totalSar)}">${money(value-cash.totalSar)}</td><td></td><td></td></tr>`;
+}
+function openInvPlatformCashOwners(platformId){
+  const plat = invPlatformById(platformId);
+  const cash = invPlatformCash(platformId);
+  const rows = Object.keys(cash.byOwner).map(k=>({owner:invOwnerById(Number(k)), ownerId:Number(k), c:cash.byOwner[k]}))
+    .filter(r=>Math.abs(r.c.usd)>0.005 || Math.abs(r.c.sar)>0.005)
+    .sort((a,b)=>(a.owner?a.owner.name:'').localeCompare(b.owner?b.owner.name:''));
+  showModal(`
+    <h3 style="margin-top:0">\uD83D\uDCB5 USD cash \u2014 ${esc(plat?plat.name:'')}</h3>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Money on this platform not yet invested, per person \u2014 with what it actually cost in SAR.</div>
+    <div style="overflow-x:auto"><table style="min-width:440px"><thead><tr><th>Person</th><th class="num">USD</th><th class="num">SAR (cost)</th><th class="num">Rate</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td>${esc(r.owner? r.owner.name : '#'+r.ownerId)}${r.owner&&r.owner.isSelf?' <span class="mut">(you)</span>':''}</td>
+      <td class="num mono ${r.c.usd<-0.005?'r':''}">$${fmt2(r.c.usd)}</td><td class="num mono">${money(r.c.sar)}</td>
+      <td class="num mono mut">${Math.abs(r.c.usd)>1e-9? (r.c.sar/r.c.usd).toFixed(4) : '\u2014'}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No cash on this platform</td></tr>'}</tbody>
+    <tfoot><tr><td>Total</td><td class="num mono">$${fmt2(cash.totalUsd)}</td><td class="num mono">${money(cash.totalSar)}</td><td></td></tr></tfoot></table></div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn ghost" onclick="openInvCashLog(${platformId})">Cash log \u2014 edit / delete</button>
+      <button class="btn pri" onclick="closeModal()">Done</button>
+    </div>`, true);
 }
 function renderInvRoboPlatformSection(p){
   const expanded = invExpandedPlatforms.has(p.id);
@@ -9436,11 +9528,13 @@ function renderInvAssetRollup(){
     </tr>`).join('')}</tbody></table></div></div>`;
 }
 function renderInvOwnerBreakdown(totals){
-  const withHoldings = totals.filter(t=>t.units>0 || Math.abs(t.costSar)>0.005);
+  const cashOf = {};
+  totals.forEach(t=>{ cashOf[t.owner.id] = invOwnerCashSar(t.owner.id); });
+  const withHoldings = totals.filter(t=>t.units>0 || Math.abs(t.costSar)>0.005 || Math.abs(cashOf[t.owner.id].cashUsd)>0.005);
   if(!withHoldings.length) return '';
   return `<div class="panel"><h3>👥 By Owner</h3>
     <div class="mut" style="font-size:12px;margin-bottom:8px">Family holdings are money passing through your accounts — shown separately, and not part of your own net worth.</div>
-    <div style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>Owner</th><th class="num">Cost (SAR)</th><th class="num">Value (SAR)</th><th class="num">Unrealised</th><th class="num">%</th><th class="num">Realised</th><th class="noprint"></th></tr></thead>
+    <div style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>Owner</th><th class="num">Cost (SAR)</th><th class="num">Value (SAR)</th><th class="num">Unrealised</th><th class="num">%</th><th class="num">Realised</th><th class="num" title="USD on platforms, not yet invested \u2014 with what it cost in SAR">Cash (USD)</th><th class="noprint"></th></tr></thead>
     <tbody>${withHoldings.map(t=>`<tr>
       <td><b>${esc(t.owner.name)}</b>${t.owner.isSelf? ' <span class="mut">(you)</span>':''}</td>
       <td class="num mono">${money(t.costSar)}</td>
@@ -9448,6 +9542,7 @@ function renderInvOwnerBreakdown(totals){
       <td class="num mono ${moneyClass(t.unrealizedSar)}">${money(t.unrealizedSar)}</td>
       <td class="num mono ${moneyClass(t.unrealizedSar)}">${invPctText(t.costSar, t.marketSar, true)}</td>
       <td class="num mono ${moneyClass(t.realizedSar)}">${Math.abs(t.realizedSar)>0.005? money(t.realizedSar):'—'}</td>
+      <td class="num mono" data-owner-cash="${t.owner.id}">${Math.abs(cashOf[t.owner.id].cashUsd)>0.005? '$'+fmt2(cashOf[t.owner.id].cashUsd)+'<div class="mut" style="font-size:10.5px">'+money(cashOf[t.owner.id].cashSar)+' SAR</div>' : '\u2014'}</td>
       <td class="noprint"><button class="btn ghost sm" onclick="openInvOwnerStatement(${t.owner.id})">📄 Statement</button></td>
     </tr>`).join('')}</tbody></table></div></div>`;
 }
@@ -9669,6 +9764,8 @@ function openInvTxModal(posId, txId){
       window._invTxDraft.usdAmount = Math.round(ts/getInvFxRate()*100)/100;
     }
   }
+  const dr = window._invTxDraft;
+  dr.fxRate = (existing && Number(dr.usdAmount)>0 && Number(dr.totalSar)>0)? Math.round(Number(dr.totalSar)/Number(dr.usdAmount)*10000)/10000 : getInvFxRate();
   renderInvTxModal();
 }
 function renderInvTxModal(){
@@ -9692,7 +9789,8 @@ function renderInvTxModal(){
       <div style="flex:1"><label class="fl">Units</label><input type="number" step="any" value="${esc(d.units)}" oninput="window._invTxDraft.units=this.value; invTxRefreshDerived()"></div>
       ${invTxShowsUsdEntry(d, pos)
         ? `<div style="flex:1"><label class="fl">USD ${d.kind==='sell'?'received':'paid'}</label><input type="text" inputmode="decimal" value="${esc(d.usdAmount)}" oninput="setInvTxUsd(this.value)" onblur="invTxUsdBlur(this)" placeholder="e.g. 105*10"></div>
-           <div style="flex:1"><label class="fl">Total SAR ${d.kind==='sell'?'received':'paid'}</label><input id="invTxSarDerived" type="number" step="0.01" value="${esc(d.totalSar)}" disabled title="Derived from USD at your configured rate"></div>`
+           ${invTxIsCashBuy(d)? '' : `<div style="width:120px"><label class="fl">Rate (SAR/USD)</label><input id="invTxRate" type="number" step="0.0001" value="${esc(d.fxRate)}" oninput="setInvTxRate(this.value)"></div>`}
+           <div style="flex:1"><label class="fl">Total SAR ${d.kind==='sell'?'received':'paid'}</label><input id="invTxSarDerived" type="number" step="0.01" value="${esc(invTxIsCashBuy(d)? (invTxCashBuyPreview(d).totalSar||d.totalSar) : d.totalSar)}" disabled title="${invTxIsCashBuy(d)? 'At each person\'s own cash rate on this platform' : 'USD × the rate'}"></div>`
         : `<div style="flex:1"><label class="fl">Total SAR ${d.kind==='sell'?'received':'paid'}</label><input type="number" step="0.01" value="${esc(d.totalSar)}" oninput="window._invTxDraft.totalSar=this.value; invTxRefreshDerived()"></div>`}
     </div>
     <div class="row" style="gap:10px;margin-top:10px">
@@ -9706,7 +9804,7 @@ function renderInvTxModal(){
     </div>
     ${d.cashSide==='cash'? `<div class="mut" style="font-size:11.5px;margin-top:6px">${d.kind==='sell'
         ? 'The proceeds stay on the platform as USD instead of returning to your bank, so no bank entry is involved.'
-        : 'Paid out of the platform\'s existing USD cash, so no money leaves your bank for this purchase.'} Converted at ${getInvFxRate()} SAR/USD.</div>`:''}
+        : 'Paid out of the platform\'s existing USD cash, so no money leaves your bank for this purchase.'} ${invTxCashRateText(d)}</div>`:''}
     ${d.cashSide==='opening'? `<div class="mut" style="font-size:11.5px;margin-top:6px">Declares a holding you already had before tracking started — no bank movement, no platform cash movement. Excluded from Reconciliation, since there is no ledger entry to match it against.</div>`:''}
     ${d.cashSide==='bank' && pos && pos.currency==='USD'? `<div class="mut" style="font-size:11.5px;margin-top:6px">${esc(pos.name)} trades in USD, so the amount is entered in USD and converted to SAR at ${getInvFxRate()} for the actual bank movement.</div>`:''}
     <div class="mut" id="invTxFeeNote" style="font-size:11.5px;margin-top:6px">${invTxFeeText(d)}</div>
@@ -9757,7 +9855,7 @@ function setInvTxUsd(val){
   d.usdAmount = val;
   const usd = Number(val);
   if(usd>0){
-    d.totalSar = Math.round(usd*getInvFxRate()*100)/100;
+    d.totalSar = Math.round(usd*invTxRate(d)*100)/100;
     const sarEl = document.getElementById('invTxSarDerived');
     if(sarEl) sarEl.value = d.totalSar;
   }
@@ -9770,7 +9868,7 @@ function invTxUsdBlur(el){
   const formulaResult = tryEvalFormula(raw);
   const usd = formulaResult!==null? formulaResult : Number(raw);
   d.usdAmount = (raw===''||isNaN(usd))? '' : usd;
-  d.totalSar = (usd>0)? Math.round(usd*getInvFxRate()*100)/100 : '';
+  d.totalSar = (usd>0)? Math.round(usd*invTxRate(d)*100)/100 : '';
   renderInvTxModal();
 }
 // "Opening balance" only makes sense on a buy — declaring a holding requires no sale event.
@@ -9870,7 +9968,7 @@ function setInvTxCashSide(side){
     // Coming from the bank side there may already be a SAR figure — seed USD from it rather than
     // blanking what was typed.
     if(!(Number(d.usdAmount)>0) && Number(d.totalSar)>0) d.usdAmount = Math.round(Number(d.totalSar)/getInvFxRate()*100)/100;
-    if(Number(d.usdAmount)>0) d.totalSar = Math.round(Number(d.usdAmount)*getInvFxRate()*100)/100;
+    if(Number(d.usdAmount)>0) d.totalSar = Math.round(Number(d.usdAmount)*invTxRate(d)*100)/100;
   }
   renderInvTxModal();
 }
@@ -9913,6 +10011,36 @@ function setInvTxOwnerSar(ownerId, val){
 // itself simply trades in USD (a US stock, most crypto) — in which case entering the SAR
 // equivalent by hand is the inconvenient path even when the money is genuinely coming from the
 // bank. Either reason is sufficient on its own.
+// v4.57.0: the rate. Every USD-entered transaction takes the rate typed on the day, except a buy
+// paid from platform cash — that one costs each person their own cash rate (it has to, or the SAR
+// leaving the cash wouldn't match the SAR going into the position).
+function invTxRate(d){ const r = Number(d && d.fxRate); return r>0? r : getInvFxRate(); }
+function invTxIsCashBuy(d){ return d.kind==='buy' && d.cashSide==='cash'; }
+function setInvTxRate(val){
+  const d = window._invTxDraft;
+  if(!d) return;
+  d.fxRate = val;
+  const usd = Number(d.usdAmount);
+  if(usd>0 && Number(val)>0){
+    d.totalSar = Math.round(usd*Number(val)*100)/100;
+    const sarEl = document.getElementById('invTxSarDerived');
+    if(sarEl) sarEl.value = d.totalSar;
+  }
+  invTxRefreshDerived();
+}
+function invTxCashBuyPreview(d){
+  const pos = invPositionById(d.positionId);
+  const usd = Number(d.usdAmount)||0;
+  const owners = (d.owners||[]).map(o=>({ownerId:o.ownerId, units:Number(o.units)||0})).filter(o=>o.units>0);
+  if(!pos || !(usd>0) || !owners.length) return {totalSar:0, rows:[], rate:null};
+  return invCashBuyOwnerCost(pos.platformId, d.date, d.id||null, usd, owners);
+}
+function invTxCashRateText(d){
+  if(d.kind==='sell') return 'The proceeds go into platform cash at the rate above ('+fmt2(invTxRate(d))+' SAR/USD).';
+  const p = invTxCashBuyPreview(d);
+  if(!p.rows.length) return 'Costed at each person\'s own rate for their cash on this platform (what it actually cost them in SAR) \u2014 split the units to see it.';
+  return 'Costed at each person\'s own cash rate: '+p.rows.map(r=>{ const o = invOwnerById(r.ownerId); return (o? o.name : '#'+r.ownerId)+' '+r.rate.toFixed(4); }).join(', ')+' \u2014 '+money(p.totalSar)+' SAR in total (average '+(p.rate? p.rate.toFixed(4) : '\u2014')+').';
+}
 function invTxShowsUsdEntry(d, pos){
   return d.cashSide==='cash' || d.cashSide==='opening' || (pos && pos.currency==='USD');
 }
@@ -10083,7 +10211,16 @@ async function saveInvTx(){
       if(short.length) toast('Heads up: this takes '+short.join(', ')+'\'s cash on this platform negative', true);
     }
   }
-  const fields = {date:d.date, kind:d.kind, units, totalSar, owners, note:d.note||'', cashSide, usdAmount, feePct};
+  // v4.57.0: store what each person's share actually cost, so the cash maths uses real rates.
+  let ownersOut = owners, totalSarOut = totalSar;
+  if(cashSide==='cash' && d.kind==='buy' && posForSave && usdAmount>0){
+    const snap = invCashBuyOwnerCost(posForSave.platformId, d.date, d.id||null, usdAmount, owners);
+    ownersOut = snap.owners; totalSarOut = snap.totalSar;
+  } else if(usdAmount>0){
+    const split = invSplitUsdBySar(usdAmount, owners.map(o=>({ownerId:o.ownerId, sar:o.units})));
+    ownersOut = owners.map(o=>({ownerId:o.ownerId, units:o.units, usd:(split.find(x=>x.ownerId===o.ownerId)||{usd:0}).usd}));
+  }
+  const fields = {date:d.date, kind:d.kind, units, totalSar:totalSarOut, owners:ownersOut, note:d.note||'', cashSide, usdAmount, feePct};
   if(d.id){
     const ex = (D.invTransactions||[]).find(t=>t.id===d.id);
     Object.assign(ex, fields);
@@ -10117,8 +10254,11 @@ function invCashOwnerRows(d){
 function setInvCashOwnerUsd(ownerId, val){
   const d = window._invCashDraft;
   if(!d) return;
+  const prev = (d.owners||[]).find(o=>o.ownerId===ownerId);
   d.owners = (d.owners||[]).filter(o=>o.ownerId!==ownerId);
-  if(String(val).trim()!=='') d.owners.push({ownerId, usd:Number(val)||0});
+  // Keep the SAR a person contributed (Collect Contributions) when only their USD is corrected —
+  // the rate is then worked out from the new USD, exactly as at collection.
+  if(String(val).trim()!=='') d.owners.push(Object.assign({ownerId, usd:Number(val)||0}, (prev && prev.sar!==undefined && prev.sar!==null && prev.sar!=='')? {sar:prev.sar} : {}));
   invCashRefreshDerived();
 }
 function invCashAllocTotal(d){ return (d.owners||[]).reduce((s,o)=>s+(Number(o.usd)||0),0); }
@@ -10142,6 +10282,33 @@ function invWithdrawalSplit(d){
   const prof = Math.min(amt, availProfit);
   return {profitUsd: prof, capitalUsd: amt-prof, availProfit, auto:true};
 }
+// For information: the rate on a deposit that carries each person's SAR (Collect Contributions).
+function invMovementRate(m){
+  const rows = (m.owners||[]).filter(o=>o.sar!==undefined && o.sar!==null && o.sar!=='');
+  const usd = rows.reduce((s,o)=>s+(Number(o.usd)||0),0), sar = rows.reduce((s,o)=>s+(Number(o.sar)||0),0);
+  return (rows.length && usd>0 && sar>0)? sar/usd : null;
+}
+// How a withdrawal should be booked in SAR, given the SAR that reached the bank: the capital leaves
+// the tracker at each person's average cost rate (book that to Withdrawn (In)); everything else,
+// including any exchange-rate gain or loss, goes to Profit. This keeps the reconciliation exact.
+function invWithdrawalBooking(d){
+  const sarReceived = Number(d.sarReceived)||0;
+  const owners = (d.owners||[]).map(o=>({ownerId:o.ownerId, usd:Math.abs(Number(o.usd)||0)})).filter(o=>o.usd>0);
+  const allocTotal = owners.reduce((s,o)=>s+o.usd,0);
+  const amt = Math.abs(Number(d.usdAmount)||0);
+  if(!(sarReceived>0) || !(amt>0) || !owners.length) return null;
+  const sp = invWithdrawalSplit(d);
+  const {state} = invCashState(d.date||null, d.id? {excludeMoveId:d.id} : null);
+  const p = state[d.platformId] || {};
+  let capitalSar = 0;
+  owners.forEach(o=>{
+    const c = p[o.ownerId] || {usd:0, sar:0, profitUsd:0, profitSar:0};
+    const pTake = allocTotal>0? sp.profitUsd*(o.usd/allocTotal) : 0;
+    capitalSar += o.usd*invCashAvgRate(c) - pTake*invCashProfitRate(c);
+  });
+  capitalSar = Math.round(capitalSar*100)/100;
+  return {rate: sarReceived/amt, capitalSar, profitSar: Math.round((sarReceived-capitalSar)*100)/100};
+}
 function invCashRefreshDerived(){
   const d = window._invCashDraft;
   if(!d) return;
@@ -10153,14 +10320,17 @@ function invCashRefreshDerived(){
   const split = document.getElementById('invCashSplitNote');
   if(split && d.kind==='withdrawal'){
     const sp = invWithdrawalSplit(d);
-    split.textContent = 'Booked as $'+fmt2(sp.capitalUsd)+' capital (In account) and $'+fmt2(sp.profitUsd)+' profit (Profit account). Realised profit available: $'+fmt2(sp.availProfit)+'.';
+    const bk = invWithdrawalBooking(d);
+    split.textContent = 'Booked as $'+fmt2(sp.capitalUsd)+' capital (In account) and $'+fmt2(sp.profitUsd)+' profit (Profit account). Realised profit available: $'+fmt2(sp.availProfit)+'.'
+      + (bk? ' Rate '+bk.rate.toFixed(4)+' SAR/USD (for information). Book '+money(bk.capitalSar)+' SAR to Withdrawn (In) and '+money(bk.profitSar)+' SAR to Profit.' : '');
   }
 }
 function openInvCashModal(platformId, kind, movementId){
   const existing = movementId? (D.invCashMovements||[]).find(m=>m.id===movementId) : null;
   const selfId = invSelfOwnerId();
   window._invCashDraft = existing
-    ? {...existing, owners:(existing.owners||[]).map(o=>({...o})), profitOverride: existing.kind==='withdrawal'? existing.profitUsd : null}
+    ? {...existing, owners:(existing.owners||[]).map(o=>({...o})), profitOverride: existing.kind==='withdrawal'? existing.profitUsd : null,
+       sarReceived: existing.kind==='withdrawal'? ((existing.owners||[]).reduce((s,o)=>s+(Number(o.sar)||0),0) || '') : ''}
     : {id:null, platformId, date:todayStr(), kind, usdAmount:'', toPlatformId:null, feeUsd:'',
        owners: selfId!==null? [{ownerId:selfId, usd:''}] : [], note:'', profitOverride:null};
   renderInvCashModal();
@@ -10173,7 +10343,7 @@ function renderInvCashModal(){
   const title = d.kind==='deposit'? 'Deposit to' : d.kind==='withdrawal'? 'Withdraw from' : 'Transfer from';
   showModal(`
     <h3 style="margin-top:0">${title} ${esc(plat?plat.name:'')}</h3>
-    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Current cash on this platform: <b class="mono">$${fmt2(cash.totalUsd)}</b> (${money(cash.totalUsd*getInvFxRate())} SAR at ${getInvFxRate()})</div>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Current cash on this platform: <b class="mono">$${fmt2(cash.totalUsd)}</b> (${money(cash.totalSar)} SAR at cost)</div>
     <div class="row" style="gap:10px">
       <div style="flex:1"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="window._invCashDraft.date=this.value"></div>
       <div style="flex:1"><label class="fl">USD amount</label><input type="number" step="0.01" value="${esc(d.usdAmount)}" oninput="window._invCashDraft.usdAmount=this.value; invCashRefreshDerived()"></div>
@@ -10189,7 +10359,9 @@ function renderInvCashModal(){
     ${d.kind==='withdrawal'? `<div class="row" style="gap:10px;margin-top:10px">
       <div style="flex:1"><label class="fl">Profit portion (USD) — leave blank for automatic</label><input type="number" step="0.01" value="${d.profitOverride===null||d.profitOverride===undefined?'':esc(d.profitOverride)}" oninput="window._invCashDraft.profitOverride=this.value===''?null:this.value; invCashRefreshDerived()"></div>
     </div>
+    <div class="row" style="gap:10px;margin-top:10px"><div style="flex:1"><label class="fl">SAR received in the bank (optional \u2014 shows the rate and how to book it)</label><input type="number" step="0.01" value="${esc(d.sarReceived||'')}" oninput="window._invCashDraft.sarReceived=this.value; invCashRefreshDerived()"></div></div>
     <div class="mut" id="invCashSplitNote" style="font-size:11.5px;margin-top:6px"></div>`:''}
+    ${d.kind==='deposit' && invMovementRate(d)? `<div class="mut" style="font-size:11.5px;margin-top:6px">Rate ${invMovementRate(d).toFixed(4)} SAR/USD (for information) \u2014 worked out from the SAR each person contributed; correcting the USD keeps their SAR and updates the rate.</div>` : ''}
     <h3 style="font-size:13.5px;margin:16px 0 6px">Whose money?</h3>
     <table><thead><tr><th>Owner</th><th class="num">USD</th></tr></thead><tbody>${invCashOwnerRows(d)}</tbody></table>
     <div class="mut" id="invCashAllocSummary" style="font-size:11.5px;margin-top:6px">${invCashAllocText(d)}</div>
@@ -10206,8 +10378,14 @@ async function saveInvCashMovement(){
   const amt = Number(d.usdAmount)||0;
   if(!(amt>0)){ toast('Enter a USD amount greater than zero', true); return; }
   if(d.kind==='transfer' && !d.toPlatformId){ toast('Choose which platform the money is going to', true); return; }
-  const owners = (d.owners||[]).map(o=>({ownerId:o.ownerId, usd:Number(o.usd)||0})).filter(o=>o.usd>0);
+  let owners = (d.owners||[]).map(o=>Object.assign({ownerId:o.ownerId, usd:Number(o.usd)||0},
+    (d.kind==='deposit' && o.sar!==undefined && o.sar!==null && o.sar!=='')? {sar:Number(o.sar)||0} : {})).filter(o=>o.usd>0);
   if(!owners.length){ toast('Assign the amount to at least one owner', true); return; }
+  // A withdrawal's SAR received is kept per person for information (the rate in the Cash log).
+  if(d.kind==='withdrawal' && Number(d.sarReceived)>0){
+    const sarSplit = invSplitUsdBySar(Number(d.sarReceived), owners.map(o=>({ownerId:o.ownerId, sar:o.usd})));
+    owners = owners.map(o=>({...o, sar:(sarSplit.find(x=>x.ownerId===o.ownerId)||{usd:0}).usd}));
+  }
   const allocTotal = owners.reduce((s,o)=>s+o.usd,0);
   if(Math.abs(allocTotal-amt)>0.005){ toast('Allocated USD must equal the movement total ($'+fmt2(amt)+')', true); return; }
   const fee = d.kind==='transfer'? Math.abs(Number(d.feeUsd)||0) : 0;
@@ -10331,6 +10509,7 @@ function invCollectRefresh(){
   if(sum){
     const pctBad = d.mode==='pct' && Math.abs(t.pctSum-100)>0.005;
     sum.innerHTML = `Total: <b class="mono">${money(t.totalSar)} SAR</b> from ${t.rows.length} ${t.rows.length===1?'person':'people'} → <b class="mono">$${fmt2(t.usd)}</b>`+
+      (t.usd>0 && t.totalSar>0? ` <span id="invCollectRate">· rate <b class="mono">${(t.totalSar/t.usd).toFixed(4)}</b> SAR/USD (for information)</span>` : '')+
       (pctBad? ` <span style="color:var(--red)">· percentages add up to ${t.pctSum.toFixed(2)}%, they must total 100%</span>` : '');
   }
 }
@@ -10398,7 +10577,7 @@ async function saveInvCollect(){
   const note = (d.note||'').trim() || 'Contributions';
   const rec = {id: invNextId(D.invCashMovements), updated_at:null, platformId:d.platformId, date:d.date, kind:'deposit',
                usdAmount: Math.round(t.usd*100)/100, toPlatformId:null, feeUsd:0, capitalUsd:0, profitUsd:0,
-               owners: t.split, note};
+               owners: t.split.map(sp=>{ const r = t.rows.find(x=>x.ownerId===sp.ownerId); return {ownerId:sp.ownerId, usd:sp.usd, sar: r? Math.round(r.sar*100)/100 : 0}; }), note};
   D.invCashMovements.push(rec);
   await persistInvCashMovement(rec);
   closeModal(); renderInvestmentsPage();
@@ -10417,7 +10596,7 @@ function openInvCashLog(platformId){
       const label = m.kind==='transfer'? (incoming? 'Transfer in':'Transfer out') : (m.kind==='deposit'?'Deposit':'Withdrawal');
       const detail = m.kind==='transfer'
         ? (other? (incoming?'from ':'to ')+esc(other.name):'—') + (m.feeUsd>0&&!incoming? ' · fee $'+fmt2(m.feeUsd):'')
-        : m.kind==='withdrawal'? ('capital $'+fmt2(m.capitalUsd)+' · profit $'+fmt2(m.profitUsd)) : esc(m.note||'—');
+        : m.kind==='withdrawal'? ('capital $'+fmt2(m.capitalUsd)+' · profit $'+fmt2(m.profitUsd)+(invMovementRate(m)? ' · '+money((m.owners||[]).reduce((s,o)=>s+(Number(o.sar)||0),0))+' SAR at '+invMovementRate(m).toFixed(4) : '')) : esc(m.note||'—')+(invMovementRate(m)? ' · rate '+invMovementRate(m).toFixed(4) : '');
       return `<tr><td class="mono">${esc(m.date)}</td><td>${label}</td>
         <td class="num mono ${(m.kind==='deposit'||incoming)?'g':'r'}">${(m.kind==='deposit'||incoming)?'':'-'}$${fmt2(m.usdAmount)}</td>
         <td class="mut" style="font-size:11.5px">${detail}</td>
@@ -10623,10 +10802,22 @@ function openInvOwnerStatement(ownerId){
   for(const pos of (D.invPositions||[])){
     const s = ownerSliceOfPosition(pos, ownerId);
     if(!s) continue;
-    rows.push({pos, plat: invPlatformById(pos.platformId), s});
+    rows.push({kind:'pos', pos, plat: invPlatformById(pos.platformId), s, cost:s.costSar, market:s.marketSar});
   }
-  const totCost = rows.reduce((a,r)=>a+r.s.costSar,0);
-  const totMarket = rows.reduce((a,r)=>a+r.s.marketSar,0);
+  // v4.57.0: their USD cash on each platform, at what it cost, valued at the standard rate.
+  const fxS = getInvFxRate();
+  const cashState = invCashState(null).state;
+  for(const pid in cashState){
+    const c = cashState[pid][ownerId];
+    if(!c || (Math.abs(c.usd)<0.005 && Math.abs(c.sar)<0.005)) continue;
+    rows.push({kind:'cash', plat: invPlatformById(Number(pid)), usd:c.usd, cost:c.sar, market:c.usd*fxS});
+  }
+  // Grouped by platform (name order), positions by name, the platform's cash last in its group.
+  const platName = r => (r.plat? r.plat.name : '').toLowerCase();
+  rows.sort((a,b)=> platName(a).localeCompare(platName(b)) || ((a.kind==='cash')-(b.kind==='cash')) ||
+    ((a.pos? a.pos.name : '').toLowerCase().localeCompare((b.pos? b.pos.name : '').toLowerCase())));
+  const totCost = rows.reduce((a,r)=>a+r.cost,0);
+  const totMarket = rows.reduce((a,r)=>a+r.market,0);
   const displayName = o.nameAr || applyNameTranslations(o.name);
   showModal(`
     <div class="row" style="justify-content:space-between;align-items:baseline">
@@ -10636,7 +10827,15 @@ function openInvOwnerStatement(ownerId){
     <div class="mut noprint" style="font-size:11px;margin:6px 0 12px">Position details, purchase value, current value and change — as of the latest logged prices.</div>
     <div style="overflow-x:auto"><table dir="rtl" style="width:100%;min-width:640px">
       <thead><tr><th>الأصل</th><th>المنصة</th><th class="num">الوحدات</th><th class="num">الحصة</th><th class="num">قيمة الشراء</th><th class="num">القيمة الحالية</th><th class="num">التغير</th></tr></thead>
-      <tbody>${rows.map(r=>`<tr>
+      <tbody>${rows.map(r=> r.kind==='cash'? `<tr class="inv-stmt-cash">
+        <td><b>\uD83D\uDCB5 نقد (دولار)</b></td>
+        <td>${esc(r.plat?r.plat.name:'')}</td>
+        <td class="num mono">$${fmt2(r.usd)}</td>
+        <td class="num mono">\u2014</td>
+        <td class="num mono">${money(r.cost)}</td>
+        <td class="num mono">${money(r.market)}</td>
+        <td class="num mono ${moneyClass(r.market-r.cost)}">${money(r.market-r.cost)}</td>
+      </tr>` : `<tr>
         <td><b>${esc(r.pos.name)}</b>${r.pos.ticker?` <span class="mut">${esc(r.pos.ticker)}</span>`:''}</td>
         <td>${esc(r.plat?r.plat.name:'')}</td>
         <td class="num mono">${r.s.units.toLocaleString(undefined,{maximumFractionDigits:8})}</td>
