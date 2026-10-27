@@ -346,12 +346,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.58.0';
+const APP_VERSION = '4.59.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.59.0', date:'2026-10-27', changes:[
+    'NEW: \u270E Edit costs in each position\u2019s window \u2014 every buy in one table with an editable SAR cell per person and an editable Total (shared out in the same proportions). Type a new total for a person and it is spread across their buys in proportion. Saved in one go.',
+    'Every cost correction (from the editor or the CSV) is recorded in \uD83D\uDCCB Activity as a \u201CCost correction\u201D showing each person\u2019s cost before \u2192 after, with the changed transactions listed. Stored in the existing investments data, so it syncs and is backed up with no database change.',
+    'FIXED: the Transactions CSV import rewrote every row and dropped each person\u2019s stored SAR/USD (so a re-import undid v4.57\u2019s real exchange rates), and refused opening balances (0 SAR), so a full export would not import back. It now writes only rows that changed (\u201Cchanged / unchanged (skipped)\u201D), keeps each person\u2019s stored figures (a new Total is shared out in their current proportions), accepts 0 for opening balances, and leaves transfer legs alone.',
+    'Transactions CSV has a new \u201COwners SAR (id:sar;\u2026)\u201D column for per-person cost. Change it, the Total, or both (they must then agree).',
+  ]},
   {version:'4.58.0', date:'2026-10-27', changes:[
     'Investments redesigned into simple views, one question each: \uD83D\uDC64 Mine (only your own money: 4 cards \u2014 value, cost, P/L, cash \u2014 and one compact line per platform that expands to a 5-column table), \uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67 Family (a card per family member plus a \u201CThis month\u201D checklist: collect \u2192 invest the cash \u2192 check it all agrees), \uD83D\uDCCB Activity, \u2705 Reconcile, \uD83D\uDCCA Insights and \u2699 Setup. The previous all-in-one page is still there as \uD83D\uDDC2 Classic.',
     'NEW \uD83D\uDCCB Activity: every buy, sell, deposit, withdrawal and transfer in one timeline, filterable by platform, person and type, with \u270E edit and \uD83D\uDDD1 delete on each line.',
@@ -8505,10 +8511,10 @@ function invOwnerAllocFromString(s){
   });
 }
 function exportInvTransactionsCSV(){
-  const rows = [['Tx ID','Position ID','Position','Date','Kind','Units','Total SAR','Owners (id:units;…)','Note']];
+  const rows = [['Tx ID','Position ID','Position','Date','Kind','Units','Total SAR','Owners (id:units;…)','Note','Owners SAR (id:sar;…)']];
   for(const t of (D.invTransactions||[]).slice().sort((a,b)=>a.date<b.date?-1:1)){
     const pos = invPositionById(t.positionId);
-    rows.push([t.id, t.positionId, pos?pos.name:'', t.date, t.kind, t.units, t.totalSar, invOwnerAllocToString(t.owners), t.note||'']);
+    rows.push([t.id, t.positionId, pos?pos.name:'', t.date, t.kind, t.units, t.totalSar, invOwnerAllocToString(t.owners), t.note||'', invOwnerSarToString(t)]);
   }
   invCsvDownload('LedgerOS Investment Transactions', rows);
   toast('Transactions exported ✓');
@@ -8706,7 +8712,8 @@ function openInvCsvTools(){
       <button class="btn ghost sm" onclick="exportInvValuationsCSV()">⬇ Export</button>
       <label class="btn ghost sm" style="cursor:pointer">⬆ Import<input type="file" accept=".csv" style="display:none" onchange="handleInvCsvFile(event,'val')"></label>
     </div>
-    <div class="mut" style="font-size:11.5px;margin-top:14px">Owners column format: <span class="mono">1:10;2:5</span> — owner id, colon, units, semicolon-separated. The units must add up to the row's Units value.</div>`);
+    <div class="mut" style="font-size:11.5px;margin-top:14px">Owners column format: <span class="mono">1:10;2:5</span> — owner id, colon, units, semicolon-separated. The units must add up to the row's Units value.
+      <br>Owners SAR (optional): <span class="mono">1:400;2:375</span> — each person's SAR on that transaction. Change the Total SAR alone and it is shared out in the current proportions. Only rows you changed are saved, and corrections are recorded in 📋 Activity.</div>`);
 }
 function handleInvCsvFile(ev, which){
   const f = ev.target.files && ev.target.files[0];
@@ -8718,22 +8725,184 @@ function handleInvCsvFile(ev, which){
   };
   reader.readAsText(f);
 }
+/* ============================= COST CORRECTIONS (v4.59.0) =============================
+   Two ways to correct what transactions cost, both recorded in 📋 Activity:
+     • ✎ Edit costs — an on-screen editor in each position's window (every buy, every person),
+       including "set this person's total", spread across their buys in proportion.
+     • The Transactions CSV — now only writes rows that actually changed, keeps each person's
+       stored SAR/USD, and has an "Owners SAR" column for per-person figures.
+   A correction is stored as a 'costadj' entry in the cash-movements table (no database change;
+   the cash maths ignores it), holding each person's cost before → after on that position. */
+// Each person's SAR on one transaction: their stored figure when every owner carries one
+// (cash-funded buys since v4.57, or an earlier correction), otherwise their units' share.
+function invTxOwnerSarMap(t){
+  const owners = (t && t.owners) || [];
+  const all = owners.length>0 && owners.every(o=>o.sar!==undefined && o.sar!==null && o.sar!=='');
+  const totalUnits = owners.reduce((s,o)=>s+(Number(o.units)||0),0);
+  const map = {};
+  owners.forEach(o=>{ map[o.ownerId] = all? (Number(o.sar)||0) : (totalUnits>0? (Number(t.totalSar)||0)*(Number(o.units)||0)/totalUnits : 0); });
+  return map;
+}
+function invTxHasOwnerSar(t){ const o = (t && t.owners) || []; return o.length>0 && o.every(x=>x.sar!==undefined && x.sar!==null && x.sar!==''); }
+function invOwnerSarToString(t){ const m = invTxOwnerSarMap(t); return ((t && t.owners)||[]).map(o=>o.ownerId+':'+(Math.round((m[o.ownerId]||0)*100)/100)).join(';'); }
+function invOwnerSarFromString(s){
+  const out = {};
+  String(s||'').split(';').map(x=>x.trim()).filter(Boolean).forEach(p=>{ const [a,b] = p.split(':'); out[Number(a)] = Number(String(b||'').replace(/,/g,'')); });
+  return out;
+}
+// Writes per-person SAR onto a transaction (every owner), keeping their units and USD shares.
+function invSetTxOwnerSar(t, sarMap){
+  t.owners = (t.owners||[]).map(o=>Object.assign({}, o, {sar: Math.round((Number(sarMap[o.ownerId])||0)*100)/100}));
+  t.totalSar = Math.round(t.owners.reduce((s,o)=>s+o.sar,0)*100)/100;
+}
+function invPositionOwnerSnapshot(posId){
+  const st = computePositionState(posId);
+  const out = {};
+  for(const oid in st.byOwner) out[oid] = {cost: st.byOwner[oid].costSar||0, realised: st.byOwner[oid].realizedSar||0};
+  return out;
+}
+async function invRecordCostCorrection(posId, before, source, changes){
+  const pos = invPositionById(posId); if(!pos) return null;
+  const after = invPositionOwnerSnapshot(posId);
+  const r2 = v => Math.round((Number(v)||0)*100)/100;
+  const ids = new Set([...Object.keys(before||{}), ...Object.keys(after)]);
+  const owners = [...ids].map(k=>({positionId:posId, ownerId:Number(k),
+      before:r2((before[k]||{}).cost), after:r2((after[k]||{}).cost),
+      realisedBefore:r2((before[k]||{}).realised), realisedAfter:r2((after[k]||{}).realised)}))
+    .filter(o=>Math.abs(o.after-o.before)>0.005 || Math.abs(o.realisedAfter-o.realisedBefore)>0.005);
+  const rec = {id: invNextId(D.invCashMovements), updated_at:null, platformId: pos.platformId, date: todayStr(), kind:'costadj',
+    usdAmount:0, toPlatformId:null, feeUsd:0, capitalUsd:0, profitUsd:0, owners,
+    note: (source+': '+changes.length+' transaction'+(changes.length===1?'':'s')+' changed — '+changes.join('; ')).slice(0,900)};
+  D.invCashMovements.push(rec);
+  await persistInvCashMovement(rec);
+  logActivity('action', 'Investments cost correction ('+source+') on '+pos.name+': '+changes.length+' transaction(s)');
+  return rec;
+}
+// ---- ✎ Edit costs (position window) ----
+function invCostEditableTxs(posId){
+  return invTxForPosition(posId).filter(t=>t.kind==='buy' && t.cashSide!=='transfer' && !t.linkId);
+}
+function openInvCostEditor(posId){
+  const pos = invPositionById(posId); if(!pos) return;
+  const rows = invCostEditableTxs(posId).map(t=>{
+    const m = invTxOwnerSarMap(t);
+    const units = {}; (t.owners||[]).forEach(o=>{ units[o.ownerId] = Number(o.units)||0; });
+    return {id:t.id, date:t.date, units:Number(t.units)||0, cashSide:t.cashSide||'bank', ownerIds:(t.owners||[]).map(o=>o.ownerId), ownerUnits:units,
+            sar:Object.assign({}, m), orig:Object.assign({}, m)};
+  });
+  const ownerIds = [...new Set(rows.flatMap(r=>r.ownerIds))].sort((a,b)=>((invOwnerById(a)||{}).name||'').localeCompare((invOwnerById(b)||{}).name||''));
+  window._invCostDraft = {posId, rows, ownerIds};
+  renderInvCostEditor();
+}
+function invCostRowTotal(r){ return r.ownerIds.reduce((s,oid)=>s+(Number(r.sar[oid])||0),0); }
+function invCostPersonTotal(d, oid){ return d.rows.reduce((s,r)=>s+(r.ownerIds.includes(oid)? (Number(r.sar[oid])||0) : 0),0); }
+function invCostChangedRows(d){ return d.rows.filter(r=>r.ownerIds.some(oid=>Math.abs((Number(r.sar[oid])||0)-(r.orig[oid]||0))>0.005)); }
+function renderInvCostEditor(){
+  const d = window._invCostDraft; if(!d) return;
+  const pos = invPositionById(d.posId);
+  const name = oid => { const o = invOwnerById(oid); return o? o.name : '#'+oid; };
+  const r2 = v => Math.round((Number(v)||0)*100)/100;
+  showModal(`
+    <h3 style="margin-top:0">✎ Edit costs — ${esc(pos? pos.name : '')}</h3>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Change any person's SAR on a buy, or a buy's Total (it is shared out in the same proportions as now). Each change is recorded in 📋 Activity.
+      A buy paid from platform cash moves the difference to or from that person's remaining cash cost.</div>
+    <div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="min-width:${360+d.ownerIds.length*130}px"><thead><tr>
+      <th>Date</th><th class="num">Units</th>${d.ownerIds.map(oid=>`<th class="num">${esc(name(oid))}</th>`).join('')}<th class="num">Total SAR</th>
+    </tr></thead><tbody>${d.rows.map((r,i)=>`<tr>
+      <td class="mono">${esc(r.date)}${r.cashSide==='cash'? ' <span class="mut" style="font-size:10.5px">← cash</span>' : r.cashSide==='opening'? ' <span class="mut" style="font-size:10.5px">opening</span>' : ''}</td>
+      <td class="num mono">${invFmtUnits(r.units)}</td>
+      ${d.ownerIds.map(oid=>r.ownerIds.includes(oid)
+        ? `<td class="num"><input type="number" step="0.01" min="0" id="invCostCell_${i}_${oid}" style="width:110px;text-align:right" value="${r2(r.sar[oid])}" oninput="setInvCostCell(${i}, ${oid}, this.value)"></td>`
+        : '<td class="num mut">—</td>').join('')}
+      <td class="num"><input type="number" step="0.01" min="0" id="invCostTotal_${i}" style="width:120px;text-align:right" value="${r2(invCostRowTotal(r))}" oninput="setInvCostRowTotal(${i}, this.value)"></td>
+    </tr>`).join('') || `<tr><td colspan="${3+d.ownerIds.length}" class="empty">No buys to edit on this position</td></tr>`}</tbody>
+    ${d.rows.length? `<tfoot><tr><td colspan="2"><b>Each person's total</b><div class="mut" style="font-size:10.5px;font-weight:400">type a new total to spread it across their buys</div></td>
+      ${d.ownerIds.map(oid=>`<td class="num"><input type="number" step="0.01" min="0" id="invCostPerson_${oid}" style="width:110px;text-align:right" value="${r2(invCostPersonTotal(d, oid))}" onchange="setInvCostPersonTotal(${oid}, this.value)"></td>`).join('')}
+      <td class="num mono" id="invCostGrand">${money(d.rows.reduce((s,r)=>s+invCostRowTotal(r),0))}</td></tr></tfoot>` : ''}
+    </table></div>
+    <div class="mut" id="invCostSummary" style="font-size:12px;margin-top:8px"></div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn ghost" onclick="openInvPosition(${d.posId})">Cancel</button>
+      <button class="btn pri" onclick="saveInvCostEditor()">Save corrections</button>
+    </div>`, true);
+  invCostRefresh();
+}
+// Patches the computed figures in place so typing never loses focus.
+function invCostRefresh(skipId){
+  const d = window._invCostDraft; if(!d) return;
+  const r2 = v => Math.round((Number(v)||0)*100)/100;
+  const put = (id, v) => { const el = document.getElementById(id); if(el && id!==skipId && el!==document.activeElement) el.value = r2(v); };
+  d.rows.forEach((r,i)=>{ put('invCostTotal_'+i, invCostRowTotal(r)); r.ownerIds.forEach(oid=>put('invCostCell_'+i+'_'+oid, r.sar[oid])); });
+  d.ownerIds.forEach(oid=>put('invCostPerson_'+oid, invCostPersonTotal(d, oid)));
+  const g = document.getElementById('invCostGrand'); if(g) g.textContent = money(d.rows.reduce((s,r)=>s+invCostRowTotal(r),0));
+  const n = invCostChangedRows(d).length;
+  const sum = document.getElementById('invCostSummary'); if(sum) sum.textContent = n? n+' buy'+(n===1?'':'s')+' will change.' : 'No changes yet.';
+}
+function setInvCostCell(i, oid, val){
+  const d = window._invCostDraft; if(!d || !d.rows[i]) return;
+  d.rows[i].sar[oid] = Math.max(0, Number(val)||0);
+  invCostRefresh('invCostCell_'+i+'_'+oid);
+}
+// New total for one buy: shared out in the buy's current proportions (by units if it is all zero).
+function setInvCostRowTotal(i, val){
+  const d = window._invCostDraft; if(!d || !d.rows[i]) return;
+  const r = d.rows[i];
+  const target = Math.max(0, Number(val)||0);
+  const cur = invCostRowTotal(r);
+  const unitsTot = r.ownerIds.reduce((s,oid)=>s+(r.ownerUnits[oid]||0),0);
+  r.ownerIds.forEach(oid=>{ r.sar[oid] = cur>0? (Number(r.sar[oid])||0)*target/cur : (unitsTot>0? target*(r.ownerUnits[oid]||0)/unitsTot : 0); });
+  invCostRefresh('invCostTotal_'+i);
+}
+// New total for one person on this position: spread across their buys in proportion to what each
+// buy currently costs them (by their units in each buy if it is all zero, e.g. opening balances).
+function setInvCostPersonTotal(oid, val){
+  const d = window._invCostDraft; if(!d) return;
+  const target = Math.max(0, Number(val)||0);
+  const rows = d.rows.filter(r=>r.ownerIds.includes(oid));
+  const cur = rows.reduce((s,r)=>s+(Number(r.sar[oid])||0),0);
+  const unitsTot = rows.reduce((s,r)=>s+(r.ownerUnits[oid]||0),0);
+  rows.forEach(r=>{ r.sar[oid] = cur>0? (Number(r.sar[oid])||0)*target/cur : (unitsTot>0? target*(r.ownerUnits[oid]||0)/unitsTot : 0); });
+  invCostRefresh('invCostPerson_'+oid);
+}
+async function saveInvCostEditor(){
+  const d = window._invCostDraft; if(!d) return;
+  const changed = invCostChangedRows(d);
+  if(!changed.length){ toast('Nothing changed'); return; }
+  if(changed.some(r=>r.ownerIds.some(oid=>!(Number(r.sar[oid])>=0)))){ toast('Amounts must be zero or more', true); return; }
+  const before = invPositionOwnerSnapshot(d.posId);
+  const descs = [];
+  for(const r of changed){
+    const t = (D.invTransactions||[]).find(x=>x.id===r.id); if(!t) continue;
+    const old = Number(t.totalSar)||0;
+    invSetTxOwnerSar(t, r.sar);
+    descs.push('#'+t.id+' buy '+t.date+' '+money(old)+' → '+money(t.totalSar));
+    await persistInvTransaction(t);
+  }
+  await invRecordCostCorrection(d.posId, before, 'Edit costs', descs);
+  window._invCostDraft = null;
+  openInvPosition(d.posId); renderInvestmentsPage();
+  toast(descs.length+' buy'+(descs.length===1?'':'s')+' corrected ✓ — recorded in Activity');
+}
 async function importInvTransactionsCSV(rows){
   if(!rows.length){ toast('Empty file', true); return; }
   const body = rows.slice(1).filter(r=>r.some(c=>String(c).trim()!==''));
   const errors = [], staged = [];
   const knownOwners = new Set((D.invOwners||[]).map(o=>o.id));
+  let unchanged = 0;
   body.forEach((r, i)=>{
     const line = i+2;
-    const [txId, posId, , date, kind, units, totalSar, ownersStr, note] = r;
+    const [txId, posId, , date, kind, units, totalSar, ownersStr, note, ownersSarStr] = r;
     const pid = Number(posId);
+    const existing = String(txId||'').trim()? (D.invTransactions||[]).find(t=>t.id===Number(txId)) || null : null;
     if(!invPositionById(pid)){ errors.push('Row '+line+': unknown Position ID "'+posId+'"'); return; }
     if(!/^\d{4}-\d{2}-\d{2}$/.test(String(date||'').trim())){ errors.push('Row '+line+': date must be YYYY-MM-DD'); return; }
     const k = String(kind||'').trim().toLowerCase();
     if(k!=='buy' && k!=='sell'){ errors.push('Row '+line+': Kind must be buy or sell'); return; }
-    const u = Number(units), sar = Number(totalSar);
+    const u = Number(String(units).replace(/,/g,'')), sar = Number(String(totalSar).replace(/,/g,''));
     if(!(u>0)){ errors.push('Row '+line+': Units must be greater than zero'); return; }
-    if(!(sar>0)){ errors.push('Row '+line+': Total SAR must be greater than zero'); return; }
+    // An opening balance declares a holding with no cost, so 0 is valid for it (v4.59.0).
+    const zeroOk = !!existing && existing.cashSide==='opening';
+    if(!(sar>0) && !(zeroOk && sar===0)){ errors.push('Row '+line+': Total SAR must be greater than zero'); return; }
     const owners = invOwnerAllocFromString(ownersStr);
     if(!owners.length){ errors.push('Row '+line+': Owners column is required'); return; }
     for(const o of owners){
@@ -8742,14 +8911,69 @@ async function importInvTransactionsCSV(rows){
     }
     const allocTotal = owners.reduce((s,o)=>s+o.units,0);
     if(Math.abs(allocTotal-u)>1e-6){ errors.push('Row '+line+': owner units ('+allocTotal+') must equal Units ('+u+')'); return; }
-    staged.push({id: String(txId||'').trim()? Number(txId) : null, positionId:pid, date:String(date).trim(), kind:k, units:u, totalSar:sar, owners, note:String(note||'')});
+    let sarMap = null;
+    const sarStr = String(ownersSarStr||'').trim();
+    if(sarStr){
+      sarMap = invOwnerSarFromString(sarStr);
+      const ids = Object.keys(sarMap).map(Number);
+      if(ids.length!==owners.length || owners.some(o=>!(o.ownerId in sarMap))){ errors.push('Row '+line+': Owners SAR must list exactly the same people as the Owners column'); return; }
+      if(ids.some(id=>!(sarMap[id]>=0))){ errors.push('Row '+line+': Owners SAR amounts must be zero or more'); return; }
+    }
+    const s = {id: existing? existing.id : null, existing, positionId:pid, date:String(date).trim(), kind:k, units:u, totalSar:sar, owners, note:String(note||''), sarMap};
+    if(existing){
+      const curSar = invTxOwnerSarMap(existing);
+      const unitsSame = owners.length===(existing.owners||[]).length && owners.every(o=>{ const e = (existing.owners||[]).find(x=>x.ownerId===o.ownerId); return e && Math.abs((Number(e.units)||0)-o.units)<1e-9; });
+      const totalChanged = Math.abs((Number(existing.totalSar)||0)-sar)>0.005;
+      const sarChanged = !!sarMap && owners.some(o=>Math.abs((curSar[o.ownerId]||0)-sarMap[o.ownerId])>0.005);
+      const same = unitsSame && !totalChanged && !sarChanged && existing.positionId===pid && existing.date===s.date && existing.kind===k
+        && Math.abs((Number(existing.units)||0)-u)<1e-9 && (existing.note||'')===s.note;
+      if(same){ unchanged++; return; }
+      if(existing.linkId || existing.cashSide==='transfer'){ errors.push('Row '+line+': this is one leg of a transfer between platforms — change it from the position window instead'); return; }
+      if(sarChanged && totalChanged){
+        const sum = owners.reduce((a,o)=>a+sarMap[o.ownerId],0);
+        if(Math.abs(sum-sar)>0.01){ errors.push('Row '+line+': Owners SAR adds up to '+money(sum)+' but Total SAR is '+money(sar)+' — change one of them, or make both agree'); return; }
+      }
+      Object.assign(s, {curSar, unitsSame, totalChanged, sarChanged});
+    } else if(sarMap){
+      const sum = owners.reduce((a,o)=>a+sarMap[o.ownerId],0);
+      if(Math.abs(sum-sar)>0.01){ errors.push('Row '+line+': Owners SAR adds up to '+money(sum)+' but Total SAR is '+money(sar)); return; }
+      s.sarChanged = true;
+    }
+    staged.push(s);
   });
   if(errors.length){ showInvCsvErrors(errors); return; }
+  if(!staged.length){ closeModal(); toast('Nothing changed — all '+unchanged+' row(s) already match'); return; }
+  // Final owners for each row: keep each person's stored SAR / USD unless the file changes them.
+  // A new Total SAR on its own is shared out in the same proportions each person has now.
+  for(const s of staged){
+    const ex = s.existing, oldOwners = ex? (ex.owners||[]) : [];
+    let sarMap = null;
+    if(s.sarChanged) sarMap = s.sarMap;
+    else if(ex && s.unitsSame && invTxHasOwnerSar(ex)){
+      if(s.totalChanged){
+        const curTot = s.owners.reduce((a,o)=>a+(s.curSar[o.ownerId]||0),0);
+        sarMap = {}; s.owners.forEach(o=>{ sarMap[o.ownerId] = curTot>0? (s.curSar[o.ownerId]||0)*s.totalSar/curTot : s.totalSar*o.units/s.units; });
+      } else sarMap = s.curSar;
+    }
+    const owners = s.owners.map(o=>{
+      const old = oldOwners.find(x=>x.ownerId===o.ownerId) || {};
+      const out = {ownerId:o.ownerId, units:o.units};
+      if(s.unitsSame && old.usd!==undefined && old.usd!==null && old.usd!=='') out.usd = old.usd;
+      if(sarMap) out.sar = Math.round((Number(sarMap[o.ownerId])||0)*100)/100;
+      return out;
+    });
+    if(ex && !s.unitsSame && Number(ex.usdAmount)>0){
+      const split = invSplitUsdBySar(Number(ex.usdAmount), s.owners.map(o=>({ownerId:o.ownerId, sar:o.units})));
+      owners.forEach(o=>{ o.usd = (split.find(x=>x.ownerId===o.ownerId)||{usd:0}).usd; });
+    }
+    s.finalOwners = owners;
+    s.finalTotal = sarMap? Math.round(owners.reduce((a,o)=>a+o.sar,0)*100)/100 : s.totalSar;
+  }
   // Dry run: replay every position affected and make sure no owner is ever sold into negative
   // units. Catching it here keeps a bad file from half-importing and corrupting cost basis.
   const original = D.invTransactions;
-  const simulated = original.filter(t=>!staged.some(s=>s.id===t.id)).concat(staged.map(s=>({...s, id: s.id||-1})));
-  D.invTransactions = simulated;
+  D.invTransactions = original.filter(t=>!staged.some(s=>s.id===t.id)).concat(staged.map(s=>Object.assign({}, s.existing||{},
+    {id: s.id||-1, positionId:s.positionId, date:s.date, kind:s.kind, units:s.units, totalSar:s.finalTotal, owners:s.finalOwners, note:s.note})));
   const negErrors = [];
   for(const pid of Array.from(new Set(staged.map(s=>s.positionId)))){
     const st = computePositionState(pid);
@@ -8762,18 +8986,26 @@ async function importInvTransactionsCSV(rows){
   }
   D.invTransactions = original;
   if(negErrors.length){ showInvCsvErrors(negErrors); return; }
+  const affected = new Set();
+  staged.forEach(s=>{ if(s.existing){ affected.add(s.existing.positionId); affected.add(s.positionId); } });
+  const before = {}; affected.forEach(pid=>{ before[pid] = invPositionOwnerSnapshot(pid); });
+  const changesByPos = {};
   for(const s of staged){
-    if(s.id && (D.invTransactions||[]).some(t=>t.id===s.id)){
-      const ex = D.invTransactions.find(t=>t.id===s.id);
-      Object.assign(ex, {positionId:s.positionId, date:s.date, kind:s.kind, units:s.units, totalSar:s.totalSar, owners:s.owners, note:s.note});
+    if(s.existing){
+      const ex = s.existing, oldTotal = Number(ex.totalSar)||0;
+      (changesByPos[s.positionId] = changesByPos[s.positionId] || []).push('#'+ex.id+' '+s.kind+' '+s.date+' '+money(oldTotal)+' → '+money(s.finalTotal));
+      if(ex.positionId!==s.positionId) (changesByPos[ex.positionId] = changesByPos[ex.positionId] || []).push('#'+ex.id+' moved to another position');
+      Object.assign(ex, {positionId:s.positionId, date:s.date, kind:s.kind, units:s.units, totalSar:s.finalTotal, owners:s.finalOwners, note:s.note});
       await persistInvTransaction(ex);
     } else {
-      const rec = {...s, id: invNextId(D.invTransactions), updated_at:null};
+      const rec = {id: invNextId(D.invTransactions), updated_at:null, positionId:s.positionId, date:s.date, kind:s.kind, units:s.units, totalSar:s.finalTotal, owners:s.finalOwners, note:s.note};
       D.invTransactions.push(rec);
       await persistInvTransaction(rec);
     }
   }
-  closeModal(); renderInvestmentsPage(); toast(staged.length+' transaction(s) imported ✓');
+  for(const pid of affected){ if(changesByPos[pid]) await invRecordCostCorrection(pid, before[pid], 'CSV import', changesByPos[pid]); }
+  closeModal(); renderInvestmentsPage();
+  toast(staged.length+' changed, '+unchanged+' unchanged (skipped) ✓'+(affected.size? ' — recorded in Activity' : ''));
 }
 async function importInvValuationsCSV(rows){
   if(!rows.length){ toast('Empty file', true); return; }
@@ -9105,6 +9337,15 @@ function invActivityRows(){
       edit: t.linkId? `openInvPosition(${t.positionId})` : `openInvTxModal(${t.positionId}, ${t.id})`, canDelete: !t.linkId});
   });
   (D.invCashMovements||[]).forEach(m=>{
+    if(m.kind==='costadj'){
+      const pos = invPositionById(((m.owners||[])[0]||{}).positionId);
+      const delta = (m.owners||[]).reduce((s,o)=>s+(Number(o.after)||0)-(Number(o.before)||0),0);
+      rows.push({key:'m'+m.id, kind:'move', id:m.id, date:m.date||'', seq:2, type:'adjustment', label:'Cost correction', platformId:m.platformId,
+        detail:(pos? pos.name : '?')+' · '+((m.owners||[]).map(o=>name(o.ownerId)+' '+money(o.before)+' → '+money(o.after)).join(' · ') || 'no change in cost'),
+        note:m.note||'', ownerIds:(m.owners||[]).map(o=>o.ownerId), people:(m.owners||[]).map(o=>name(o.ownerId)).join(', '),
+        usd:0, sar: Math.abs(delta)>0.005? delta : null, edit:null, canDelete:true});
+      return;
+    }
     const other = m.kind==='transfer'? invPlatformById(m.toPlatformId) : null;
     const sar = (m.owners||[]).reduce((s,o)=>s+(Number(o.sar)||0),0);
     const rate = invMovementRate(m);
@@ -9131,7 +9372,8 @@ function setInvActivityFilter(field, val){
   renderInvestmentsPage();
 }
 async function invActivityDelete(kind, id){
-  if(!confirm('Delete this '+(kind==='tx'? 'transaction' : 'cash movement')+'? This can\'t be undone.')) return;
+  const isAdj = kind==='move' && ((D.invCashMovements||[]).find(m=>m.id===id)||{}).kind==='costadj';
+  if(!confirm(isAdj? 'Remove this cost-correction record? The corrected costs themselves stay as they are.' : 'Delete this '+(kind==='tx'? 'transaction' : 'cash movement')+'? This can\'t be undone.')) return;
   if(kind==='tx'){ await deleteInvTx(id); closeModal(); renderInvestmentsPage(); }
   else { await deleteInvCashMovement(id); }
 }
@@ -9144,16 +9386,16 @@ function renderInvActivityView(nav){
     <div class="row noprint" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
       ${sel('platformId', [['','All platforms'], ...invPlatformsSorted().map(p=>[p.id, p.name])])}
       ${sel('ownerId', [['','Everyone'], ...(D.invOwners||[]).map(o=>[o.id, o.name+(o.isSelf?' (you)':'')])])}
-      ${sel('type', [['','All types'],['buy','Buys'],['sell','Sells'],['deposit','Deposits'],['withdrawal','Withdrawals'],['transfer','Transfers']])}
+      ${sel('type', [['','All types'],['buy','Buys'],['sell','Sells'],['deposit','Deposits'],['withdrawal','Withdrawals'],['transfer','Transfers'],['adjustment','Cost corrections']])}
       <span class="mut" style="font-size:12px;align-self:center">${all.length} item${all.length===1?'':'s'}</span>
     </div>
     <div style="overflow-x:auto"><table id="invActivityTable" style="min-width:760px"><thead><tr>
       <th>Date</th><th>Type</th><th>Platform</th><th>Detail</th><th>People</th><th class="num">USD</th><th class="num">SAR</th><th class="noprint"></th>
     </tr></thead><tbody>${rows.map(r=>{ const p = invPlatformById(r.platformId); return `<tr data-act="${r.key}">
       <td class="mono">${esc(r.date)}</td><td>${esc(r.label)}</td><td>${esc(p? p.name : '—')}</td>
-      <td style="font-size:12px">${esc(r.detail)}</td><td class="mut" style="font-size:12px">${esc(r.people)}</td>
+      <td style="font-size:12px"${r.note? ` title="${esc(r.note)}"` : ''}>${esc(r.detail)}${r.note? `<div class="mut" style="font-size:10.5px">${esc(r.note)}</div>` : ''}</td><td class="mut" style="font-size:12px">${esc(r.people)}</td>
       <td class="num mono">${r.usd>0? '$'+fmt2(r.usd) : '—'}</td><td class="num mono">${r.sar? money(r.sar) : '—'}</td>
-      <td class="noprint" style="white-space:nowrap"><button class="btn ghost sm" title="Edit" onclick="${r.edit}">✎</button>${r.canDelete? ` <button class="btn ghost sm" title="Delete" onclick="invActivityDelete('${r.kind}', ${r.id})">🗑</button>` : ''}</td>
+      <td class="noprint" style="white-space:nowrap">${r.edit? `<button class="btn ghost sm" title="Edit" onclick="${r.edit}">✎</button>` : ''}${r.canDelete? ` <button class="btn ghost sm" title="Delete" onclick="invActivityDelete('${r.kind}', ${r.id})">🗑</button>` : ''}</td>
     </tr>`; }).join('') || '<tr><td colspan="8" class="empty">Nothing recorded yet</td></tr>'}</tbody></table></div>
     ${all.length>rows.length? `<div class="row noprint" style="justify-content:center;margin-top:10px"><button class="btn ghost sm" onclick="setInvActivityFilter('limit', ${f.limit+100})">Show more (${all.length-rows.length} older)</button></div>` : ''}
   </div>`;
@@ -10137,6 +10379,7 @@ function openInvPosition(posId){
     <div class="row" style="justify-content:space-between;align-items:center">
       <h3 style="margin:0;font-size:14px">Transactions</h3>
       <div class="row noprint" style="gap:6px">
+        <button class="btn ghost sm" onclick="openInvCostEditor(${posId})" title="Correct what each buy cost, per person">✎ Edit costs</button>
         <button class="btn ghost sm" onclick="openInvPositionTransfer(${posId})" title="Move some or all units to another platform">⇄ Transfer</button>
         <button class="btn pri sm" onclick="openInvTxModal(${posId}, null)">+ Transaction</button>
       </div>
@@ -10997,7 +11240,7 @@ async function saveInvCollect(){
 }
 function openInvCashLog(platformId){
   const plat = invPlatformById(platformId);
-  const moves = (D.invCashMovements||[]).filter(m=>m.platformId===platformId || m.toPlatformId===platformId)
+  const moves = (D.invCashMovements||[]).filter(m=>m.kind!=='costadj' && (m.platformId===platformId || m.toPlatformId===platformId))
     .slice().sort((a,b)=> a.date===b.date? (b.id-a.id) : (a.date<b.date?1:-1));
   showModal(`
     <h3 style="margin-top:0">Cash movements — ${esc(plat?plat.name:'')}</h3>
