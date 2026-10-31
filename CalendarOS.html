@@ -1177,6 +1177,12 @@ body.dark-mode .danger-zone{background:color-mix(in srgb, var(--flag) 12%, var(-
 .btn.danger:disabled{opacity:.4; cursor:not-allowed;}
 
 /* ============ HEALTH LOG ============ */
+.metric-group-head{display:flex; align-items:center; gap:8px; margin:6px 0 10px; font-weight:700; font-size:15px; cursor:pointer; user-select:none;}
+.metric-group-head .mg-chev{display:inline-block; transition:transform .15s; font-size:12px; color:var(--slate);}
+.metric-group-head.collapsed .mg-chev{transform:rotate(-90deg);}
+.metric-group-manage{display:flex; align-items:center; gap:4px; padding:12px 0 4px; border-bottom:1px solid var(--paper-dim);}
+.metric-group-manage .mgm-name{flex:1; min-width:0; font-weight:700; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--slate);}
+.log-table th.mg-th{text-align:center; border-bottom:1px solid var(--paper-dim);}
 .health-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:20px;}
 .health-input-card{padding:16px;}
 .health-input-card label{display:block; font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; color:var(--slate); margin-bottom:8px;}
@@ -2350,7 +2356,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.70.0';
+const APP_VERSION = '4.71.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2358,6 +2364,12 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.71.0', changes: [
+    '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds group_id on health_metric_defs and metric_groups on app_settings. Additive and safe to run more than once. Until it is run, health-metric and settings sync will report an error.',
+    'NEW \u2014 Health metric groups. In Health Log \u2192 Manage Metrics, \u201c+ Add group\u201d creates a named group (rename, delete and reorder groups there too). Each metric\u2019s edit window has a Group selector. The log page shows the metric cards under group headings (tap a heading to collapse it; remembered on this device), with a \u201cNo group\u201d section for the rest. Arrows and drag reorder a metric inside its group. The History table shows the group above its columns. Deleting a group moves its metrics to \u201cNo group\u201d \u2014 it never deletes a metric.',
+    'NEW \u2014 Ctrl+Z now undoes moving a recurring task (both \u201cMove It\u201d in the task window and the Shift box on the card). The occurrence goes back to its original date and the \u201cmissed\u201d mark the move created is cleared.',
+    'NEW \u2014 Dashboard switch \u201cHide missed / moved\u201d, next to \u201cHide completed\u201d. It hides recurring tasks marked missed, recurring tasks that were moved to this date, and one-time tasks whose due date was moved. Remembered on this device.',
+  ]},
   { v:'4.70.0', changes: [
     'No SQL migration needed \u2014 front-end only, and only the text of the Review Pack changed. Nothing else in the app behaves differently.',
     'CHANGED \u2014 Review Pack: the \u201cexactly 3 working sets\u201d rule is replaced. The AI now plans 3 working sets per exercise by default and may use 4 (never more) only when a muscle cannot reach its weekly floor otherwise. Before a 4th set it must try, in order: an extra training day for that muscle; a different exercise with that muscle as primary; secondary-muscle credit; and only then a 4th set on the fewest blocks, raising the muscle to the floor exactly. 4th sets are spread over different days, never two on the same muscle in one day, and never on exercises that are not progressing.',
@@ -3259,6 +3271,9 @@ const DEFAULT_SETTINGS_EXTRAS = {
   // Exercise body-part/category tags — real data (not a device preference),
   // same treatment as listFolders. Each exercise stores tagIds: [] referencing these.
   exerciseTags: [], // [{id, name}]
+  metricGroups: [], // v4.71.0: [{id, name}] \u2014 array order is the display order; synced (app_settings.metric_groups)
+  collapsedMetricGroups: {}, // local-only: { groupId|'_none': true }
+  hideMissedMoved: false, // local-only Dashboard toggle
   hydrationGoalMl: 2500,
   hydrationDefaultsSeeded: false, // local-only flag, same pattern as healthCoreMetricsSeeded
   // Named filter presets for Week/Calendar — also real data (not a display
@@ -3286,6 +3301,8 @@ function backfillSettingsDefaults(){
     }
   });
   if(!state.settings.siloColors) state.settings.siloColors = {};
+  if(!Array.isArray(state.settings.metricGroups)) state.settings.metricGroups = [];
+  if(!state.settings.collapsedMetricGroups) state.settings.collapsedMetricGroups = {};
   if(!state.settings.locationColors) state.settings.locationColors = {};
   // any locations/pages added since pageOrder was created should still show up
   const ALL_PAGE_KEYS = ['dashboard','overdue','tasks','calendar','week','lists','health','training','recipes','coffee','progress','settings'];
@@ -3533,6 +3550,12 @@ async function rescheduleOccurrence(taskId, fromDate, toDate, opts){
   if(!t) return;
   if(!t.rescheduleExceptions) t.rescheduleExceptions = [];
   const markMissed = !(opts && opts.markMissed === false);
+  // v4.71.0: snapshot for Ctrl+Z (exceptions as they were + the from-date's status).
+  const undoSnap = {
+    action:'move_occurrence', kind:'recurring', taskId, name:t.name, fromDate,
+    prevExceptions: JSON.parse(JSON.stringify(t.rescheduleExceptions)),
+    prevFromStatus: isMissedOn(taskId, fromDate) ? 'missed' : (isCompletedOn(taskId, fromDate) ? 'done' : null),
+  };
 
   // If the date being moved is ITSELF where an earlier move landed, rewrite
   // that exception rather than adding a second one. Chains would otherwise
@@ -3548,6 +3571,7 @@ async function rescheduleOccurrence(taskId, fromDate, toDate, opts){
   }
 
   if(markMissed) setOccurrenceStatus(taskId, fromDate, 'missed');
+  if(!(opts && opts.noUndo)) pushUndo(undoSnap);
   await saveTasks();
 }
 
@@ -4469,10 +4493,10 @@ function rowToHealth(r){
 }
 function metricDefToRow(m){
   const s = state.settings.sync;
-  return { pin:s.pin, id:m.id, name:m.name, type:m.type, unit:m.unit||null, sort_order:m.sortOrder||0, core:!!m.core, visible:m.visible!==false };
+  return { pin:s.pin, id:m.id, name:m.name, type:m.type, unit:m.unit||null, sort_order:m.sortOrder||0, core:!!m.core, visible:m.visible!==false, group_id:m.groupId||null };
 }
 function rowToMetricDef(r){
-  return { id:r.id, name:r.name, type:r.type, unit:r.unit, sortOrder:r.sort_order||0, core:!!r.core, visible:r.visible!==false };
+  return { id:r.id, name:r.name, type:r.type, unit:r.unit, sortOrder:r.sort_order||0, core:!!r.core, visible:r.visible!==false, groupId:r.group_id||null };
 }
 function ratingToRow(r){
   const s = state.settings.sync;
@@ -4702,7 +4726,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -5016,6 +5040,7 @@ async function pullFromSupabase(onProgress){
       if(settingsRows[0].calendar_view_presets) state.settings.calendarViewPresets = settingsRows[0].calendar_view_presets;
       if(settingsRows[0].hydration_containers) state.settings.hydrationContainers = settingsRows[0].hydration_containers;
       if(settingsRows[0].exercise_tags) state.settings.exerciseTags = settingsRows[0].exercise_tags;
+      if(settingsRows[0].metric_groups) state.settings.metricGroups = settingsRows[0].metric_groups;
       if(settingsRows[0].hydration_goal_ml!=null) state.settings.hydrationGoalMl = settingsRows[0].hydration_goal_ml;
       // Array.isArray rather than truthiness: an intentionally EMPTY array
       // (all weekend days cleared, or all location rules deleted) must still
@@ -5654,7 +5679,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted }], 'pin'),
     ]);
   }
 }
@@ -7218,6 +7243,7 @@ function renderDashboard(){
   const dashSilo = dashboardSilo();
   if(dashSilo !== 'All') allRows = allRows.filter(r=> r.task.silo === dashSilo);
   let rows = state.settings.hideCompleted ? allRows.filter(r=>!isRowCompleted(r)) : allRows;
+  if(state.settings.hideMissedMoved) rows = rows.filter(r=>!isRowMissedOrMoved(r));
   const overdueN = getOverdueOneTime().length;
   const doneToday = state.tasks.oneTime.filter(t=>t.done && t.due===todayStr()).length +
     state.tasks.recurring.filter(t=> isEffectivelyDueOn(t, todayStr()) && isCompletedOn(t.id, todayStr())).length;
@@ -7283,6 +7309,10 @@ function renderDashboard(){
         <span>Hide completed</span>
         <div class="toggle-switch ${state.settings.hideCompleted?'on':''}" onclick="toggleHideCompleted()"><div class="knob"></div></div>
       </div>
+      <div class="toggle-switch-row">
+        <span>Hide missed / moved</span>
+        <div class="toggle-switch ${state.settings.hideMissedMoved?'on':''}" onclick="toggleHideMissedMoved()"><div class="knob"></div></div>
+      </div>
       <div class="toggle-switch-row" style="margin-left:auto;">
         <span>Group by location</span>
         <div class="toggle-switch ${state.groupByLocation?'on':''}" onclick="toggleGroupByLocation()"><div class="knob"></div></div>
@@ -7310,6 +7340,21 @@ function renderDashboard(){
 
 async function toggleHideCompleted(){
   state.settings.hideCompleted = !state.settings.hideCompleted;
+  await saveSettings();
+  renderMain();
+}
+
+/* v4.71.0: "missed / moved" = recurring occurrence marked missed, recurring occurrence that arrived here by a move,
+   or a one-time task whose due date was moved (dueHistory). Display-only, device-local. */
+function isRowMissedOrMoved(row){
+  if(row.kind==='recurring'){
+    if(isMissedOn(row.task.id, row.dueOn)) return true;
+    return (row.task.rescheduleExceptions||[]).some(e=>e.to===row.dueOn);
+  }
+  return !!(row.task.dueHistory && row.task.dueHistory.length);
+}
+async function toggleHideMissedMoved(){
+  state.settings.hideMissedMoved = !state.settings.hideMissedMoved;
   await saveSettings();
   renderMain();
 }
@@ -7638,6 +7683,17 @@ async function undoLast(){
     await saveTasks();
     renderMain();
     showToast(`Restored: ${entry.snapshot.name}`);
+    return;
+  }
+
+  if(entry.action === 'move_occurrence'){
+    const t = state.tasks.recurring.find(x=>x.id===entry.taskId);
+    if(!t){ showToast('Task no longer exists'); return; }
+    t.rescheduleExceptions = entry.prevExceptions;
+    setOccurrenceStatus(entry.taskId, entry.fromDate, entry.prevFromStatus);
+    await saveTasks();
+    renderMain();
+    showToast(`Undid move: ${entry.name} \u2014 back on ${humanDate(entry.fromDate)}`);
     return;
   }
 
@@ -8933,13 +8989,101 @@ function getHealthEntry(dateStr){
 
 if(!state.healthViewDate) state.healthViewDate = todayStr();
 
+/* ---------- v4.71.0: health metric groups ---------- */
+function metricGroupsList(){ return Array.isArray(state.settings.metricGroups) ? state.settings.metricGroups : []; }
+function effMetricGroupId(m){ return metricGroupsList().some(g=>g.id===m.groupId) ? m.groupId : ''; }
+// Groups in group order, then the "No group" bucket; metrics inside each keep their sortOrder.
+function metricSections(onlyVisible){
+  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).filter(m=>!onlyVisible || m.visible!==false);
+  const sections = metricGroupsList().map(g=>({ group:g, metrics:sorted.filter(m=>effMetricGroupId(m)===g.id) }));
+  sections.push({ group:null, metrics:sorted.filter(m=>!effMetricGroupId(m)) });
+  return sections;
+}
+function metricsInDisplayOrder(onlyVisible){ return metricSections(onlyVisible).reduce((a,s)=>a.concat(s.metrics), []); }
+function metricGroupKey(sec){ return sec.group ? sec.group.id : '_none'; }
+async function toggleMetricGroupCollapse(key){
+  const c = state.settings.collapsedMetricGroups || (state.settings.collapsedMetricGroups = {});
+  if(c[key]) delete c[key]; else c[key] = true;
+  renderMain();
+  await saveSettings();
+}
+async function addMetricGroup(){
+  const name = (prompt('Name for the new group (e.g. Macros, Body measurements):','')||'').trim();
+  if(!name) return;
+  if(metricGroupsList().some(g=>g.name.toLowerCase()===name.toLowerCase())){ showToast('That group already exists'); return; }
+  state.settings.metricGroups = metricGroupsList().concat([{ id:newId('mg'), name }]);
+  await saveSettings();
+  renderMain();
+  showToast(`Added group "${name}"`);
+}
+async function renameMetricGroup(id){
+  const g = metricGroupsList().find(x=>x.id===id); if(!g) return;
+  const name = (prompt('Rename group:', g.name)||'').trim();
+  if(!name || name===g.name) return;
+  if(metricGroupsList().some(x=>x.id!==id && x.name.toLowerCase()===name.toLowerCase())){ showToast('That group already exists'); return; }
+  g.name = name;
+  await saveSettings();
+  renderMain();
+}
+async function deleteMetricGroup(id){
+  const g = metricGroupsList().find(x=>x.id===id); if(!g) return;
+  const n = state.healthMetricDefs.filter(m=>m.groupId===id).length;
+  if(!confirm(`Delete the group "${g.name}"? ${n ? `Its ${n} metric${n===1?'':'s'} will move to "No group" \u2014 no metric is deleted.` : 'It has no metrics.'}`)) return;
+  state.settings.metricGroups = metricGroupsList().filter(x=>x.id!==id);
+  let moved = false;
+  state.healthMetricDefs.forEach(m=>{ if(m.groupId===id){ m.groupId = null; moved = true; } });
+  await saveSettings();
+  if(moved) await saveHealthMetricDefs();
+  renderMain();
+}
+async function moveMetricGroup(id, delta){
+  const arr = metricGroupsList().slice();
+  const i = arr.findIndex(g=>g.id===id), j = i+delta;
+  if(i<0 || j<0 || j>=arr.length) return;
+  const [g] = arr.splice(i,1); arr.splice(j,0,g);
+  state.settings.metricGroups = arr;
+  await saveSettings();
+  renderMain();
+}
 function renderHealthView(){
   ensureCoreMetricDefs();
   const viewDate = state.healthViewDate;
   const entry = getHealthEntry(viewDate);
   const history = [...state.health].sort((a,b)=> a.date < b.date ? 1 : -1).slice(0,30);
-  const sortedMetrics = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
-  const visibleMetrics = sortedMetrics.filter(m=>m.visible!==false);
+  const sortedMetrics = metricsInDisplayOrder(false);
+  const visibleMetrics = metricsInDisplayOrder(true);
+  const hasGroups = metricGroupsList().length > 0;
+  const collapsed = state.settings.collapsedMetricGroups || {};
+  const cardsHtml = !hasGroups
+    ? `<div class="health-grid">${visibleMetrics.map(m=>renderMetricCard(m, entry)).join('')}</div>`
+    : metricSections(true).filter(s=>s.metrics.length).map(s=>{
+        const key = metricGroupKey(s), isCol = !!collapsed[key];
+        return `<div class="metric-group-head ${isCol?'collapsed':''}" onclick="toggleMetricGroupCollapse('${key}')"><span class="mg-chev">\u25be</span><span class="mg-name">${escapeHtml(s.group ? s.group.name : 'No group')}</span><span class="page-sub">${s.metrics.length}</span></div>
+          ${isCol ? '' : `<div class="health-grid">${s.metrics.map(m=>renderMetricCard(m, entry)).join('')}</div>`}`;
+      }).join('');
+  const manageHtml = metricSections(false).filter(s=>s.group || (hasGroups ? s.metrics.length : true)).map(s=>{
+    const gi = s.group ? metricGroupsList().findIndex(g=>g.id===s.group.id) : -1;
+    const head = hasGroups ? `<div class="metric-group-manage"><span class="mgm-name">${escapeHtml(s.group ? s.group.name : 'No group')}</span>${s.group ? `
+        <button class="icon-btn" title="Move group up" ${gi===0?'disabled':''} onclick="moveMetricGroup('${s.group.id}',-1)">\u25b2</button>
+        <button class="icon-btn" title="Move group down" ${gi===metricGroupsList().length-1?'disabled':''} onclick="moveMetricGroup('${s.group.id}',1)">\u25bc</button>
+        <button class="icon-btn" title="Rename group" onclick="renameMetricGroup('${s.group.id}')">\u270e</button>
+        <button class="icon-btn" title="Delete group" onclick="deleteMetricGroup('${s.group.id}')">\u2715</button>` : ''}</div>` : '';
+    const rows = s.metrics.map((m,i)=>`
+          <div class="metric-manage-row" draggable="true" data-metric-id="${m.id}"
+               ondragstart="onMetricDragStart(event)" ondragover="onDragOver(event)" ondrop="onMetricDrop(event)" ondragend="onMetricDragEnd(event)">
+            <span class="drag-handle-sm metric-drag" title="Drag to reorder">\u283f</span>
+            <span class="metric-manage-name">${escapeHtml(m.name)}${m.core?' <span class="ptr-locked">built-in</span>':''}</span>
+            <div class="toggle-switch-row">
+              <span class="page-sub">Show</span>
+              <div class="toggle-switch ${m.visible!==false?'on':''}" onclick="toggleMetricVisible('${m.id}')"><div class="knob"></div></div>
+            </div>
+            <button class="icon-btn" title="Move up" ${i===0?'disabled':''} onclick="moveMetric('${m.id}',-1)">\u25b2</button>
+            <button class="icon-btn" title="Move down" ${i===s.metrics.length-1?'disabled':''} onclick="moveMetric('${m.id}',1)">\u25bc</button>
+            <button class="icon-btn" title="Edit" onclick="openMetricModal('${m.id}')">\u270e</button>
+            <button class="icon-btn" title="Delete" onclick="deleteMetricDef('${m.id}')">\u2715</button>
+          </div>`).join('');
+    return head + (rows || (s.group ? `<div class="page-sub" style="padding:6px 0 10px;">No metrics in this group yet \u2014 open a metric (\u270e) and pick this group.</div>` : ''));
+  }).join('');
 
   return `
     <div class="topbar">
@@ -8958,29 +9102,13 @@ function renderHealthView(){
       <span class="page-sub" style="margin-left:auto;">${fullDate(viewDate)}</span>
     </div>
 
-    <div class="health-grid">
-      ${visibleMetrics.map(m=>renderMetricCard(m, entry)).join('')}
-    </div>
+    ${cardsHtml}
     ${visibleMetrics.length===0 ? `<div class="card empty-state" style="margin-bottom:20px;"><span class="glyph">☺</span>All metrics are hidden — manage them below to bring some back.</div>` : ''}
 
     <div class="section">
-      <div class="section-head"><h2>Manage Metrics</h2></div>
+      <div class="section-head"><h2>Manage Metrics</h2><button class="btn secondary sm" onclick="addMetricGroup()">+ Add group</button></div>
       <div class="card" style="padding:4px 16px;">
-        ${sortedMetrics.map((m,i)=>`
-          <div class="metric-manage-row" draggable="true" data-metric-id="${m.id}"
-               ondragstart="onMetricDragStart(event)" ondragover="onDragOver(event)" ondrop="onMetricDrop(event)" ondragend="onMetricDragEnd(event)">
-            <span class="drag-handle-sm metric-drag" title="Drag to reorder">\u283f</span>
-            <span class="metric-manage-name">${escapeHtml(m.name)}${m.core?' <span class="ptr-locked">built-in</span>':''}</span>
-            <div class="toggle-switch-row">
-              <span class="page-sub">Show</span>
-              <div class="toggle-switch ${m.visible!==false?'on':''}" onclick="toggleMetricVisible('${m.id}')"><div class="knob"></div></div>
-            </div>
-            <button class="icon-btn" title="Move up" ${i===0?'disabled':''} onclick="moveMetric('${m.id}',-1)">\u25b2</button>
-            <button class="icon-btn" title="Move down" ${i===sortedMetrics.length-1?'disabled':''} onclick="moveMetric('${m.id}',1)">\u25bc</button>
-            <button class="icon-btn" title="Edit" onclick="openMetricModal('${m.id}')">✎</button>
-            <button class="icon-btn" title="Delete" onclick="deleteMetricDef('${m.id}')">✕</button>
-          </div>
-        `).join('')}
+        ${manageHtml}
       </div>
     </div>
 
@@ -8989,11 +9117,19 @@ function renderHealthView(){
       <div class="page-sub" style="margin-bottom:8px;">Click a row to edit that day above.</div>
       <div class="card" style="padding:6px 16px; overflow-x:auto;">
         <table class="log-table">
-          <thead><tr>
+          <thead>
+          ${hasGroups ? `<tr class="mg-row">
+            <th rowspan="2">Date</th>
+            ${metricSections(false).filter(s=>s.metrics.length).map(s=>`<th class="mg-th" colspan="${s.metrics.length}">${escapeHtml(s.group ? s.group.name : 'No group')}</th>`).join('')}
+            <th rowspan="2"></th>
+          </tr><tr>
+            ${sortedMetrics.map(m=>`<th>${escapeHtml(m.name)}${m.unit?` (${escapeHtml(m.unit)})`:''}</th>`).join('')}
+          </tr>` : `<tr>
             <th>Date</th>
             ${sortedMetrics.map(m=>`<th>${escapeHtml(m.name)}${m.unit?` (${escapeHtml(m.unit)})`:''}</th>`).join('')}
             <th></th>
-          </tr></thead>
+          </tr>`}
+          </thead>
           <tbody>
             ${history.map(h=>`
               <tr class="${h.date===viewDate?'log-row-active':''}" data-history-date="${h.date}">
@@ -9079,15 +9215,14 @@ async function setMetricValue(metricId, value){
   // number/text input itself already shows what was just typed, so it
   // doesn't need touching at all.
   if(m.type==='yesno'){
-    const grid = document.querySelector('.health-grid');
-    const visibleMetrics = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).filter(x=>x.visible!==false);
+    const visibleMetrics = metricsInDisplayOrder(true);
     const idx = visibleMetrics.findIndex(x=>x.id===metricId);
-    const card = grid ? grid.querySelectorAll('.health-input-card')[idx] : null;
+    const card = document.querySelectorAll('.health-grid .health-input-card')[idx] || null;
     if(card) card.outerHTML = renderMetricCard(m, entry);
   }
   const row = document.querySelector(`[data-history-date="${CSS.escape(state.healthViewDate)}"]`);
   if(row){
-    const sortedMetrics = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+    const sortedMetrics = metricsInDisplayOrder(false);
     const cells = row.querySelectorAll('td');
     sortedMetrics.forEach((mm,i)=>{
       const cell = cells[i+1]; // cell 0 is the date column
@@ -9102,7 +9237,7 @@ async function setMetricValue(metricId, value){
 }
 /* v4.68.0: reorder health metrics (drag or arrows). Renumbers sortOrder 0..n-1 for every metric. */
 async function reorderMetrics(fromId, toIndex){
-  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  const sorted = metricsInDisplayOrder(false);
   const from = sorted.findIndex(m=>m.id===fromId);
   if(from<0 || toIndex<0 || toIndex>=sorted.length || from===toIndex) return;
   const [moved] = sorted.splice(from,1);
@@ -9112,9 +9247,11 @@ async function reorderMetrics(fromId, toIndex){
   renderMain();
 }
 async function moveMetric(metricId, delta){
-  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  const sorted = metricsInDisplayOrder(false);
   const i = sorted.findIndex(m=>m.id===metricId);
   if(i<0) return;
+  const nb = sorted[i+delta];
+  if(!nb || effMetricGroupId(nb) !== effMetricGroupId(sorted[i])) return;   // v4.71.0: arrows stay inside the group
   await reorderMetrics(metricId, i+delta);
 }
 let metricDragId = null;
@@ -9128,7 +9265,9 @@ async function onMetricDrop(e){
   const toId = e.currentTarget.dataset.metricId;
   const fromId = metricDragId; metricDragId = null;
   if(!fromId || fromId===toId) return;
-  const sorted = [...state.healthMetricDefs].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
+  const sorted = metricsInDisplayOrder(false);
+  const a = sorted.find(m=>m.id===fromId), b = sorted.find(m=>m.id===toId);
+  if(!a || !b || effMetricGroupId(a) !== effMetricGroupId(b)) return;   // v4.71.0: drag stays inside the group
   await reorderMetrics(fromId, sorted.findIndex(m=>m.id===toId));
 }
 function onMetricDragEnd(e){ e.currentTarget.classList.remove('dragging'); metricDragId = null; }
@@ -9171,6 +9310,11 @@ function openMetricModal(metricId){
         <label>Unit (optional)</label>
         <input type="text" id="metricUnit" value="${editing&&editing.unit?escapeHtml(editing.unit):''}" placeholder="e.g. hrs, steps, kg">
       </div>
+      <div class="field">
+        <label>Group</label>
+        ${metricGroupsList().length ? `<select id="metricGroup"><option value="">No group</option>${metricGroupsList().map(g=>`<option value="${escapeHtml(g.id)}" ${editing && effMetricGroupId(editing)===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}</select>`
+          : `<div class="page-sub">No groups yet \u2014 use \u201c+ Add group\u201d in Manage Metrics first.</div>`}
+      </div>
       <div class="modal-actions">
         <button class="btn secondary" onclick="document.getElementById('addMetricOverlay').remove();">Cancel</button>
         <button class="btn brass" onclick="submitMetricModal()">${editing?'Save Changes':'Add Metric'}</button>
@@ -9189,17 +9333,21 @@ async function submitMetricModal(){
   const name = document.getElementById('metricName').value.trim();
   if(!name){ showToast('Give it a name'); return; }
   const unit = document.getElementById('metricUnit').value.trim();
+  const groupEl = document.getElementById('metricGroup');
+  const groupId = groupEl ? (groupEl.value || null) : undefined;   // undefined = no groups exist, leave as is
   if(window.__editingMetricId){
     const m = state.healthMetricDefs.find(x=>x.id===window.__editingMetricId);
-    if(m){ m.name = name; if(m.type==='number') m.unit = unit||null; }
+    if(m){ m.name = name; if(m.type==='number') m.unit = unit||null; if(groupId!==undefined) m.groupId = groupId; }
     await saveHealthMetricDefs();
     showToast(`Updated "${name}"`);
   } else {
-    const def = { id: newId('metric'), name, type: window.__newMetricType, unit: unit||null, core:false, visible:true, sortOrder: state.healthMetricDefs.length };
+    const def = { id: newId('metric'), name, type: window.__newMetricType, unit: unit||null, core:false, visible:true, sortOrder: state.healthMetricDefs.length, groupId: groupId||null };
     state.healthMetricDefs.push(def);
     await saveHealthMetricDefs();
     showToast(`Added "${name}"`);
   }
+  metricsInDisplayOrder(false).forEach((m,k)=>{ m.sortOrder = k; });   // keep sortOrder consistent with the grouped display order
+  await saveHealthMetricDefs();
   document.getElementById('addMetricOverlay').remove();
   renderMain();
 }
@@ -17118,6 +17266,8 @@ alter table app_settings add column if not exists hydration_containers jsonb def
 alter table app_settings add column if not exists hydration_liquid_types jsonb default '[]';
 alter table app_settings add column if not exists hydration_goal_ml int default 2500;
 alter table app_settings add column if not exists exercise_tags jsonb default '[]';
+alter table health_metric_defs add column if not exists group_id text;
+alter table app_settings add column if not exists metric_groups jsonb default '[]';
 alter table lists add column if not exists folder text;
 alter table training_logs add column if not exists sets int;
 alter table training_logs add column if not exists reps text;
