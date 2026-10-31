@@ -346,12 +346,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.59.0';
+const APP_VERSION = '4.60.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.60.0', date:'2026-10-31', changes:[
+    'Jamiah summary: the Amount Due and Amount Paid columns are gone; in their place is Pledge / Round (\u201Cالقسط لكل دورة\u201D in the Arabic view) for each participant. The footer shows the total pledge per round (the pot) and \u201CPending this round\u201D \u2014 this round\u2019s pledges not yet tagged as paid.',
+    'Allocations \u2192 Unallocated: after ticking one or more lines, the new \u201CAdd to existing allocation\u2026\u201D button lists that account\u2019s existing allocations with what each would net to after adding; only those that come out at exactly zero can be chosen.',
+  ]},
   {version:'4.59.0', date:'2026-10-27', changes:[
     'NEW: \u270E Edit costs in each position\u2019s window \u2014 every buy in one table with an editable SAR cell per person and an editable Total (shared out in the same proportions). Type a new total for a person and it is spread across their buys in proportion. Saved in one go.',
     'Every cost correction (from the editor or the CSV) is recorded in \uD83D\uDCCB Activity as a \u201CCost correction\u201D showing each person\u2019s cost before \u2192 after, with the changed transactions listed. Stored in the existing investments data, so it syncs and is backed up with no database change.',
@@ -12375,22 +12379,15 @@ function showSettlementCleanOutput(){
 function monthLabelAr(ym){ const [y,m] = ym.split('-').map(Number); return AR_MONTHS[m-1]+' '+y; }
 const JAMIAH_AR = {
   title: 'الملخص — من دفع ومن لم يدفع بعد',
-  note: 'المبلغ المستحق يُحسب حتى الشهر الحالي فقط. يتم تمييز صف المشاركين الذين ستذهب لهم الدفعة هذا الشهر، وكذلك عمود الشهر الحالي.',
-  participant: 'المشارك', group: 'المجموعة', amountDue: 'المبلغ المستحق', amountPaid: 'المبلغ المدفوع',
-  total: 'الإجمالي', pendingLabel: 'المتبقي', paidBadge: '✓ مدفوع', pendingCell: 'معلّق', ofWord: 'من', none: '—', arrow: '→',
+  note: 'القسط لكل دورة هو ما يدفعه كل مشارك في كل دورة، والمتبقي هو ما لم يُدفع من أقساط هذه الدورة. يتم تمييز صف المشاركين الذين ستذهب لهم الدفعة هذا الشهر، وكذلك عمود الشهر الحالي.',
+  participant: 'المشارك', group: 'المجموعة', pledge: 'القسط لكل دورة',
+  total: 'الإجمالي', pendingLabel: 'المتبقي لهذه الدورة', paidBadge: '✓ مدفوع', pendingCell: 'معلّق', ofWord: 'من', none: '—', arrow: '→',
 };
 function renderJamiahSummary(j){
   const rounds = jamiahRounds(j);
   if(!rounds.length || !j.participants.length) return '';
   const currentMonth = todayStr().slice(0,7);
-  const elapsedRounds = rounds.filter(m=>m<=currentMonth);
   const isCurrentMonthInRange = rounds.includes(currentMonth);
-  const paidByPart = {}; // lifetime total paid per participant (all rounds)
-  Object.entries(j.tags).forEach(([lineId, pid])=>{
-    const line = D.ledger.find(l=>l.id===Number(lineId));
-    if(!line) return;
-    paidByPart[pid] = (paidByPart[pid]||0) + Math.abs(Number(line.amt));
-  });
   const paidByPartRound = jamiahPaidByPartRound(j); // paid per participant per round (for the ✓/pending cells)
   const groupsById = {}; j.groups.forEach(g=>groupsById[g.id]=g);
   const currentGroupId = j.roundGroup[currentMonth]||null;
@@ -12400,22 +12397,25 @@ function renderJamiahSummary(j){
     return (ga<0?9999:ga) - (gb<0?9999:gb);
   });
 
-  let totalDue=0, totalPaid=0;
+  // Footer (v4.60.0): the pot per round, and what is still unpaid of THIS round's pledges —
+  // each person's pledge less what has been tagged to them for the current month (never below 0,
+  // so one person paying extra doesn't hide someone else still owing).
+  let totalPledge=0, pendingRound=0;
   const rows = sortedParticipants.map(p=>{
-    const due = elapsedRounds.length * Number(p.pledgeAmount||0);
-    const paid = paidByPart[p.id]||0;
-    totalDue += due; totalPaid += paid;
+    const pledge = Number(p.pledgeAmount||0);
     const curPaid = paidByPartRound[p.id+'_'+currentMonth]||0;
-    const curOk = curPaid >= Number(p.pledgeAmount||0) - 0.005;
-    return {p, due, paid, isCurrentGroup: !!(p.groupId && p.groupId===currentGroupId), curOk};
+    const curOk = curPaid >= pledge - 0.005;
+    totalPledge += pledge;
+    if(isCurrentMonthInRange) pendingRound += Math.max(0, pledge - curPaid);
+    return {p, pledge, isCurrentGroup: !!(p.groupId && p.groupId===currentGroupId), curOk};
   });
 
   const ar = jamiahSummaryLang==='ar';
   const t = ar ? JAMIAH_AR : {
     title: "Summary — who's paid, who's pending",
-    note: "Amount Due counts pledges through the current month only. Rows for whoever's group is due to receive this month's pot are highlighted, as is this month's column. This month's name shows green once paid, red while still pending.",
-    participant:'Participant', group:'Group', amountDue:'Amount Due', amountPaid:'Amount Paid',
-    total:'Total', pendingLabel:'Pending', paidBadge:'✓ Paid', pendingCell:'Pending', ofWord:'of', none:'—', arrow:'→',
+    note: "Pledge / Round is what each person puts in every round; Pending this round is what is still unpaid of this round's pledges. Rows for whoever's group is due to receive this month's pot are highlighted, as is this month's column. This month's name shows green once paid, red while still pending.",
+    participant:'Participant', group:'Group', pledge:'Pledge / Round',
+    total:'Total', pendingLabel:'Pending this round', paidBadge:'✓ Paid', pendingCell:'Pending', ofWord:'of', none:'—', arrow:'→',
   };
   const mLabel = m => ar? monthLabelAr(m) : monthLabel(m);
 
@@ -12426,13 +12426,12 @@ function renderJamiahSummary(j){
     </div>
     <div class="mut" style="font-size:11.5px;margin:8px 0">${t.note}</div>
     <table style="min-width:700px" ${ar? 'dir="rtl"':''}>
-      <thead><tr><th>${t.participant}</th><th class="num">${t.amountDue}</th><th class="num">${t.amountPaid}</th><th>${t.group}</th>${rounds.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip);border-bottom:2px solid var(--accent)':''}">${esc(mLabel(m))}${j.roundGroup[m]?`<div class="mut" style="font-size:10px;font-weight:400">${t.arrow} ${esc(groupsById[j.roundGroup[m]]?.name||'')}</div>`:''}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(({p,due,paid,isCurrentGroup,curOk})=>{
+      <thead><tr><th>${t.participant}</th><th class="num">${t.pledge}</th><th>${t.group}</th>${rounds.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip);border-bottom:2px solid var(--accent)':''}">${esc(mLabel(m))}${j.roundGroup[m]?`<div class="mut" style="font-size:10px;font-weight:400">${t.arrow} ${esc(groupsById[j.roundGroup[m]]?.name||'')}</div>`:''}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(({p,pledge,isCurrentGroup,curOk})=>{
         const nameColor = isCurrentMonthInRange? (curOk? 'color:var(--green)' : 'color:var(--red)') : '';
         return `<tr ${isCurrentGroup?'style="background:var(--chip)"':''}>
         <td style="${nameColor};font-weight:${isCurrentMonthInRange?'600':'400'}">${esc(p.name)}</td>
-        <td class="num mono">${money(due)}</td>
-        <td class="num mono">${money(paid)}</td>
+        <td class="num mono">${money(pledge)}</td>
         <td class="mut">${esc(groupsById[p.groupId]?.name||t.none)}</td>
         ${rounds.map(m=>{
           const paidR = paidByPartRound[p.id+'_'+m]||0;
@@ -12450,10 +12449,9 @@ function renderJamiahSummary(j){
       }).join('')}</tbody>
       <tfoot><tr style="font-weight:700">
         <td>${t.total}</td>
-        <td class="num mono">${money(totalDue)}</td>
-        <td class="num mono">${money(totalPaid)}</td>
+        <td class="num mono" id="jamiahPledgeTotal">${money(totalPledge)}</td>
         <td></td>
-        <td class="num mono ${moneyClass(totalDue-totalPaid)}" colspan="${rounds.length}">${t.pendingLabel}: ${money(totalDue-totalPaid)}</td>
+        <td class="num mono ${pendingRound>0.005?'r':''}" id="jamiahPendingRound" colspan="${rounds.length}">${isCurrentMonthInRange? t.pendingLabel+': '+money(pendingRound) : ''}</td>
       </tr></tfoot>
     </table>
   </div>`;
@@ -13382,6 +13380,7 @@ function renderAllocUnallocResults(){
           ${Math.abs(selSum)<0.005 && accSelected.length>=2 ? ' <span class="badge pos">balances ✓</span>':' <span class="mut">need 2+ lines summing to zero</span>'}</div>
         <div class="row">
           ${imbalanced? `<button class="btn ghost" onclick="createBalancingJV(${acc})" title="Prefill New JV with a line to bring this selection to zero">Create JV to Balance</button>` : ''}
+          <button class="btn ghost" onclick="openAddToAllocation(${acc})" title="Add the ticked lines to an allocation that already exists for this account">Add to existing allocation…</button>
           <input id="allocNumInput_${acc}" style="width:130px" value="${pad5(nextAllocNum())}" placeholder="Alloc #">
           <button class="btn pri" ${canAssign?'':'disabled'} onclick="assignAllocation(${acc})">Assign Allocation</button>
         </div>
@@ -13441,6 +13440,51 @@ async function assignAllocation(acc){
   for(const t of touched){ await syncWrite('pd_ledger', 'upsert', {id:t.row.id, jv:t.row.jv, entry_date:t.row.date, acc:t.row.acc, descr:t.row.descr, amt:t.row.amt, alloc:t.row.alloc, allocatable:t.row.allocatable, acc_name_snapshot:t.row.accNameSnapshot||null}, t.base); }
   toast('Allocation #'+pad5(num)+' created with '+ids.length+' lines ✓');
   allocSelected.clear();
+  renderAlloc();
+}
+// ---- Add ticked lines to an existing allocation (v4.60.0) ----
+// Same single-account rule as creating one: only allocations whose lines are all on this account
+// are offered, and only ones that would net to exactly zero after adding can be chosen.
+function allocSelectedLinesForAcc(acc){ return [...allocSelected].map(id=>D.ledger.find(l=>l.id===id)).filter(l=>l && l.acc===acc && !l.alloc); }
+function allocGroupsForAccount(acc){
+  const groups = {};
+  D.ledger.forEach(l=>{ if(l.alloc) (groups[l.alloc] = groups[l.alloc] || []).push(l); });
+  return Object.keys(groups).map(Number).filter(n=>groups[n].every(l=>l.acc===acc)).map(n=>{
+    const lines = groups[n].slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    return {n, lines, net: lines.reduce((s,l)=>s+(Number(l.amt)||0),0), from: lines[0]?.date||'', to: lines[lines.length-1]?.date||''};
+  });
+}
+function openAddToAllocation(acc){
+  const sel = allocSelectedLinesForAcc(acc);
+  if(!sel.length){ toast('Tick the line(s) to add first', true); return; }
+  const selSum = sel.reduce((s,l)=>s+(Number(l.amt)||0),0);
+  const groups = allocGroupsForAccount(acc).map(g=>({...g, after: g.net+selSum}))
+    .sort((a,b)=> (Math.abs(a.after)<0.005? 0:1) - (Math.abs(b.after)<0.005? 0:1) || b.n-a.n);
+  showModal(`<h3 style="margin-top:0">Add to existing allocation — ${acc} ${esc(accShort(acc))}</h3>
+    <div class="mut" style="font-size:12px;margin-bottom:10px">Adding <b>${sel.length}</b> line${sel.length===1?'':'s'} totalling <b class="mono ${moneyClass(selSum)}">${money(selSum)}</b>. The allocation has to net to zero afterwards.</div>
+    <div style="overflow-x:auto;max-height:55vh;overflow-y:auto"><table><thead><tr><th>Allocation #</th><th class="num">Lines</th><th>Date range</th><th class="num">Net now</th><th class="num">Net after</th><th></th></tr></thead>
+    <tbody>${groups.map(g=>{ const ok = Math.abs(g.after)<0.005; return `<tr data-addalloc="${g.n}">
+      <td class="mono click" onclick="viewAllocGroup(${g.n})">${pad5(g.n)}</td><td class="num">${g.lines.length}</td><td class="mono">${esc(g.from)} → ${esc(g.to)}</td>
+      <td class="num mono ${moneyClass(g.net)}">${money(g.net)}</td><td class="num mono ${ok?'':'r'}">${ok? '0.00 ✓' : money(g.after)}</td>
+      <td><button class="btn ${ok?'pri':'ghost'} sm" ${ok?'':'disabled title="Would not net to zero"'} onclick="addToAllocation(${acc}, ${g.n})">Add</button></td></tr>`; }).join('')
+      || '<tr><td colspan="6" class="empty">This account has no existing allocations yet — use Assign Allocation to create one.</td></tr>'}</tbody></table></div>
+    ${groups.length && !groups.some(g=>Math.abs(g.after)<0.005)? '<div class="mut" style="font-size:12px;margin-top:8px">None of these would net to zero with the ticked lines — tick a different combination, or use Create JV to Balance.</div>' : ''}
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Cancel</button></div>`, true);
+}
+async function addToAllocation(acc, n){
+  if(blockIfSyncing()) return;
+  const sel = allocSelectedLinesForAcc(acc);
+  const g = allocGroupsForAccount(acc).find(x=>x.n===n);
+  if(!sel.length || !g){ toast('That allocation or selection is no longer available', true); return; }
+  const after = g.net + sel.reduce((s,l)=>s+(Number(l.amt)||0),0);
+  if(Math.abs(after)>=0.005){ toast('Allocation #'+pad5(n)+' would not net to zero ('+money(after)+')', true); return; }
+  const touched = sel.map(l=>({row:l, base:l.updated_at||null}));
+  sel.forEach(l=>{ l.alloc = n; });
+  persistLocal();
+  for(const t of touched){ const l = t.row; await syncWrite('pd_ledger', 'upsert', {id:l.id, jv:l.jv, entry_date:l.date, acc:l.acc, descr:l.descr, amt:l.amt, alloc:l.alloc, allocatable:l.allocatable, acc_name_snapshot:l.accNameSnapshot||null}, t.base); }
+  allocSelected.clear();
+  closeModal();
+  toast(sel.length+' line'+(sel.length===1?'':'s')+' added to allocation #'+pad5(n)+' ✓');
   renderAlloc();
 }
 let allocNumQ = '';
