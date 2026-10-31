@@ -2350,7 +2350,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.69.0';
+const APP_VERSION = '4.70.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2358,6 +2358,12 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.70.0', changes: [
+    'No SQL migration needed \u2014 front-end only, and only the text of the Review Pack changed. Nothing else in the app behaves differently.',
+    'CHANGED \u2014 Review Pack: the \u201cexactly 3 working sets\u201d rule is replaced. The AI now plans 3 working sets per exercise by default and may use 4 (never more) only when a muscle cannot reach its weekly floor otherwise. Before a 4th set it must try, in order: an extra training day for that muscle; a different exercise with that muscle as primary; secondary-muscle credit; and only then a 4th set on the fewest blocks, raising the muscle to the floor exactly. 4th sets are spread over different days, never two on the same muscle in one day, and never on exercises that are not progressing.',
+    'CHANGED \u2014 Review Pack: new limit of 6 exercises per training day. Only if the weekly floor is still out of reach after the steps above may a day go to 7 or at most 8 exercises, and the AI must flag it.',
+    'CHANGED \u2014 Review Pack: the rules check now lists every 4-set block (exercise, muscle served, the gap, and why the other options could not close it) and every day over 6 exercises, or says \u201cnone\u201d. The weekly-floor paragraph now points to the same steps instead of just \u201cadd sets\u201d.',
+  ]},
   { v:'4.69.0', changes: [
     'No SQL migration needed \u2014 front-end only. Nothing in the database changed.',
     'NEW \u2014 Duplicate a task. While a task window is open for editing, a Duplicate button closes it and opens a new-task form with the same name (ending in \u201c(copy)\u201d), location, silo, priority, notes and date / schedule. Nothing is created until you press Create Task.',
@@ -14919,7 +14925,7 @@ MY FIXED WEEKLY SCHEDULE (hard constraint, not a suggestion to optimize): ${pack
 \`\`\`json
 ${JSON.stringify(pack.trainingSchedule, null, 2)}
 \`\`\`
-EVERY tracked muscle group must get AT LEAST ${band.min} sets/week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, increase sets per session or add a day it's trained on to close the gap, while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
+EVERY tracked muscle group must get AT LEAST ${band.min} sets/week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, close the gap using the ordered steps in the working-sets rule below (extra training day, different primary exercise, secondary credit, and only then a 4th set), while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
 ${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard ${band.min}-${band.max} set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
@@ -14949,7 +14955,7 @@ WHAT I NEED FROM YOU:
 
 6. **Rationale for every planned day.** For each training day in the plan, give two or three lines in your reply (NOT inside the JSON): why these exercises on this day, why this order, and why these weights. Name the muscle-volume or progression reason, not generic filler. Rest days need one line too.
 
-7. **Rules check against my rules.** Before you write the JSON, check your own plan against EVERY rule in this prompt: my fixed rest days, the weekly set floor for every muscle, priority-muscle frequency, exactly 3 working sets per exercise, one weight per exercise per day, weight never backward, each exercise's weightIncrementKg grid, once per week per exercise, no same primary muscle on consecutive training days, block ordering, and the unique dated session names. Give a short pass/fail line per rule. If anything fails, fix the plan, then re-check. Do not output a plan that breaks a rule unless you flag the exception explicitly and say why.
+7. **Rules check against my rules.** Before you write the JSON, check your own plan against EVERY rule in this prompt: my fixed rest days, the weekly set floor for every muscle, priority-muscle frequency, working sets per exercise (3 by default, 4 only under the exception), the 6-exercises-per-day limit, one weight per exercise per day, weight never backward, each exercise's weightIncrementKg grid, once per week per exercise, no same primary muscle on consecutive training days, block ordering, and the unique dated session names. Give a short pass/fail line per rule. Also list every 4-set block (exercise, the muscle it serves, the weekly gap, and why steps 1-3 of the working-sets rule could not close it) and every day with more than 6 exercises (and why), or write \"none\" for each. If anything fails, fix the plan, then re-check. Do not output a plan that breaks a rule unless you flag the exception explicitly and say why.
 
 The JSON must follow this exact schema (the same format the app already accepts via Paste & Import):
 \`\`\`
@@ -14984,7 +14990,14 @@ RULES for the plan:
 - Rep defaults in the app: every working set is pre-filled with the TOP of that exercise's rep range (e.g. 12 for "8-12"); I then adjust to what I actually did. So the top of the range is my aim each set, and reps I log under it are real results, not planned ones.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
 - Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
-- Every exercise gets exactly 3 working sets, consistently, across every session in the plan — not 2, not 4, unless I've told you a specific reason to deviate for a particular exercise. The app adds a warm-up set automatically on top of these 3 (see below), so "3 sets" in blocks[].sets means 3 working sets only — don't add a 4th to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
+- WORKING SETS PER EXERCISE. The default is 3 working sets per exercise: use 3 on every block unless the exception below applies. EXCEPTION: you may raise an exercise to 4 working sets (never more than 4) ONLY when a muscle cannot reach its weekly set floor otherwise. Before using the exception, try these in order:
+  1. Move the muscle to an extra training day, if the recovery rule (no same primary muscle on consecutive training days) allows it.
+  2. Use a different exercise that has the muscle as a primary target, if one exists in my library and fits the once-per-week and the 6-exercises-per-day limits.
+  3. Count secondary-muscle credit where it genuinely covers the gap.
+  4. Only then add a 4th set to the smallest number of blocks needed to reach the floor. Raise the muscle to the floor exactly and do not exceed it.
+  5. Last resort: if the floor is still out of reach, a training day may go above 6 exercises, to 7 or at most 8. In that case the muscle may end up above the floor, and you must flag it.
+  Spread any extra sets across different days. Do not put two 4-set blocks for the same muscle on one day, and do not put 4-set blocks on exercises that are not progressing at their current volume. Every 4-set block must be listed in the rules check with the muscle it serves and the reason the options above could not close the gap. The app adds a warm-up set automatically on top of the working sets (see below), so blocks[].sets counts working sets only — don't add a set to account for warm-up yourself, and don't mention warm-up sets in the plan at all.
+- EXERCISES PER DAY: at most 6 exercises in any training day's session (walking not counted). Going to 7 or 8 is allowed only as the last resort in step 5 above, and must be flagged in the rules check.
 - Order each session's blocks array deliberately, using established hypertrophy-programming sequencing, not an arbitrary order — this order is what I'll actually perform the exercises in, in that exact sequence: heavier/more technically demanding compound movements first while genuinely fresh, isolation and accessory work later; the more fatiguing/larger-muscle work generally before smaller-muscle/single-joint work. On top of that base sequencing, also avoid the same muscle group in two back-to-back blocks where avoidable (e.g. don't put two chest-primary exercises next to each other) — alternate through the session so consecutive exercises give each area a moment before it's hit again.
 - Don't schedule the same PRIMARY muscle group as a direct target on two consecutive TRAINING days (a rest day in between resets this — it only applies to actual back-to-back training days). This is for recovery, not just within-session variety. Exception: if a priority muscle group above genuinely cannot get its extra frequency without landing on consecutive training days, it's fine to do so — but say so explicitly in your performance summary (item 1) so I know it was a deliberate trade-off, not an oversight. Secondary-muscle overlap between consecutive days is fine and expected; this rule is primary-only.
 - All suggested weights must be achievable on that specific exercise's own equipment — see weightIncrementKg on each exercise above (most are 2.5kg: 5kg main increments plus a 2.5kg toggle, but some machines only move in 5/10/20kg jumps). Every suggested weight for an exercise must land on THAT exercise's increment grid, not a blanket 2.5kg assumption — e.g. a weightIncrementKg of 10 means 40, 50, 60kg are valid but 45kg isn't.
