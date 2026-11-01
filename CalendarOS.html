@@ -2356,7 +2356,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.71.0';
+const APP_VERSION = '4.71.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2364,6 +2364,10 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.71.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIX \u2014 Dashboard \u201cHide missed / moved\u201d was hiding too much: tasks that had been rescheduled in the past but are due today disappeared. It now hides only what is missed or moved for the date being shown: a recurring task marked missed on that date, or one whose occurrence on that date was moved away. A task that was moved onto today, or a one-time task rescheduled earlier but due today, stays visible.',
+  ]},
   { v:'4.71.0', changes: [
     '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds group_id on health_metric_defs and metric_groups on app_settings. Additive and safe to run more than once. Until it is run, health-metric and settings sync will report an error.',
     'NEW \u2014 Health metric groups. In Health Log \u2192 Manage Metrics, \u201c+ Add group\u201d creates a named group (rename, delete and reorder groups there too). Each metric\u2019s edit window has a Group selector. The log page shows the metric cards under group headings (tap a heading to collapse it; remembered on this device), with a \u201cNo group\u201d section for the rest. Arrows and drag reorder a metric inside its group. The History table shows the group above its columns. Deleting a group moves its metrics to \u201cNo group\u201d \u2014 it never deletes a metric.',
@@ -7344,14 +7348,13 @@ async function toggleHideCompleted(){
   renderMain();
 }
 
-/* v4.71.0: "missed / moved" = recurring occurrence marked missed, recurring occurrence that arrived here by a move,
-   or a one-time task whose due date was moved (dueHistory). Display-only, device-local. */
+/* v4.71.1: "missed / moved" is judged for the date the row is shown on only: a recurring occurrence marked missed
+   on that date, or one that was moved away from that date. Tasks moved ONTO the date, or one-time tasks that were
+   rescheduled earlier but are due now, stay visible. Display-only, device-local. */
 function isRowMissedOrMoved(row){
-  if(row.kind==='recurring'){
-    if(isMissedOn(row.task.id, row.dueOn)) return true;
-    return (row.task.rescheduleExceptions||[]).some(e=>e.to===row.dueOn);
-  }
-  return !!(row.task.dueHistory && row.task.dueHistory.length);
+  if(row.kind!=='recurring') return false;
+  if(isMissedOn(row.task.id, row.dueOn)) return true;
+  return (row.task.rescheduleExceptions||[]).some(e=>e.from===row.dueOn);
 }
 async function toggleHideMissedMoved(){
   state.settings.hideMissedMoved = !state.settings.hideMissedMoved;
