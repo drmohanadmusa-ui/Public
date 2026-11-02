@@ -346,12 +346,17 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.60.0';
+const APP_VERSION = '4.61.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.61.0', date:'2026-11-02', changes:[
+    'Accrual cap per sub category: Settings \u2192 Accrual Mappings has a new \u201CCap (months)\u201D column. With a cap of e.g. 3, Month End JV \u2013 Post Accrual stops accruing once the accrual liability reaches 3 \u00D7 that month\u2019s budget for the sub category: it accrues only the part up to the cap and skips the rest, and does nothing once the cap is reached. Measured as of the end of the month being accrued. Drawdowns in over-budget months are unchanged. Blank = no cap.',
+    'The \u201CAccrued\u201D figure next to a sub category on the P&L and Budget pages now shows its cap too (e.g. \u201CAccrued: 3,930.01 of 4,050.00\u201D), and the duplicate one next to the accrual (99) account line is gone.',
+    'SCHEMA (additive): pd_accrual_mappings.cap_months numeric. Run Settings \u2192 Database Schema once in Supabase before setting a cap (safe to re-run).',
+  ]},
   {version:'4.60.0', date:'2026-10-31', changes:[
     'Jamiah summary: the Amount Due and Amount Paid columns are gone; in their place is Pledge / Round (\u201Cالقسط لكل دورة\u201D in the Arabic view) for each participant. The footer shows the total pledge per round (the pot) and \u201CPending this round\u201D \u2014 this round\u2019s pledges not yet tagged as paid.',
     'Allocations \u2192 Unallocated: after ticking one or more lines, the new \u201CAdd to existing allocation\u2026\u201D button lists that account\u2019s existing allocations with what each would net to after adding; only those that come out at exactly zero can be chosen.',
@@ -1969,7 +1974,7 @@ async function fetchAllFromCloud(forceFullLedger){
   D.subcategories = subcat.error? (SEED.subcategories||[]).map(s=>({...s})) : subcat.data.map(s=>({catDigit:s.cat_digit, subCode:s.sub_code, name:s.name}));
   if(!drafts.error){ jvDrafts = drafts.data.map(d=>({id:d.id, date:d.entry_date, lines:d.lines, savedAt:d.saved_at, updated_at:d.updated_at||null})); saveJVDraftsList(); }
   if(!prov.error){ D.provisionGroups = prov.data.map(g=>({id:g.id, name:g.name, lines:g.lines, months:g.months, lastBulkFillMonths:g.last_bulk_fill_months||null, dupBalanceExempt:!!g.dup_balance_exempt, updated_at:g.updated_at||null})); }
-  if(!accr.error){ D.accrualMappings = accr.data.map(m=>({category:m.category, liabilityAcc:m.liability_acc, expenseAcc:m.expense_acc, updated_at:m.updated_at||null})); }
+  if(!accr.error){ D.accrualMappings = accr.data.map(m=>({category:m.category, liabilityAcc:m.liability_acc, expenseAcc:m.expense_acc, capMonths:(m.cap_months===null||m.cap_months===undefined||m.cap_months==='')? null : Number(m.cap_months), updated_at:m.updated_at||null})); }
   if(!jam.error){ D.jamiahs = jam.data.map(j=>({id:j.id, name:j.name, account:j.account, startMonth:j.start_month, durationMonths:j.duration_months, groups:j.groups, participants:j.participants, roundGroup:j.round_group, tags:j.tags, updated_at:j.updated_at||null})); }
   if(!fplans.error && fplans.data.length){ D.forecastPlans = fplans.data[0].plans||{}; }
   if(!nameTr.error && nameTr.data.length){ D.nameTranslations = nameTr.data[0].names||{}; }
@@ -2017,7 +2022,7 @@ async function seedCloud(){
   if(D.subcategories.length) await insertWithRetry('pd_subcategories', D.subcategories.map(s=>({cat_digit:s.catDigit,sub_code:s.subCode,name:s.name})));
   if(localDrafts.length){ await insertWithRetry('pd_drafts', localDrafts.map(d=>({id:d.id, entry_date:d.date, lines:d.lines, saved_at:d.savedAt}))); jvDrafts = localDrafts; saveJVDraftsList(); }
   if(localProvisions.length){ await insertWithRetry('pd_provisions', localProvisions.map(g=>({id:g.id, name:g.name, lines:g.lines, months:g.months, last_bulk_fill_months:g.lastBulkFillMonths||null, dup_balance_exempt:!!g.dupBalanceExempt}))); D.provisionGroups = localProvisions; }
-  if(localAccrualMappings.length){ await insertWithRetry('pd_accrual_mappings', localAccrualMappings.map(m=>({category:m.category, liability_acc:m.liabilityAcc, expense_acc:m.expenseAcc}))); D.accrualMappings = localAccrualMappings; }
+  if(localAccrualMappings.length){ await insertWithRetry('pd_accrual_mappings', accrualMappingRows(localAccrualMappings)); D.accrualMappings = localAccrualMappings; }
   if(localJamiahs.length){ await insertWithRetry('pd_jamiahs', localJamiahs.map(j=>({id:j.id, name:j.name, account:j.account, start_month:j.startMonth, duration_months:j.durationMonths, groups:j.groups, participants:j.participants, round_group:j.roundGroup, tags:j.tags}))); D.jamiahs = localJamiahs; }
   if(localRealEstateBuildings.length){ await insertWithRetry('pd_real_estate_buildings', localRealEstateBuildings.map(b=>({id:b.id, name:b.name, apartment_account_ids:b.apartmentAccountIds, expense_account_ids:b.expenseAccountIds}))); D.realEstateBuildings = localRealEstateBuildings; }
   if(Object.keys(localForecastPlans).length){ await insertWithRetry('pd_forecast_plans', [{id:1, plans:localForecastPlans}]); D.forecastPlans = localForecastPlans; }
@@ -2390,6 +2395,7 @@ create table if not exists pd_accrual_mappings (
   category      text primary key,
   liability_acc bigint,
   expense_acc   bigint,
+  cap_months    numeric,
   updated_at    timestamptz default now()
 );
 
@@ -4653,6 +4659,24 @@ let accrualPanelOpen = false;
 let accrualMonth = todayStr().slice(0,7);
 let accrualExplanation = [];
 function getAccrualMappings(){ return D.accrualMappings||[]; }
+// v4.61.0 accrual cap: cap_months is only sent when a mapping has (or just lost) a cap, so a
+// database that hasn't had the schema script run yet keeps saving mappings exactly as before.
+function accrualCapMonths(m){ const v = m? Number(m.capMonths) : NaN; return (m && m.capMonths!==null && m.capMonths!==undefined && m.capMonths!=='' && v>0)? v : null; }
+function accrualMappingRows(list){
+  const withCap = (list||[]).some(m=>accrualCapMonths(m)!==null);
+  return (list||[]).map(m=>Object.assign({category:m.category, liability_acc:m.liabilityAcc, expense_acc:m.expenseAcc}, withCap? {cap_months:accrualCapMonths(m)} : {}));
+}
+// A sub category's budget for one month — the same Forecast Plan figure the accrual JV uses.
+function accrualCategoryBudget(cat, mk){
+  return D.accounts.filter(a=>a.category===cat && firstDigit(a.id)===6).reduce((s,a)=> s + (computeForecastCell(a, mk, mk).plan||0), 0);
+}
+// Cap in SAR for a sub category in a month = cap months × that month's budget; null = no cap.
+function accrualCapForCategory(cat, mk){
+  const m = (D.accrualMappings||[]).find(x=>x.category===cat);
+  const months = accrualCapMonths(m);
+  if(months===null) return null;
+  return Math.max(0, months * accrualCategoryBudget(cat, mk));
+}
 // "Accrued" for an expense sub category = balance of the accrual LIABILITY account mapped to it in
 // Settings → Accrual Mappings, as of a date. Liabilities are stored negative, so it's shown as the
 // negated balance (positive = money genuinely accrued). null when the category has no mapping.
@@ -4665,11 +4689,8 @@ function accruedForCategory(cat, asOfDate){
 function accruedChipHTML(cat, asOfDate){
   const v = accruedForCategory(cat, asOfDate);
   if(v===null) return '';
-  return ` <span class="mut accrued-chip" data-accrued-cat="${esc(cat)}" title="Balance of the mapped accrual liability account as of ${esc(asOfDate)}" style="font-weight:400;font-size:12px">\u00B7 Accrued: <b class="mono">${money(v)}</b></span>`;
-}
-function accruedChipForExpenseAcc(accId, asOfDate){
-  const m = (D.accrualMappings||[]).find(x=>x.expenseAcc===accId);
-  return m? accruedChipHTML(m.category, asOfDate) : '';
+  const cap = accrualCapForCategory(cat, String(asOfDate).slice(0,7));
+  return ` <span class="mut accrued-chip" data-accrued-cat="${esc(cat)}" title="Balance of the mapped accrual liability account as of ${esc(asOfDate)}" style="font-weight:400;font-size:12px">\u00B7 Accrued: <b class="mono">${money(v)}</b>${cap!==null? ` of <span class="mono">${money(cap)}</span>` : ''}</span>`;
 }
 function expenseCategoriesList(){
   const cats = [...new Set(D.accounts.filter(a=>firstDigit(a.id)===6 && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account')).map(a=>a.category))].filter(Boolean);
@@ -4685,11 +4706,17 @@ async function saveAccrualMappingFromForm(sanitizedKey){
   const liabilityAcc = liabEl && liabEl.dataset.acc? Number(liabEl.dataset.acc) : null;
   const expenseAcc = expEl && expEl.dataset.acc? Number(expEl.dataset.acc) : null;
   if(!liabilityAcc || !expenseAcc){ toast('Pick both a liability account and an accrual expense account', true); return; }
+  const capEl = document.getElementById('accrCap_'+sanitizedKey);
+  const capRaw = capEl? String(capEl.value).trim() : '';
+  const capMonths = capRaw===''? null : Number(capRaw);
+  if(capMonths!==null && !(capMonths>0)){ toast('Cap must be a number of months above 0, or blank for no cap', true); return; }
   let m = D.accrualMappings.find(x=>x.category===category);
-  if(m){ m.liabilityAcc = liabilityAcc; m.expenseAcc = expenseAcc; } else { m = {category, liabilityAcc, expenseAcc}; D.accrualMappings.push(m); }
+  const hadCap = accrualCapMonths(m)!==null;
+  if(m){ m.liabilityAcc = liabilityAcc; m.expenseAcc = expenseAcc; m.capMonths = capMonths; } else { m = {category, liabilityAcc, expenseAcc, capMonths}; D.accrualMappings.push(m); }
   persistLocal();
   toast('Accrual mapping saved for "'+category+'" ✓');
-  if(usingCloud){ const r = await SB.from('pd_accrual_mappings').upsert({category, liability_acc:liabilityAcc, expense_acc:expenseAcc}); if(r.error) toast('Cloud save failed: '+r.error.message, true); }
+  const row = Object.assign({category, liability_acc:liabilityAcc, expense_acc:expenseAcc}, (capMonths!==null || hadCap)? {cap_months:capMonths} : {});
+  if(usingCloud){ const r = await SB.from('pd_accrual_mappings').upsert(row); if(r.error) toast('Cloud save failed: '+r.error.message+(/cap_months/.test(r.error.message||'')? ' — run Settings → Database Schema in Supabase first' : ''), true); }
   renderSettings();
 }
 async function deleteAccrualMapping(sanitizedKey){
@@ -4756,10 +4783,21 @@ function computeAccrualJV(){
       if(Math.abs(variance)<0.005){ explanation.push({category:map.category, budget, actual, variance:0, action:'On budget — no accrual needed'}); return; }
       const tag = monthTag(accrualMonth);
       if(variance>0){
-        // under budget: accrue the surplus — Dr the 99-account, Cr the liability
-        lines.push({key:Math.random().toString(36).slice(2), acc:map.expenseAcc, descr:map.category+' Accrual - '+tag, amt: Math.round(variance*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
-        lines.push({key:Math.random().toString(36).slice(2), acc:map.liabilityAcc, descr:map.category+' Accrual - '+tag, amt: -Math.round(variance*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
-        explanation.push({category:map.category, budget, actual, variance, action:'Under budget — accrued '+money(variance)+' to liability'});
+        // under budget: accrue the surplus — Dr the 99-account, Cr the liability. With a cap
+        // (v4.61.0) only the part that keeps the liability within cap months × this month's budget
+        // is accrued, measured as of the end of the month being accrued; nothing once it's reached.
+        let amount = variance, capNote = '';
+        const capMonths = accrualCapMonths(map);
+        if(capMonths!==null){
+          const cap = Math.max(0, capMonths*budget);
+          const accrued = -sumAcc(l=>l.acc===map.liabilityAcc, null, mTo);
+          const room = Math.max(0, cap - accrued);
+          if(room<0.005){ explanation.push({category:map.category, budget, actual, variance, action:'Under budget, but already at the cap ('+money(accrued)+' accrued, cap '+money(cap)+' = '+capMonths+' × budget) — no accrual'}); return; }
+          if(room < variance-0.005){ amount = room; capNote = ' (capped — '+money(variance)+' surplus, but only '+money(room)+' left under the '+money(cap)+' cap)'; }
+        }
+        lines.push({key:Math.random().toString(36).slice(2), acc:map.expenseAcc, descr:map.category+' Accrual - '+tag, amt: Math.round(amount*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
+        lines.push({key:Math.random().toString(36).slice(2), acc:map.liabilityAcc, descr:map.category+' Accrual - '+tag, amt: -Math.round(amount*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
+        explanation.push({category:map.category, budget, actual, variance, action:'Under budget — accrued '+money(amount)+' to liability'+capNote});
       } else {
         const overage = -variance;
         const liabBalance = accountBalance(map.liabilityAcc); // negative number
@@ -6197,7 +6235,7 @@ function renderBudgetSummaryTable(){
         return `<tr style="background:var(--chip)"><td colspan="2" style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, monthEndDateStr(budgetMonth))}</td>
             <td class="num mono" style="font-weight:700">${money(cp)}</td><td class="num mono" style="font-weight:700">${money(ca)}</td>
             <td class="num mono ${budgetVarClass(ca-cp)}" style="font-weight:700">${money(ca-cp)}</td></tr>` +
-          items.map(r=>`<tr class="click" onclick="viewBudgetAccountMonth(${r.acc})"><td class="mono" style="padding-left:18px">${r.acc}</td><td>${esc(accShort(r.acc))}${accruedChipForExpenseAcc(r.acc, monthEndDateStr(budgetMonth))}</td>
+          items.map(r=>`<tr class="click" onclick="viewBudgetAccountMonth(${r.acc})"><td class="mono" style="padding-left:18px">${r.acc}</td><td>${esc(accShort(r.acc))}</td>
             <td class="num mono">${money(r.planned)}</td><td class="num mono">${money(r.actual)}</td>
             <td class="num mono ${budgetVarClass(r.variance)}">${money(r.variance)}</td></tr>`).join('');
       }).join('') || '<tr><td colspan="5" class="empty">No budget or actuals for this month</td></tr>'}</tbody>
@@ -6468,7 +6506,7 @@ function renderPnL(){
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
     return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
-      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${accruedChipForExpenseAcc(i.a.id, pnlTo)}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
+      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
   // Net Result is always Income minus the magnitude of Expenses — matching standard P&L
@@ -13864,7 +13902,7 @@ function renderSettings(){
       <div class="panel">
         <h3>⚡ Accrual Mappings</h3>
         <div class="mut" style="font-size:12px;margin-bottom:12px">Used by "Month End JV – Post Accrual" in New JV. For each expense category, pick the liability account that accrues its unused budget, and the account ending in 99 that absorbs the accrual entries.</div>
-        <table><thead><tr><th>Category</th><th>Liability Account</th><th>Accrual (99) Expense Account</th><th></th></tr></thead>
+        <table><thead><tr><th>Category</th><th>Liability Account</th><th>Accrual (99) Expense Account</th><th class="num" title="Stop accruing once the liability reaches this many months of the sub category's budget. Blank = no cap.">Cap (months)</th><th></th></tr></thead>
         <tbody>${expenseCategoriesList().map(cat=>{
           const m = D.accrualMappings.find(x=>x.category===cat);
           const cid = sanitizeIdPart(cat);
@@ -13888,9 +13926,11 @@ function renderSettings(){
                 onblur="setTimeout(function(){ acpClose('accrExp_${cid}'); },150)" data-acc="${expAcc||''}">
               <div class="acdrop" id="acpdrop_accrExp_${cid}"></div>
             </td>
+            <td class="num"><input id="accrCap_${cid}" type="number" step="0.5" min="0" style="width:80px;text-align:right" placeholder="no cap" value="${accrualCapMonths(m)!==null? accrualCapMonths(m) : ''}"></td>
             <td><button class="btn ghost sm" onclick="saveAccrualMappingFromForm('${cid}')">Save</button>${m? ` <button class="x" onclick="deleteAccrualMapping('${cid}')">✕</button>`:''}</td>
           </tr>`;
-        }).join('') || '<tr><td colspan="4" class="empty">No expense categories found</td></tr>'}</tbody></table>
+        }).join('') || '<tr><td colspan="5" class="empty">No expense categories found</td></tr>'}</tbody></table>
+        <div class="mut" style="font-size:11.5px;margin-top:8px">Cap (months): the accrual stops once the liability reaches this many months of the sub category's budget for the month being accrued (e.g. 3 × 1,350 = 4,050). Blank = no cap. Needs the Database Schema script run once in Supabase.</div>
       </div>`},
     templates: {label:'📋 Prebuilt JV Templates', html: `
       <div class="panel">
@@ -14055,7 +14095,7 @@ async function restoreFromBackup(parsed){
   bump('Restoring drafts');
   if(D.provisionGroups.length) await insertWithRetry('pd_provisions', D.provisionGroups.map(g=>({id:g.id, name:g.name, lines:g.lines, months:g.months, last_bulk_fill_months:g.lastBulkFillMonths||null, dup_balance_exempt:!!g.dupBalanceExempt})));
   bump('Restoring provisions');
-  if(D.accrualMappings.length) await insertWithRetry('pd_accrual_mappings', D.accrualMappings.map(m=>({category:m.category, liability_acc:m.liabilityAcc, expense_acc:m.expenseAcc})));
+  if(D.accrualMappings.length) await insertWithRetry('pd_accrual_mappings', accrualMappingRows(D.accrualMappings));
   bump('Restoring accrual mappings');
   if(D.jamiahs.length) await insertWithRetry('pd_jamiahs', D.jamiahs.map(j=>({id:j.id, name:j.name, account:j.account, start_month:j.startMonth, duration_months:j.durationMonths, groups:j.groups, participants:j.participants, round_group:j.roundGroup, tags:j.tags})));
   bump('Restoring Jamiahs');
