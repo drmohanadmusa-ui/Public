@@ -346,12 +346,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.61.0';
+const APP_VERSION = '4.62.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.62.0', date:'2026-11-03', changes:[
+    'Investments wording: the platform/owner account labels \u201CInvested (Out)\u201D and \u201CWithdrawn (In)\u201D now read \u201CInvested into platform\u201D and \u201CWithdrawn from platform\u201D, so they say the same thing as your account names (\u201CRaseed - In\u201D = money into Raseed) instead of reading backwards. Wording only \u2014 no data or calculations changed.',
+  ]},
   {version:'4.61.0', date:'2026-11-02', changes:[
     'Accrual cap per sub category: Settings \u2192 Accrual Mappings has a new \u201CCap (months)\u201D column. With a cap of e.g. 3, Month End JV \u2013 Post Accrual stops accruing once the accrual liability reaches 3 \u00D7 that month\u2019s budget for the sub category: it accrues only the part up to the cap and skips the rest, and does nothing once the cap is reached. Measured as of the end of the month being accrued. Drawdowns in over-budget months are unchanged. Blank = no cap.',
     'The \u201CAccrued\u201D figure next to a sub category on the P&L and Budget pages now shows its cap too (e.g. \u201CAccrued: 3,930.01 of 4,050.00\u201D), and the duplicate one next to the accrual (99) account line is gone.',
@@ -8279,7 +8282,7 @@ function invOwnerReconciliation(){
   });
 }
 // ---- Pooled monthly contributions (v4.54.0) ----
-// "Available to place" per owner: what their Invested (Out) / Withdrawn (In) accounts say has gone
+// "Available to place" per owner: what their Invested into / Withdrawn from platform accounts say has gone
 // in, minus what the tracker already holds for them (positions + platform cash). This is exactly
 // the reconciliation gap, read the other way round — the money that has been recorded as invested
 // in the ledger but not yet deposited onto a platform. Recording the deposit closes the gap, so the
@@ -9476,7 +9479,7 @@ function renderInvSetupView(nav){
       <button class="btn ghost sm" onclick="openInvCoinImport()">📥 Import Coin Balances</button>
     </div></div>
     <div class="panel"><h3 style="margin-top:0">Platforms</h3>
-      <div style="overflow-x:auto"><table style="min-width:620px"><thead><tr><th>Platform</th><th>Invested (Out)</th><th>Withdrawn (In)</th><th>Profit</th><th class="noprint"></th></tr></thead>
+      <div style="overflow-x:auto"><table style="min-width:620px"><thead><tr><th>Platform</th><th>Invested into platform</th><th>Withdrawn from platform</th><th>Profit</th><th class="noprint"></th></tr></thead>
       <tbody>${plats.map(p=>`<tr><td><b>${p.isRobo?'🤖':'🏦'} ${esc(p.name)}</b></td><td style="font-size:12px">${accTxt(p.outAcc)}</td><td style="font-size:12px">${accTxt(p.inAcc)}</td><td style="font-size:12px">${accTxt(p.profitAcc)}</td>
         <td class="noprint" style="white-space:nowrap"><button class="btn ghost sm" onclick="openInvEditPlatform(${p.id})">✎</button>${p.isRobo? '' : ` <button class="btn ghost sm" onclick="openInvAddPosition(${p.id})">+ Position</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No platforms yet</td></tr>'}</tbody></table></div>
     </div>`;
@@ -10127,11 +10130,11 @@ function renderInvPlatformSection(p){
     </div>
     <div class="mut" style="font-size:11.5px;margin-bottom:6px">
       Portfolio + Cash: <b class="mono">$${fmt2(portfolioUsd+cash.totalUsd)}</b> <span class="mut">· ${money(tot.m+cash.totalSar)} SAR</span>
-      <span class="mut" title="For a quick eyeball comparison against Invested (Out) below"> (compare against Invested (Out))</span>
+      <span class="mut" title="For a quick eyeball comparison against Invested into platform below"> (compare against Invested into platform)</span>
     </div>
     <div class="mut" style="font-size:11.5px;margin-bottom:10px">
-      Invested (Out): <b class="mono">${acctBalTxt(p.outAcc)}</b>
-      &nbsp;·&nbsp; Withdrawn (In): <b class="mono">${acctBalTxt(p.inAcc)}</b>
+      Invested into platform: <b class="mono">${acctBalTxt(p.outAcc)}</b>
+      &nbsp;·&nbsp; Withdrawn from platform: <b class="mono">${acctBalTxt(p.inAcc)}</b>
       &nbsp;·&nbsp; Profit: <b class="mono">${acctBalTxt(p.profitAcc)}</b>
     </div>
     <div style="overflow-x:auto"><table style="min-width:980px"><thead><tr>
@@ -10193,12 +10196,12 @@ function renderInvRoboPlatformSection(p){
       </div>
     </div>
     ${expanded? `<div class="mut" style="font-size:11.5px;margin:10px 0">
-      Invested (Out): <b class="mono">${acctBalTxt(p.outAcc)}</b>
-      &nbsp;·&nbsp; Withdrawn (In): <b class="mono">${acctBalTxt(p.inAcc)}</b>
+      Invested into platform: <b class="mono">${acctBalTxt(p.outAcc)}</b>
+      &nbsp;·&nbsp; Withdrawn from platform: <b class="mono">${acctBalTxt(p.inAcc)}</b>
       &nbsp;·&nbsp; Profit: <b class="mono">${acctBalTxt(p.profitAcc)}</b>
     </div>
     <table><tbody>
-      <tr><td>Cost basis (Out − In)</td><td class="num mono ${stats.costBasisFlagged?'r':''}">${money(stats.costBasis)}</td></tr>
+      <tr><td>Cost basis (invested − withdrawn)</td><td class="num mono ${stats.costBasisFlagged?'r':''}">${money(stats.costBasis)}</td></tr>
       ${stats.costBasisFlagged? `<tr><td colspan="2" class="mut" style="font-size:10.5px;color:var(--red)">⚠ Withdrawn is larger than Invested — this usually means the Invested/Withdrawn accounts are assigned the wrong way round for this platform. Gain/Loss below uses ${money(Math.abs(stats.costBasis))} (the absolute amount) as the basis until that's corrected.</td></tr>` : ''}
       <tr><td>Current value
           <div class="mut" style="font-size:10.5px;${stale?'color:var(--red)':''}">${p.roboValueDate? 'as of '+esc(p.roboValueDate) : 'never updated'}</div>
@@ -10264,8 +10267,8 @@ function openInvPlatformModal(p){
   showModal(`
     <h3 style="margin-top:0">${d.id?'Edit':'New'} Platform</h3>
     <label class="fl">Name</label><input value="${esc(d.name)}" oninput="window._invPlatDraft.name=this.value" style="margin-bottom:12px">
-    ${invAccountPickerField('platOut','Invested (Out) account', d.outAcc, 'outAcc', '_invPlatDraft')}
-    ${invAccountPickerField('platIn','Withdrawn (In) account', d.inAcc, 'inAcc', '_invPlatDraft')}
+    ${invAccountPickerField('platOut','Invested into platform account', d.outAcc, 'outAcc', '_invPlatDraft')}
+    ${invAccountPickerField('platIn','Withdrawn from platform account', d.inAcc, 'inAcc', '_invPlatDraft')}
     ${invAccountPickerField('platProfit','Profit account', d.profitAcc, 'profitAcc', '_invPlatDraft')}
     <label style="display:flex;align-items:center;gap:8px;margin:14px 0;font-size:13px;cursor:pointer">
       <input type="checkbox" class="chk" ${d.isRobo?'checked':''} onchange="window._invPlatDraft.isRobo=this.checked; renderInvPlatformModal()"> Robo-Investment platform
@@ -10344,8 +10347,8 @@ function openInvOwners(){
   const owners = D.invOwners||[];
   showModal(`
     <div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">👥 Owners</h3><button class="x" onclick="closeModal()">✕</button></div>
-    <div class="mut" style="font-size:12px;margin:6px 0 12px">Add yourself and each family member you invest for. Their In / Out accounts are used to reconcile the tracker against your ledger.</div>
-    <div style="overflow-x:auto"><table style="min-width:440px"><thead><tr><th>Name</th><th>Arabic</th><th>Out</th><th>In</th><th class="noprint"></th></tr></thead>
+    <div class="mut" style="font-size:12px;margin:6px 0 12px">Add yourself and each family member you invest for. Their \u201Cinvested into platform\u201D and \u201Cwithdrawn from platform\u201D accounts are used to reconcile the tracker against your ledger.</div>
+    <div style="overflow-x:auto"><table style="min-width:440px"><thead><tr><th>Name</th><th>Arabic</th><th>Invested into</th><th>Withdrawn from</th><th class="noprint"></th></tr></thead>
     <tbody>${owners.map(o=>`<tr>
       <td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}</td>
       <td dir="rtl">${esc(o.nameAr||'')}</td>
@@ -10365,8 +10368,8 @@ function openInvOwnerModal(id){
     <label class="fl">Arabic name <span class="mut">(used on their statement)</span></label>
     <input dir="rtl" value="${esc(d.nameAr||'')}" oninput="window._invOwnerDraft.nameAr=this.value" style="margin-bottom:12px">
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer"><input type="checkbox" class="chk" ${d.isSelf?'checked':''} onchange="window._invOwnerDraft.isSelf=this.checked"> This is me (not a family member)</label>
-    ${invAccountPickerField('ownOut','Invested (Out) account', d.outAcc, 'outAcc', '_invOwnerDraft')}
-    ${invAccountPickerField('ownIn','Withdrawn (In) account', d.inAcc, 'inAcc', '_invOwnerDraft')}
+    ${invAccountPickerField('ownOut','Invested into platform account', d.outAcc, 'outAcc', '_invOwnerDraft')}
+    ${invAccountPickerField('ownIn','Withdrawn from platform account', d.inAcc, 'inAcc', '_invOwnerDraft')}
     ${invAccountPickerField('ownProfit','Profit account', d.profitAcc, 'profitAcc', '_invOwnerDraft')}
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
       ${d.id? (invOwnerTxCount(d.id)>0
@@ -10986,7 +10989,7 @@ function invMovementRate(m){
   return (rows.length && usd>0 && sar>0)? sar/usd : null;
 }
 // How a withdrawal should be booked in SAR, given the SAR that reached the bank: the capital leaves
-// the tracker at each person's average cost rate (book that to Withdrawn (In)); everything else,
+// the tracker at each person's average cost rate (book that to Withdrawn from platform); everything else,
 // including any exchange-rate gain or loss, goes to Profit. This keeps the reconciliation exact.
 function invWithdrawalBooking(d){
   const sarReceived = Number(d.sarReceived)||0;
@@ -11018,8 +11021,8 @@ function invCashRefreshDerived(){
   if(split && d.kind==='withdrawal'){
     const sp = invWithdrawalSplit(d);
     const bk = invWithdrawalBooking(d);
-    split.textContent = 'Booked as $'+fmt2(sp.capitalUsd)+' capital (In account) and $'+fmt2(sp.profitUsd)+' profit (Profit account). Realised profit available: $'+fmt2(sp.availProfit)+'.'
-      + (bk? ' Rate '+bk.rate.toFixed(4)+' SAR/USD (for information). Book '+money(bk.capitalSar)+' SAR to Withdrawn (In) and '+money(bk.profitSar)+' SAR to Profit.' : '');
+    split.textContent = 'Booked as $'+fmt2(sp.capitalUsd)+' capital (Withdrawn from platform account) and $'+fmt2(sp.profitUsd)+' profit (Profit account). Realised profit available: $'+fmt2(sp.availProfit)+'.'
+      + (bk? ' Rate '+bk.rate.toFixed(4)+' SAR/USD (for information). Book '+money(bk.capitalSar)+' SAR to Withdrawn from platform and '+money(bk.profitSar)+' SAR to Profit.' : '');
   }
 }
 function openInvCashModal(platformId, kind, movementId){
@@ -11116,7 +11119,7 @@ async function deleteInvCashMovement(id){
   persistLocal(); closeModal(); renderInvestmentsPage(); toast('Cash movement deleted');
 }
 /* ---- Investments: Collect Contributions (pooled monthly money → one split Deposit) ---- */
-// The ledger side (bank → personal → Invested (Out)) is posted manually; this only records the
+// The ledger side (bank → personal → Invested into platform) is posted manually; this only records the
 // money landing on the platform, split by person. Amounts are pre-filled from what each person
 // has invested per the ledger but not yet placed in the tracker, so the usual case is confirm-only.
 function openInvCollectModal(platformId){
@@ -11154,21 +11157,21 @@ function renderInvCollectModal(){
   const tab = (mode,label)=>`<button class="btn ghost sm" style="${d.mode===mode?'border-color:var(--accent);background:var(--chip);font-weight:600':''}" onclick="setInvCollectMode('${mode}')">${label}</button>`;
   showModal(`
     <h3 style="margin-top:0">💰 Collect Contributions — ${esc(p? p.name : '')}</h3>
-    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Records the money landing on this platform as one Deposit, split by person. Post the bank / personal / Invested (Out) JVs yourself as usual — nothing is booked to the ledger from here.</div>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Records the money landing on this platform as one Deposit, split by person. Post the bank / personal / Invested into platform JVs yourself as usual — nothing is booked to the ledger from here.</div>
     <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
       <div style="width:160px"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="window._invCollectDraft.date=this.value"></div>
       <div class="row" style="gap:4px;align-items:center"><span class="mut" style="font-size:11.5px">Enter by</span>${tab('amount','SAR amount')}${tab('pct','% of a total')}</div>
       ${d.mode==='pct'? `<div style="width:160px"><label class="fl">Total SAR this time</label><input type="number" step="0.01" value="${esc(d.totalSar)}" oninput="window._invCollectDraft.totalSar=this.value; invCollectRefresh()"></div>` : ''}
     </div>
     <div style="overflow-x:auto;margin-top:10px"><table style="min-width:560px"><thead><tr>
-      <th>Person</th><th class="num" title="Invested per the ledger (Out − In) minus what the tracker already holds">Available</th><th class="num" title="Already sitting on this platform — rolls into the next buy's split automatically">Cash on platform</th>
+      <th>Person</th><th class="num" title="Invested per the ledger (invested into platform − withdrawn from platform) minus what the tracker already holds">Available</th><th class="num" title="Already sitting on this platform — rolls into the next buy's split automatically">Cash on platform</th>
       <th class="num">${d.mode==='pct'? '%' : 'SAR'}</th><th class="num">Share</th><th class="num">USD</th>
     </tr></thead><tbody>${owners.map(o=>{
       const a = d.avail[o.id];
       const r = d.rows[o.id] || {sar:'', pct:''};
       const c = cash[o.id]? cash[o.id].usd : 0;
       return `<tr><td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}</td>
-        <td class="num mono ${a!==null && a<-0.005?'r':''}">${a===null? '<span class="mut" title="No Invested (Out) account linked to this person">—</span>' : money(a)}</td>
+        <td class="num mono ${a!==null && a<-0.005?'r':''}">${a===null? '<span class="mut" title="No Invested into platform account linked to this person">—</span>' : money(a)}</td>
         <td class="num mono mut">${Math.abs(c)>0.005? '$'+fmt2(c) : '—'}</td>
         <td class="num"><input type="number" step="${d.mode==='pct'?'0.01':'0.01'}" style="width:110px;text-align:right" value="${esc(d.mode==='pct'? r.pct : r.sar)}" oninput="setInvCollectRow(${o.id}, this.value)"></td>
         <td class="num mono" id="invCollectPct_${o.id}">—</td>
