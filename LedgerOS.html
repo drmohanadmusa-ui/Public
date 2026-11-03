@@ -346,12 +346,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.62.0';
+const APP_VERSION = '4.63.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'4.63.0', date:'2026-11-03', changes:[
+    'NEW: \uD83D\uDD01 Move coins to another platform (in + Add, on each platform card, and from a position\u2019s window). Move one or several assets at once: for each, enter the units sent and the units received \u2014 the difference is the network fee. Everyone keeps their share; the fee comes off each person in proportion to it, and a per-person preview shows held / sent / fee / received before you save.',
+    'The full cost moves with the coins (the fee just makes each remaining unit slightly dearer): no realised gain or loss, and the reconciliation against the ledger stays exact. Opening-balance cost keeps its opening tag when it moves.',
+    '\uD83D\uDCCB Activity shows each move as one line (e.g. \u201CRaseed \u2192 Binance \u00B7 Bitcoin 0.05 sent \u2192 0.0499 received, fee 0.0001\u201D), with Undo move. Filter to one person and the line shows that person\u2019s own units sent, fee and received.',
+    'The cash version is now labelled \u201C\u21C4 Move cash\u201D so the two can\u2019t be confused.',
+  ]},
   {version:'4.62.0', date:'2026-11-03', changes:[
     'Investments wording: the platform/owner account labels \u201CInvested (Out)\u201D and \u201CWithdrawn (In)\u201D now read \u201CInvested into platform\u201D and \u201CWithdrawn from platform\u201D, so they say the same thing as your account names (\u201CRaseed - In\u201D = money into Raseed) instead of reading backwards. Wording only \u2014 no data or calculations changed.',
   ]},
@@ -7865,6 +7871,11 @@ function computePositionState(posId, asOfDate){
         st.units += oUnits;
         st.costSar += oSar;
         if(t.cashSide==='opening') st.openingCostSar += oSar;
+        else if(t.cashSide==='transfer'){
+          // v4.63.0: a moved holding keeps its opening-balance tag on arrival.
+          const e = (t.owners||[]).find(x=>String(x.ownerId)===String(oid));
+          if(e && Number(e.openingSar)>0) st.openingCostSar += Number(e.openingSar);
+        }
       }
     }
   }
@@ -9267,7 +9278,8 @@ function invHoldingCardHTML(h, scope){
       <button class="btn ghost sm" onclick="openInvTradePicker(${pid})">🔁 Buy / Sell</button>
       <button class="btn ghost sm" onclick="INV_PLATFORM_ACTIONS.deposit.open(${pid})">↓ Deposit</button>
       <button class="btn ghost sm" onclick="INV_PLATFORM_ACTIONS.withdrawal.open(${pid})">↑ Withdraw</button>
-      <button class="btn ghost sm" onclick="INV_PLATFORM_ACTIONS.transfer.open(${pid})">⇄ Transfer</button>
+      <button class="btn ghost sm" onclick="INV_PLATFORM_ACTIONS.transfer.open(${pid})">⇄ Move cash</button>
+      <button class="btn ghost sm" onclick="openInvMoveAssets(${pid})">🔁 Move coins</button>
       <button class="btn ghost sm" onclick="openInvCashLog(${pid})">Cash log</button>
       <button class="btn ghost sm" onclick="openInvAddPosition(${pid})">+ Position</button>
     </div>` : '';
@@ -9371,7 +9383,30 @@ function renderInvFamilyView(nav){
 function invActivityRows(){
   const name = id => { const o = invOwnerById(id); return o? o.name : '#'+id; };
   const rows = [];
+  // A move between platforms (linked OUT + IN legs) is one line.
+  const moveLegs = {};
+  (D.invTransactions||[]).forEach(t=>{ if(t.cashSide==='transfer' && t.linkId!==null && t.linkId!==undefined) (moveLegs[t.linkId] = moveLegs[t.linkId] || []).push(t); });
+  const pairedIds = new Set();
+  Object.keys(moveLegs).forEach(k=>{
+    const legs = moveLegs[k];
+    const out = legs.find(t=>t.kind==='sell'), inn = legs.find(t=>t.kind==='buy');
+    if(!out || !inn) return;
+    pairedIds.add(out.id); pairedIds.add(inn.id);
+    const src = invPositionById(out.positionId), dst = invPositionById(inn.positionId);
+    const per = {};
+    (out.owners||[]).forEach(o=>{ (per[o.ownerId] = per[o.ownerId] || {sent:0, received:0, sar:0}).sent += Number(o.units)||0; per[o.ownerId].sar += Number(o.sar)||0; });
+    (inn.owners||[]).forEach(o=>{ (per[o.ownerId] = per[o.ownerId] || {sent:0, received:0, sar:0}).received += Number(o.units)||0; });
+    const sent = Number(out.units)||0, received = Number(inn.units)||0;
+    const fromP = src? invPlatformById(src.platformId) : null, toP = dst? invPlatformById(dst.platformId) : null;
+    rows.push({key:'v'+out.id, kind:'coinmove', id:out.id, date:out.date||'', seq:0, type:'move', label:'Moved',
+      platformId: src? src.platformId : null, platformIds:[src? src.platformId : null, dst? dst.platformId : null],
+      platformText:(fromP? fromP.name : '?')+' → '+(toP? toP.name : '?'), assetName: src? src.name : '?',
+      detail:(src? src.name : '?')+' · '+invFmtUnits(sent)+' sent → '+invFmtUnits(received)+' received, fee '+invFmtUnits(Math.max(0, sent-received)),
+      perOwner: per, ownerIds: Object.keys(per).map(Number), people: Object.keys(per).map(k=>name(Number(k))).join(', '),
+      usd:0, sar: Number(out.totalSar)||0, edit: dst? `openInvPosition(${dst.id})` : null, canDelete:true});
+  });
   (D.invTransactions||[]).forEach(t=>{
+    if(pairedIds.has(t.id)) return;
     const pos = invPositionById(t.positionId);
     const how = t.cashSide==='cash'? (t.kind==='sell'? ' → cash' : ' ← cash') : t.cashSide==='opening'? ' (opening)' : t.cashSide==='transfer'? ' (moved)' : '';
     rows.push({key:'t'+t.id, kind:'tx', id:t.id, date:t.date||'', seq:0, type: t.kind==='sell'? 'sell' : 'buy',
@@ -9407,7 +9442,7 @@ function invActivityRows(){
 function invActivityFiltered(){
   const f = invActivityFilter;
   return invActivityRows().filter(r=>
-    (!f.platformId || r.platformId===Number(f.platformId)) &&
+    (!f.platformId || (r.platformIds? r.platformIds.includes(Number(f.platformId)) : r.platformId===Number(f.platformId))) &&
     (!f.ownerId || r.ownerIds.includes(Number(f.ownerId))) &&
     (!f.type || r.type===f.type));
 }
@@ -9417,6 +9452,10 @@ function setInvActivityFilter(field, val){
   renderInvestmentsPage();
 }
 async function invActivityDelete(kind, id){
+  if(kind==='coinmove'){
+    if(!confirm('Undo this move? Both halves are removed, so the units go back to where they came from.')) return;
+    await invUndoMove(id); return;
+  }
   const isAdj = kind==='move' && ((D.invCashMovements||[]).find(m=>m.id===id)||{}).kind==='costadj';
   if(!confirm(isAdj? 'Remove this cost-correction record? The corrected costs themselves stay as they are.' : 'Delete this '+(kind==='tx'? 'transaction' : 'cash movement')+'? This can\'t be undone.')) return;
   if(kind==='tx'){ await deleteInvTx(id); closeModal(); renderInvestmentsPage(); }
@@ -9431,13 +9470,19 @@ function renderInvActivityView(nav){
     <div class="row noprint" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
       ${sel('platformId', [['','All platforms'], ...invPlatformsSorted().map(p=>[p.id, p.name])])}
       ${sel('ownerId', [['','Everyone'], ...(D.invOwners||[]).map(o=>[o.id, o.name+(o.isSelf?' (you)':'')])])}
-      ${sel('type', [['','All types'],['buy','Buys'],['sell','Sells'],['deposit','Deposits'],['withdrawal','Withdrawals'],['transfer','Transfers'],['adjustment','Cost corrections']])}
+      ${sel('type', [['','All types'],['buy','Buys'],['sell','Sells'],['deposit','Deposits'],['withdrawal','Withdrawals'],['transfer','Cash moves'],['move','Coin moves'],['adjustment','Cost corrections']])}
       <span class="mut" style="font-size:12px;align-self:center">${all.length} item${all.length===1?'':'s'}</span>
     </div>
     <div style="overflow-x:auto"><table id="invActivityTable" style="min-width:760px"><thead><tr>
       <th>Date</th><th>Type</th><th>Platform</th><th>Detail</th><th>People</th><th class="num">USD</th><th class="num">SAR</th><th class="noprint"></th>
-    </tr></thead><tbody>${rows.map(r=>{ const p = invPlatformById(r.platformId); return `<tr data-act="${r.key}">
-      <td class="mono">${esc(r.date)}</td><td>${esc(r.label)}</td><td>${esc(p? p.name : '—')}</td>
+    </tr></thead><tbody>${rows.map(r=>{ const p = invPlatformById(r.platformId);
+      // Filtered to one person: a move shows that person's own units sent, fee and received.
+      const mine = r.perOwner && f.ownerId? r.perOwner[Number(f.ownerId)] : null;
+      if(mine){ const nm = (invOwnerById(Number(f.ownerId))||{}).name||''; r = Object.assign({}, r, {
+        detail: r.assetName+' · '+nm+': '+invFmtUnits(mine.sent)+' sent → '+invFmtUnits(mine.received)+' received, fee '+invFmtUnits(Math.max(0, mine.sent-mine.received)),
+        people: nm, sar: mine.sar||null}); }
+      return `<tr data-act="${r.key}">
+      <td class="mono">${esc(r.date)}</td><td>${esc(r.label)}</td><td>${esc(r.platformText || (p? p.name : '—'))}</td>
       <td style="font-size:12px"${r.note? ` title="${esc(r.note)}"` : ''}>${esc(r.detail)}${r.note? `<div class="mut" style="font-size:10.5px">${esc(r.note)}</div>` : ''}</td><td class="mut" style="font-size:12px">${esc(r.people)}</td>
       <td class="num mono">${r.usd>0? '$'+fmt2(r.usd) : '—'}</td><td class="num mono">${r.sar? money(r.sar) : '—'}</td>
       <td class="noprint" style="white-space:nowrap">${r.edit? `<button class="btn ghost sm" title="Edit" onclick="${r.edit}">✎</button>` : ''}${r.canDelete? ` <button class="btn ghost sm" title="Delete" onclick="invActivityDelete('${r.kind}', ${r.id})">🗑</button>` : ''}</td>
@@ -9489,7 +9534,8 @@ function openInvAddMenu(){
   const has = invActionablePlatformsSorted().length>0;
   const items = [['trade','🔁 Buy / Sell','A trade on one of your positions'], ['collect','💰 Collect Contributions','Family money landing on a platform'],
     ['deposit','↓ Deposit','Your own money onto a platform'], ['withdrawal','↑ Withdraw','Money back to the bank'],
-    ['transfer','⇄ Transfer','Cash between platforms'], ['position','+ New position','Start tracking a new asset']];
+    ['transfer','⇄ Move cash','USD cash between platforms'], ['moveassets','🔁 Move coins','Coins or stocks to another platform, with network fees'],
+    ['position','+ New position','Start tracking a new asset']];
   showModal(`<h3 style="margin-top:0">+ Add</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">
       ${items.map(([a,l,h])=>`<button class="btn ghost" data-addaction="${a}" ${has?'':'disabled'} style="text-align:left;display:block;padding:10px" onclick="closeModal(); invStartPlatformAction('${a}')"><b>${l}</b><div class="mut" style="font-size:11.5px;font-weight:400;margin-top:2px">${h}</div></button>`).join('')}
@@ -9582,7 +9628,8 @@ function renderInvClassicPage(tabs){
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('collect')" title="Pooled money from several people landing on a platform — recorded as one Deposit split by person">💰 Collect Contributions</button>
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('deposit')" title="Money wired from your bank onto a platform">↓ Deposit</button>
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('withdrawal')" title="Money taken off a platform back to your bank">↑ Withdraw</button>
-      <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('transfer')" title="Move cash between platforms">⇄ Transfer</button>
+      <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('transfer')" title="Move cash between platforms">⇄ Move cash</button>
+      <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('moveassets')" title="Move coins or stocks to another platform">🔁 Move coins</button>
       <button class="btn ghost sm" ${!actionablePlatforms.length?'disabled':''} onclick="invStartPlatformAction('cashlog')">Cash log</button>
     </div>
     ${platforms.length? platforms.map(p=>renderInvPlatformSection(p)).join('') : '<div class="panel empty">No platforms yet — click + Platform to add one.</div>'}
@@ -9759,7 +9806,7 @@ function openInvAssetAcrossPlatforms(identityKey){
     const pl = invPlatformById(pid);
     const rows = byPlatform[pid].flatMap(pos=>invTxForPosition(pos.id).slice().reverse().map(t=>`<tr class="click" onclick="openInvTxModal(${pos.id}, ${t.id})">
       <td class="mono">${esc(t.date)}</td>
-      <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'⇄ Transfer out':'⇄ Transfer in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
+      <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'🔁 Moved out':'🔁 Moved in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
       <td class="num mono">${Number(t.units).toLocaleString(undefined,{maximumFractionDigits:8})}</td>
       <td class="num mono">${money(t.totalSar)}</td>
     </tr>`)).join('');
@@ -9961,7 +10008,8 @@ const INV_PLATFORM_ACTIONS = {
   deposit:   {label:'↓ Deposit',   open: platformId => openInvCashModal(platformId,'deposit')},
   collect:   {label:'💰 Collect Contributions', open: platformId => openInvCollectModal(platformId)},
   withdrawal:{label:'↑ Withdraw',  open: platformId => openInvCashModal(platformId,'withdrawal')},
-  transfer:  {label:'⇄ Transfer',  open: platformId => openInvCashModal(platformId,'transfer')},
+  transfer:  {label:'⇄ Move cash',  open: platformId => openInvCashModal(platformId,'transfer')},
+  moveassets:{label:'🔁 Move coins', open: platformId => openInvMoveAssets(platformId)},
   cashlog:   {label:'Cash log',    open: platformId => openInvCashLog(platformId)},
   trade:     {label:'🔁 Buy / Sell', open: platformId => openInvTradePicker(platformId)},
 };
@@ -10425,14 +10473,14 @@ function openInvPosition(posId){
       <h3 style="margin:0;font-size:14px">Transactions</h3>
       <div class="row noprint" style="gap:6px">
         <button class="btn ghost sm" onclick="openInvCostEditor(${posId})" title="Correct what each buy cost, per person">✎ Edit costs</button>
-        <button class="btn ghost sm" onclick="openInvPositionTransfer(${posId})" title="Move some or all units to another platform">⇄ Transfer</button>
+        <button class="btn ghost sm" onclick="closeModal(); openInvMoveAssets(${pos.platformId}, ${posId})" title="Move some or all units to another platform">🔁 Move</button>
         <button class="btn pri sm" onclick="openInvTxModal(${posId}, null)">+ Transaction</button>
       </div>
     </div>
     <div style="overflow-x:auto"><table style="min-width:600px"><thead><tr><th>Date</th><th>Type</th><th class="num">Units</th><th class="num">Total SAR</th><th class="num">Per unit</th><th>Owners</th><th class="noprint"></th></tr></thead>
     <tbody>${txs.map(t=>`<tr>
       <td class="mono">${esc(t.date)}</td>
-      <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'⇄ Transfer out':'⇄ Transfer in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
+      <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'🔁 Moved out':'🔁 Moved in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
       <td class="num mono">${Number(t.units).toLocaleString(undefined,{maximumFractionDigits:8})}</td>
       <td class="num mono">${money(t.totalSar)}</td>
       <td class="num mono">${t.units? money(t.totalSar/t.units):'—'}</td>
@@ -11348,108 +11396,170 @@ function invSplitUnitsByShares(shares, total){
   if(largestOid!==null && Math.abs(remainder)>0) out[largestOid] = invRoundUnits(out[largestOid]+remainder);
   return out;
 }
-function openInvPositionTransfer(posId){
-  const pos = invPositionById(posId); if(!pos) return;
-  const others = (D.invPlatforms||[]).filter(p=>p.id!==pos.platformId);
-  window._invTransferDraft = {sourcePosId:posId, destPlatformId: others[0]? others[0].id : null,
-    date: todayStr(), unitsSent:'', feeUnits:'', note:''};
-  renderInvPositionTransferModal();
+/* ============================= MOVE COINS / POSITIONS BETWEEN PLATFORMS (v4.63.0) =============================
+   Move one or several holdings from one platform to another in one go. For each asset you enter the
+   units SENT and the units RECEIVED; the difference is the network/withdrawal fee.
+     • Everyone's share is kept: the units sent and received are split by each person's units as of
+       the move date, so the fee comes off each person in proportion to their share.
+     • The cost travels in full (agreed option a): each person's cost of the units sent arrives with
+       them, so the fee just makes each remaining unit slightly dearer. No realised gain or loss, and
+       the reconciliation against the ledger stays exact. Opening-balance cost keeps its opening tag.
+   Stored as the existing linked pair — an OUT leg (sell, cashSide 'transfer') on the source and an IN
+   leg (buy, cashSide 'transfer') on the destination, both carrying linkId = the OUT leg's id — with
+   each person's units and SAR on both legs. */
+function invMovePlatforms(){ return invPlatformsSorted().filter(p=>!p.isRobo); }
+function openInvMoveAssets(fromPlatformId, preselectPosId){
+  const plats = invMovePlatforms();
+  const from = plats.find(p=>p.id===fromPlatformId) || plats[0];
+  if(!from){ toast('Add a platform first', true); return; }
+  const to = plats.find(p=>p.id!==from.id);
+  window._invMoveDraft = {fromPid: from.id, toPid: to? to.id : null, date: todayStr(), note:'', rows:{}};
+  if(preselectPosId) window._invMoveDraft.rows[preselectPosId] = {sent:'', received:''};
+  renderInvMoveAssets();
 }
-function renderInvPositionTransferModal(){
-  const d = window._invTransferDraft;
-  const pos = invPositionById(d.sourcePosId);
-  const st = computePositionState(pos.id);
-  const others = (D.invPlatforms||[]).filter(p=>p.id!==pos.platformId);
-  const match = d.destPlatformId? invMatchPositionOnPlatform(pos, d.destPlatformId) : null;
-  const sent = Number(d.unitsSent)||0, fee = Math.max(0, Number(d.feeUnits)||0);
-  const arriving = Math.max(0, sent-fee);
+function invMoveHeld(posId, date){ return computePositionState(posId, date).totalUnits; }
+function invMoveRowList(d){
+  return invPositionsForPlatform(d.fromPid).map(pos=>{
+    const held = invMoveHeld(pos.id, d.date);
+    const r = d.rows[pos.id] || {sent:'', received:''};
+    const sent = Number(r.sent)||0, received = r.received===''||r.received===undefined? sent : (Number(r.received)||0);
+    return {pos, held, rawSent:r.sent, rawReceived:r.received, sent, received, fee: Math.max(0, sent-received)};
+  }).filter(r=>r.held>1e-12 || r.sent>0);
+}
+function invMoveRowError(r){
+  if(!(r.sent>0)) return null;
+  if(r.sent > r.held + 1e-9) return 'Only '+invFmtUnits(r.held)+' held on that date';
+  if(r.received > r.sent + 1e-12) return 'Received can\'t be more than sent';
+  if(!(r.received>0)) return 'Enter the units received';
+  return null;
+}
+// Each person's units sent / received / fee and the SAR cost moving with them, for one asset.
+function invMovePerOwner(posId, date, sent, received){
+  const st = computePositionState(posId, date);
+  const shares = {}; for(const oid in st.byOwner){ if(st.byOwner[oid].units>1e-12) shares[oid] = st.byOwner[oid].units; }
+  const sentBy = invSplitUnitsByShares(shares, sent), recvBy = invSplitUnitsByShares(shares, received);
+  return Object.keys(shares).map(oid=>{
+    const o = st.byOwner[oid];
+    const s = sentBy[oid]||0, r = recvBy[oid]||0;
+    const avg = o.units>0? o.costSar/o.units : 0;
+    const cost = avg*s;
+    const openingRatio = o.costSar>0? o.openingCostSar/o.costSar : 0;
+    return {ownerId:Number(oid), held:o.units, sent:s, received:r, fee:Math.max(0, s-r), cost, openingCost: cost*openingRatio};
+  }).filter(x=>x.sent>0);
+}
+function renderInvMoveAssets(){
+  const d = window._invMoveDraft; if(!d) return;
+  const plats = invMovePlatforms();
+  const rows = invMoveRowList(d);
+  const opt = (sel, excl) => plats.filter(p=>p.id!==excl).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(p.name)}</option>`).join('');
   showModal(`
-    <h3 style="margin-top:0">⇄ Transfer ${esc(pos.name)}${pos.ticker?` (${esc(pos.ticker)})`:''}</h3>
-    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Currently held: <b class="mono">${invFmtUnits(st.totalUnits)}</b> units on ${esc(invPlatformById(pos.platformId)?.name||'')}. Ownership is unaffected — this only changes where the units sit.</div>
-    <div class="row" style="gap:10px">
-      <div style="flex:1"><label class="fl">To platform</label><select onchange="window._invTransferDraft.destPlatformId=Number(this.value)||null; renderInvPositionTransferModal()">
-        ${others.map(p=>`<option value="${p.id}" ${d.destPlatformId===p.id?'selected':''}>${esc(p.name)}</option>`).join('') || '<option>No other platform yet</option>'}
-      </select></div>
-      <div style="flex:1"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="window._invTransferDraft.date=this.value"></div>
+    <h3 style="margin-top:0">🔁 Move coins to another platform</h3>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Enter what you sent and what arrived — the difference is the network fee, taken from each person in proportion to their share. Everyone keeps their share, and the full cost moves with the coins.</div>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:150px"><label class="fl">From</label><select id="invMoveFrom" onchange="setInvMoveField('fromPid', Number(this.value))">${opt(d.fromPid)}</select></div>
+      <div style="flex:1;min-width:150px"><label class="fl">To</label><select id="invMoveTo" onchange="setInvMoveField('toPid', Number(this.value))">${opt(d.toPid, d.fromPid) || '<option value="">No other platform</option>'}</select></div>
+      <div style="width:160px"><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="setInvMoveField('date', this.value)"></div>
     </div>
-    <div class="mut" style="font-size:11.5px;margin:8px 0">${match? `Will add to the existing <b>${esc(match.name)}</b> position there.` : `No matching position on that platform yet — a new one will be created there automatically, matching this asset's name, ticker, class and currency.`}</div>
-    <div class="row" style="gap:10px;margin-top:6px">
-      <div style="flex:1"><label class="fl">Units to send</label><input type="number" step="any" value="${esc(d.unitsSent)}" oninput="window._invTransferDraft.unitsSent=this.value; invTransferRefreshDerived()" placeholder="up to ${invFmtUnits(st.totalUnits)}"></div>
-      <div style="flex:1"><label class="fl">Network / withdrawal fee (units)</label><input type="number" step="any" value="${esc(d.feeUnits)}" oninput="window._invTransferDraft.feeUnits=this.value; invTransferRefreshDerived()" placeholder="0"></div>
-    </div>
-    <div class="mut" id="invTransferSummary" style="font-size:11.5px;margin-top:8px">${invTransferSummaryText(d, st)}</div>
-    <label class="fl" style="margin-top:12px">Note</label><input value="${esc(d.note||'')}" oninput="window._invTransferDraft.note=this.value">
+    <div style="overflow-x:auto;margin-top:10px;max-height:45vh;overflow-y:auto"><table style="min-width:620px"><thead><tr>
+      <th>Asset</th><th class="num">Held</th><th class="num">Units sent</th><th class="num">Units received</th><th class="num">Fee</th>
+    </tr></thead><tbody>${rows.map(r=>`<tr data-moverow="${r.pos.id}">
+      <td><b>${esc(r.pos.name)}</b>${r.pos.ticker? ` <span class="mut">${esc(r.pos.ticker)}</span>`:''}</td>
+      <td class="num mono">${invFmtUnits(r.held)}</td>
+      <td class="num" style="white-space:nowrap"><input type="number" step="any" min="0" id="invMoveSent_${r.pos.id}" style="width:120px;text-align:right" value="${esc(r.rawSent===undefined?'':r.rawSent)}" oninput="setInvMoveRow(${r.pos.id}, 'sent', this.value)">
+        <label class="mut" style="font-size:11px;cursor:pointer;white-space:nowrap;margin-left:4px"><input type="checkbox" class="chk" style="width:auto;vertical-align:middle" ${r.held>1e-12 && Math.abs(r.sent-r.held)<1e-12?'checked':''} onchange="invMoveSendAll(${r.pos.id}, this.checked)"> all</label></td>
+      <td class="num"><input type="number" step="any" min="0" id="invMoveRecv_${r.pos.id}" style="width:120px;text-align:right" value="${esc(r.rawReceived===undefined?'':r.rawReceived)}" placeholder="same as sent" oninput="setInvMoveRow(${r.pos.id}, 'received', this.value)"></td>
+      <td class="num mono" id="invMoveFee_${r.pos.id}">${r.sent>0? invFmtUnits(r.fee) : '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing held on this platform on that date</td></tr>'}</tbody></table></div>
+    <div id="invMovePreview" style="margin-top:10px">${invMovePreviewHTML(d)}</div>
+    <label class="fl" style="margin-top:10px">Note</label><input value="${esc(d.note||'')}" oninput="window._invMoveDraft.note=this.value" placeholder="e.g. moved to Binance">
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn pri" onclick="saveInvPositionTransfer()">Transfer</button>
+      <button class="btn pri" onclick="saveInvMoveAssets()">Move</button>
     </div>`, true);
 }
-function invTransferRefreshDerived(){
-  const d = window._invTransferDraft;
-  if(!d) return;
-  const el = document.getElementById('invTransferSummary');
-  if(el){ const st = computePositionState(d.sourcePosId); el.textContent = invTransferSummaryText(d, st); }
+function invMovePreviewHTML(d){
+  const rows = invMoveRowList(d).filter(r=>r.sent>0);
+  if(!rows.length) return '<div class="mut" style="font-size:12px">Enter the units sent for each asset you\'re moving.</div>';
+  return rows.map(r=>{
+    const err = invMoveRowError(r);
+    if(err) return `<div class="mut" style="font-size:12px;color:var(--red)">${esc(r.pos.name)}: ${esc(err)}</div>`;
+    const per = invMovePerOwner(r.pos.id, d.date, r.sent, r.received);
+    return `<div style="margin-top:6px"><b style="font-size:12.5px">${esc(r.pos.name)}</b> <span class="mut" style="font-size:11.5px">— ${invFmtUnits(r.sent)} sent, ${invFmtUnits(r.received)} received, fee ${invFmtUnits(r.fee)}</span>
+      <table style="font-size:12px;margin-top:4px"><thead><tr><th>Person</th><th class="num">Held</th><th class="num">Sent</th><th class="num">Fee</th><th class="num">Received</th><th class="num">Cost moving (SAR)</th></tr></thead>
+      <tbody>${per.map(x=>{ const o = invOwnerById(x.ownerId); return `<tr data-moveowner="${r.pos.id}_${x.ownerId}"><td>${esc(o? o.name : '#'+x.ownerId)}</td><td class="num mono">${invFmtUnits(x.held)}</td><td class="num mono">${invFmtUnits(x.sent)}</td><td class="num mono">${invFmtUnits(x.fee)}</td><td class="num mono">${invFmtUnits(x.received)}</td><td class="num mono">${money(x.cost)}</td></tr>`; }).join('')}</tbody></table></div>`;
+  }).join('');
 }
-function invTransferSummaryText(d, st){
-  const sent = Number(d.unitsSent)||0, fee = Math.max(0, Number(d.feeUnits)||0);
-  if(!(sent>0)) return 'Enter how many units to send.';
-  if(fee>sent) return 'The fee cannot be larger than the units sent.';
-  if(sent>st.totalUnits+1e-9) return 'More units than this position currently holds ('+invFmtUnits(st.totalUnits)+').';
-  const arriving = sent-fee;
-  const avg = st.totalUnits>0? st.totalCostSar/st.totalUnits : 0;
-  const lossSar = avg*fee;
-  return invFmtUnits(arriving)+' units will arrive at the destination'+
-    (fee>0? ', with '+invFmtUnits(fee)+' lost to the fee — recorded as a realised loss of '+money(lossSar)+' SAR, split across the current owners.' : '.');
+function setInvMoveField(field, val){
+  const d = window._invMoveDraft; if(!d) return;
+  d[field] = val;
+  if(field==='fromPid'){ d.rows = {}; if(d.toPid===val){ const other = invMovePlatforms().find(p=>p.id!==val); d.toPid = other? other.id : null; } }
+  renderInvMoveAssets();
 }
-async function saveInvPositionTransfer(){
-  const d = window._invTransferDraft;
-  const sourcePos = invPositionById(d.sourcePosId);
-  if(!sourcePos){ toast('Position not found', true); return; }
-  if(!d.destPlatformId){ toast('Choose a destination platform', true); return; }
-  if(d.destPlatformId===sourcePos.platformId){ toast('Choose a different platform to transfer to', true); return; }
-  const sent = Number(d.unitsSent)||0, fee = Math.max(0, Number(d.feeUnits)||0);
-  if(!(sent>0)){ toast('Enter the units to send', true); return; }
-  if(fee>sent){ toast('The fee cannot exceed the units sent', true); return; }
-  const st = computePositionState(sourcePos.id, d.date);
-  if(sent>st.totalUnits+1e-9){ toast('Only '+invFmtUnits(st.totalUnits)+' units are held as of that date', true); return; }
-  const avg = st.totalUnits>0? st.totalCostSar/st.totalUnits : 0;
-  const arriving = sent-fee;
-  const arrivingValueSar = Math.round(avg*arriving*100)/100;
-
-  const shares = {}; for(const oid in st.byOwner) shares[oid] = st.byOwner[oid].units;
-  const sentByOwner = invSplitUnitsByShares(shares, sent);
-  const arrivingByOwner = invSplitUnitsByShares(shares, arriving);
-
-  let destPos = invMatchPositionOnPlatform(sourcePos, d.destPlatformId);
+function setInvMoveRow(posId, field, val){
+  const d = window._invMoveDraft; if(!d) return;
+  d.rows[posId] = d.rows[posId] || {sent:'', received:''};
+  d.rows[posId][field] = val;
+  const r = invMoveRowList(d).find(x=>x.pos.id===posId);
+  const feeEl = document.getElementById('invMoveFee_'+posId);
+  if(feeEl) feeEl.textContent = r && r.sent>0? invFmtUnits(r.fee) : '—';
+  const pv = document.getElementById('invMovePreview'); if(pv) pv.innerHTML = invMovePreviewHTML(d);
+}
+function invMoveSendAll(posId, on){
+  const d = window._invMoveDraft; if(!d) return;
+  d.rows[posId] = d.rows[posId] || {sent:'', received:''};
+  d.rows[posId].sent = on? invMoveHeld(posId, d.date) : '';
+  renderInvMoveAssets();
+}
+// The engine: one asset, one linked pair. Returns the OUT leg's id.
+async function invMoveOnePosition(sourcePos, toPid, date, sent, received, note){
+  const per = invMovePerOwner(sourcePos.id, date, sent, received);
+  if(!per.length) return null;
+  let destPos = invMatchPositionOnPlatform(sourcePos, toPid);
   if(!destPos){
-    destPos = {id: invNextId(D.invPositions), platformId: d.destPlatformId, name: sourcePos.name,
-      ticker: sourcePos.ticker||'', assetClass: sourcePos.assetClass||'Other', currency: sourcePos.currency||'SAR',
-      status:'Active', stmtUnits:null, stmtDate:null, updated_at:null};
+    destPos = {id: invNextId(D.invPositions), platformId: toPid, name: sourcePos.name, ticker: sourcePos.ticker||'',
+      assetClass: sourcePos.assetClass||'Other', currency: sourcePos.currency||'SAR', status:'Active', stmtUnits:null, stmtDate:null, updated_at:null};
     D.invPositions.push(destPos);
     await persistInvPosition(destPos);
   }
-
+  const totalCost = per.reduce((s,x)=>s+x.cost,0);
+  const fromName = (invPlatformById(sourcePos.platformId)||{}).name||'', toName = (invPlatformById(toPid)||{}).name||'';
   const outId = invNextId(D.invTransactions);
-  const outTx = {id: outId, positionId: sourcePos.id, date: d.date, kind:'sell', units: sent,
-    totalSar: arrivingValueSar, owners: Object.keys(sentByOwner).map(oid=>({ownerId:Number(oid), units:sentByOwner[oid]})),
-    note: (d.note?d.note+' — ':'')+'Transfer to '+(invPlatformById(d.destPlatformId)?.name||''),
-    cashSide:'transfer', usdAmount:0, feePct:0, linkId:null, feeUnits: fee, updated_at:null};
+  const outTx = {id: outId, positionId: sourcePos.id, date, kind:'sell', units: sent, totalSar: totalCost,
+    owners: per.map(x=>({ownerId:x.ownerId, units:x.sent, sar:x.cost})),
+    note: (note? note+' — ' : '')+'Moved to '+toName, cashSide:'transfer', usdAmount:0, feePct:0, linkId: outId, feeUnits: Math.max(0, sent-received), updated_at:null};
   D.invTransactions.push(outTx);
   await persistInvTransaction(outTx);
-
-  const inTx = {id: invNextId(D.invTransactions), positionId: destPos.id, date: d.date, kind:'buy', units: arriving,
-    totalSar: arrivingValueSar, owners: Object.keys(arrivingByOwner).map(oid=>({ownerId:Number(oid), units:arrivingByOwner[oid]})),
-    note: (d.note?d.note+' — ':'')+'Transfer from '+(invPlatformById(sourcePos.platformId)?.name||''),
-    cashSide:'transfer', usdAmount:0, feePct:0, linkId: outId, feeUnits:0, updated_at:null};
+  const inTx = {id: invNextId(D.invTransactions), positionId: destPos.id, date, kind:'buy', units: received, totalSar: totalCost,
+    owners: per.map(x=>({ownerId:x.ownerId, units:x.received, sar:x.cost, openingSar:x.openingCost})),
+    note: (note? note+' — ' : '')+'Moved from '+fromName, cashSide:'transfer', usdAmount:0, feePct:0, linkId: outId, feeUnits:0, updated_at:null};
   D.invTransactions.push(inTx);
   await persistInvTransaction(inTx);
-
-  outTx.linkId = outId; // the pair shares the OUT leg's id
-  await persistInvTransaction(outTx);
-
-  closeModal(); openInvPosition(sourcePos.id); renderInvestmentsPage();
-  toast('Transferred '+invFmtUnits(arriving)+' units'+(fee>0?' ('+invFmtUnits(fee)+' fee)':'')+' ✓');
+  return outId;
 }
+async function saveInvMoveAssets(){
+  const d = window._invMoveDraft; if(!d) return;
+  if(!d.toPid || d.toPid===d.fromPid){ toast('Choose a different platform to move to', true); return; }
+  const rows = invMoveRowList(d).filter(r=>r.sent>0);
+  if(!rows.length){ toast('Enter the units sent for at least one asset', true); return; }
+  const bad = rows.map(r=>({r, e:invMoveRowError(r)})).find(x=>x.e);
+  if(bad){ toast(bad.r.pos.name+': '+bad.e, true); return; }
+  let n = 0;
+  for(const r of rows){ if(await invMoveOnePosition(r.pos, d.toPid, d.date, r.sent, r.received, d.note)) n++; }
+  window._invMoveDraft = null;
+  closeModal(); renderInvestmentsPage();
+  toast('Moved '+n+' asset'+(n===1?'':'s')+' to '+((invPlatformById(d.toPid)||{}).name||'')+' ✓');
+}
+// Undo a move: both halves go together (the units are back on the source as if never sent).
+async function invUndoMove(outId){
+  const legs = (D.invTransactions||[]).filter(t=>t.cashSide==='transfer' && (t.id===outId || t.linkId===outId));
+  if(!legs.length) return;
+  for(const t of legs){
+    D.invTransactions = D.invTransactions.filter(x=>x.id!==t.id);
+    await syncWrite('pd_inv_transactions','delete',{id:t.id}, t.updated_at||null);
+  }
+  persistLocal(); renderInvestmentsPage(); toast('Move undone ✓');
+}
+
 
 // Whole days between two 'YYYY-MM-DD' strings. Used purely for the "is this price stale"
 // check, so it deliberately ignores time-of-day — a price logged this morning and checked this
