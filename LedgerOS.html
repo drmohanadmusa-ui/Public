@@ -12,16 +12,16 @@
 <title>LedgerOS — Personal Accounting</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
 :root{
-  --bg:#F3F4F7; --panel:#ffffff; --panel2:#EAECF1; --line:rgba(16,19,26,0.09); --text:#10131A; --muted:#626B7A;
-  --accent:#3D3AE0; --accent2:#2B28B0; --green:#0E8A5F; --red:#D14343; --yellow:#C98A3E; --chip:#EAECF1; --input:#ffffff;
-  --r:10px; --mono:'IBM Plex Mono','SF Mono',ui-monospace,Consolas,monospace;
+  --bg:#F4F5F7; --panel:#ffffff; --panel2:#F1F3F6; --line:#E1E5EA; --text:#111827; --muted:#556070;
+  --accent:#3D3AE0; --accent2:#2B28B0; --green:#047857; --red:#B42318; --yellow:#A15C07; --chip:#F1F3F6; --input:#ffffff;
+  --r:14px; --mono:'Geist Mono','IBM Plex Mono','SF Mono',ui-monospace,Consolas,monospace;
   --content-max-width:1240px;
-  --serif:'Space Grotesk',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
-  --sans:'Inter',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+  --serif:var(--sans);
+  --sans:'Geist',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
   --head:linear-gradient(180deg,#ffffff,#F3F4F7);
   --sidebar-bg:#0B0D12; --sidebar-text:#EDEFF3; --sidebar-text-muted:#8B93A5; --sidebar-line:rgba(255,255,255,0.08);
   --shadow-card:0 1px 2px rgba(16,19,26,0.04), 0 1px 0 rgba(16,19,26,0.03);
@@ -29,8 +29,8 @@
   --shadow-pop:0 16px 40px rgba(16,19,26,0.18), 0 4px 10px rgba(16,19,26,0.08);
 }
 [data-theme="dark"]{
-  --bg:#0B0D12; --panel:#151821; --panel2:#1B1F29; --line:rgba(255,255,255,0.08); --text:#EDEFF3; --muted:#8B93A5;
-  --accent:#6C69F5; --accent2:#8785FF; --green:#2FBE85; --red:#EF6B6B; --yellow:#E0A855; --chip:#1B1F29; --input:#12151D;
+  --bg:#0D1014; --panel:#14181E; --panel2:#1B2028; --line:#272E38; --text:#E8ECF1; --muted:#9AA3B0;
+  --accent:#6C69F5; --accent2:#8785FF; --green:#4ADE80; --red:#F87171; --yellow:#FBBF24; --chip:#1B2028; --input:#101318;
   --head:linear-gradient(180deg,#151821,#0B0D12);
   --sidebar-bg:#000000; --sidebar-text:#EDEFF3; --sidebar-text-muted:#7A8194; --sidebar-line:rgba(255,255,255,0.07);
   --shadow-card:0 1px 2px rgba(0,0,0,0.3), 0 1px 0 rgba(0,0,0,0.2);
@@ -301,6 +301,78 @@ main{padding:22px;max-width:var(--content-max-width);margin:0;min-height:100vh;f
   body.sidebar-pinned .sidebar-footer{flex-direction:column;border-top:1px solid var(--sidebar-line);border-left:none;margin-left:0}
   body.sidebar-pinned main#app{padding-left:22px;padding-right:22px;padding-bottom:22px}
 }
+
+/* ===================== v5.0 Command Center shell =====================
+   Colours below come from tokens that applyDerivedTheme() computes from the accent:
+   --rail/--rail-text/--rail-on-bg/--rail-on-fg (side rail), --bar (top bar), --accent-soft,
+   --on-accent, --aurora. Background (Plain/Tinted/Aurora) and Motion are per-device prefs. */
+body{transition:background-color .35s ease}
+#sidebar{background:var(--rail);border-right:none}
+#sidebar .brand{flex-direction:column;justify-content:center;gap:4px;padding:14px 8px 10px}
+#sidebar .brand .mark{width:38px;height:38px;border-radius:11px;background:var(--rail-on-bg);color:var(--rail-on-fg);font-family:var(--sans);font-size:17px}
+#sidebar .brand h1{display:none}
+#sidebar .brand .mut{color:var(--rail-text)!important;opacity:.75;margin:0!important}
+nav{padding:4px 8px;gap:2px}
+nav button{display:flex;flex-direction:column;align-items:center;gap:3px;min-height:52px;padding:7px 4px;border-radius:10px;font-size:10.5px;font-weight:500;text-align:center;color:var(--rail-text)}
+nav button:hover{background:color-mix(in srgb,var(--rail-on-bg) 10%,transparent);color:var(--rail-on-bg);padding-left:4px}
+nav button.on{background:var(--rail-on-bg);color:var(--rail-on-fg);font-weight:600;box-shadow:none}
+nav button:focus-visible{outline:2px solid var(--rail-on-bg);outline-offset:2px}
+.nav-svg{width:18px;height:18px;flex:none}
+nav .nav-ico{margin:0;width:auto;font-size:16px}
+.nav-lbl{line-height:1.15}
+.sidebar-footer{border-top:1px solid color-mix(in srgb,var(--rail-text) 18%,transparent);padding:10px 8px 14px;align-items:center}
+.sidebar-footer a{color:var(--rail-text)!important;line-height:1.25}
+.sidebar-footer .themeBtn{background:transparent;border-color:color-mix(in srgb,var(--rail-text) 25%,transparent);color:var(--rail-text)}
+@media(min-width:761px){#sidebar{width:88px}}
+.main-col{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.aurora{display:none;position:absolute;top:0;left:0;right:0;height:520px;pointer-events:none;background-image:var(--aurora);background-size:140% 140%,140% 140%,160% 160%;animation:auroraDrift 22s ease-in-out infinite;-webkit-mask-image:linear-gradient(to bottom,#000 40%,transparent);mask-image:linear-gradient(to bottom,#000 40%,transparent)}
+body.bg-aurora .aurora{display:block}
+@keyframes auroraDrift{0%{background-position:0% 0%,100% 0%,50% 100%}50%{background-position:30% 20%,70% 30%,40% 80%}100%{background-position:0% 0%,100% 0%,50% 100%}}
+#topbar{position:sticky;top:0;z-index:15;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px clamp(16px,2.4vw,32px);border-bottom:1px solid var(--line);background:var(--bar);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+#topbar h1{margin:0 auto 0 0;font-size:16px;font-weight:600;font-family:var(--sans)}
+#topbar h1 .mut{font-weight:400}
+.tb-search{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);flex:0 1 360px;min-width:0;text-align:left;font-size:13px}
+.tb-search:hover{border-color:var(--accent)}
+.tb-search-ph{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tb-kbd{flex:none;font-size:12px}
+#topbar .cloud{height:38px;border-radius:10px;background:var(--panel);font-size:12.5px;padding:0 12px}
+@keyframes syncPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--green) 55%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+#topbar .dot.ok{animation:syncPulse 2.2s ease-out infinite}
+.tb-seg{display:flex;height:38px;padding:3px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
+.tb-seg button{display:flex;align-items:center;gap:6px;padding:0 10px;border:none;border-radius:7px;font-size:12.5px;background:transparent;color:var(--muted);font-weight:500}
+.tb-seg button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent);font-weight:600}
+.tb-seg svg,.tb-search svg{width:14px;height:14px;flex:none}
+.tb-newjv{min-height:38px;border-radius:10px}
+main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;min-height:0}
+.panel,.kpi{border-radius:16px}
+.modal{border-radius:18px}
+.btn.pri,.btn.pri:hover{color:var(--on-accent)}
+.btn,.tbtn,.themeBtn{border-radius:9px}
+.seg{display:flex;padding:3px;border-radius:11px;background:var(--panel2);max-width:420px}
+.seg button{flex:1;height:34px;border:none;border-radius:8px;font-size:13px;background:transparent;color:var(--muted);font-weight:500}
+.seg button[aria-pressed="true"]{background:var(--panel);color:var(--text);font-weight:600;box-shadow:var(--shadow-card)}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px;margin-bottom:16px}
+.swatch{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:14px;text-align:left;color:var(--text);background:var(--panel);border:2px solid var(--line);font-size:13px;font-weight:600;cursor:pointer}
+.swatch[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.swatch .bars{display:flex;height:34px;border-radius:8px;overflow:hidden}
+.swatch .bars span{flex:1}.swatch .bars span:first-child{flex:2}
+.swatch input[type=color]{width:100%;height:34px;padding:0;border:none;border-radius:8px;background:transparent;cursor:pointer}
+body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+@media(max-width:760px){
+  nav button{flex-direction:row;justify-content:flex-start;gap:10px;min-height:42px;padding:8px 12px;font-size:13.5px;text-align:left}
+  nav button:hover{padding-left:12px}
+  #sidebar .brand{flex-direction:row;justify-content:flex-start;padding:10px 14px}
+  #sidebar .brand h1{display:block;color:var(--rail-on-bg)}
+  .sidebar-footer{align-items:stretch}
+  #topbar{position:static;padding:10px 14px}
+  #topbar h1,.tb-search-ph,.tb-kbd{display:none}
+  .tb-search{flex:0 0 auto}
+  body.sidebar-pinned #sidebar{width:88px}
+  body.sidebar-pinned nav button{flex-direction:column;justify-content:center;gap:3px;min-height:52px;padding:7px 4px;font-size:10.5px;text-align:center}
+  body.sidebar-pinned #sidebar .brand{flex-direction:column;justify-content:center}
+  body.sidebar-pinned #sidebar .brand h1{display:none}
+}
 </style>
 </head>
 <body>
@@ -323,17 +395,27 @@ main{padding:22px;max-width:var(--content-max-width);margin:0;min-height:100vh;f
   <div class="mobile-nav-scrim" id="mobileNavScrim" onclick="closeMobileNav()"></div>
   <aside id="sidebar">
     <button class="mobile-nav-close noprint" onclick="closeMobileNav()" aria-label="Close menu">✕</button>
-    <div class="brand"><div class="mark">₪</div><h1>LedgerOS</h1><span class="mut" style="font-size:9.5px;margin-left:4px" id="sidebarVersionTag"></span></div>
-    <div style="padding:0 10px 8px" class="noprint"><button class="tbtn" style="width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between" onclick="openCmdPalette()">🔍 Search<span class="mut" style="font-size:10.5px">Ctrl+K</span></button></div>
-    <nav id="nav"></nav>
+    <div class="brand"><div class="mark">L</div><h1>LedgerOS</h1><span class="mut" style="font-size:9.5px" id="sidebarVersionTag"></span></div>
+    <nav id="nav" aria-label="Pages"></nav>
     <div class="sidebar-footer noprint">
       <a class="mut" id="lookSwitchLink" href="LedgerOS-classic.html" style="font-size:11px;text-align:center" title="Open the frozen v4.63 classic LedgerOS (same data, same connection)">Switch to classic</a>
-      <div class="cloud cloud-static" id="cloudBtn" title="Sync status"><span class="dot" id="dot"></span><span id="statusTxt">Local only</span></div>
       <button class="themeBtn" id="sidebarPinBtn" onclick="toggleSidebarPin()" title="Pin sidebar open on narrow windows">📌</button>
-      <button class="themeBtn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
     </div>
   </aside>
-  <main id="app"></main>
+  <div class="main-col">
+    <div class="aurora noprint" aria-hidden="true"></div>
+    <header id="topbar" class="noprint">
+      <h1><span id="topbarTitle">Dashboard</span> <span class="mut" id="topbarDate"></span></h1>
+      <button class="tb-search" onclick="openCmdPalette()" aria-label="Search accounts, JVs and pages (Ctrl+K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><span class="tb-search-ph">Search accounts, JVs, pages</span><span class="tb-kbd">Ctrl+K</span></button>
+      <div class="cloud cloud-static" id="cloudBtn" title="Sync status"><span class="dot" id="dot"></span><span id="statusTxt">Local only</span></div>
+      <div class="tb-seg" role="group" aria-label="Theme">
+        <button id="themeLightBtn" aria-pressed="true" onclick="applyTheme('light')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6L4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>Light</button>
+        <button id="themeDarkBtn" aria-pressed="false" onclick="applyTheme('dark')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>Dark</button>
+      </div>
+      <button class="btn pri tb-newjv" onclick="go('newjv')">+ New JV</button>
+    </header>
+    <main id="app"></main>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <div id="modalRoot"></div>
@@ -2142,7 +2224,8 @@ const LEDGEROS_KEYS = [
   'ledgerData_v1','activityLog_v1','syncQueue_v1','jvDrafts_v1','ledgerLastChanged',
   'sb_url','sb_key','forecastSignFlips','forecastSectionOrder','forecastCollapsedSections',
   'budgetCollapsedSections','statementSortDesc','driftDismissals','driftSettings',
-  'hiddenPages','sidebarPinned','theme','invFxUsdSar',
+  'hiddenPages','sidebarPinned','theme','invFxUsdSar','uiTheme','uiBackground','uiMotion','customAccentColor',
+  'fontSize','fontFamily','contentWidthMode','contentWidthPreset',
 ];
 const LS_ORIGIN_LIMIT_BYTES = 5 * 1024 * 1024; // browsers land near 5 MB; treated as approximate
 function isLedgerOsKey(k){
@@ -2914,6 +2997,16 @@ function closeMobileNav(){
   if(sb) sb.classList.remove('open');
   if(scrim) scrim.classList.remove('show');
 }
+// Line icons for the side rail (v5.0). A page without one falls back to its emoji.
+const NAV_ICONS = {
+  dashboard:'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z', newjv:'M12 5v14M5 12h14',
+  ledger:'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM9 9h6M9 13h6', accounts:'M4 7h16M4 12h16M4 17h16',
+  budget:'M12 3a9 9 0 1 0 9 9h-9z', pnl:'M3 17l6-6 4 4 8-8M15 7h6v6', alloc:'M4 6h16M4 12h10M4 18h6',
+  provisions:'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
+  jamiah:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M14 15c3 0 8 1 8 5',
+  forecast:'M3 12h4l3-8 4 16 3-8h4', realestate:'M3 21V9l9-6 9 6v12M9 21v-6h6v6', investments:'M3 3v18h18M7 14l3-3 3 3 5-6',
+  settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2'
+};
 let navHasAnimatedIn = false; // the staggered nav entrance plays once per session, on first render only
 function renderNav(){
   const vEl = document.getElementById('sidebarVersionTag');
@@ -2921,7 +3014,7 @@ function renderNav(){
   const hidden = getHiddenPages();
   const animClass = navHasAnimatedIn? '' : ' anim';
   document.getElementById('nav').innerHTML = orderedScreens().filter(([id])=> ALWAYS_VISIBLE_SCREENS.includes(id) || !hidden.includes(id)).map(([id,label,icon])=>
-    `<button class="${screen===id?'on':''}${animClass}" onclick="go('${id}')"><span class="nav-ico">${icon||''}</span>${label}</button>`).join('');
+    `<button class="${screen===id?'on':''}${animClass}" onclick="go('${id}')"${screen===id?' aria-current="page"':''}>${NAV_ICONS[id]? `<svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${NAV_ICONS[id]}"></path></svg>` : `<span class="nav-ico">${icon||''}</span>`}<span class="nav-lbl">${label}</span></button>`).join('');
   navHasAnimatedIn = true;
 }
 let pageScrollPositions = {}; // in-memory only, this session — remembers where you were on each page
@@ -2935,6 +3028,10 @@ function go(s){
   closeMobileNav();
   const titleEl = document.getElementById('mobileTopbarTitle');
   if(titleEl){ const found = SCREENS.find(([id])=>id===s); titleEl.textContent = found? (found[2]? found[2]+' '+found[1] : found[1]) : (s==='settings'?'⚙️ Settings':s==='statement'?'📄 Statement':s==='forecastSettings'?'🌤 Forecast Settings':'LedgerOS'); }
+  const tbTitle = document.getElementById('topbarTitle');
+  if(tbTitle){ const found = SCREENS.find(([id])=>id===s); tbTitle.textContent = found? found[1] : ({statement:'Statement', forecastSettings:'Forecast Settings'}[s]||'LedgerOS'); }
+  const tbDate = document.getElementById('topbarDate');
+  if(tbDate) tbDate.textContent = '\u00b7 ' + new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'});
   const fn = {dashboard:renderDashboard,newjv:renderNewJV,ledger:renderLedger,accounts:renderAccounts,
     budget:renderBudget,pnl:renderPnL,alloc:renderAlloc,statement:renderStatement,settings:renderSettings,provisions:renderProvisions,jamiah:renderJamiahPage,forecast:renderForecastPage,forecastSettings:renderForecastSettingsPage,realestate:renderRealEstatePage,investments:renderInvestmentsPage}[s];
   if(fn) fn();
@@ -13794,7 +13891,7 @@ function renderSettings(){
   const url = localStorage.getItem('sb_url')||'', key = localStorage.getItem('sb_key')||'';
   const curAccent = localStorage.getItem('accentColor')||'indigo';
   const curFontSize = localStorage.getItem('fontSize')||'medium';
-  const curFontFamily = localStorage.getItem('fontFamily')||'system';
+  const curFontFamily = localStorage.getItem('fontFamily')||'geist';
   const curContentWidthMode = localStorage.getItem('contentWidthMode')||'manual';
   const curContentWidthPreset = localStorage.getItem('contentWidthPreset')||'standard';
   const hidden = getHiddenPages();
@@ -13884,14 +13981,21 @@ function renderSettings(){
     appearance: {label:'🎨 Appearance', html: `
       <div class="panel">
         <h3>🎨 Appearance</h3>
+        <div class="mut" style="font-size:12px;margin:-6px 0 14px">Changes apply instantly on every page, on this device. The Light / Dark switch is in the top bar.</div>
         <label class="fl">Accent Color</label>
-        <div class="row" style="margin-bottom:14px;align-items:center">${Object.entries(ACCENT_PALETTES).map(([key,p])=>`
-          <button class="tbtn" style="display:flex;align-items:center;gap:7px;${key===curAccent?'border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)':''}" onclick="setAccentColor('${key}')">
-            <span style="width:14px;height:14px;border-radius:50%;background:${p.light[0]};display:inline-block;border:1px solid var(--line)"></span>${p.label}
-          </button>`).join('')}
-          <label class="tbtn" style="display:flex;align-items:center;gap:7px;cursor:pointer;${curAccent==='custom'?'border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)':''}">
-            <input type="color" value="${localStorage.getItem('customAccentColor')||'#9a6b1f'}" onchange="setCustomAccentColor(this.value)" style="width:16px;height:16px;padding:0;border:none;cursor:pointer">Custom
+        <div class="swatches">${Object.entries(ACCENT_PALETTES).map(([key,p])=>{ const c = (document.documentElement.dataset.theme==='dark'? p.dark : p.light)[0]; return `
+          <button class="swatch" aria-pressed="${key===curAccent}" onclick="setAccentColor('${key}')">
+            <span class="bars"><span style="background:${c}"></span><span style="background:${mixHex(c,'#FFFFFF',0.55)}"></span><span style="background:${mixHex(c,'#000000',0.45)}"></span></span>${p.label}
+          </button>`; }).join('')}
+          <label class="swatch" aria-pressed="${curAccent==='custom'}">
+            <input type="color" value="${localStorage.getItem('customAccentColor')||'#9a6b1f'}" onchange="setCustomAccentColor(this.value)" aria-label="Custom accent colour">Custom
           </label>
+        </div>
+        <div class="grid2" style="margin-bottom:14px">
+          <div><label class="fl">Background</label><div class="seg" role="group" aria-label="Background">${[['plain','Plain'],['tinted','Tinted'],['aurora','Aurora']].map(([v,l])=>`<button aria-pressed="${getUiBackground()===v}" onclick="setUiBackground('${v}')">${l}</button>`).join('')}</div>
+            <div class="mut" style="font-size:11.5px;margin-top:6px">Tinted washes the page with the accent; Aurora adds a slow glow behind the top of each page.</div></div>
+          <div><label class="fl">Motion</label><div class="seg" role="group" aria-label="Motion"><button aria-pressed="${getUiMotion()}" onclick="setUiMotion(true)">On</button><button aria-pressed="${!getUiMotion()}" onclick="setUiMotion(false)">Off</button></div>
+            <div class="mut" style="font-size:11.5px;margin-top:6px">Off always wins when your computer asks for reduced motion.</div></div>
         </div>
         <div class="grid2">
           <div><label class="fl">Font Size</label><select onchange="setFontSize(this.value)">
@@ -13907,9 +14011,9 @@ function renderSettings(){
         </div>
         <div style="margin-top:14px">
           <label class="fl">Content Width</label>
-          <div class="row" style="margin-bottom:${curContentWidthMode==='manual'?'10px':'0'}">
-            <button class="tbtn" style="${curContentWidthMode==='auto'?'border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)':''}" onclick="setContentWidthMode('auto')">Automatic (based on screen size)</button>
-            <button class="tbtn" style="${curContentWidthMode==='manual'?'border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)':''}" onclick="setContentWidthMode('manual')">Manual</button>
+          <div class="seg" role="group" aria-label="Content width" style="margin-bottom:${curContentWidthMode==='manual'?'10px':'0'}">
+            <button aria-pressed="${curContentWidthMode==='auto'}" onclick="setContentWidthMode('auto')">Automatic</button>
+            <button aria-pressed="${curContentWidthMode==='manual'}" onclick="setContentWidthMode('manual')">Manual</button>
           </div>
           ${curContentWidthMode==='manual'? `<select onchange="setContentWidthPreset(this.value)" style="max-width:320px">
             ${Object.entries(CONTENT_WIDTH_PRESETS).map(([k,v])=>`<option value="${k}" ${k===curContentWidthPreset?'selected':''}>${v.label}</option>`).join('')}
@@ -14858,18 +14962,71 @@ const ACCENT_PALETTES = {
 };
 function applyAccent(){
   const name = localStorage.getItem('accentColor')||'indigo';
-  if(name==='custom'){
-    const hex = localStorage.getItem('customAccentColor')||'#3D3AE0';
-    document.documentElement.style.setProperty('--accent', hex);
-    document.documentElement.style.setProperty('--accent2', shadeColor(hex, 18));
-    return;
-  }
-  const pal = ACCENT_PALETTES[name]||ACCENT_PALETTES.indigo;
   const dark = document.documentElement.dataset.theme==='dark';
-  const [a,a2] = dark? pal.dark : pal.light;
+  let a, a2;
+  if(name==='custom'){
+    a = localStorage.getItem('customAccentColor')||'#3D3AE0';
+    a2 = shadeColor(a, 18);
+  } else {
+    const pal = ACCENT_PALETTES[name]||ACCENT_PALETTES.indigo;
+    [a,a2] = dark? pal.dark : pal.light;
+  }
   document.documentElement.style.setProperty('--accent', a);
   document.documentElement.style.setProperty('--accent2', a2);
+  applyDerivedTheme(a);
 }
+/* v5.0: the accent drives the whole UI. Colour maths from the agreed mockup (theme()). */
+const THEME_BASE = {
+  light:{bg:'#F4F5F7', panel:'#FFFFFF', panel2:'#F1F3F6', warn:'#A15C07'},
+  dark: {bg:'#0D1014', panel:'#14181E', panel2:'#1B2028', warn:'#FBBF24'},
+};
+const UI_BACKGROUNDS = ['plain','tinted','aurora'];
+function hexRgb(h){
+  h = String(h||'').replace('#','');
+  if(h.length===3) h = h.split('').map(c=>c+c).join('');
+  return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)||0);
+}
+function mixHex(a, b, w){ const A = hexRgb(a), B = hexRgb(b); return '#'+A.map((v,i)=>Math.round(v*(1-w)+B[i]*w).toString(16).padStart(2,'0')).join(''); }
+function rgbaHex(h, alpha){ const [r,g,b] = hexRgb(h); return 'rgba('+r+','+g+','+b+','+alpha+')'; }
+function getUiBackground(){ const v = localStorage.getItem('uiBackground'); return UI_BACKGROUNDS.includes(v)? v : 'tinted'; }
+function getUiMotion(){ return localStorage.getItem('uiMotion')!=='off'; }
+// Pure: returns the CSS custom properties for a theme. pos/neg are the (possibly customised) semantic colours.
+function deriveThemeTokens(dark, accent, bgMode, pos, neg){
+  const base = dark? THEME_BASE.dark : THEME_BASE.light;
+  const second = mixHex(accent, dark? '#22D3EE' : '#F59E0B', 0.55);
+  const rail = dark? mixHex(accent, '#06080B', 0.78) : mixHex(accent, '#0B0D12', 0.5);
+  const railText = mixHex(accent, '#FFFFFF', 0.72);
+  return {
+    '--bg': bgMode==='plain'? base.bg : mixHex(base.bg, accent, dark? 0.10 : 0.07),
+    '--bar': bgMode==='aurora'? rgbaHex(base.panel, dark? 0.6 : 0.7) : base.panel,
+    '--panel2': mixHex(base.panel2, accent, dark? 0.10 : 0.05),
+    '--chip': mixHex(base.panel2, accent, dark? 0.10 : 0.05),
+    '--accent-soft': mixHex(base.panel, accent, dark? 0.24 : 0.13),
+    '--accent-text': dark? accent : mixHex(accent, '#000000', 0.12),
+    '--nav-on-fg': dark? mixHex(accent, '#FFFFFF', 0.35) : mixHex(accent, '#000000', 0.3),
+    '--on-accent': dark? '#0B0D10' : '#FFFFFF',
+    '--rail': rail, '--rail-text': railText, '--rail-on-bg': '#FFFFFF', '--rail-on-fg': mixHex(accent, '#0B0D12', 0.35),
+    '--sidebar-bg': rail, '--sidebar-text': '#FFFFFF', '--sidebar-text-muted': railText, '--sidebar-line': rgbaHex(railText, 0.18),
+    '--pos-soft': mixHex(base.panel, pos, dark? 0.22 : 0.12),
+    '--neg-soft': mixHex(base.panel, neg, dark? 0.22 : 0.10),
+    '--warn-soft': mixHex(base.panel, base.warn, dark? 0.22 : 0.12),
+    '--aurora': 'radial-gradient(ellipse at 15% 10%, '+rgbaHex(accent, dark? 0.35 : 0.28)+', transparent 55%), radial-gradient(ellipse at 85% 0%, '+rgbaHex(second, dark? 0.28 : 0.22)+', transparent 50%), radial-gradient(ellipse at 50% 90%, '+rgbaHex(accent, 0.12)+', transparent 60%)',
+  };
+}
+function applyDerivedTheme(accent){
+  const root = document.documentElement;
+  const dark = root.dataset.theme==='dark';
+  const bg = getUiBackground();
+  const t = deriveThemeTokens(dark, accent, bg, getCustomColor('green'), getCustomColor('red'));
+  for(const k in t) root.style.setProperty(k, t[k]);
+  const body = document.body;
+  if(body){
+    UI_BACKGROUNDS.forEach(b=>body.classList.toggle('bg-'+b, b===bg));
+    body.classList.toggle('still', !getUiMotion());
+  }
+}
+function setUiBackground(v){ if(!UI_BACKGROUNDS.includes(v)) return; const ok = safeSetItemWarn('uiBackground', v); applyAccent(); renderSettings(); if(ok) toast('Background updated \u2713'); }
+function setUiMotion(on){ const ok = safeSetItemWarn('uiMotion', on? 'on' : 'off'); applyAccent(); renderSettings(); if(ok) toast(on? 'Motion on \u2713' : 'Motion off \u2713'); }
 function shadeColor(hex, percent){
   const num = parseInt(hex.replace('#',''),16);
   let r = (num>>16) + Math.round(255*percent/100);
@@ -14891,7 +15048,8 @@ const FONT_SIZES = {
   xlarge: {label:'Extra Large', px:'18px'},
 };
 const FONT_FAMILIES = {
-  system: {label:'System Default (current)', stack:"'Inter',-apple-system,'Segoe UI',Roboto,Arial,sans-serif"},
+  geist:  {label:'Geist (default)', stack:"'Geist',-apple-system,'Segoe UI',Roboto,Arial,sans-serif"},
+  system: {label:'Inter (the classic look)', stack:"'Inter',-apple-system,'Segoe UI',Roboto,Arial,sans-serif"},
   serif:  {label:'Classic Serif', stack:"Georgia,'Iowan Old Style',serif"},
   humanist: {label:'Humanist Sans', stack:"Verdana,Tahoma,Geneva,sans-serif"},
   rounded: {label:'Rounded', stack:"'Trebuchet MS',Verdana,sans-serif"},
@@ -14907,8 +15065,8 @@ function applyContentWidth(){
   const mode = localStorage.getItem('contentWidthMode') || 'manual';
   if(mode==='auto'){
     const vw = window.innerWidth || document.documentElement.clientWidth || 1240;
-    // Leaves room for the sidebar (~230px) plus margins; grows/shrinks with the window.
-    const target = Math.max(900, vw - 260);
+    // Leaves room for the side rail (88px) plus margins; grows/shrinks with the window.
+    const target = Math.max(900, vw - 120);
     document.documentElement.style.setProperty('--content-max-width', target+'px');
   } else {
     const presetKey = localStorage.getItem('contentWidthPreset') || 'standard';
@@ -14931,7 +15089,7 @@ function setContentWidthPreset(key){
 window.addEventListener('resize', ()=>{ if((localStorage.getItem('contentWidthMode')||'manual')==='auto') applyContentWidth(); });
 function applyTypography(){
   const sizeKey = localStorage.getItem('fontSize')||'medium';
-  const famKey = localStorage.getItem('fontFamily')||'system';
+  const famKey = localStorage.getItem('fontFamily')||'geist';
   const size = FONT_SIZES[sizeKey]||FONT_SIZES.medium;
   const fam = FONT_FAMILIES[famKey]||FONT_FAMILIES.system;
   document.documentElement.style.setProperty('--basefs', size.px);
@@ -14939,7 +15097,7 @@ function applyTypography(){
 }
 function setFontSize(v){ const ok = safeSetItemWarn('fontSize', v); applyTypography(); renderSettings(); if(ok) toast('Font size updated ✓'); }
 function setFontFamily(v){ const ok = safeSetItemWarn('fontFamily', v); applyTypography(); renderSettings(); if(ok) toast('Font updated ✓'); }
-const DEFAULT_SEMANTIC_COLORS = { light:{green:'#0E8A5F', red:'#D14343'}, dark:{green:'#2FBE85', red:'#EF6B6B'} };
+const DEFAULT_SEMANTIC_COLORS = { light:{green:'#047857', red:'#B42318'}, dark:{green:'#4ADE80', red:'#F87171'} };
 function getCustomColor(kind){
   const dark = document.documentElement.dataset.theme==='dark';
   const stored = localStorage.getItem('color_'+kind+'_'+(dark?'dark':'light'));
@@ -14962,6 +15120,7 @@ function resetCustomColor(kind){
 function applySemanticColors(){
   document.documentElement.style.setProperty('--green', getCustomColor('green'));
   document.documentElement.style.setProperty('--red', getCustomColor('red'));
+  applyAccent(); // the soft positive/negative tints are derived from these
 }
 function getHiddenPages(){ try{ return JSON.parse(localStorage.getItem('hiddenPages')||'[]'); }catch(e){ return []; } }
 function togglePageVisibility(id, visible){
@@ -14976,7 +15135,8 @@ function togglePageVisibility(id, visible){
 }
 function applyTheme(t){
   document.documentElement.dataset.theme = t;
-  const b = document.getElementById('themeBtn'); if(b) b.textContent = (t==='dark'?'☀️':'🌙');
+  const lb = document.getElementById('themeLightBtn'); if(lb) lb.setAttribute('aria-pressed', String(t!=='dark'));
+  const db = document.getElementById('themeDarkBtn'); if(db) db.setAttribute('aria-pressed', String(t==='dark'));
   safeSetItemWarn('uiTheme',t);
   applyAccent();
   applyTypography();

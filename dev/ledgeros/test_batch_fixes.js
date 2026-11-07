@@ -7962,6 +7962,12 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testMoveIsOfferedEverywhereAndCashMoveIsRelabelled();
   await testOlderTransferPairsStillShowAsOneMove();
   await testClassicCopyIsFrozenAndBothPagesLinkEachOther();
+  await testThemeTokensFollowTheAccentAndBackground();
+  await testBackgroundAndMotionPrefsApplyAndPersist();
+  await testRailRendersIconsLabelsAndCurrentPage();
+  await testTopBarShowsPageTitleAndThemeState();
+  await testShellMarkupHasTopBarAndNoOldThemeButton();
+  await testAppearanceSettingsOfferBackgroundMotionAndGeist();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -7977,4 +7983,100 @@ async function testClassicCopyIsFrozenAndBothPagesLinkEachOther(){
   assert(/<a [^>]*id="lookSwitchLink" href="LedgerOS\.html"[^>]*>Switch to the new look<\/a>/.test(classic), 'Classic links to the new look');
   assert(/<a [^>]*id="lookSwitchLink" href="LedgerOS-classic\.html"[^>]*>Switch to classic<\/a>/.test(app), 'The new app links to classic');
   assert((classic.match(/id="lookSwitchLink"/g)||[]).length===1, 'Classic has exactly one switch link');
+}
+
+// ---- v5.0 step 1: look and shell ----
+function shellSandbox(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  doc.body.insertAdjacentHTML('afterbegin', '<nav id="nav"></nav><span id="topbarTitle"></span><span id="topbarDate"></span><button id="themeLightBtn"></button><button id="themeDarkBtn"></button>');
+  return sb;
+}
+async function testThemeTokensFollowTheAccentAndBackground(){
+  const sb = makeSandbox();
+  assert(sb.mixHex('#000000','#FFFFFF',0.5)==='#808080', 'mixHex blends halfway');
+  assert(sb.mixHex('#abc','#abc',0.3)==='#aabbcc', 'mixHex accepts 3-digit hex');
+  const t = sb.deriveThemeTokens(false, '#3D3AE0', 'tinted', '#047857', '#B42318');
+  assert(t['--rail']==='#242479', 'Light rail is the accent mixed halfway to near-black (got '+t['--rail']+')');
+  assert(t['--bg']===sb.mixHex('#F4F5F7','#3D3AE0',0.07), 'Tinted ground is the base washed 7% with the accent');
+  assert(t['--on-accent']==='#FFFFFF' && t['--bar']==='#FFFFFF', 'Light: white text on accent, solid top bar');
+  const plain = sb.deriveThemeTokens(false, '#3D3AE0', 'plain', '#047857', '#B42318');
+  assert(plain['--bg']==='#F4F5F7', 'Plain ground ignores the accent');
+  const aur = sb.deriveThemeTokens(true, '#2DD4BF', 'aurora', '#4ADE80', '#F87171');
+  assert(/^rgba\(20,24,30,0\.6\)$/.test(aur['--bar']), 'Aurora: the top bar is see-through (got '+aur['--bar']+')');
+  assert(/radial-gradient/.test(aur['--aurora']) && /rgba\(45,212,191,0\.35\)/.test(aur['--aurora']), 'Aurora gradient uses the accent');
+  assert(aur['--on-accent']==='#0B0D10', 'Dark: dark text on the accent');
+  const teal = sb.deriveThemeTokens(false, '#0F766E', 'tinted', '#047857', '#B42318');
+  assert(teal['--rail']!==t['--rail'] && teal['--accent-soft']!==t['--accent-soft'], 'A different accent changes the rail and soft tint');
+}
+async function testBackgroundAndMotionPrefsApplyAndPersist(){
+  const sb = shellSandbox();
+  const root = sb.document.documentElement, body = sb.document.body;
+  sb.applyTheme('light');
+  assert(body.classList.contains('bg-tinted') && !body.classList.contains('still'), 'Default: Tinted background, motion on');
+  assert(root.style.getPropertyValue('--rail')==='#242479', 'applyTheme sets the rail colour from the default indigo accent');
+  sb.setUiBackground('aurora');
+  assert(sb.localStorage.getItem('uiBackground')==='aurora' && body.classList.contains('bg-aurora') && !body.classList.contains('bg-tinted'), 'Aurora is saved and applied');
+  sb.setUiBackground('neon');
+  assert(sb.localStorage.getItem('uiBackground')==='aurora', 'An unknown background is ignored');
+  sb.setUiBackground('plain');
+  assert(root.style.getPropertyValue('--bg')==='#F4F5F7', 'Plain ground applied');
+  sb.setUiMotion(false);
+  assert(sb.localStorage.getItem('uiMotion')==='off' && body.classList.contains('still'), 'Motion off is saved and stills the page');
+  sb.setUiMotion(true);
+  assert(!body.classList.contains('still'), 'Motion back on');
+  sb.setAccentColor('teal');
+  assert(root.style.getPropertyValue('--rail')===sb.mixHex('#0f766e','#0B0D12',0.5), 'Picking teal recolours the rail');
+  const keys = vm.runInContext('LEDGEROS_KEYS', sb);
+  assert(['uiBackground','uiMotion','uiTheme','fontFamily'].every(k=>keys.includes(k)), 'New appearance keys are listed as LedgerOS keys');
+}
+async function testRailRendersIconsLabelsAndCurrentPage(){
+  const sb = shellSandbox();
+  sb.__set('screen', 'ledger');
+  sb.renderNav();
+  const nav = sb.document.getElementById('nav');
+  const btns = [...nav.querySelectorAll('button')];
+  assert(btns.length>=13, 'Every page has a rail button');
+  assert(btns.every(b=>b.querySelector('svg.nav-svg') && b.querySelector('.nav-lbl')), 'Each rail button has a line icon and a label');
+  const cur = nav.querySelector('[aria-current="page"]');
+  assert(cur && cur.classList.contains('on') && /Ledger/.test(cur.textContent), 'The current page is marked');
+  assert(nav.querySelectorAll('[aria-current]').length===1, 'Only one page is current');
+}
+async function testTopBarShowsPageTitleAndThemeState(){
+  const sb = shellSandbox();
+  freezeDate(sb, '2026-11-07T10:00:00');
+  sb.go('budget');
+  assert(sb.document.getElementById('topbarTitle').textContent==='Budget', 'Top bar shows the page name');
+  assert(/7 November/.test(sb.document.getElementById('topbarDate').textContent), 'Top bar shows today\'s date');
+  sb.go('forecastSettings');
+  assert(sb.document.getElementById('topbarTitle').textContent==='Forecast Settings', 'Pages outside the rail still get a title');
+  sb.applyTheme('dark');
+  assert(sb.document.getElementById('themeDarkBtn').getAttribute('aria-pressed')==='true' && sb.document.getElementById('themeLightBtn').getAttribute('aria-pressed')==='false', 'Dark is shown as pressed');
+  assert(sb.document.documentElement.dataset.theme==='dark' && sb.localStorage.getItem('uiTheme')==='dark', 'Dark mode applied and remembered');
+}
+async function testShellMarkupHasTopBarAndNoOldThemeButton(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const top = (html.match(/<header id="topbar"[\s\S]*?<\/header>/)||[''])[0];
+  assert(/onclick="openCmdPalette\(\)"/.test(top) && /Ctrl\+K/.test(top), 'Top bar has the search with Ctrl+K');
+  assert(/id="cloudBtn"/.test(top), 'Sync status lives in the top bar');
+  assert(/id="themeLightBtn"[^>]*onclick="applyTheme\('light'\)"/.test(top) && /id="themeDarkBtn"[^>]*onclick="applyTheme\('dark'\)"/.test(top), 'Light/Dark switch is in the top bar');
+  assert(/onclick="go\('newjv'\)">\+ New JV/.test(top), 'Top bar has + New JV');
+  assert(!/id="themeBtn"/.test(html), 'The old moon/sun theme button is gone');
+  assert(/<div class="aurora[^"]*" aria-hidden="true">/.test(html), 'Aurora layer exists');
+  assert(/prefers-reduced-motion:reduce\)\{\*,\*::before,\*::after\{animation:none!important/.test(html), 'Reduced motion always wins');
+  assert(/family=Geist:/.test(html) && /family=Geist\+Mono/.test(html), 'Geist and Geist Mono are loaded');
+}
+async function testAppearanceSettingsOfferBackgroundMotionAndGeist(){
+  const sb = shellSandbox();
+  sb.__set('settingsTab', 'appearance');
+  sb.renderSettings();
+  const app = sb.document.getElementById('app');
+  const bg = app.querySelector('[aria-label="Background"]'), mo = app.querySelector('[aria-label="Motion"]');
+  assert(bg && bg.querySelectorAll('button').length===3, 'Background offers Plain / Tinted / Aurora');
+  assert(bg && /Tinted/.test((bg.querySelector('[aria-pressed="true"]')||{}).textContent||''), 'Tinted is the default');
+  assert(mo && /On/.test((mo.querySelector('[aria-pressed="true"]')||{}).textContent||''), 'Motion defaults to On');
+  assert(app.querySelectorAll('.swatch').length===8, 'Seven accent swatches plus Custom');
+  const fam = [...app.querySelectorAll('select')].find(s=>/Geist/.test(s.innerHTML));
+  assert(fam && fam.value==='geist', 'Geist is the default font');
+  assert(fam && /Inter/.test(fam.innerHTML) && /Classic Serif/.test(fam.innerHTML), 'The existing font options are kept');
 }
