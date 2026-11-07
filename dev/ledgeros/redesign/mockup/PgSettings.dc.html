@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <nav aria-label="Settings sections" class="rise" style="flex: 1 1 220px; max-width: 280px; padding: 8px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 2px">
+    <sc-for list="{{sections}}" as="s" hint-placeholder-count="14">
+      <button onClick="{{s.pick}}" aria-current="{{s.current}}" style="display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 12px; border: none; border-radius: 10px; cursor: pointer; text-align: left; font-size: 13.5px; background: {{s.bg}}; color: {{s.fg}}; font-weight: {{s.weight}}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{s.icon}}"></path></svg>{{s.label}}
+      </button>
+    </sc-for>
+  </nav>
+
+  <div style="flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 18px">
+    <sc-if value="{{isAppearance}}" hint-placeholder-val="{{true}}">
+      <section class="rise" style="padding: 22px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 22px">
+        <div>
+          <h2 style="margin: 0; font-size: 18px; font-weight: 600">Appearance</h2>
+          <p style="margin: 4px 0 0; font-size: 13px; color: {{t.muted}}">Changes apply instantly across every page. The light and dark switch stays in the top bar.</p>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          <h3 style="margin: 0; font-size: 13px; font-weight: 600">Accent colour</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px">
+            <sc-for list="{{swatches}}" as="w" hint-placeholder-count="7">
+              <button onClick="{{w.pick}}" aria-pressed="{{w.on}}" class="lift" style="display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px; cursor: pointer; text-align: left; font: inherit; color: {{t.text}}; background: {{w.bg}}; border: 2px solid {{w.border}}">
+                <span style="display: flex; height: 34px; border-radius: 8px; overflow: hidden"><span style="flex: 2; background: {{w.c1}}"></span><span style="flex: 1; background: {{w.c2}}"></span><span style="flex: 1; background: {{w.c3}}"></span></span>
+                <span style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 600">{{w.label}}<sc-if value="{{w.on}}" hint-placeholder-val="{{false}}"><svg class="pop" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg></sc-if></span>
+              </button>
+            </sc-for>
+            <label class="lift" style="display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px; cursor: pointer; background: {{custom.bg}}; border: 2px solid {{custom.border}}">
+              <input type="color" value="{{custom.hex}}" onChange="{{custom.onPick}}" aria-label="Custom accent colour" style="width: 100%; height: 34px; padding: 0; border: none; border-radius: 8px; background: transparent; cursor: pointer">
+              <span style="font-size: 13px; font-weight: 600">Custom</span>
+            </label>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 18px">
+          <div style="display: flex; flex-direction: column; gap: 8px">
+            <h3 style="margin: 0; font-size: 13px; font-weight: 600">Background</h3>
+            <div role="group" aria-label="Background" style="display: flex; padding: 3px; border-radius: 11px; background: {{t.panel2}}">
+              <sc-for list="{{bgOpts}}" as="o" hint-placeholder-count="3"><button onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="flex: 1; height: 34px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; background: {{o.bg}}; color: {{o.fg}}; font-weight: {{o.weight}}">{{o.label}}</button></sc-for>
+            </div>
+            <p style="margin: 0; font-size: 12px; color: {{t.muted}}">Aurora adds a slow wash of the accent behind the top of each page.</p>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px">
+            <h3 style="margin: 0; font-size: 13px; font-weight: 600">Motion</h3>
+            <div role="group" aria-label="Motion" style="display: flex; padding: 3px; border-radius: 11px; background: {{t.panel2}}">
+              <sc-for list="{{motionOpts}}" as="o" hint-placeholder-count="2"><button onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="flex: 1; height: 34px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; background: {{o.bg}}; color: {{o.fg}}; font-weight: {{o.weight}}">{{o.label}}</button></sc-for>
+            </div>
+            <p style="margin: 0; font-size: 12px; color: {{t.muted}}">Off always wins when your computer asks for reduced motion.</p>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px">
+            <h3 style="margin: 0; font-size: 13px; font-weight: 600">Font size</h3>
+            <div role="group" aria-label="Font size" style="display: flex; padding: 3px; border-radius: 11px; background: {{t.panel2}}">
+              <sc-for list="{{sizeOpts}}" as="o" hint-placeholder-count="3"><button onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="flex: 1; height: 34px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; background: {{o.bg}}; color: {{o.fg}}; font-weight: {{o.weight}}">{{o.label}}</button></sc-for>
+            </div>
+          </div>
+          <label style="display: flex; flex-direction: column; gap: 8px">
+            <span style="font-size: 13px; font-weight: 600">Font family</span>
+            <select style="height: 40px; padding: 0 10px; border-radius: 10px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"><option>Geist (default)</option><option>Inter</option><option>System font</option></select>
+          </label>
+          <div style="display: flex; flex-direction: column; gap: 8px">
+            <span style="font-size: 13px; font-weight: 600">Positive and negative colours</span>
+            <div style="display: flex; gap: 10px">
+              <label style="display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid {{t.line}}; font-size: 13px"><input type="color" value="#047857" aria-label="Positive colour" style="width: 22px; height: 22px; padding: 0; border: none; background: transparent">Positive</label>
+              <label style="display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid {{t.line}}; font-size: 13px"><input type="color" value="#B42318" aria-label="Negative colour" style="width: 22px; height: 22px; padding: 0; border: none; background: transparent">Negative</label>
+            </div>
+          </div>
+          <label style="display: flex; flex-direction: column; gap: 8px">
+            <span style="font-size: 13px; font-weight: 600">Content width</span>
+            <select style="height: 40px; padding: 0 10px; border-radius: 10px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"><option>Automatic (based on screen size)</option><option>Manual</option></select>
+          </label>
+        </div>
+
+        <div style="padding: 16px; border-radius: 14px; background: {{t.ground}}; border: 1px solid {{t.line}}; display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+          <span style="font-size: 12.5px; color: {{t.muted}}; margin-right: auto">Preview</span>
+          <button style="min-height: 36px; padding: 0 14px; border-radius: 9px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600">Post JV</button>
+          <span style="padding: 4px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; background: {{t.accentSoft}}; color: {{t.navOnFg}}">Selected</span>
+          <span style="padding: 4px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; background: {{t.posSoft}}; color: {{t.pos}}">Reconciled</span>
+          <span style="padding: 4px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; background: {{t.negSoft}}; color: {{t.neg}}">−225.00</span>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{isOther}}" hint-placeholder-val="{{false}}">
+      <section class="rise" style="padding: 22px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 600">{{secLabel}}</h2>
+        <p style="margin: 0; max-width: 600px; color: {{t.muted}}">{{secText}}</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px">
+          <sc-for list="{{secActions}}" as="a" hint-placeholder-count="2"><button style="min-height: 38px; padding: 0 14px; border-radius: 9px; cursor: pointer; border: 1px solid {{a.border}}; background: {{a.bg}}; color: {{a.fg}}; font-weight: 600">{{a.label}}</button></sc-for>
+        </div>
+      </section>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"prefs":{"editor":null},"setPref":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { sec: 'appearance', local: { accent: 'teal', custom: '#C2410C', bg: 'tinted', motion: true, fontSize: 'medium' } }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const ACC = { indigo: ['Indigo', '#3D3AE0', '#6C69F5'], amber: ['Amber', '#9A6B1F', '#D9A643'], blue: ['Blue', '#2F5FA8', '#6FA8F5'], green: ['Green', '#146C43', '#3FBF85'], purple: ['Purple', '#6B3FA0', '#B98FF0'], rust: ['Rust', '#A3352C', '#E3695F'], teal: ['Teal', '#0F766E', '#2DD4BF'] };
+    const prefs = this.props.prefs || this.state.local;
+    const set = this.props.setPref || ((k, v) => this.setState((st) => ({ local: { ...st.local, [k]: v } })));
+    const localAccent = prefs.accent === 'custom' ? prefs.custom : ACC[prefs.accent][1];
+    const defT = (a) => { const p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF', posSoft: mx(p, '#047857', 0.12), negSoft: mx(p, '#B42318', 0.1) }; };
+    const t = this.props.t || defT(localAccent);
+    const dark = !!prefs.dark;
+    const swatches = Object.entries(ACC).map(([k, v]) => { const on = prefs.accent === k; const c = dark ? v[2] : v[1]; return { label: v[0], on, c1: c, c2: mx(c, '#FFFFFF', 0.55), c3: mx(c, '#000000', 0.45), bg: on ? t.accentSoft : t.panel, border: on ? t.accent : t.line, pick: () => set('accent', k) }; });
+    const customOn = prefs.accent === 'custom';
+    const seg = (opts, cur, key) => opts.map(([v, label]) => { const on = cur === v; return { label, on, bg: on ? t.panel : 'transparent', fg: on ? t.text : t.muted, weight: on ? '600' : '500', pick: () => set(key, v) }; });
+    const SECS = [
+      ['appearance', 'Appearance', 'M12 3a9 9 0 1 0 0 18c1.1 0 1.7-.9 1.4-1.9-.4-1.2.4-2.1 1.6-2.1H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z', '', []],
+      ['pages', 'Pages', 'M4 6h16M4 12h16M4 18h16', 'Choose which pages show in the side rail and drag them into your order. Dashboard and Settings always stay.', [['Reset order', 0]]],
+      ['sync', 'Cloud sync', 'M7 18a5 5 0 1 1 .9-9.9A6 6 0 0 1 19 10a4 4 0 0 1 0 8z', 'Connected to your Supabase project on this device. Last sync 10:42.', [['Sync now', 1], ['Force full ledger refresh', 0], ['Export full backup (JSON)', 0]]],
+      ['schema', 'Database schema', 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6', 'The full, additive SQL to run in Supabase whenever a version adds columns or tables.', [['Copy SQL', 1], ['Download .sql', 0]]],
+      ['coa', 'Chart of accounts', 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z', 'Main and sub categories, numbering and direction for every account.', [['+ Add main category', 1], ['+ Add sub category', 0]]],
+      ['rules', 'Smart rules', 'M13 2L4 14h7l-1 8 9-12h-7z', 'Rules that fill amounts automatically when a JV is generated.', [['+ New smart rule', 1]]],
+      ['accruals', 'Accrual mappings', 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'Which liability account each expense accrues into, with a cap in months.', [['+ Add mapping', 1]]],
+      ['templates', 'JV templates', 'M5 4h14v16H5zM9 8h6M9 12h6M9 16h4', 'Prebuilt journal vouchers you load from New JV.', [['+ New template', 1]]],
+      ['drift', 'Drift detection', 'M3 17l6-6 4 4 8-8', 'Flag accounts whose actuals keep posting away from plan.', [['Save', 1]]],
+      ['freshness', 'Balance freshness', 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'How many days before a reconciled bank balance is shown as stale.', [['Save', 1]]],
+      ['translations', 'Name translations', 'M4 5h8M8 3v2M6 5c0 4 2 7 6 9M12 5c-1 4-3 7-7 9M14 21l4-10 4 10M15.5 17h5', 'English to Arabic spellings used in Arabic statements.', [['+ Add', 1]]],
+      ['log', 'Change log', 'M5 4h14v16H5zM9 9h6M9 13h6', 'Every edit to the books, with who, when and what changed.', [['Copy to clipboard', 0]]],
+      ['import', 'Import CSV', 'M12 3v12M7 10l5 5 5-5M5 21h14', 'Bring in ledger lines or balances from a CSV file.', [['Download template', 0], ['Choose file', 1]]],
+      ['danger', 'Danger zone', 'M12 8v5M12 16.5v.5M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'Clear the ledger, chart of accounts, allocations or provisions. Each asks for confirmation.', [['Clear everything, start fresh', 2]]]
+    ];
+    const sec = SECS.find(s => s[0] === this.state.sec) || SECS[0];
+    const sections = SECS.map(s => { const on = this.state.sec === s[0]; const danger = s[0] === 'danger'; return { label: s[1], icon: s[2], current: on ? 'page' : 'false', bg: on ? t.accentSoft : 'transparent', fg: on ? t.navOnFg : (danger ? t.neg : t.text), weight: on ? '600' : '500', pick: () => this.setState({ sec: s[0] }) }; });
+    return { t, sections, swatches, bgFill: this.props.t ? 'transparent' : t.ground,
+      custom: { hex: prefs.custom, bg: customOn ? t.accentSoft : t.panel, border: customOn ? t.accent : t.line, onPick: (e) => { set('custom', e.target.value); set('accent', 'custom'); } },
+      bgOpts: seg([['plain', 'Plain'], ['tinted', 'Tinted'], ['aurora', 'Aurora']], prefs.bg, 'bg'),
+      motionOpts: seg([[true, 'On'], [false, 'Off']], prefs.motion, 'motion'),
+      sizeOpts: seg([['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], prefs.fontSize, 'fontSize'),
+      isAppearance: sec[0] === 'appearance', isOther: sec[0] !== 'appearance', secLabel: sec[1], secText: sec[3],
+      secActions: sec[4].map(a => ({ label: a[0], bg: a[1] === 1 ? t.accent : (a[1] === 2 ? t.negSoft : t.panel), fg: a[1] === 1 ? t.onAccent : (a[1] === 2 ? t.neg : t.text), border: a[1] === 1 ? t.accent : (a[1] === 2 ? t.neg : t.line) })) };
+  }
+}
+</script>
+</body>
+</html>

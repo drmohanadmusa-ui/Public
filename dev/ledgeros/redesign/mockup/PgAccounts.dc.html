@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Accounts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 16px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <section class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+    <div role="group" aria-label="Category" style="display: flex; flex-wrap: wrap; gap: 6px; margin-right: auto">
+      <sc-for list="{{cats}}" as="c" hint-placeholder-count="6">
+        <button onClick="{{c.pick}}" aria-pressed="{{c.on}}" style="display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border-radius: 99px; cursor: pointer; font-size: 13px; border: 1px solid {{c.border}}; background: {{c.bg}}; color: {{c.fg}}; font-weight: {{c.weight}}"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{c.dot}}"></span>{{c.label}}<span style="font-family: 'Geist Mono', monospace; font-size: 11.5px; opacity: 0.75">{{c.count}}</span></button>
+      </sc-for>
+    </div>
+    <div role="group" aria-label="View" style="display: flex; padding: 3px; border-radius: 10px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+      <sc-for list="{{views}}" as="v" hint-placeholder-count="2">
+        <button onClick="{{v.pick}}" aria-pressed="{{v.on}}" style="height: 30px; padding: 0 12px; border: none; border-radius: 7px; cursor: pointer; font-size: 12.5px; background: {{v.bg}}; color: {{v.fg}}; font-weight: {{v.weight}}">{{v.label}}</button>
+      </sc-for>
+    </div>
+    <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Batch edit</button>
+    <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Export balances</button>
+    <button style="min-height: 38px; padding: 0 16px; border-radius: 9px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer">+ Add account</button>
+  </section>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+    <section style="flex: 2 1 560px; min-width: 0">
+      <sc-if value="{{isList}}" hint-placeholder-val="{{true}}">
+        <div class="rise" style="border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow-x: auto">
+          <table style="width: 100%; border-collapse: collapse; min-width: 560px">
+            <thead>
+              <tr style="font-size: 11.5px; color: {{t.muted}}; text-align: left">
+                <th style="padding: 11px 16px; font-weight: 500">Acc#</th>
+                <th style="padding: 11px 12px; font-weight: 500">Name</th>
+                <th style="padding: 11px 12px; font-weight: 500">Sub category</th>
+                <th style="padding: 11px 16px; font-weight: 500; text-align: right">Current balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <sc-for list="{{accs}}" as="a" hint-placeholder-count="12">
+                <tr onClick="{{a.pick}}" style="cursor: pointer; border-top: 1px solid {{t.line}}; background: {{a.bg}}">
+                  <td style="padding: 10px 16px; font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{t.muted}}"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: {{a.dot}}"></span>{{a.id}}</td>
+                  <td style="padding: 10px 12px; font-weight: 500">{{a.name}} <sc-if value="{{a.inactive}}" hint-placeholder-val="{{false}}"><span style="margin-left: 6px; padding: 1px 7px; border-radius: 99px; font-size: 11px; background: {{t.panel2}}; color: {{t.muted}}">inactive</span></sc-if></td>
+                  <td style="padding: 10px 12px; color: {{t.muted}}">{{a.sub}}</td>
+                  <td style="padding: 10px 16px; text-align: right; font-family: 'Geist Mono', monospace; color: {{a.balColor}}">{{a.balS}}</td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+      </sc-if>
+      <sc-if value="{{isGrid}}" hint-placeholder-val="{{false}}">
+        <div class="rise" style="border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow: hidden">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid {{t.line}}">
+            <button onClick="{{gPrev}}" aria-label="Earlier months" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg></button>
+            <span style="font-weight: 600; min-width: 150px; text-align: center">{{gLabel}}</span>
+            <button onClick="{{gNext}}" aria-label="Later months" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+            <button onClick="{{gToday}}" style="height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Current month</button>
+            <span style="margin-left: auto; font-size: 12px; color: {{t.muted}}">Each cell is that month's movement on the account</span>
+            <button style="height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Export monthly movement</button>
+          </div>
+          <div style="overflow-x: auto">
+            <table style="border-collapse: separate; border-spacing: 0; min-width: 100%">
+              <thead><tr style="font-size: 11.5px; color: {{t.muted}}"><th style="position: sticky; left: 0; z-index: 1; background: {{t.panel}}; padding: 10px 14px; font-weight: 500; text-align: left; min-width: 230px">Account</th><th style="padding: 10px 12px; font-weight: 600; text-align: right; white-space: nowrap; color: {{t.text}}">Current balance</th><sc-for list="{{gMonths}}" as="m" hint-placeholder-count="12"><th style="padding: 10px 10px; font-weight: {{m.weight}}; color: {{m.color}}; background: {{m.bg}}; text-align: right; white-space: nowrap">{{m.label}}</th></sc-for></tr></thead>
+              <tbody>
+                <sc-for list="{{gRows}}" as="r" hint-placeholder-count="12">
+                  <tr onClick="{{r.pick}}" style="cursor: pointer">
+                    <td style="position: sticky; left: 0; z-index: 1; background: {{r.bg}}; padding: 8px 14px; border-top: 1px solid {{t.line}}; white-space: nowrap"><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.accentText}}">{{r.id}}</span> {{r.name}}</td>
+                    <td style="padding: 8px 12px; border-top: 1px solid {{t.line}}; text-align: right; font-family: 'Geist Mono', monospace; font-size: 12.5px; font-weight: 600; color: {{r.balColor}}">{{r.balS}}</td>
+                    <sc-for list="{{r.cells}}" as="c" hint-placeholder-count="12"><td style="padding: 8px 10px; border-top: 1px solid {{t.line}}; text-align: right; font-family: 'Geist Mono', monospace; font-size: 12.5px; background: {{c.bg}}; color: {{c.color}}">{{c.v}}</td></sc-for>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </sc-if>
+    </section>
+
+    <section class="rise" style="flex: 1 1 320px; min-width: 0; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: flex-start">
+        <div><p style="margin: 0; font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}">{{sel.id}} · {{sel.sub}}</p><h2 style="margin: 2px 0 0; font-size: 18px; font-weight: 600">{{sel.name}}</h2></div>
+        <button style="min-height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Edit</button>
+      </div>
+      <p style="margin: 0; font-family: 'Geist Mono', monospace; font-size: 26px; font-weight: 600; color: {{sel.balColor}}">{{sel.balS}}</p>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap">
+        <button style="min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12px">Print statement</button>
+        <button style="min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12px">CSV</button>
+        <button style="min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12px">Historical averages</button>
+        <button style="min-height: 32px; padding: 0 12px; border-radius: 8px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; cursor: pointer; font-size: 12px; font-weight: 600">Full history in Ledger</button>
+      </div>
+      <p style="margin: 4px 0 0; font-size: 12.5px; font-weight: 600">5 most recent JVs on this account</p>
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px">
+        <thead><tr style="font-size: 11px; color: {{t.muted}}; text-align: left"><th style="padding: 6px 0; font-weight: 500">Date</th><th style="padding: 6px 0; font-weight: 500">Description</th><th style="padding: 6px 0; font-weight: 500; text-align: right">Amount</th><th style="padding: 6px 0; font-weight: 500; text-align: right">Running</th></tr></thead>
+        <tbody>
+          <sc-for list="{{stmt}}" as="s" hint-placeholder-count="6">
+            <tr style="border-top: 1px solid {{t.line}}">
+              <td style="padding: 7px 0; font-family: 'Geist Mono', monospace; font-size: 11.5px; color: {{t.muted}}">{{s.d}}</td>
+              <td style="padding: 7px 4px">{{s.desc}}</td>
+              <td style="padding: 7px 0; text-align: right; font-family: 'Geist Mono', monospace; color: {{s.color}}">{{s.amt}}</td>
+              <td style="padding: 7px 0; text-align: right; font-family: 'Geist Mono', monospace">{{s.run}}</td>
+            </tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { cat: 'all', view: 'list', sel: 10101 }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF' }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const CATS = { 1: ['Assets', t.accent], 2: ['Liabilities', t.neg], 3: ['Income', t.pos], 6: ['Expenses', t.warn] };
+    const ACCS = [
+      [10101, 'Main Current', 'Bank Accounts', 48250], [10102, 'Family Savings', 'Bank Accounts', 126400], [10103, 'Joint Account', 'Bank Accounts', 18930.5], [10104, 'Cash Wallet', 'Bank Accounts', 1240],
+      [11200, 'Loan to brother', 'Short Term Receivables', 6500], [14100, 'Kitchen renovation', 'Temporary Projects Accounts', 2300],
+      [10105, 'Rewards Card', 'Short Term Liabilities', -3412.8], [21510, 'Jamiah payable', 'Short Term Liabilities', -5487.2], [22900, 'School fees accrual', 'Accruals', -4150], [23100, 'Car service provision', 'Provisions', -11600],
+      [30100, 'Salary', 'Salary Income', -32500], [31200, 'Rental income', 'Real Estate Income', -4500],
+      [60110, 'Groceries', 'Household', 2840], [60120, 'Utilities', 'Household', 960], [60140, 'Dining out', 'Lifestyle', 1310], [60150, 'Transport', 'Transport', 1150], [60190, 'Old gym membership', 'Lifestyle', 0, true]
+    ];
+    const catOf = (id) => { const f = String(id)[0]; return f === '1' ? (id === 10105 ? 2 : 1) : Number(f); };
+    const list = ACCS.filter(a => this.state.cat === 'all' || String(catOf(a[0])) === this.state.cat);
+    const accs = list.map(a => { const c = CATS[catOf(a[0])]; const on = this.state.sel === a[0];
+      return { id: a[0], name: a[1], sub: a[2], balS: fmt(a[3]), balColor: a[3] < 0 ? t.neg : t.text, dot: c[1], inactive: !!a[4], bg: on ? t.accentSoft : 'transparent', border: on ? t.accent : t.line, pick: () => this.setState({ sel: a[0] }) }; });
+    const cats = [['all', 'All', t.muted, ACCS.length]].concat(Object.entries(CATS).map(([k, v]) => [k, v[0], v[1], ACCS.filter(a => String(catOf(a[0])) === k).length]))
+      .map(([v, label, dot, count]) => { const on = this.state.cat === v; return { label, dot, count, on, bg: on ? t.accentSoft : t.panel, fg: t.text, border: on ? t.accent : t.line, weight: on ? '600' : '500', pick: () => this.setState({ cat: v }) }; });
+    const views = [['list', 'List'], ['grid', 'Grid']].map(([v, label]) => { const on = this.state.view === v; return { label, on, bg: on ? t.accent : 'transparent', fg: on ? t.onAccent : t.muted, weight: on ? '600' : '500', pick: () => this.setState({ view: v }) }; });
+    const s = ACCS.find(a => a[0] === this.state.sel) || ACCS[0];
+    const moves = [['07 Nov', 'Weekly groceries', -612.4], ['06 Nov', 'November salary', 32500], ['04 Nov', 'Jamiah round 6', -2000], ['02 Nov', 'Transfer to savings', -10000], ['29 Oct', 'Phone bill', -230]];
+    const totalMoves = moves.reduce((a, m) => a + (m[2] || 0), 0);
+    let run = s[3];
+    const stmt = moves.map(m => { const r = run; run -= m[2]; return { d: m[0], desc: m[1], amt: fmt(m[2]), color: m[2] < 0 ? t.neg : t.text, run: fmt(r) }; });
+    const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const gs = this.state.gStart === undefined ? 0 : this.state.gStart; const CURI = 10;
+    const gIdx = Array.from({ length: 12 }, (_, i) => gs + i);
+    const gMonths = gIdx.map(i => ({ label: MN[((i % 12) + 12) % 12] + '-' + (26 + Math.floor(i / 12)), weight: i === CURI ? '700' : '500', color: i === CURI ? t.accentText : t.muted, bg: i === CURI ? t.accentSoft : t.panel }));
+    const gRows = list.map(a => ({ id: a[0], name: a[1], balS: fmt(a[3]), balColor: a[3] < 0 ? t.neg : t.text, bg: this.state.sel === a[0] ? t.accentSoft : t.panel, pick: () => this.setState({ sel: a[0] }),
+      cells: gIdx.map(i => { if (i > CURI) return { v: '\u2014', color: t.muted, bg: 'transparent' }; const base = a[3] === 0 ? 0 : (String(a[0])[0] === '6' ? a[3] * (0.85 + ((a[0] + i * 7) % 5) * 0.06) : (((a[0] + i * 13) % 7) - 3) * Math.max(100, Math.abs(a[3]) / 40)); const v = Math.round(base * 100) / 100;
+        return { v: v ? fmt(v) : '\u2014', color: v < 0 ? t.neg : (v ? t.text : t.muted), bg: i === CURI ? t.accentSoft : 'transparent' }; }) }));
+    return { gMonths, gRows, gLabel: gMonths[0].label + ' to ' + gMonths[11].label,
+      gPrev: () => this.setState({ gStart: gs - 1 }), gNext: () => this.setState({ gStart: gs + 1 }), gToday: () => this.setState({ gStart: 0 }),
+      t, accs, cats, views, stmt, bgFill: this.props.t ? 'transparent' : t.ground,
+      isList: this.state.view === 'list', isGrid: this.state.view === 'grid',
+      sel: { id: s[0], name: s[1], sub: s[2], balS: fmt(s[3]), balColor: s[3] < 0 ? t.neg : t.text } };
+  }
+}
+</script>
+</body>
+</html>

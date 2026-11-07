@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Forecast</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 16px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <section class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+    <span style="font-size: 13px; color: {{t.muted}}">Horizon</span>
+    <div role="group" aria-label="Horizon" style="display: flex; flex-wrap: wrap; padding: 3px; border-radius: 11px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+      <sc-for list="{{horizons}}" as="h" hint-placeholder-count="4">
+        <button onClick="{{h.pick}}" aria-pressed="{{h.on}}" style="height: 32px; padding: 0 12px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; background: {{h.bg}}; color: {{h.fg}}; font-weight: {{h.weight}}">{{h.label}}</button>
+      </sc-for>
+    </div>
+    <label style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; font-size: 13px; cursor: pointer"><input type="checkbox" checked="{{anchor}}" onChange="{{toggleAnchor}}" style="width: auto; accent-color: {{t.accent}}">Anchor current month to real balance</label>
+    <span style="flex: 1"></span>
+    <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Export grid</button>
+    <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Export pivot</button>
+    <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Import grid</button>
+    <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Export cash position</button>
+    <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Forecast settings</button>
+  </section>
+
+  <section class="rise lift" style="padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Closing bank balance, projected</h2>
+      <span style="font-size: 12px; color: {{t.muted}}">{{rangeLabel}} · lowest point <span style="font-family: 'Geist Mono', monospace; font-weight: 600; color: {{lowColor}}">{{lowS}}</span> in {{lowM}}</span>
+    </div>
+    <div style="overflow-x: auto">
+      <div style="display: grid; grid-template-columns: repeat({{cols}}, minmax({{colMin}}, 1fr)); gap: 4px; align-items: end; height: 200px; min-width: {{chartMin}}">
+        <sc-for list="{{bars}}" as="c" hint-placeholder-count="12">
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%">
+            <span style="font-family: 'Geist Mono', monospace; font-size: {{c.fs}}; color: {{c.valColor}}; writing-mode: {{c.wm}}; transform: {{c.rot}}; white-space: nowrap">{{c.v}}</span>
+            <div class="grow-y" style="width: 72%; max-width: 30px; border-radius: 4px 4px 1px 1px; background: {{c.color}}; height: {{c.h}}; animation-delay: {{c.delay}}; outline: {{c.outline}}; outline-offset: 2px"></div>
+            <span style="font-size: 10px; color: {{c.labelColor}}; font-weight: {{c.weight}}; white-space: nowrap">{{c.m}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </section>
+
+  <section class="rise" style="border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow: hidden">
+    <div style="padding: 14px 18px 6px"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Bank accounts · projected cash position</h2><p style="margin: 3px 0 0; font-size: 12px; color: {{t.muted}}">The current month starts from the real ledger balance at the end of last month. Click a month's total for its breakdown.</p></div>
+    <div style="overflow-x: auto">
+      <table style="border-collapse: separate; border-spacing: 0; min-width: 100%">
+        <thead><tr style="font-size: 11.5px; color: {{t.muted}}"><th style="position: sticky; left: 0; z-index: 1; background: {{t.panel}}; padding: 9px 18px; font-weight: 500; text-align: left; min-width: 240px"></th><sc-for list="{{months}}" as="m" hint-placeholder-count="12"><th style="padding: 9px 10px; font-weight: {{m.weight}}; color: {{m.color}}; background: {{m.bg}}; text-align: right; white-space: nowrap">{{m.label}}</th></sc-for></tr></thead>
+        <tbody>
+          <sc-for list="{{cashRows}}" as="r" hint-placeholder-count="16">
+            <tr>
+              <td style="position: sticky; left: 0; z-index: 1; padding: 8px 18px; border-top: {{r.rule}}; background: {{r.bg}}; font-weight: {{r.weight}}; color: {{r.labelColor}}; padding-left: {{r.indent}}; white-space: nowrap">{{r.name}}</td>
+              <sc-for list="{{r.cells}}" as="c" hint-placeholder-count="12"><td style="padding: 8px 10px; border-top: {{r.rule}}; background: {{c.bg}}; text-align: right; font-family: 'Geist Mono', monospace; font-size: 12.5px; font-weight: {{r.weight}}; color: {{c.color}}; white-space: nowrap">{{c.v}}</td></sc-for>
+            </tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <sc-for list="{{sections}}" as="s" hint-placeholder-count="3">
+    <section class="rise" style="border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow: hidden">
+      <button onClick="{{s.toggle}}" aria-expanded="{{s.open}}" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 18px; border: none; background: transparent; color: {{t.text}}; cursor: pointer; text-align: left; font: inherit">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: {{s.chev}}; transition: transform .2s"><path d="M9 6l6 6-6 6"></path></svg>
+        <span style="font-size: 15px; font-weight: 600; margin-right: auto">{{s.name}}</span>
+        <span style="font-size: 12.5px; color: {{t.muted}}">{{s.meta}}</span>
+      </button>
+      <sc-if value="{{s.open}}" hint-placeholder-val="{{false}}">
+        <div style="overflow-x: auto; border-top: 1px solid {{t.line}}">
+          <table style="border-collapse: separate; border-spacing: 0; min-width: 100%">
+            <thead><tr style="font-size: 11.5px; color: {{t.muted}}"><th style="position: sticky; left: 0; z-index: 1; background: {{t.panel}}; padding: 9px 18px; font-weight: 500; text-align: left; min-width: 240px">Account</th><th style="padding: 9px 10px; font-weight: 500; text-align: right; white-space: nowrap">Current balance</th><sc-for list="{{months}}" as="m" hint-placeholder-count="12"><th style="padding: 9px 8px; font-weight: {{m.weight}}; color: {{m.color}}; background: {{m.bg}}; text-align: right; white-space: nowrap">{{m.label}}</th></sc-for></tr></thead>
+            <tbody>
+              <sc-for list="{{s.rows}}" as="r" hint-placeholder-count="4">
+                <tr>
+                  <td style="position: sticky; left: 0; z-index: 1; background: {{t.panel}}; padding: 6px 18px; border-top: 1px solid {{t.line}}; white-space: nowrap"><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.accentText}}">{{r.id}}</span> {{r.name}}<sc-if value="{{r.fromProv}}" hint-placeholder-val="{{false}}"><span style="margin-left: 6px; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; background: {{t.accentSoft}}; color: {{t.navOnFg}}">from Provisions</span></sc-if></td>
+                  <td style="padding: 6px 10px; border-top: 1px solid {{t.line}}; text-align: right; font-family: 'Geist Mono', monospace; font-size: 12.5px">{{r.bal}}</td>
+                  <sc-for list="{{r.cells}}" as="c" hint-placeholder-count="12"><td style="padding: 4px 4px; border-top: 1px solid {{t.line}}; background: {{c.bg}}"><input value="{{c.v}}" readonly="{{c.ro}}" aria-label="{{c.aria}}" placeholder="—" style="width: 86px; height: 30px; padding: 0 6px; text-align: right; border-radius: 7px; border: 1px solid {{c.border}}; background: {{c.inBg}}; color: {{c.color}}; font-family: 'Geist Mono', monospace; font-size: 12px"></td></sc-for>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+      </sc-if>
+    </section>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1400}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { h: 12, anchor: true, open: { income: true } }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF' }; };
+    const t = this.props.t || defT();
+    const f0 = (n) => (n < 0 ? '−' : '') + Math.abs(Math.round(n)).toLocaleString('en-US');
+    const k1 = (n) => (n < 0 ? '−' : '') + (Math.abs(n) / 1000).toFixed(Math.abs(n) >= 100000 ? 0 : 1) + 'k';
+    const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const END = 50; /* Settings: grid and export end month = Dec-30 */
+    const H = this.state.h === 'end' ? END : this.state.h;
+    const lab = (i) => MN[(10 + i) % 12] + '-' + (26 + Math.floor((10 + i) / 12));
+    const idx = Array.from({ length: H }, (_, i) => i);
+    const months = idx.map(i => ({ label: lab(i), weight: i === 0 ? '700' : '500', color: i === 0 ? t.accentText : t.muted, bg: i === 0 ? t.accentSoft : t.panel }));
+    const w = (base, i, amp) => Math.round(base * (1 + (((i * 37) % 7) - 3) * (amp || 0.02)));
+    /* Sign convention copied from the current app: inflow categories show as negative, outflow categories as positive, and Monthly Cash Change is their sum. */
+    const IN = [['Income', i => -w(30500, i)], ['Investment income (short term)', () => 0], ['Investment income (long term)', i => -(i % 3 === 0 ? 9200 : 4200)], ['Asset (short term)', i => (i === 0 ? -6500 : 0)], ['Asset (long term)', i => (i % 12 === 3 ? -6000 : -500)]];
+    const OUT = [['Expense', i => w(24800, i)], ['Investment expense (short term)', () => 400], ['Investment expense (long term)', i => (i === 0 ? 12000 : 3200)], ['Liability (short term)', i => (i % 2 ? 0 : 1400)], ['Liability (long term)', i => (i % 12 === 3 ? -14000 : 6800)], ['Provision', i => (i % 3 === 1 ? 5400 : -6200)], ['Accrual', i => (i === 0 ? 4200 : 0)]];
+    let start = this.state.anchor ? 84500 : 82950;
+    const startV = [], inT = [], outT = [], chg = [], close = [];
+    idx.forEach(i => { const a = IN.reduce((s, r) => s + r[1](i), 0), b = OUT.reduce((s, r) => s + r[1](i), 0); startV.push(start); inT.push(a); outT.push(b); chg.push(a + b); start = start + a + b; close.push(start); });
+    const cellBg = (i) => i === 0 ? t.accentSoft : 'transparent';
+    const sgn = (v) => v < 0 ? t.neg : (v > 0 ? t.pos : t.muted);
+    const row = (name, vals, opt) => ({ name, weight: opt.bold ? '600' : '400', labelColor: opt.bold ? t.text : t.muted, indent: opt.bold ? '18px' : '30px', bg: opt.band ? t.panel2 : t.panel, rule: opt.strong ? '2px solid ' + t.text : '1px solid ' + t.line,
+      cells: vals.map((v, i) => ({ v: f0(v), color: opt.plain ? t.text : sgn(v), bg: opt.band ? t.panel2 : cellBg(i) })) });
+    const cashRows = [row('Month cash starting balance', startV, { bold: true, plain: true })]
+      .concat(IN.map(r => row(r[0], idx.map(r[1]), {}))).concat([row('Total monthly inflows', inT, { bold: true, band: true })])
+      .concat(OUT.map(r => row(r[0], idx.map(r[1]), {}))).concat([row('Total monthly outflows', outT, { bold: true, band: true }), row('Monthly cash change', chg, { bold: true }), row('Closing balance', close, { bold: true, band: true, strong: true, plain: true })]);
+    const cmax = Math.max(...close.map(Math.abs)) || 1, cmin = Math.min(0, ...close);
+    const many = H > 18;
+    const bars = close.map((v, i) => ({ m: lab(i), v: many ? k1(v) : f0(v), h: Math.max(3, Math.round(Math.abs(v) / cmax * 130)) + 'px', color: v < 0 ? t.neg : (i === 0 ? t.accentText : mx(t.accent, t.panel, 0.45)), valColor: v < 0 ? t.neg : t.text,
+      fs: many ? '9px' : '10.5px', wm: many ? 'vertical-rl' : 'horizontal-tb', rot: many ? 'rotate(180deg)' : 'none', outline: i === 0 ? '2px solid ' + t.accent : 'none', labelColor: i === 0 ? t.text : t.muted, weight: i === 0 ? '700' : '400', delay: (Math.min(i, 24) * 25) + 'ms' }));
+    let low = 0; close.forEach((v, i) => { if (v < close[low]) low = i; });
+    const SECT = [
+      ['income', 'Income', [[30100, 'Salary', '−384,000', i => -30500], [30200, 'Freelance work', '−6,600', i => (i % 4 === 0 ? -1500 : 0)], [30300, 'Savings cashback', '−4,680', i => -70]]],
+      ['receivables', 'Asset (short term): receivables', [[11200, 'Loan to brother', '6,500', i => (i === 0 ? -6500 : 0)], [11210, 'Deposit refund due', '1,800', i => (i === 2 ? -1800 : 0)]]],
+      ['payables', 'Liability (short term): payables', [[21510, 'Jamiah payable', '−5,487', i => (i % 2 ? 0 : 1400)], [10105, 'Rewards Card', '−3,413', i => 0]]],
+      ['provision', 'Provision', [[23100, 'Car service provision', '−11,600', i => -600, true], [23200, 'School fees provision', '−9,000', i => (i % 3 === 1 ? 6000 : -1500), true]]]
+    ];
+    const sections = SECT.map(([key, name, rows]) => { const open = !!this.state.open[key];
+      return { name, open, chev: open ? 'rotate(90deg)' : 'none', meta: rows.length + ' accounts', toggle: () => this.setState({ open: { ...this.state.open, [key]: !open } }),
+        rows: rows.map(r => ({ id: r[0], name: r[1], bal: r[2], fromProv: !!r[4], cells: idx.map(i => { const v = r[3](i); return { v: v ? f0(v) : '', ro: !!r[4], aria: r[1] + ' ' + lab(i), color: v < 0 ? t.neg : t.text, border: t.line, inBg: r[4] ? t.panel2 : t.panel, bg: cellBg(i) }; }) })) }; });
+    const horizons = [[6, '6 months'], [12, '12 months'], [18, '18 months'], ['end', 'End of reporting period (Dec-30)']].map(([v, label]) => { const on = this.state.h === v; return { label, on, bg: on ? t.accent : 'transparent', fg: on ? t.onAccent : t.muted, weight: on ? '600' : '500', pick: () => this.setState({ h: v }) }; });
+    return { t, months, cashRows, bars, sections, horizons, cols: H, colMin: many ? '22px' : '0px', chartMin: many ? (H * 26) + 'px' : '0px', bgFill: this.props.t ? 'transparent' : t.ground,
+      anchor: this.state.anchor, toggleAnchor: () => this.setState({ anchor: !this.state.anchor }),
+      rangeLabel: lab(0) + ' to ' + lab(H - 1), lowS: f0(close[low]), lowM: lab(low), lowColor: close[low] < 0 ? t.neg : t.text };
+  }
+}
+</script>
+</body>
+</html>

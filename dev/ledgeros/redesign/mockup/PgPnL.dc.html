@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: P&amp;L</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 18px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <section class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+    <div role="group" aria-label="Period" style="display: flex; padding: 3px; border-radius: 11px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+      <sc-for list="{{periods}}" as="p" hint-placeholder-count="3">
+        <button onClick="{{p.pick}}" aria-pressed="{{p.on}}" style="height: 32px; padding: 0 14px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; background: {{p.bg}}; color: {{p.fg}}; font-weight: {{p.weight}}">{{p.label}}</button>
+      </sc-for>
+    </div>
+    <span style="font-weight: 600; margin-right: auto">{{periodLabel}}</span>
+    <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Export</button>
+  </section>
+
+  <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 14px">
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}"><p style="margin: 0; font-size: 12.5px; color: {{t.muted}}">Income</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600; color: {{t.pos}}">{{incS}}</p><p style="margin: 2px 0 0; font-size: 12px; color: {{t.muted}}">Budget {{incBudS}}</p></div>
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}"><p style="margin: 0; font-size: 12.5px; color: {{t.muted}}">Expenses</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600">{{expS}}</p><p style="margin: 2px 0 0; font-size: 12px; color: {{t.muted}}">Budget {{expBudS}}</p></div>
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.accent}}; color: {{t.onAccent}}"><p style="margin: 0; font-size: 12.5px; opacity: 0.85">Net result</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600">{{netS}}</p><p style="margin: 2px 0 0; font-size: 12px; opacity: 0.85">{{netNote}}</p></div>
+  </section>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+    <section class="rise" style="flex: 2 1 560px; min-width: 0; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow: hidden">
+      <div style="overflow-x: auto">
+        <table style="width: 100%; border-collapse: collapse; min-width: 560px">
+          <thead><tr style="font-size: 11.5px; color: {{t.muted}}; text-align: left; background: {{t.panel2}}"><th style="padding: 10px 18px; font-weight: 500">Category</th><th style="padding: 10px 12px; font-weight: 500; text-align: right">Budget</th><th style="padding: 10px 12px; font-weight: 500; text-align: right">Actual</th><th style="padding: 10px 12px; font-weight: 500; text-align: right">% of total</th><th style="padding: 10px 18px; font-weight: 500; text-align: right">Variance</th></tr></thead>
+          <tbody>
+            <sc-for list="{{rows}}" as="r" hint-placeholder-count="12">
+              <tr onClick="{{r.toggle}}" style="cursor: {{r.cursor}}; border-top: {{r.rule}}; background: {{r.bg}}">
+                <td style="padding: 9px 18px; padding-left: {{r.indent}}; font-weight: {{r.weight}}; color: {{r.labelColor}}">
+                  <sc-if value="{{r.isHead}}" hint-placeholder-val="{{false}}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 6px; transform: {{r.chev}}; transition: transform .2s"><path d="M9 6l6 6-6 6"></path></svg></sc-if>{{r.name}}
+                </td>
+                <td style="padding: 9px 12px; text-align: right; font-family: 'Geist Mono', monospace; font-size: 13px; font-weight: {{r.weight}}; color: {{t.muted}}">{{r.budS}}</td>
+                <td style="padding: 9px 12px; text-align: right; font-family: 'Geist Mono', monospace; font-size: 13px; font-weight: {{r.weight}}">{{r.actS}}</td>
+                <td style="padding: 9px 12px; text-align: right">
+                  <span style="display: inline-flex; align-items: center; gap: 8px; font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}"><span style="width: 60px; height: 6px; border-radius: 99px; background: {{t.panel2}}; overflow: hidden; display: inline-block"><span class="grow-x" style="display: block; height: 100%; background: {{r.barColor}}; width: {{r.pctW}}"></span></span>{{r.pctS}}</span>
+                </td>
+                <td style="padding: 9px 18px; text-align: right; font-family: 'Geist Mono', monospace; font-size: 13px; color: {{r.vColor}}; font-weight: {{r.weight}}">{{r.varS}}</td>
+              </tr>
+            </sc-for>
+            <tr style="font-weight: 700"><td style="padding: 11px 18px; border-top: 2px solid {{t.text}}">Net result</td><td style="padding: 11px 12px; text-align: right; font-family: 'Geist Mono', monospace; border-top: 2px solid {{t.text}}; color: {{t.muted}}">{{netBudS}}</td><td style="padding: 11px 12px; text-align: right; font-family: 'Geist Mono', monospace; border-top: 2px solid {{t.text}}">{{netS}}</td><td style="padding: 11px 12px; border-top: 2px solid {{t.text}}"></td><td style="padding: 11px 18px; text-align: right; font-family: 'Geist Mono', monospace; border-top: 2px solid {{t.text}}; color: {{netVColor}}">{{netVarS}}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="rise lift" style="flex: 1 1 300px; min-width: 0; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Full year 2026</h2>
+      <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13px">
+        <div style="display: flex; justify-content: space-between"><span style="color: {{t.muted}}">Full-year expense budget</span><span style="font-family: 'Geist Mono', monospace">168,000.00</span></div>
+        <div style="display: flex; justify-content: space-between"><span style="color: {{t.muted}}">Actual to date</span><span style="font-family: 'Geist Mono', monospace">137,446.75</span></div>
+        <div style="height: 10px; border-radius: 99px; background: {{t.panel2}}; overflow: hidden"><div class="grow-x" style="height: 100%; width: 81.8%; background: {{t.accent}}"></div></div>
+        <div style="display: flex; justify-content: space-between; padding-top: 8px; border-top: 2px solid {{t.text}}; font-weight: 600"><span>Remaining for the year</span><span style="font-family: 'Geist Mono', monospace; color: {{t.accentText}}">30,553.25</span></div>
+      </div>
+      <h3 style="margin: 8px 0 0; font-size: 13px; font-weight: 600">Cumulative budget vs actual</h3>
+      <div style="display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 4px; align-items: end; height: 120px">
+        <sc-for list="{{cum}}" as="c" hint-placeholder-count="11">
+          <div style="position: relative; height: 110px; display: flex; align-items: flex-end; justify-content: center">
+            <div style="position: absolute; bottom: 0; width: 100%; border-radius: 3px 3px 0 0; background: {{t.panel2}}; height: {{c.bH}}"></div>
+            <div class="grow-y" style="position: relative; width: 55%; border-radius: 3px 3px 0 0; background: {{c.color}}; height: {{c.aH}}; animation-delay: {{c.delay}}"></div>
+          </div>
+        </sc-for>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: {{t.muted}}">Jan to Nov. Pale column is budget, solid is actual.</p>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { period: 'month', open: { Household: true, Lifestyle: true } }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', bar2: '#CDD3DB', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF' }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const mult = this.state.period === 'month' ? 1 : (this.state.period === 'year' ? 10.6 : 3.1);
+    const INC = [['Salary', 32500, 32500], ['Rental income', 4500, 4500], ['Investment income', 300, 412]];
+    const EXP = { Household: [['Groceries', 3500, 2840], ['Utilities', 1200, 960]], Children: [['School fees', 4200, 4200]], Lifestyle: [['Dining out', 1000, 1310], ['Gifts', 600, 450]], Transport: [['Transport', 1500, 1150]], Health: [['Health', 800, 240]] };
+    const r2 = (v) => Math.round(v * mult * 100) / 100;
+    const incA = INC.reduce((a, x) => a + r2(x[2]), 0), incB = INC.reduce((a, x) => a + r2(x[1]), 0);
+    let expA = 0, expB = 0; Object.values(EXP).forEach(l => l.forEach(x => { expA += r2(x[2]); expB += r2(x[1]); }));
+    const rows = [];
+    const push = (o) => rows.push(o);
+    push({ name: 'Income', budS: fmt(incB), actS: fmt(incA), pctS: '', pctW: '0%', varS: fmt(incA - incB), vColor: incA >= incB ? t.pos : t.neg, weight: '700', labelColor: t.text, indent: '18px', rule: '1px solid ' + t.line, bg: t.accentSoft, isHead: false, cursor: 'default', barColor: t.pos });
+    INC.forEach(x => push({ name: x[0], budS: fmt(r2(x[1])), actS: fmt(r2(x[2])), pctS: Math.round(r2(x[2]) / incA * 100) + '%', pctW: (r2(x[2]) / incA * 100).toFixed(1) + '%', varS: fmt(r2(x[2]) - r2(x[1])), vColor: x[2] >= x[1] ? t.pos : t.neg, weight: '400', labelColor: t.muted, indent: '36px', rule: '1px solid ' + t.line, bg: 'transparent', isHead: false, cursor: 'default', barColor: t.pos }));
+    push({ name: 'Expenses', budS: fmt(expB), actS: fmt(expA), pctS: '', pctW: '0%', varS: fmt(expB - expA), vColor: expA <= expB ? t.pos : t.neg, weight: '700', labelColor: t.text, indent: '18px', rule: '1px solid ' + t.line, bg: t.accentSoft, isHead: false, cursor: 'default', barColor: t.accent });
+    Object.entries(EXP).forEach(([cat, list]) => {
+      const a = list.reduce((s, x) => s + r2(x[2]), 0), b = list.reduce((s, x) => s + r2(x[1]), 0); const open = !!this.state.open[cat];
+      push({ name: cat, budS: fmt(b), actS: fmt(a), pctS: Math.round(a / expA * 100) + '%', pctW: (a / expA * 100).toFixed(1) + '%', varS: fmt(b - a), vColor: a <= b ? t.pos : t.neg, weight: '600', labelColor: t.text, indent: '26px', rule: '1px solid ' + t.line, bg: 'transparent', isHead: true, chev: open ? 'rotate(90deg)' : 'none', cursor: 'pointer', barColor: a > b ? t.neg : t.accent,
+        toggle: () => this.setState({ open: { ...this.state.open, [cat]: !open } }) });
+      if (open) list.forEach(x => push({ name: x[0], budS: fmt(r2(x[1])), actS: fmt(r2(x[2])), pctS: Math.round(r2(x[2]) / expA * 100) + '%', pctW: (r2(x[2]) / expA * 100).toFixed(1) + '%', varS: fmt(r2(x[1]) - r2(x[2])), vColor: x[2] <= x[1] ? t.pos : t.neg, weight: '400', labelColor: t.muted, indent: '52px', rule: 'none', bg: 'transparent', isHead: false, cursor: 'default', barColor: x[2] > x[1] ? t.neg : t.accent }));
+    });
+    const net = incA - expA, netB = incB - expB;
+    const periods = [['month', 'Month'], ['year', 'Year'], ['custom', 'Custom']].map(([v, label]) => { const on = this.state.period === v; return { label, on, bg: on ? t.accent : 'transparent', fg: on ? t.onAccent : t.muted, weight: on ? '600' : '500', pick: () => this.setState({ period: v }) }; });
+    const CB = [14, 28, 42, 56, 70, 84, 98, 112, 126, 140, 154], CA = [13, 27, 40, 55, 69, 85, 101, 112, 128, 141, 151];
+    const cum = CB.map((b, i) => ({ bH: (b / 154 * 100).toFixed(1) + '%', aH: (CA[i] / 154 * 100).toFixed(1) + '%', color: CA[i] > b ? t.neg : t.accent, delay: (i * 50) + 'ms' }));
+    return { t, rows, periods, cum, bgFill: this.props.t ? 'transparent' : t.ground,
+      periodLabel: this.state.period === 'month' ? 'November 2026' : (this.state.period === 'year' ? 'January to November 2026' : 'September to November 2026'),
+      incS: fmt(incA), incBudS: fmt(incB), expS: fmt(expA), expBudS: fmt(expB), netS: fmt(net), netBudS: fmt(netB), netVarS: fmt(net - netB), netVColor: net >= netB ? t.pos : t.neg,
+      netNote: 'Saving ' + (net / incA * 100).toFixed(1) + '% of income' };
+  }
+}
+</script>
+</body>
+</html>

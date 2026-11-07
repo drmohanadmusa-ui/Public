@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Allocations</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 18px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <section class="rise" style="padding: 14px 16px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px">
+    <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">From<input type="date" value="2026-06-01" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+    <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">To<input type="date" value="2026-11-30" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+    <label style="flex: 1 1 220px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Search description<input placeholder="e.g. repayment" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+    <span style="font-size: 12.5px; color: {{t.muted}}">{{summary}}</span>
+  </section>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+    <div style="flex: 2 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+      <sc-for list="{{boxes}}" as="b" hint-placeholder-count="3">
+        <section class="rise" style="border-radius: 18px; background: {{t.panel}}; border: 1px solid {{b.border}}; overflow: hidden; animation-delay: {{b.delay}}">
+          <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; padding: 14px 18px 8px">
+            <h2 style="margin: 0; font-size: 15px; font-weight: 600"><span style="font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{t.accentText}}">{{b.id}}</span> {{b.name}}</h2>
+            <span style="margin-left: auto; font-size: 12.5px; color: {{t.muted}}">{{b.count}} unallocated · net <span style="font-family: 'Geist Mono', monospace; color: {{t.text}}">{{b.netAll}}</span></span>
+          </div>
+          <div style="overflow-x: auto">
+            <table style="width: 100%; border-collapse: collapse; min-width: 520px">
+              <tbody>
+                <sc-for list="{{b.lines}}" as="l" hint-placeholder-count="4">
+                  <tr onClick="{{l.toggle}}" style="cursor: pointer; border-top: 1px solid {{t.line}}; background: {{l.bg}}">
+                    <td style="padding: 8px 18px; width: 40px"><span role="checkbox" aria-checked="{{l.on}}" style="width: 18px; height: 18px; border-radius: 5px; display: flex; align-items: center; justify-content: center; border: 1.5px solid {{l.boxBorder}}; background: {{l.boxBg}}; color: {{t.onAccent}}"><sc-if value="{{l.on}}" hint-placeholder-val="{{false}}"><svg class="pop" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg></sc-if></span></td>
+                    <td style="padding: 8px 6px; font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{t.muted}}; width: 60px">{{l.jv}}</td>
+                    <td style="padding: 8px 6px; font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{t.muted}}; width: 64px">{{l.d}}</td>
+                    <td style="padding: 8px 6px">{{l.desc}}</td>
+                    <td style="padding: 8px 18px; text-align: right; font-family: 'Geist Mono', monospace; color: {{l.color}}">{{l.amtS}}</td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+          <sc-if value="{{b.hasSel}}" hint-placeholder-val="{{false}}">
+            <div class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 18px; border-top: 2px solid {{t.text}}; background: {{t.panel2}}">
+              <span style="font-size: 13px">{{b.selCount}} · net <span style="font-family: 'Geist Mono', monospace; font-weight: 600; color: {{b.netColor}}">{{b.netS}}</span></span>
+              <span style="margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap">
+                <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Arabic statement</button>
+                <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Create JV to balance</button>
+                <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Add to existing</button>
+                <button style="min-height: 36px; padding: 0 14px; border-radius: 9px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer; font-size: 13px">Assign allocation</button>
+              </span>
+            </div>
+          </sc-if>
+        </section>
+      </sc-for>
+    </div>
+
+    <section class="rise" style="flex: 1 1 320px; min-width: 0; padding: 18px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Look up an allocation</h2>
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Allocation number
+        <select value="{{pick}}" onChange="{{onPick}}" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px">
+          <sc-for list="{{allocOpts}}" as="o" hint-placeholder-count="4"><option value="{{o.no}}">{{o.label}}</option></sc-for>
+        </select>
+      </label>
+      <div style="padding: 12px; border-radius: 12px; background: {{t.panel2}}">
+        <p style="margin: 0; font-weight: 600">{{al.title}}</p>
+        <p style="margin: 2px 0 8px; font-size: 12px; color: {{t.muted}}">{{al.meta}}</p>
+        <sc-for list="{{al.lines}}" as="l" hint-placeholder-count="3">
+          <div style="display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid {{t.line}}; font-size: 12.5px"><span style="font-family: 'Geist Mono', monospace; color: {{t.muted}}; width: 52px">{{l.d}}</span><span style="flex: 1">{{l.desc}}</span><span style="font-family: 'Geist Mono', monospace; color: {{l.color}}">{{l.amt}}</span></div>
+        </sc-for>
+        <div style="display: flex; justify-content: space-between; padding-top: 8px; border-top: 2px solid {{t.text}}; font-weight: 600; font-size: 13px"><span>Net</span><span style="font-family: 'Geist Mono', monospace; color: {{al.netColor}}">{{al.net}}</span></div>
+      </div>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap">
+        <button style="flex: 1; min-height: 38px; border-radius: 9px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer">Arabic statement</button>
+        <button style="min-height: 38px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Renumber</button>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { sel: { '11200:1012': true, '11200:1029': true }, pick: 'A-118' }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF' }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const ACC = [
+      [11200, 'Loan to brother', [[1012, '14 Jun', 'Car deposit', 5000], [1029, '20 Aug', 'Repayment, first part', -2000], [1033, '18 Sep', 'Repayment, second part', -1500], [1038, '12 Oct', 'Loan top-up', 3000], [1040, '28 Oct', 'Repayment', -800]]],
+      [21510, 'Jamiah payable', [[1035, '01 Oct', 'Round 5 collected', -12000], [1036, '03 Oct', 'Round 5 paid out', 12000], [1042, '04 Nov', 'Round 6 contribution', 2000]]],
+      [14100, 'Kitchen renovation', [[1031, '22 Sep', 'Contractor deposit', 2300], [1037, '15 Oct', 'Tiles', 1450], [1041, '30 Oct', 'Refund, damaged tiles', -320]]]
+    ];
+    let total = 0;
+    const boxes = ACC.map(([id, name, L], bi) => { let net = 0, n = 0, all = 0;
+      const lines = L.map(l => { const key = id + ':' + l[0]; const on = !!this.state.sel[key]; all += l[3]; if (on) { net += l[3]; n++; }
+        return { jv: l[0], d: l[1], desc: l[2], amtS: fmt(l[3]), color: l[3] < 0 ? t.neg : t.text, on, bg: on ? t.accentSoft : 'transparent', boxBg: on ? t.accent : t.panel, boxBorder: on ? t.accent : t.line,
+          toggle: () => this.setState({ sel: { ...this.state.sel, [key]: !on } }) }; });
+      total += L.length; const bal = n > 0 && Math.abs(net) < 0.005;
+      return { id, name, lines, count: L.length + ' lines', netAll: fmt(all), hasSel: n > 0, selCount: n + (n === 1 ? ' line selected' : ' lines selected'), netS: fmt(net) + (bal ? '  balanced' : ''), netColor: bal ? t.pos : t.warn, border: n ? t.accent : t.line, delay: (bi * 80) + 'ms' }; });
+    const ALLOCS = {
+      'A-118': { title: 'Jamiah round 6', meta: '21510 Jamiah payable · 2 lines · 04 Nov', lines: [['04 Nov', 'Round 6 contribution', 2000], ['04 Nov', 'Paid from Main Current', -2000]] },
+      'A-117': { title: 'Flat 2 rent, November', meta: '31200 Rental income · 2 lines · 01 Nov', lines: [['01 Nov', 'Rent received', 4500], ['01 Nov', 'Rental income', -4500]] },
+      'A-116': { title: 'Kitchen renovation deposit', meta: '14100 Kitchen renovation · 3 lines · 22 Oct', lines: [['22 Sep', 'Contractor deposit', 2300], ['15 Oct', 'Tiles', 1450], ['30 Oct', 'Refund', -1450]] },
+      'A-115': { title: 'Shared car service', meta: '11200 Loan to brother · 3 lines · 18 Oct', lines: [['10 Oct', 'Service paid', 1260], ['18 Oct', 'His share repaid', -630], ['18 Oct', 'My share', -630]] }
+    };
+    const a = ALLOCS[this.state.pick]; const anet = a.lines.reduce((s, l) => s + l[2], 0);
+    return { t, boxes, bgFill: this.props.t ? 'transparent' : t.ground, summary: total + ' unallocated lines across ' + ACC.length + ' accounts',
+      pick: this.state.pick, onPick: (e) => this.setState({ pick: e.target.value }),
+      allocOpts: Object.entries(ALLOCS).map(([no, v]) => ({ no, label: no + '  ' + v.title })),
+      al: { title: this.state.pick + ' · ' + a.title, meta: a.meta, net: fmt(anet), netColor: Math.abs(anet) < 0.005 ? t.pos : t.warn, lines: a.lines.map(l => ({ d: l[0], desc: l[1], amt: fmt(l[2]), color: l[2] < 0 ? t.neg : t.text })) } };
+  }
+}
+</script>
+</body>
+</html>

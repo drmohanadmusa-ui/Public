@@ -100,6 +100,8 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 ## 6. Open items and future features (ask before starting any of them)
 
+- **Redesign to v5.0.0 ("Command Center") is agreed and ready to build.** Follow `dev/ledgeros/redesign/REDESIGN_PLAN.md`; the mockup sources are in `dev/ledgeros/redesign/mockup/`.
+
 - **Security hardening (planned):** add Supabase Auth sign-in and tighten the database policies. Muhannad has the details. It needs careful planning with him because it touches every sync path and his backup script.
 - **A platform-to-platform cleanup is in progress:** recording some missing buys, then using Move coins. Muhannad has the details. Afterwards, read the moved cost (read-only) so he can post the matching ledger JV himself.
 - **Future features:**

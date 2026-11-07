@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS Command Center</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#0F766E}a:hover{color:#0B5D56}
+button,input,select{font-family:inherit}
+button:disabled{opacity:.35;cursor:default}
+.rail-nav{display:flex;flex-direction:column;gap:2px}
+@media (max-width:760px){.rail-nav{flex-direction:row;flex-wrap:wrap}}
+.cc *{transition:background-color .35s ease,border-color .35s ease,color .35s ease}
+.lift{transition:transform .2s cubic-bezier(.2,.8,.2,1),box-shadow .2s ease,background-color .35s ease,border-color .35s ease}
+.lift:hover{transform:translateY(-2px);box-shadow:0 10px 24px -12px rgba(15,20,30,.28),0 2px 6px rgba(15,20,30,.06)}
+@keyframes growY{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes growX{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes popIn{0%{opacity:0;transform:scale(.6)}70%{opacity:1;transform:scale(1.08)}100%{transform:scale(1)}}
+@keyframes riseIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+@keyframes drift{0%{background-position:0% 0%,100% 0%,50% 100%}50%{background-position:30% 20%,70% 30%,40% 80%}100%{background-position:0% 0%,100% 0%,50% 100%}}
+.grow-y{transform-origin:bottom;animation:growY .7s cubic-bezier(.2,.8,.2,1) both}
+.grow-x{transform-origin:left;animation:growX .7s cubic-bezier(.2,.8,.2,1) both}
+.pop{animation:popIn .32s cubic-bezier(.2,.8,.2,1) both}
+.rise{animation:riseIn .4s cubic-bezier(.2,.8,.2,1) both}
+.pulse{animation:pulse 2.2s ease-out infinite}
+.aurora{background-size:140% 140%,140% 140%,160% 160%;animation:drift 22s ease-in-out infinite}
+.still *{animation:none!important;transition:none!important}
+.wgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:20px;align-items:start}
+@media (max-width:900px){.wgrid>*{grid-column:1/-1!important}}
+@media (prefers-reduced-motion:reduce){.cc *{animation:none!important;transition:none!important}}
+</style>
+</helmet>
+<div class="cc {{rootClass}}" style="min-height: 100vh; display: flex; flex-wrap: wrap; background: {{t.ground}}; color: {{t.text}}; font-family: Geist, system-ui, sans-serif; font-size: {{fontPx}}; line-height: 1.45">
+
+  <aside style="flex: 1 1 88px; padding: 14px 8px; display: flex; flex-direction: column; gap: 14px; background: {{t.rail}}">
+    <div style="display: flex; justify-content: center"><div style="width: 38px; height: 38px; border-radius: 11px; background: {{t.railOnBg}}; color: {{t.railOnFg}}; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px">L</div></div>
+    <nav aria-label="Pages" class="rail-nav">
+      <sc-for list="{{nav}}" as="item" hint-placeholder-count="13">
+        <button onClick="{{item.pick}}" aria-current="{{item.current}}" style="display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 52px; min-width: 70px; padding: 7px 4px; border: none; border-radius: 10px; cursor: pointer; font-size: 10.5px; background: {{item.bg}}; color: {{item.fg}}; font-weight: {{item.weight}}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{item.icon}}"></path></svg>
+          <span>{{item.label}}</span>
+        </button>
+      </sc-for>
+    </nav>
+  </aside>
+
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; position: relative; overflow: hidden">
+    <sc-if value="{{showAurora}}" hint-placeholder-val="{{false}}">
+      <div class="aurora" aria-hidden="true" style="position: absolute; top: 0; left: 0; right: 0; height: 520px; pointer-events: none; background-image: {{auroraBg}}; -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent); mask-image: linear-gradient(to bottom, #000 40%, transparent)"></div>
+    </sc-if>
+
+    <header style="position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px clamp(16px, 2.4vw, 32px); border-bottom: 1px solid {{t.line}}; background: {{t.bar}}">
+      <h1 style="margin: 0 auto 0 0; font-size: 16px; font-weight: 600">{{screenLabel}} <span style="color: {{t.muted}}; font-weight: 400">· Saturday 7 November</span></h1>
+      <label style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.muted}}; flex: 0 1 360px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <input placeholder="Search accounts, JVs, pages" aria-label="Search" style="border: none; background: transparent; outline: none; font: inherit; color: {{t.text}}; width: 100%; min-width: 0">
+        <span style="flex: none; font-size: 12px; color: {{t.muted}}">Ctrl+K</span>
+      </label>
+      <span style="display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 12px; border-radius: 10px; background: {{t.panel}}; border: 1px solid {{t.line}}; font-size: 12.5px; color: {{t.muted}}"><span class="pulse" style="width: 8px; height: 8px; border-radius: 50%; background: #22C55E"></span>Synced 10:42</span>
+      <div role="group" aria-label="Theme" style="display: flex; height: 38px; padding: 3px; border-radius: 10px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+        <sc-for list="{{themeOpts}}" as="o" hint-placeholder-count="2">
+          <button onClick="{{o.pick}}" aria-pressed="{{o.on}}" aria-label="{{o.label}}" style="display: flex; align-items: center; gap: 6px; padding: 0 10px; border: none; border-radius: 7px; cursor: pointer; font-size: 12.5px; background: {{o.bg}}; color: {{o.fg}}; font-weight: {{o.weight}}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{o.icon}}"></path></svg>{{o.label}}
+          </button>
+        </sc-for>
+      </div>
+      <button onClick="{{goNewJV}}" style="min-height: 38px; padding: 0 16px; border-radius: 10px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer">+ New JV</button>
+    </header>
+
+    <sc-if value="{{isDash}}" hint-placeholder-val="{{true}}">
+    <div style="position: relative; padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px">
+        <sc-if value="{{editing}}" hint-placeholder-val="{{false}}">
+          <span style="margin-right: auto; font-size: 13px; color: {{t.muted}}">Drag boxes by their bar to reorder; drag a box's right edge to resize.</span>
+          <button onClick="{{addBox}}" style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px dashed {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; cursor: pointer; font-size: 12.5px; font-weight: 600">+ New box</button>
+          <button onClick="{{resetLayout}}" style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Reset layout</button>
+        </sc-if>
+        <button onClick="{{toggleEdit}}" aria-pressed="{{editing}}" style="display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border-radius: 9px; cursor: pointer; font-size: 12.5px; font-weight: 600; border: 1px solid {{editBorder}}; background: {{editBg}}; color: {{editFg}}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"></path></svg>{{editLabel}}
+        </button>
+      </div>
+
+      <div class="wgrid">
+        <sc-for list="{{widgets}}" as="w" hint-placeholder-count="6">
+          <div draggable="{{editing}}" onDragStart="{{w.onDragStart}}" onDragOver="{{w.onDragOver}}" onDrop="{{w.onDrop}}" onDragEnd="{{dragEnd}}" style="position: relative; grid-column: span {{w.span}}; min-width: 0; border-radius: 20px; outline: {{w.outline}}; outline-offset: 6px; opacity: {{w.opacity}}; cursor: {{w.cursor}}; box-shadow: {{w.dropShadow}}">
+            <sc-if value="{{editing}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; margin-bottom: 10px; border-radius: 10px; background: {{t.accentSoft}}; color: {{t.navOnFg}}; font-size: 12px">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+                <span style="font-weight: 600; margin-right: auto">{{w.title}} <span style="font-weight: 400; opacity: 0.8">· drag to move, drag the right edge to resize</span></span>
+                <span style="font-family: 'Geist Mono', monospace; font-size: 11.5px">{{w.widthS}}</span>
+                <sc-if value="{{w.removable}}" hint-placeholder-val="{{false}}"><button onClick="{{w.remove}}" aria-label="Remove box" style="height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.neg}}; cursor: pointer; font-size: 12px">Remove</button></sc-if>
+              </div>
+              <div onMouseDown="{{w.onResizeStart}}" role="separator" aria-label="Resize {{w.title}}" title="Drag to resize" style="position: absolute; top: 40px; bottom: 0; right: -14px; width: 14px; cursor: ew-resize; display: flex; align-items: center; justify-content: center; z-index: 2">
+                <span style="width: 4px; height: 48px; border-radius: 99px; background: {{t.accent}}"></span>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{w.isKpis}}" hint-placeholder-val="{{true}}">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 14px">
+                <sc-for list="{{kpis}}" as="k" hint-placeholder-count="4">
+                  <div class="lift rise" style="padding: 16px 18px; border-radius: 16px; background: {{k.bg}}; color: {{k.fg}}; border: 1px solid {{k.border}}; animation-delay: {{k.delay}}">
+                    <p style="margin: 0; font-size: 12.5px; font-weight: 500; opacity: 0.85">{{k.label}}</p>
+                    <p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; color: {{k.valColor}}">{{k.value}}</p>
+                    <p style="margin: 2px 0 0; font-size: 12px; opacity: 0.85">{{k.note}}</p>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{w.isTodo}}" hint-placeholder-val="{{false}}">
+              <div style="display: flex; flex-direction: column; gap: 10px">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap">
+                  <h2 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em">{{todayTitle}}</h2>
+                  <span style="font-size: 12.5px; color: {{t.muted}}">Updates as you reconcile</span>
+                </div>
+                <sc-for list="{{todo}}" as="x" hint-placeholder-count="5">
+                  <div class="lift rise" style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 14px; background: {{x.bg}}; border: 1px solid {{x.border}}; animation-delay: {{x.delay}}">
+                    <span style="width: 34px; height: 34px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center; background: {{x.dot}}; color: #FFFFFF">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{x.icon}}"></path></svg>
+                    </span>
+                    <div style="flex: 1; min-width: 0">
+                      <p style="margin: 0; font-weight: 600">{{x.title}}</p>
+                      <p style="margin: 1px 0 0; font-size: 12.5px; color: {{t.muted}}">{{x.sub}}</p>
+                    </div>
+                    <button style="flex: none; min-height: 36px; padding: 0 14px; border-radius: 9px; border: none; background: {{x.dot}}; color: #FFFFFF; font-weight: 600; font-size: 12.5px; cursor: pointer">{{x.action}}</button>
+                  </div>
+                </sc-for>
+                <sc-if value="{{allClear}}" hint-placeholder-val="{{false}}">
+                  <div class="pop" style="padding: 18px; border-radius: 14px; background: {{t.accentSoft}}; color: {{t.navOnFg}}; font-weight: 600">Nothing needs you today. Every bank account matches its statement.</div>
+                </sc-if>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{w.isBox}}" hint-placeholder-val="{{false}}">
+              <dc-import name="PosBox" t="{{t}}" box="{{w.box}}" save-box="{{w.saveBox}}" hint-size="100%,520px"></dc-import>
+            </sc-if>
+
+            <sc-if value="{{w.isBanks}}" hint-placeholder-val="{{false}}">
+              <section class="lift" style="padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap">
+                  <h2 style="margin: 0; font-size: 15px; font-weight: 600">Bank accounts · reconcile against statements</h2>
+                  <span style="font-size: 12px; color: {{t.muted}}">Type a statement balance. Credit cards take the available limit.</span>
+                </div>
+                <div style="overflow-x: auto">
+                  <table style="width: 100%; border-collapse: collapse; min-width: 720px">
+                    <thead>
+                      <tr style="font-size: 11.5px; color: {{t.muted}}; text-align: left; background: {{t.panel2}}">
+                        <th style="padding: 9px 10px; font-weight: 500; width: 70px; border-radius: 8px 0 0 8px">Acc#</th>
+                        <th style="padding: 9px 10px; font-weight: 500">Account</th>
+                        <th style="padding: 9px 10px; font-weight: 500; text-align: right">Ledger balance</th>
+                        <th style="padding: 9px 10px; font-weight: 500; text-align: right; width: 170px">Statement balance</th>
+                        <th style="padding: 9px 10px; font-weight: 500; text-align: right; width: 240px; border-radius: 0 8px 8px 0">Variance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <sc-for list="{{banks}}" as="b" hint-placeholder-count="5">
+                        <tr style="border-bottom: 1px solid {{t.line}}">
+                          <td style="padding: 10px; font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{t.muted}}">{{b.id}}</td>
+                          <td style="padding: 10px; font-weight: 500">{{b.name}} <sc-if value="{{b.cc}}" hint-placeholder-val="{{false}}"><span style="margin-left: 6px; padding: 2px 8px; border-radius: 99px; background: {{t.accentSoft}}; color: {{t.navOnFg}}; font-size: 11px; font-weight: 600">credit card</span></sc-if></td>
+                          <td style="padding: 10px; text-align: right; font-family: 'Geist Mono', monospace">{{b.ledgerS}}</td>
+                          <td style="padding: 6px 10px; text-align: right">
+                            <input value="{{b.raw}}" onChange="{{b.onInput}}" inputmode="decimal" placeholder="{{b.ph}}" aria-label="{{b.aria}}" style="width: 150px; height: 36px; padding: 0 10px; text-align: right; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font-family: 'Geist Mono', monospace; font-size: 13px; outline: none">
+                          </td>
+                          <td style="padding: 10px; text-align: right">
+                            <sc-if value="{{b.isOk}}" hint-placeholder-val="{{false}}">
+                              <span class="pop" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; background: {{b.pillBg}}; color: {{b.pillFg}}">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>{{b.status}}
+                              </span>
+                            </sc-if>
+                            <sc-if value="{{b.isOff}}" hint-placeholder-val="{{false}}">
+                              <button onClick="{{goNewJV}}" style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 99px; border: none; cursor: pointer; font-size: 12.5px; font-weight: 600; background: {{t.negSoft}}; color: {{t.neg}}; font-family: 'Geist Mono', monospace">{{b.status}}</button>
+                            </sc-if>
+                            <sc-if value="{{b.isEmpty}}" hint-placeholder-val="{{false}}">
+                              <span style="font-size: 12.5px; color: {{t.muted}}">No statement yet</span>
+                            </sc-if>
+                          </td>
+                        </tr>
+                      </sc-for>
+                      <tr style="font-weight: 600">
+                        <td style="padding: 10px; border-top: 2px solid {{t.text}}"></td>
+                        <td style="padding: 10px; border-top: 2px solid {{t.text}}">Total</td>
+                        <td style="padding: 10px; text-align: right; font-family: 'Geist Mono', monospace; border-top: 2px solid {{t.text}}">{{ledgerTotal}}</td>
+                        <td style="padding: 10px; text-align: right; font-family: 'Geist Mono', monospace; border-top: 2px solid {{t.text}}">{{stmtTotal}}</td>
+                        <td style="padding: 10px; text-align: right; font-family: 'Geist Mono', monospace; border-top: 2px solid {{t.text}}; color: {{varColor}}">{{varTotal}}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </sc-if>
+
+            <sc-if value="{{w.isCash}}" hint-placeholder-val="{{false}}">
+              <div class="lift" style="padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap">
+                  <h2 style="margin: 0; font-size: 15px; font-weight: 600">Cash flow, last 6 months</h2>
+                  <span style="display: flex; gap: 14px; font-size: 12px; color: {{t.muted}}">
+                    <span style="display: flex; align-items: center; gap: 6px"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{t.accent}}"></span>Income</span>
+                    <span style="display: flex; align-items: center; gap: 6px"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{t.bar2}}"></span>Expense</span>
+                  </span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: end; height: 190px; margin-top: 16px">
+                  <sc-for list="{{months}}" as="m" hint-placeholder-count="6">
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px">
+                      <span style="font-family: 'Geist Mono', monospace; font-size: 10.5px; color: {{t.pos}}">{{m.net}}</span>
+                      <div style="display: flex; align-items: flex-end; gap: 4px; height: 130px">
+                        <div class="grow-y" style="width: 14px; border-radius: 5px 5px 2px 2px; background: {{t.accent}}; height: {{m.inH}}; animation-delay: {{m.delay}}"></div>
+                        <div class="grow-y" style="width: 14px; border-radius: 5px 5px 2px 2px; background: {{t.bar2}}; height: {{m.exH}}; animation-delay: {{m.delay2}}"></div>
+                      </div>
+                      <span style="font-size: 12px; color: {{m.labelColor}}; font-weight: {{m.weight}}">{{m.m}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{w.isBudget}}" hint-placeholder-val="{{false}}">
+              <div class="lift" style="padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+                <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 600">Budget, November</h2>
+                <div style="display: flex; flex-direction: column; gap: 14px">
+                  <sc-for list="{{budget}}" as="g" hint-placeholder-count="5">
+                    <div>
+                      <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px">
+                        <span style="font-weight: 500">{{g.name}}</span>
+                        <span style="color: {{t.muted}}; font-family: 'Geist Mono', monospace; font-size: 12px">{{g.spent}} / {{g.cap}}</span>
+                      </div>
+                      <div style="height: 8px; border-radius: 99px; background: {{t.panel2}}; margin-top: 6px; overflow: hidden"><div class="grow-x" style="height: 100%; border-radius: 99px; background: {{g.color}}; width: {{g.w}}; animation-delay: {{g.delay}}"></div></div>
+                      <p style="margin: 4px 0 0; font-size: 12px; color: {{g.textColor}}">{{g.status}}</p>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{isNewJV}}" hint-placeholder-val="{{false}}"><dc-import name="PgNewJV" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isLedger}}" hint-placeholder-val="{{false}}"><dc-import name="PgLedger" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isAccounts}}" hint-placeholder-val="{{false}}"><dc-import name="PgAccounts" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isBudgetPg}}" hint-placeholder-val="{{false}}"><dc-import name="PgBudget" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isPnL}}" hint-placeholder-val="{{false}}"><dc-import name="PgPnL" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isAlloc}}" hint-placeholder-val="{{false}}"><dc-import name="PgAlloc" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isProvisions}}" hint-placeholder-val="{{false}}"><dc-import name="PgProvisions" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isJamiah}}" hint-placeholder-val="{{false}}"><dc-import name="PgJamiah" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isForecast}}" hint-placeholder-val="{{false}}"><dc-import name="PgForecast" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isRealEstate}}" hint-placeholder-val="{{false}}"><dc-import name="PgRealEstate" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isInvestments}}" hint-placeholder-val="{{false}}"><dc-import name="PgInvestments" t="{{t}}" hint-size="100%,900px"></dc-import></sc-if>
+    <sc-if value="{{isSettings}}" hint-placeholder-val="{{false}}"><dc-import name="PgSettings" t="{{t}}" prefs="{{prefs}}" set-pref="{{setPref}}" hint-size="100%,900px"></dc-import></sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1900}}'>
+const NAV = [
+  ['dashboard','Dashboard','M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z'],
+  ['newjv','New JV','M12 5v14M5 12h14'],
+  ['ledger','Ledger','M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM9 9h6M9 13h6'],
+  ['accounts','Accounts','M4 7h16M4 12h16M4 17h16'],
+  ['budget','Budget','M12 3a9 9 0 1 0 9 9h-9z'],
+  ['pnl','P&L','M3 17l6-6 4 4 8-8M15 7h6v6'],
+  ['alloc','Allocations','M4 6h16M4 12h10M4 18h6'],
+  ['provisions','Provisions','M12 3l9 5-9 5-9-5zM3 13l9 5 9-5'],
+  ['jamiah','Jamiah','M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M14 15c3 0 8 1 8 5'],
+  ['forecast','Forecast','M3 12h4l3-8 4 16 3-8h4'],
+  ['realestate','Real Estate','M3 21V9l9-6 9 6v12M9 21v-6h6v6'],
+  ['investments','Investments','M3 3v18h18M7 14l3-3 3 3 5-6'],
+  ['settings','Settings','M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2']
+];
+/* The app's existing accent palettes (Settings > Appearance), same keys and colours. */
+const ACCENTS = {
+  indigo: { light: '#3D3AE0', dark: '#6C69F5' }, amber: { light: '#9A6B1F', dark: '#D9A643' },
+  blue: { light: '#2F5FA8', dark: '#6FA8F5' }, green: { light: '#146C43', dark: '#3FBF85' },
+  purple: { light: '#6B3FA0', dark: '#B98FF0' }, rust: { light: '#A3352C', dark: '#E3695F' },
+  teal: { light: '#0F766E', dark: '#2DD4BF' }
+};
+const FONT_PX = { small: '13px', medium: '14px', large: '15.5px' };
+const hexRgb = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+const mix = (a, b, w) => { const A = hexRgb(a), B = hexRgb(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+const rgba = (h, a) => { const [r, g, b] = hexRgb(h); return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')'; };
+const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const STALE_DAYS = 14;
+const BANKS = [
+  { id: 10101, name: 'Main Current', ledger: 48250, date: '05 Nov', days: 2 },
+  { id: 10102, name: 'Family Savings', ledger: 126400, date: '12 Oct', days: 26 },
+  { id: 10103, name: 'Joint Account', ledger: 18930.5, date: '06 Nov', days: 1 },
+  { id: 10104, name: 'Cash Wallet', ledger: 1240, date: null, days: null },
+  { id: 10105, name: 'Rewards Card', ledger: -3412.8, cc: true, limit: 20000, date: '04 Nov', days: 3 }
+];
+const POSITION = { stRec: 6500, temp: 2300, stLiab: -8900, accruals: -4150, provisions: -11600 };
+const MONTHS = [['Jun', 30500, 24100], ['Jul', 30500, 27950], ['Aug', 31200, 22400], ['Sep', 32500, 29800], ['Oct', 32500, 23650], ['Nov', 32500, 21846.75]];
+const BUDGET = [['Groceries', 2840, 3500], ['School fees', 4200, 4200], ['Utilities', 960, 1200], ['Dining out', 1310, 1000], ['Transport', 1150, 1500]];
+const ICON = { neg: 'M12 8v5M12 16.5v.5M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', warn: 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', drift: 'M3 17l6-6 4 4 8-8M15 7h6v6' };
+/* The three existing dashboard panels, rebuilt as editable boxes (invented account numbers). */
+const PRESETS = {
+  ste: { title: 'Short-term equity', rows: [
+    { type: 'line', label: 'Bank accounts', sign: 1, accs: '10101, 10102, 10103, 10104' }, { type: 'line', label: 'Short-term receivables', sign: 1, accs: '11200, 11210' },
+    { type: 'line', label: 'Temporary projects', sign: 1, accs: '14100' }, { type: 'subtotal', label: 'Current assets' },
+    { type: 'line', label: 'Short-term liabilities', sign: 1, accs: '21510, 10105' }, { type: 'line', label: 'Accruals', sign: 1, accs: '22900' },
+    { type: 'line', label: 'Provisions', sign: 1, accs: '23100' }, { type: 'total', label: 'Short-term equity' } ] },
+  cash: { title: 'Cash bank account', rows: [
+    { type: 'line', label: 'Bank accounts', sign: 1, accs: '10101, 10102, 10103, 10104' }, { type: 'account', label: 'Family Savings', sign: -1, accs: '10102' },
+    { type: 'line', label: 'Short-term receivables', sign: 1, accs: '11200, 11210' }, { type: 'subtotal', label: 'Liquid cash' },
+    { type: 'line', label: 'Short-term liabilities', sign: 1, accs: '21510, 10105' }, { type: 'line', label: 'Accruals', sign: 1, accs: '22900' },
+    { type: 'total', label: 'Liquid cash after liabilities' } ] },
+  lte: { title: 'Long-term equity', rows: [
+    { type: 'line', label: 'Bank accounts', sign: 1, accs: '10101, 10102, 10103, 10104' }, { type: 'line', label: 'Receivables', sign: 1, accs: '11200, 11210, 12100' },
+    { type: 'line', label: 'Temporary projects', sign: 1, accs: '14100' }, { type: 'subtotal', label: 'Total assets' },
+    { type: 'line', label: 'Liabilities', sign: 1, accs: '21510, 10105, 24100' }, { type: 'line', label: 'Accruals and provisions', sign: 1, accs: '22900, 23100' },
+    { type: 'total', label: 'Long-term equity' } ] }
+};
+const DEFAULT_WIDGETS = [
+  { id: 'kpis', title: 'Month figures', span: 12 }, { id: 'todo', title: 'Things that need you', span: 7 },
+  { id: 'box-ste', title: 'Short-term equity', span: 5, box: PRESETS.ste }, { id: 'banks', title: 'Bank accounts', span: 12 },
+  { id: 'cash', title: 'Cash flow', span: 6 }, { id: 'budget', title: 'Budget', span: 6 },
+  { id: 'box-cash', title: 'Cash bank account', span: 6, box: PRESETS.cash }, { id: 'box-lte', title: 'Long-term equity', span: 6, box: PRESETS.lte }
+];
+function theme(dark, accent, bgMode) {
+  const base = dark
+    ? { bg: '#0D1014', panel: '#14181E', panel2: '#1B2028', line: '#272E38', text: '#E8ECF1', muted: '#9AA3B0', pos: '#4ADE80', neg: '#F87171', warn: '#FBBF24', bar2: '#353D49' }
+    : { bg: '#F4F5F7', panel: '#FFFFFF', panel2: '#F1F3F6', line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', bar2: '#CDD3DB' };
+  const t = { ...base, accent, dark };
+  t.ground = bgMode === 'plain' ? base.bg : mix(base.bg, accent, dark ? 0.10 : 0.07);
+  t.bar = bgMode === 'aurora' ? rgba(base.panel, dark ? 0.6 : 0.7) : base.panel;
+  t.panel2 = mix(base.panel2, accent, dark ? 0.10 : 0.05);
+  t.accentSoft = mix(base.panel, accent, dark ? 0.24 : 0.13);
+  t.accentText = dark ? accent : mix(accent, '#000000', 0.12);
+  t.navOnFg = dark ? mix(accent, '#FFFFFF', 0.35) : mix(accent, '#000000', 0.3);
+  t.onAccent = dark ? '#0B0D10' : '#FFFFFF';
+  t.rail = dark ? mix(accent, '#06080B', 0.78) : mix(accent, '#0B0D12', 0.5);
+  t.railText = mix(accent, '#FFFFFF', 0.72);
+  t.railOnBg = '#FFFFFF';
+  t.railOnFg = mix(accent, '#0B0D12', 0.35);
+  t.posSoft = mix(base.panel, base.pos, dark ? 0.22 : 0.12);
+  t.negSoft = mix(base.panel, base.neg, dark ? 0.22 : 0.10);
+  t.warnSoft = mix(base.panel, base.warn, dark ? 0.22 : 0.12);
+  t.liab = mix(base.neg, base.panel, 0.35);
+  return t;
+}
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { screen: 'dashboard', dark: false, accent: 'teal', custom: '#C2410C', bg: 'tinted', motion: true, fontSize: 'medium',
+      editing: false, drag: null, over: null, widgets: DEFAULT_WIDGETS.map(w => ({ ...w })),
+      stmt: { 10101: '48,250.00', 10102: '126,400.00', 10103: '18,705.50', 10104: '', 10105: '16,587.20' }, edited: {} };
+  }
+  dropOn(i) { const from = this.state.drag; if (from === null || from === undefined || from === i) { this.setState({ drag: null, over: null }); return; } const w = this.state.widgets.slice(); const [x] = w.splice(from, 1); w.splice(i, 0, x); this.setState({ widgets: w, drag: null, over: null }); }
+  sizeWidget(i, span) { const w = this.state.widgets.map((x, k) => k === i ? { ...x, span } : x); this.setState({ widgets: w }); }
+  startResize(i, e) {
+    e.preventDefault(); e.stopPropagation();
+    const grid = e.currentTarget.closest('.wgrid'); if (!grid) return;
+    const colW = grid.getBoundingClientRect().width / 12; const x0 = e.clientX; const span0 = this.state.widgets[i].span;
+    const move = (ev) => { const span = Math.max(3, Math.min(12, Math.round(span0 + (ev.clientX - x0) / colW))); if (span !== this.state.widgets[i].span) this.sizeWidget(i, span); };
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  }
+  renderVals() {
+    const s = this.state;
+    const accentHex = s.accent === 'custom' ? s.custom : (s.dark ? ACCENTS[s.accent].dark : ACCENTS[s.accent].light);
+    const t = theme(s.dark, accentHex, s.bg);
+    const d = (i, step) => (s.motion ? (i * (step || 60)) + 'ms' : '0ms');
+    const nav = NAV.map(([id, label, icon]) => { const on = s.screen === id; return { id, label, icon, current: on ? 'page' : 'false', bg: on ? t.railOnBg : 'transparent', fg: on ? t.railOnFg : t.railText, weight: on ? '600' : '500', pick: () => this.setState({ screen: id, editing: false }) }; });
+    const themeOpts = [[false, 'Light', 'M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6L4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'], [true, 'Dark', 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z']].map(([v, label, icon]) => { const on = s.dark === v; return { label, icon, on, bg: on ? t.accent : 'transparent', fg: on ? t.onAccent : t.muted, weight: on ? '600' : '500', pick: () => this.setState({ dark: v }) }; });
+
+    const todo = []; let ledgerTotal = 0, stmtTotal = 0, varTotal = 0;
+    const banks = BANKS.map(b => {
+      const raw = s.stmt[b.id] || '';
+      const num = Number(String(raw).replace(/,/g, ''));
+      const has = String(raw).trim() !== '' && !isNaN(num);
+      const stmtBal = has ? (b.cc ? -(b.limit - num) : num) : null;
+      const variance = has ? stmtBal - b.ledger : null;
+      const ok = has && Math.abs(variance) < 0.005;
+      const date = s.edited[b.id] ? '07 Nov' : b.date;
+      const days = s.edited[b.id] ? 0 : b.days;
+      const fresh = ok && days !== null && days <= STALE_DAYS;
+      ledgerTotal += b.ledger;
+      if (has) { stmtTotal += stmtBal; varTotal += variance; }
+      let status = '', pillBg = t.posSoft, pillFg = t.pos;
+      if (!has) todo.push({ tone: 'warn', icon: ICON.warn, title: b.name + ' has no statement balance', sub: 'Type it in the bank accounts table', action: 'Enter' });
+      else if (ok && fresh) status = 'Reconciled · ' + date;
+      else if (ok) { status = 'Reconciled · ' + date + ' (stale)'; pillBg = t.warnSoft; pillFg = t.warn; todo.push({ tone: 'warn', icon: ICON.warn, title: b.name + ' last reconciled ' + days + ' days ago', sub: 'Statement from ' + date + '. Check a newer one', action: 'Update' }); }
+      else { status = fmt(variance) + '  Work it off →'; todo.push({ tone: 'neg', icon: ICON.neg, title: b.name + ' is off by ' + fmt(variance), sub: 'Statement vs ledger. Opens a New JV to clear it', action: 'Work it off' }); }
+      return { ...b, raw, ph: b.cc ? 'avail. limit' : '—', aria: 'Statement balance for ' + b.name, ledgerS: fmt(b.ledger), status, pillBg, pillFg, isOk: ok, isOff: has && !ok, isEmpty: !has,
+        onInput: (e) => this.setState({ stmt: { ...this.state.stmt, [b.id]: e.target.value }, edited: { ...this.state.edited, [b.id]: true } }) };
+    });
+    todo.push({ tone: 'neg', icon: ICON.neg, title: 'Dining out is over budget by 310.00', sub: '1,310.00 spent of 1,000.00 this month', action: 'Open P&L' });
+    todo.push({ tone: 'warn', icon: ICON.drift, title: 'Drift: Fuel keeps posting above plan', sub: 'Planned 900.00 vs actual 1,150.00 (3-month average)', action: 'Update plan' });
+    const todoOut = todo.map((x, i) => ({ ...x, dot: x.tone === 'neg' ? t.neg : t.warn, bg: x.tone === 'neg' ? t.negSoft : t.warnSoft, border: rgba(x.tone === 'neg' ? t.neg : t.warn, 0.25), delay: d(i, 70) }));
+
+    const kpis = [
+      { label: 'Bank balance', value: fmt(ledgerTotal), note: 'SAR across ' + BANKS.length + ' accounts', bg: t.accent, fg: t.onAccent, border: t.accent, valColor: t.onAccent },
+      { label: 'Income this month', value: '32,500.00', note: 'Same as October', bg: t.panel, fg: t.text, border: t.line, valColor: t.pos },
+      { label: 'Expense this month', value: '21,846.75', note: 'On track, 7.6% below October', bg: t.panel, fg: t.text, border: t.line, valColor: t.text },
+      { label: 'Net cash flow', value: '+10,653.25', note: 'Saving 32.8% of income', bg: t.accentSoft, fg: t.text, border: rgba(accentHex, 0.3), valColor: t.accentText }
+    ].map((k, i) => ({ ...k, delay: d(i, 70) }));
+
+    const curAssets = ledgerTotal + POSITION.stRec + POSITION.temp;
+    const ste = curAssets + POSITION.stLiab + POSITION.accruals + POSITION.provisions;
+    const steps = []; let run = 0;
+    const step = (label, v) => { const a = run, z = run + v; run = z; steps.push({ label, v, left: Math.min(a, z), width: Math.abs(v), kind: v >= 0 ? 'asset' : 'liab' }); };
+    step('Bank accounts', ledgerTotal); step('Short-term receivables', POSITION.stRec); step('Temporary projects', POSITION.temp);
+    steps.push({ label: 'Current assets', v: curAssets, left: 0, width: curAssets, kind: 'total' });
+    step('Short-term liabilities', POSITION.stLiab); step('Accruals', POSITION.accruals); step('Provisions', POSITION.provisions);
+    steps.push({ label: 'Short-term equity', v: ste, left: 0, width: ste, kind: 'total' });
+    const ladder = steps.map((r, i) => ({ label: r.label, valS: fmt(r.v), left: (r.left / curAssets * 100).toFixed(2) + '%', width: Math.max(0.6, r.width / curAssets * 100).toFixed(2) + '%',
+      color: r.kind === 'total' ? t.accentText : (r.kind === 'asset' ? mix(t.accent, t.panel, 0.35) : t.liab), weight: r.kind === 'total' ? '600' : '400', barH: r.kind === 'total' ? '10px' : '6px',
+      labelColor: r.kind === 'total' ? t.text : t.muted, valColor: r.kind === 'liab' ? t.neg : t.text, rule: r.kind === 'total' ? '2px solid ' + t.text : 'none', delay: d(i, 80) }));
+
+    const max = Math.max(...MONTHS.map(m => Math.max(m[1], m[2])));
+    const months = MONTHS.map(([m, i, e], idx) => ({ m, inH: Math.round(i / max * 120) + 'px', exH: Math.round(e / max * 120) + 'px', net: '+' + (Math.round((i - e) / 100) / 10) + 'k', delay: d(idx, 80), delay2: d(idx * 80 + 40, 1), labelColor: idx === MONTHS.length - 1 ? t.text : t.muted, weight: idx === MONTHS.length - 1 ? '600' : '400' }));
+    const budget = BUDGET.map(([name, spent, cap], i) => { const pct = Math.round(spent / cap * 100); const over = spent > cap; const c = over ? t.neg : (pct >= 90 ? t.warn : t.accent); return { name, spent: fmt(spent), cap: fmt(cap), w: Math.min(pct, 100) + '%', color: c, textColor: over ? t.neg : (pct >= 90 ? t.warn : t.muted), status: over ? 'Over by ' + fmt(spent - cap) : (spent === cap ? 'Fully used' : fmt(cap - spent) + ' left'), delay: d(i, 80) }; });
+
+    const n = s.widgets.length;
+    const widgets = s.widgets.map((w, i) => { const dragging = s.drag === i, over = s.over === i && s.drag !== null && s.drag !== i;
+      return { ...w,
+      isKpis: w.id === 'kpis', isTodo: w.id === 'todo', isBox: !!w.box, isBanks: w.id === 'banks', isCash: w.id === 'cash', isBudget: w.id === 'budget',
+      removable: !!w.box && w.id.indexOf('box-new') === 0,
+      widthS: Math.round(w.span / 12 * 100) + '% wide',
+      outline: s.editing ? (over ? '2px solid ' + t.accent : '2px dashed ' + rgba(accentHex, 0.55)) : 'none',
+      opacity: dragging ? '0.45' : '1', cursor: s.editing ? 'grab' : 'auto', dropShadow: over ? '0 0 0 6px ' + rgba(accentHex, 0.18) : 'none',
+      onDragStart: (e) => { if (!this.state.editing) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; this.setState({ drag: i }); },
+      onDragOver: (e) => { if (this.state.drag === null) return; e.preventDefault(); if (this.state.over !== i) this.setState({ over: i }); },
+      onDrop: (e) => { e.preventDefault(); this.dropOn(i); },
+      onResizeStart: (e) => this.startResize(i, e),
+      remove: () => this.setState({ widgets: this.state.widgets.filter((_, k) => k !== i) }),
+      saveBox: (box) => this.setState({ widgets: this.state.widgets.map((x, k) => k === i ? { ...x, box, title: box.title } : x) }) }; });
+
+    const second = mix(accentHex, s.dark ? '#22D3EE' : '#F59E0B', 0.55);
+    const auroraBg = 'radial-gradient(ellipse at 15% 10%, ' + rgba(accentHex, s.dark ? 0.35 : 0.28) + ', transparent 55%), radial-gradient(ellipse at 85% 0%, ' + rgba(second, s.dark ? 0.28 : 0.22) + ', transparent 50%), radial-gradient(ellipse at 50% 90%, ' + rgba(accentHex, 0.12) + ', transparent 60%)';
+    const sc = s.screen;
+    return {
+      t, nav, themeOpts, banks, ladder, months, budget, kpis, widgets,
+      fontPx: FONT_PX[s.fontSize] || '14px',
+      rootClass: s.motion ? '' : 'still',
+      showAurora: s.bg === 'aurora', auroraBg,
+      editing: s.editing, editLabel: s.editing ? 'Done' : 'Edit layout',
+      editBg: s.editing ? t.accent : t.panel, editFg: s.editing ? t.onAccent : t.text, editBorder: s.editing ? t.accent : t.line,
+      toggleEdit: () => this.setState({ editing: !s.editing }),
+      resetLayout: () => this.setState({ widgets: DEFAULT_WIDGETS.map(w => ({ ...w })) }),
+      dragEnd: () => this.setState({ drag: null, over: null }),
+      addBox: () => this.setState({ widgets: [...this.state.widgets, { id: 'box-new-' + Date.now(), title: 'New box', span: 6, box: { title: 'New box', rows: [{ type: 'line', label: 'Family accounts', sign: 1, accs: '10101, 10103' }, { type: 'total', label: 'Total' }] } }] }),
+      todo: todoOut, allClear: todoOut.length === 0,
+      todayTitle: todoOut.length === 0 ? 'All clear' : todoOut.length + (todoOut.length === 1 ? ' thing needs you' : ' things need you'),
+      steTotal: fmt(ste),
+      ledgerTotal: fmt(ledgerTotal), stmtTotal: fmt(stmtTotal), varTotal: fmt(varTotal), varColor: Math.abs(varTotal) < 0.005 ? t.pos : t.neg,
+      prefs: { accent: s.accent, custom: s.custom, bg: s.bg, motion: s.motion, fontSize: s.fontSize, dark: s.dark },
+      setPref: (key, value) => this.setState({ [key]: value }),
+      isDash: sc === 'dashboard', isNewJV: sc === 'newjv', isLedger: sc === 'ledger', isAccounts: sc === 'accounts', isBudgetPg: sc === 'budget',
+      isPnL: sc === 'pnl', isAlloc: sc === 'alloc', isProvisions: sc === 'provisions', isJamiah: sc === 'jamiah', isForecast: sc === 'forecast',
+      isRealEstate: sc === 'realestate', isInvestments: sc === 'investments', isSettings: sc === 'settings',
+      screenLabel: (NAV.find(x => x[0] === sc) || ['', ''])[1],
+      goNewJV: () => this.setState({ screen: 'newjv', editing: false })
+    };
+  }
+}
+</script>
+</body>
+</html>

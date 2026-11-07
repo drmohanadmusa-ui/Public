@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Investments</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 18px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <section class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+    <div role="tablist" aria-label="Investment views" style="display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 12px; background: {{t.panel}}; border: 1px solid {{t.line}}; margin-right: auto">
+      <sc-for list="{{views}}" as="v" hint-placeholder-count="7">
+        <button role="tab" onClick="{{v.pick}}" aria-selected="{{v.on}}" style="height: 34px; padding: 0 14px; border: none; border-radius: 9px; cursor: pointer; font-size: 13px; background: {{v.bg}}; color: {{v.fg}}; font-weight: {{v.weight}}">{{v.label}}</button>
+      </sc-for>
+    </div>
+    <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Collect</button>
+    <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Move coins</button>
+    <button style="min-height: 38px; padding: 0 16px; border-radius: 9px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer">Buy / Sell</button>
+  </section>
+
+  <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 14px">
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.accent}}; color: {{t.onAccent}}"><p style="margin: 0; font-size: 12.5px; opacity: 0.85">{{valueLabel}}</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600">{{valueS}}</p><p style="margin: 2px 0 0; font-size: 12px; opacity: 0.85">SAR across 3 platforms</p></div>
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}"><p style="margin: 0; font-size: 12.5px; color: {{t.muted}}">Cost</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600">{{costS}}</p></div>
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.posSoft}}; border: 1px solid {{t.line}}"><p style="margin: 0; font-size: 12.5px; color: {{t.muted}}">Unrealised gain</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600; color: {{t.pos}}">{{gainS}}</p><p style="margin: 2px 0 0; font-size: 12px; color: {{t.muted}}">{{gainPct}} on cost</p></div>
+    <div class="rise lift" style="padding: 16px 18px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}"><p style="margin: 0; font-size: 12.5px; color: {{t.muted}}">Platform cash</p><p style="margin: 6px 0 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 600">{{cashS}}</p><p style="margin: 2px 0 0; font-size: 12px; color: {{t.muted}}">USD and stablecoins, at actual rates</p></div>
+  </section>
+
+  <sc-if value="{{isMine}}" hint-placeholder-val="{{true}}">
+    <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px">
+      <sc-for list="{{plat}}" as="p" hint-placeholder-count="3">
+        <div class="lift rise" style="padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px; animation-delay: {{p.delay}}">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px">
+            <div><h2 style="margin: 0; font-size: 16px; font-weight: 600">{{p.name}}</h2><p style="margin: 2px 0 0; font-size: 12.5px; color: {{t.muted}}">{{p.kind}}</p></div>
+            <span style="padding: 3px 10px; border-radius: 99px; font-weight: 600; font-size: 12.5px; background: {{p.gBg}}; color: {{p.gColor}}">{{p.gainPct}}</span>
+          </div>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 24px; font-weight: 600">{{p.valueS}}</span>
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; font-size: 12px">
+            <div style="padding: 10px; border-radius: 10px; background: {{t.panel2}}"><p style="margin: 0; color: {{t.muted}}">Cost</p><p style="margin: 0; font-family: 'Geist Mono', monospace">{{p.costS}}</p></div>
+            <div style="padding: 10px; border-radius: 10px; background: {{t.panel2}}"><p style="margin: 0; color: {{t.muted}}">Gain</p><p style="margin: 0; font-family: 'Geist Mono', monospace; color: {{p.gColor}}">{{p.gain}}</p></div>
+            <div style="padding: 10px; border-radius: 10px; background: {{t.panel2}}"><p style="margin: 0; color: {{t.muted}}">Cash</p><p style="margin: 0; font-family: 'Geist Mono', monospace">{{p.cashS}}</p></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <sc-for list="{{p.positions}}" as="x" hint-placeholder-count="3">
+              <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px"><span><span style="font-weight: 600">{{x.sym}}</span> <span style="color: {{t.muted}}">{{x.units}}</span></span><span style="font-family: 'Geist Mono', monospace; color: {{x.color}}">{{x.chg}}</span></div>
+            </sc-for>
+          </div>
+          <div>
+            <div style="height: 8px; border-radius: 99px; background: {{t.bar2}}; overflow: hidden"><div class="grow-x" style="height: 100%; background: {{t.accent}}; width: {{p.mineW}}"></div></div>
+            <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: {{t.muted}}"><span>{{p.mineS}}</span><span>{{p.famS}}</span></div>
+          </div>
+        </div>
+      </sc-for>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isFamily}}" hint-placeholder-val="{{false}}">
+    <section class="rise" style="border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow-x: auto">
+      <table style="width: 100%; border-collapse: collapse; min-width: 640px">
+        <thead><tr style="font-size: 11.5px; color: {{t.muted}}; text-align: right; background: {{t.panel2}}"><th style="padding: 10px 18px; font-weight: 500; text-align: left">Owner</th><th style="padding: 10px 12px; font-weight: 500">Cost basis</th><th style="padding: 10px 12px; font-weight: 500">Value</th><th style="padding: 10px 12px; font-weight: 500">Gain</th><th style="padding: 10px 18px; font-weight: 500; text-align: left; width: 220px">Share of portfolio</th></tr></thead>
+        <tbody>
+          <sc-for list="{{owners}}" as="o" hint-placeholder-count="4">
+            <tr style="border-top: 1px solid {{t.line}}; text-align: right"><td style="padding: 11px 18px; text-align: left; font-weight: 500">{{o.name}}</td><td style="padding: 11px 12px; font-family: 'Geist Mono', monospace">{{o.cost}}</td><td style="padding: 11px 12px; font-family: 'Geist Mono', monospace">{{o.value}}</td><td style="padding: 11px 12px; font-family: 'Geist Mono', monospace; color: {{o.gColor}}">{{o.gain}}</td>
+              <td style="padding: 11px 18px; text-align: left"><div style="display: flex; align-items: center; gap: 8px"><div style="flex: 1; height: 8px; border-radius: 99px; background: {{t.panel2}}; overflow: hidden"><div class="grow-x" style="height: 100%; background: {{o.color}}; width: {{o.shareW}}"></div></div><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}">{{o.shareS}}</span></div></td></tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isActivity}}" hint-placeholder-val="{{false}}">
+    <section class="rise" style="padding: 12px 16px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px">
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Platform<select value="{{fPlat}}" onChange="{{onPlat}}" style="height: 36px; padding: 0 8px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px; min-width: 170px"><sc-for list="{{platOpts}}" as="o" hint-placeholder-count="4"><option value="{{o}}">{{o}}</option></sc-for></select></label>
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Owner<select value="{{fOwner}}" onChange="{{onOwner}}" style="height: 36px; padding: 0 8px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px; min-width: 140px"><sc-for list="{{ownerOpts}}" as="o" hint-placeholder-count="5"><option value="{{o}}">{{o}}</option></sc-for></select></label>
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Ledger account<select value="{{fAcc}}" onChange="{{onAcc}}" style="height: 36px; padding: 0 8px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px; min-width: 200px"><sc-for list="{{accOpts}}" as="o" hint-placeholder-count="5"><option value="{{o}}">{{o}}</option></sc-for></select></label>
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">From<input type="date" value="2026-01-01" style="height: 36px; padding: 0 8px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">To<input type="date" value="2026-11-30" style="height: 36px; padding: 0 8px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+      <span style="flex: 1; font-size: 12.5px; color: {{t.muted}}; text-align: right">{{actCount}}</span>
+      <button style="height: 36px; padding: 0 14px; border-radius: 9px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer">Export CSV</button>
+    </section>
+    <section class="rise" style="padding: 8px 18px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+      <sc-if value="{{noActivity}}" hint-placeholder-val="{{false}}"><p style="margin: 0; padding: 20px 0; text-align: center; color: {{t.muted}}">Nothing matches these filters.</p></sc-if>
+      <sc-for list="{{activity}}" as="a" hint-placeholder-count="6">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid {{t.line}}">
+          <span style="width: 84px; flex: none; padding: 3px 8px; border-radius: 99px; text-align: center; font-size: 11.5px; font-weight: 600; background: {{a.bg}}; color: {{a.fg}}">{{a.kind}}</span>
+          <div style="flex: 1; min-width: 0"><p style="margin: 0; font-weight: 500">{{a.detail}}</p><p style="margin: 0; font-size: 12px; color: {{t.muted}}">{{a.meta}} · {{a.acc}}</p></div>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 13px">{{a.amt}}</span>
+        </div>
+      </sc-for>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isReconcile}}" hint-placeholder-val="{{false}}">
+    <section class="rise" style="border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow-x: auto">
+      <table style="width: 100%; border-collapse: collapse; min-width: 760px">
+        <thead><tr style="font-size: 11.5px; color: {{t.muted}}; text-align: right; background: {{t.panel2}}"><th style="padding: 10px 18px; font-weight: 500; text-align: left">Owner</th><th style="padding: 10px 10px; font-weight: 500">Cost basis</th><th style="padding: 10px 10px; font-weight: 500">− Opening</th><th style="padding: 10px 10px; font-weight: 500">+ Platform cash</th><th style="padding: 10px 10px; font-weight: 500">− Retained profit</th><th style="padding: 10px 10px; font-weight: 600">= Tracker capital</th><th style="padding: 10px 10px; font-weight: 500">Ledger</th><th style="padding: 10px 18px; font-weight: 500">Difference</th></tr></thead>
+        <tbody>
+          <sc-for list="{{recon}}" as="r" hint-placeholder-count="3">
+            <tr style="border-top: 1px solid {{t.line}}; text-align: right; font-family: 'Geist Mono', monospace; font-size: 13px"><td style="padding: 11px 18px; text-align: left; font-family: Geist, sans-serif; font-weight: 500">{{r.name}}</td><td style="padding: 11px 10px">{{r.cost}}</td><td style="padding: 11px 10px">{{r.open}}</td><td style="padding: 11px 10px">{{r.cash}}</td><td style="padding: 11px 10px">{{r.ret}}</td><td style="padding: 11px 10px; font-weight: 600">{{r.cap}}</td><td style="padding: 11px 10px">{{r.ledger}}</td>
+              <td style="padding: 11px 18px"><span style="padding: 3px 10px; border-radius: 99px; font-weight: 600; background: {{r.dBg}}; color: {{r.dFg}}">{{r.diff}}</span></td></tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isInsights}}" hint-placeholder-val="{{false}}">
+    <section style="display: flex; flex-wrap: wrap; gap: 20px">
+      <div class="rise lift" style="flex: 1 1 340px; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+        <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 600">Allocation</h2>
+        <div style="display: flex; height: 16px; border-radius: 99px; overflow: hidden; gap: 2px"><sc-for list="{{alloc}}" as="a" hint-placeholder-count="4"><div class="grow-x" style="height: 100%; background: {{a.color}}; width: {{a.w}}"></div></sc-for></div>
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px"><sc-for list="{{alloc}}" as="a" hint-placeholder-count="4"><div style="display: flex; align-items: center; gap: 8px; font-size: 13px"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{a.color}}"></span><span style="flex: 1">{{a.name}}</span><span style="font-family: 'Geist Mono', monospace; color: {{t.muted}}">{{a.w}}</span></div></sc-for></div>
+      </div>
+      <div class="rise lift" style="flex: 1 1 340px; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+        <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 600">Your value vs cost, 12 months</h2>
+        <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 5px; align-items: end; height: 150px"><sc-for list="{{vc}}" as="c" hint-placeholder-count="12"><div style="position: relative; height: 140px; display: flex; align-items: flex-end; justify-content: center"><div style="position: absolute; bottom: 0; width: 100%; height: {{c.costH}}; border-top: 2px dashed {{t.muted}}"></div><div class="grow-y" style="width: 60%; border-radius: 4px 4px 0 0; background: {{c.color}}; height: {{c.valH}}"></div></div></sc-for></div>
+        <p style="margin: 8px 0 0; font-size: 12px; color: {{t.muted}}">Bars are value; the dashed line is cost.</p>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isOther}}" hint-placeholder-val="{{false}}">
+    <section class="rise" style="padding: 28px; border-radius: 18px; border: 1px dashed {{t.line}}; background: {{t.panel}}">
+      <h2 style="margin: 0 0 6px; font-size: 16px; font-weight: 600">{{viewLabel}}</h2>
+      <p style="margin: 0; max-width: 560px; color: {{t.muted}}">{{otherText}}</p>
+    </section>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { view: 'mine' }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', bar2: '#CDD3DB', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF', posSoft: mx(p, '#047857', 0.12), negSoft: mx(p, '#B42318', 0.1), warnSoft: mx(p, '#A15C07', 0.12) }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const v = this.state.view;
+    const P = [
+      { name: 'Brokerage A', kind: 'Stocks and ETFs', value: 84300, cost: 71900, cash: 2150, mine: 62, pos: [['VTI', '120 units', '+18.4%'], ['QQQ', '40 units', '+21.0%'], ['Cash', 'USD 573', '']] },
+      { name: 'Crypto Exchange B', kind: 'Coins and stablecoins', value: 22750, cost: 25100, cash: 640, mine: 100, pos: [['BTC', '0.042', '−7.9%'], ['ETH', '0.9', '−14.2%'], ['USDT', '170', 'cash']] },
+      { name: 'Gold Savings C', kind: 'Physical gold', value: 15600, cost: 13200, cash: 0, mine: 40, pos: [['Gold', '52 g', '+18.2%']] }
+    ];
+    const own = this.state.view === 'mine';
+    const k = (p) => own ? p.mine / 100 : 1;
+    const val = P.reduce((s, p) => s + p.value * k(p), 0), cost = P.reduce((s, p) => s + p.cost * k(p), 0), cash = P.reduce((s, p) => s + p.cash * k(p), 0);
+    const plat = P.map((p, i) => { const g = p.value - p.cost; const pct = g / p.cost * 100; return { name: p.name, kind: p.kind, valueS: fmt(p.value), costS: fmt(p.cost), cashS: fmt(p.cash), gain: (g > 0 ? '+' : '') + fmt(g), gainPct: (pct > 0 ? '+' : '') + pct.toFixed(1) + '%', gColor: g >= 0 ? t.pos : t.neg, gBg: g >= 0 ? t.posSoft : t.negSoft, mineW: p.mine + '%', mineS: p.mine + '% mine', famS: (100 - p.mine) + '% family', delay: (i * 90) + 'ms',
+      positions: p.pos.map(x => ({ sym: x[0], units: x[1], chg: x[2], color: x[2].startsWith('+') ? t.pos : (x[2].startsWith('−') ? t.neg : t.muted) })) }; });
+    const OC = [t.accent, t.warn, t.pos, mx(t.accent, '#7C3AED', 0.6)];
+    const O = [['Me', 81256, 69180], ['Spouse', 21540, 19210], ['Child 1', 11314, 12100], ['Child 2', 8540, 9710]];
+    const owners = O.map((o, i) => { const g = o[1] - o[2]; return { name: o[0], value: fmt(o[1]), cost: fmt(o[2]), gain: (g > 0 ? '+' : '') + fmt(g), gColor: g >= 0 ? t.pos : t.neg, shareW: (o[1] / 122650 * 100).toFixed(1) + '%', shareS: (o[1] / 122650 * 100).toFixed(1) + '%', color: OC[i] }; });
+    const KIND = { Buy: [t.accentSoft, t.navOnFg], Collect: [t.posSoft, t.pos], 'Move coins': [t.warnSoft, t.warn], 'Cost fix': [t.panel2, t.muted], Withdraw: [t.negSoft, t.neg] };
+    const ACT = [['Buy', 'Brokerage A · VTI 10 units', '06 Nov · Me 62%, Family 38%', '9,410.00', 'Brokerage A', ['Me', 'Spouse'], '13100 Brokerage A - In'], ['Collect', 'Family contributions, November', '03 Nov · 3 people · rate 3.7500', '6,000.00', 'Brokerage A', ['Spouse', 'Child 1', 'Child 2'], '13100 Brokerage A - In'], ['Move coins', 'Crypto Exchange B to Wallet D · ETH 0.4', '29 Oct · fee 0.002 ETH, split by share', '4,980.00', 'Crypto Exchange B', ['Me'], '13200 Crypto Exchange B - In'], ['Cost fix', 'Gold Savings C · opening cost per owner', '20 Oct · recorded in Activity', '—', 'Gold Savings C', ['Me', 'Spouse'], '13300 Gold Savings C - In'], ['Withdraw', 'Brokerage A · cash out', '12 Oct · cost to Withdrawn, rest to Profit', '3,000.00', 'Brokerage A', ['Me'], '13110 Brokerage A - Out'], ['Buy', 'Crypto Exchange B · BTC 0.01', '02 Oct · Me 100%', '2,630.00', 'Crypto Exchange B', ['Me'], '13200 Crypto Exchange B - In']];
+    const ALL = 'All';
+    const fP = this.state.fPlat || ALL, fO = this.state.fOwner || ALL, fA = this.state.fAcc || ALL;
+    const shown = ACT.filter(a => (fP === ALL || a[4] === fP) && (fO === ALL || a[5].includes(fO)) && (fA === ALL || a[6] === fA));
+    const activity = shown.map(a => ({ kind: a[0], detail: a[1], meta: a[2], amt: a[3], acc: a[6], bg: KIND[a[0]][0], fg: KIND[a[0]][1] }));
+    const uniq = (arr) => [ALL].concat(Array.from(new Set(arr)));
+    const recon = [['Me', 69180, 12000, 1420, 2310, 56290, 56290], ['Spouse', 19210, 4000, 380, 640, 14950, 14950], ['Children', 21810, 6000, 990, 410, 16390, 16165]].map(r => { const d = r[6] - r[5]; return { name: r[0], cost: fmt(r[1]), open: fmt(r[2]), cash: fmt(r[3]), ret: fmt(r[4]), cap: fmt(r[5]), ledger: fmt(r[6]), diff: Math.abs(d) < 0.005 ? '0.00' : fmt(d), dBg: Math.abs(d) < 0.005 ? t.posSoft : t.negSoft, dFg: Math.abs(d) < 0.005 ? t.pos : t.neg }; });
+    const alloc = [['Stocks and ETFs', 68.7, t.accent], ['Crypto', 18.5, t.warn], ['Gold', 12.7, t.pos]].map(a => ({ name: a[0], w: a[1] + '%', color: a[2] }));
+    const VC = [[60, 58], [62, 59], [61, 61], [66, 62], [68, 64], [71, 64], [70, 65], [74, 66], [77, 67], [79, 68], [81, 69], [81, 69]];
+    const vc = VC.map(c => ({ valH: (c[0] / 85 * 100).toFixed(0) + '%', costH: (c[1] / 85 * 100).toFixed(0) + '%', color: c[0] >= c[1] ? t.accent : t.neg }));
+    const VIEWS = [['mine', 'Mine'], ['family', 'Family'], ['activity', 'Activity'], ['reconcile', 'Reconcile'], ['insights', 'Insights'], ['setup', 'Setup'], ['classic', 'Classic']];
+    const views = VIEWS.map(([id, label]) => { const on = v === id; return { label, on, bg: on ? t.accent : 'transparent', fg: on ? t.onAccent : t.muted, weight: on ? '600' : '500', pick: () => this.setState({ view: id }) }; });
+    const g = val - cost;
+    const OTHER = { setup: 'Platforms, owners, standard USD to SAR rate, management fee and the reconciliation start date. The same forms as today, restyled.', classic: 'The previous all-in-one Investments page, kept for anything the new views do not cover yet.' };
+    return { platOpts: uniq(ACT.map(a => a[4])), ownerOpts: uniq([].concat(...ACT.map(a => a[5]))), accOpts: uniq(ACT.map(a => a[6])), fPlat: fP, fOwner: fO, fAcc: fA,
+      onPlat: (e) => this.setState({ fPlat: e.target.value }), onOwner: (e) => this.setState({ fOwner: e.target.value }), onAcc: (e) => this.setState({ fAcc: e.target.value }),
+      actCount: shown.length + ' of ' + ACT.length + ' entries · export includes per-owner SAR, USD and rate', noActivity: shown.length === 0,
+      t, views, plat, owners, activity, recon, alloc, vc, bgFill: this.props.t ? 'transparent' : t.ground,
+      valueLabel: own ? 'My value' : 'Portfolio value', valueS: fmt(val), costS: fmt(cost), gainS: (g > 0 ? '+' : '') + fmt(g), gainPct: (g / cost * 100).toFixed(1) + '%', cashS: fmt(cash),
+      isMine: v === 'mine', isFamily: v === 'family', isActivity: v === 'activity', isReconcile: v === 'reconcile', isInsights: v === 'insights', isOther: v === 'setup' || v === 'classic',
+      viewLabel: (VIEWS.find(x => x[0] === v) || ['', ''])[1], otherText: OTHER[v] || '' };
+  }
+}
+</script>
+</body>
+</html>
