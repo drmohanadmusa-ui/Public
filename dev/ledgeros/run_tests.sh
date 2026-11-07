@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Runs the LedgerOS regression suite.
-# Usage:  bash dev/run_tests.sh [path/to/LedgerOS.html]     (default: the repo's LedgerOS.html)
+# Usage:  bash dev/ledgeros/run_tests.sh [path/to/LedgerOS.html]     (default: the repo's LedgerOS.html)
 # Prints any FAIL lines, then the summary line "N passed, M failed". Exit code is non-zero on any failure.
 set -euo pipefail
 DEV="$(cd "$(dirname "$0")" && pwd)"
-APP="$(readlink -f "${1:-$DEV/../LedgerOS.html}")"
+APP="$(readlink -f "${1:-$DEV/../../LedgerOS.html}")"
 BUILD="$DEV/.build"
 mkdir -p "$BUILD"
 

@@ -1,5 +1,5 @@
 ---
-name: data-question
+name: ledgeros-data
 description: Answer Muhannad's questions about his real LedgerOS data (balances, spending, budgets, investments, Jamiah, accruals) using the read-only Supabase connector. Use when he asks about his actual numbers rather than about the app's code.
 argument-hint: "[question about your data]"
 ---

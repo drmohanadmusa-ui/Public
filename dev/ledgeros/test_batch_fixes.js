@@ -5,9 +5,9 @@
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
-// Paths: the app is ../LedgerOS.html (repo root); the extracted JS is written by run_tests.sh.
+// Paths: the app is ../../LedgerOS.html (repo root); the extracted JS is written by run_tests.sh.
 // Both can be overridden with LEDGEROS_HTML / LEDGEROS_JS.
-const APP_HTML = process.env.LEDGEROS_HTML || path.resolve(__dirname, '..', 'LedgerOS.html');
+const APP_HTML = process.env.LEDGEROS_HTML || path.resolve(__dirname, '..', '..', 'LedgerOS.html');
 const APP_JS = process.env.LEDGEROS_JS || path.resolve(__dirname, '.build', 'extracted_noboot.js');
 const { JSDOM } = require('jsdom');
 

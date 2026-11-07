@@ -1,5 +1,5 @@
 ---
-name: check-live
+name: ledgeros-check
 description: Start-of-session check for LedgerOS. Confirms the version in the repo, on origin/main and (if reachable) on the live site, and runs the full regression suite. Use at the start of every LedgerOS session and whenever Muhannad asks "what's live?" or "are the tests green?".
 ---
 
@@ -15,7 +15,7 @@ Report facts you actually observed. Don't report what you expect.
 
    If curl is blocked by the session's network allowlist, say so in one line and rely on `origin/main`. Pages serves `main` about a minute after a merge.
 3. **Changelog.** Confirm the top `CHANGELOG` entry's version equals `APP_VERSION`.
-4. **Tests.** Run `bash dev/run_tests.sh`. Report the exact final line (`N passed, M failed`) and any `FAIL` lines.
+4. **Tests.** Run `bash dev/ledgeros/run_tests.sh`. Report the exact final line (`N passed, M failed`) and any `FAIL` lines.
    - The baseline at the move to Claude Code was 1701 passed at v4.63.0. The count only grows.
 5. **Report** in a few lines:
    - the versions (and whether they match)
