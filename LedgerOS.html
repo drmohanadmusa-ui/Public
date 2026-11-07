@@ -13147,11 +13147,11 @@ async function deleteNameTranslation(en){
 }
 // ===== Arabic Settlement Statement =====
 let settlementDraft = null;
-async function openSettlementStatement(acc){
+async function openSettlementStatement(acc, onlyLines){
   // Deliberately re-queries D.ledger directly (not the page's own filtered unallocItems()) so the
   // statement is always complete, regardless of any search/account filter currently active on the
-  // Allocations page itself.
-  const lines = D.ledger.filter(l=>l.acc===acc && !l.alloc).sort((a,b)=>(a.date||'').localeCompare(b.date||'') || a.id-b.id);
+  // Allocations page itself. onlyLines (v5.0): one allocation's lines, from "Look up an allocation".
+  const lines = (onlyLines || D.ledger.filter(l=>l.acc===acc && !l.alloc)).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'') || a.id-b.id);
   if(!lines.length){ toast('No unallocated transactions for this account', true); return; }
   showModal(`<h3>📄 Generating Arabic statement…</h3><div class="mut" style="margin:16px 0">Translating ${lines.length} line(s) — this can take a few seconds for anything the saved phrases and pattern rules don't already cover.</div>`, true);
   const translated = await Promise.all(lines.map(async l=>{
@@ -14191,8 +14191,32 @@ function renderAlloc(){
         <button class="tbtn" style="border:none;border-radius:0;${allocTab==='groups'?'background:var(--accent);color:#ffffff':''}" onclick="allocTab='groups'; renderAlloc()">Existing Allocations</button>
       </div>
     </div>
+    <div id="allocLookup" class="noprint"></div>
     <div id="allocBody"></div>`;
+  renderAllocLookup();
   if(allocTab==='unalloc') renderAllocUnalloc(); else renderAllocGroups();
+}
+// v5.0: "Look up an allocation": type a number, preview its lines and net, Arabic statement for it.
+let allocLookupNum = '';
+function setAllocLookup(v){ allocLookupNum = String(v||'').trim(); renderAllocLookup(); }
+function renderAllocLookup(){
+  const el = document.getElementById('allocLookup'); if(!el) return;
+  const n = parseInt(allocLookupNum, 10);
+  const lines = n? D.ledger.filter(l=>l.alloc===n).sort((a,b)=>(a.date||'').localeCompare(b.date||'') || a.id-b.id) : [];
+  const net = lines.reduce((s,l)=>s+(Number(l.amt)||0),0);
+  el.innerHTML = `<div class="panel">
+    <div class="dash-head"><h2>Look up an allocation</h2></div>
+    <div class="row"><input type="text" inputmode="numeric" aria-label="Allocation number" placeholder="e.g. 00006" value="${esc(allocLookupNum)}" onchange="setAllocLookup(this.value)" onkeydown="if(event.key==='Enter') setAllocLookup(this.value)" style="max-width:180px">
+      ${lines.length? `<button class="btn ghost sm" onclick="viewAllocGroup(${n})">Open</button><button class="btn pri sm" onclick="openAllocationArabicStatement(${n})">\uD83D\uDCC4 Arabic Statement</button>` : ''}</div>
+    ${allocLookupNum && !lines.length? `<div class="mut" style="font-size:13px;margin-top:8px">No allocation #${esc(allocLookupNum)}.</div>` : ''}
+    ${lines.length? `<table style="margin-top:10px"><thead><tr><th>Date</th><th>JV#</th><th>Account</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>${lines.map(l=>`<tr><td class="mono">${esc(l.date)}</td><td class="mono click" onclick="viewJV(${l.jv})">#${l.jv}</td><td>${l.acc} <span class="mut">${esc(accShort(l.acc))}</span></td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="4">Net (#${pad5(n)}, ${lines.length} line${lines.length===1?'':'s'})</td><td class="num mono ${moneyClass(net)}">${money(net)}</td></tr></tfoot></table>` : ''}
+  </div>`;
+}
+function openAllocationArabicStatement(n){
+  const lines = D.ledger.filter(l=>l.alloc===n);
+  if(!lines.length){ toast('No allocation #'+pad5(n), true); return; }
+  return openSettlementStatement(lines[0].acc, lines);
 }
 function unallocItems(){
   return D.ledger.filter(l=> ACC_BY_ID[l.acc]?.is_allocatable && !l.alloc).filter(l=>{

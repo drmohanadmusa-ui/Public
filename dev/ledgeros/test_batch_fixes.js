@@ -7988,6 +7988,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testJamiahTickShowsItsTransactionWithUntag();
   await testJamiahTaggedTransactionsLeaveEveryList();
   await testJamiahSettingsIsOnePanel();
+  await testAllocationLookupPreviewsLinesAndNet();
+  await testAllocationLookupArabicStatementUsesOnlyThatAllocation();
+  await testUnallocatedBoxesPerAccountWithAllActions();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8577,4 +8580,42 @@ async function testJamiahSettingsIsOnePanel(){
   const at = app.indexOf('Jamiah settings');
   assert(at>-1 && app.indexOf("setJamiahField(1,'name'")>at && app.indexOf("setJamiahField(1,'startMonth'")>at && app.indexOf('addJamiahParticipant(1)')>at && app.indexOf('setJamiahRoundGroup(1,')>at, 'Name, account, months, participants and rounds are all in Jamiah settings');
   assert((app.match(/Jamiah settings/g)||[]).length===1 && !/Setup: Groups/.test(app), 'One settings panel');
+}
+
+// ---- v5.0 step 4: Allocations ----
+async function testAllocationLookupPreviewsLinesAndNet(){
+  const {sb} = allocSandbox();
+  if(!sb.document.getElementById('app')) sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.renderAlloc();
+  sb.setAllocLookup('00007');
+  const el = sb.document.getElementById('allocLookup');
+  assert(el && el.querySelectorAll('tbody tr').length===2, 'Allocation #7 shows its two lines');
+  assert(/Net \(#00007, 2 lines\)/.test(el.textContent) && /200\.00/.test(el.querySelector('tfoot').textContent), 'And its net (+200)');
+  assert(/openAllocationArabicStatement\(7\)/.test(el.innerHTML), 'With its own Arabic Statement button');
+  sb.setAllocLookup('123');
+  assert(/No allocation #123/.test(el.textContent) && !/openAllocationArabicStatement/.test(el.innerHTML), 'An unknown number says so');
+}
+async function testAllocationLookupArabicStatementUsesOnlyThatAllocation(){
+  const {sb} = allocSandbox();
+  sb.__set('translateDescriptionToArabic', async (d)=>({text:'ar:'+d, source:'test'}));
+  sb.__set('renderSettlementStatement', ()=>{});
+  await sb.openAllocationArabicStatement(7);
+  const d = vm.runInContext('settlementDraft', sb);
+  assert(d && d.acc===10501 && d.lines.map(l=>l.id).join()==='1,2', 'The statement holds only allocation #7\'s lines, got '+(d&&d.lines.map(l=>l.id).join()));
+  await sb.openSettlementStatement(10501);
+  const d2 = vm.runInContext('settlementDraft', sb);
+  assert(d2 && d2.lines.map(l=>l.id).join()==='6,7', 'The per-account statement still uses the unallocated lines (6 and 7)');
+}
+async function testUnallocatedBoxesPerAccountWithAllActions(){
+  const {sb} = allocSandbox();
+  if(!sb.document.getElementById('app')) sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.__set('allocTab', 'unalloc');
+  sb.renderAlloc();
+  allocSel(sb, [7]);
+  sb.renderAllocUnallocResults();
+  const html = sb.document.getElementById('allocUnallocResults').innerHTML;
+  assert(/openSettlementStatement\(10501\)/.test(html) && /createBalancingJV\(10501\)/.test(html) && /openAddToAllocation\(10501\)/.test(html) && /assignAllocation\(10501\)/.test(html), 'Each account box offers Arabic statement, Create JV to balance, Add to existing and Assign');
+  sb.__set('allocTab', 'groups');
+  sb.renderAlloc();
+  assert(!/Arabic/.test(sb.document.getElementById('allocBody').innerHTML), 'No Arabic statement on the existing allocations list');
 }
