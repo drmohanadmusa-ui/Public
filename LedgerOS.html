@@ -452,6 +452,13 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 .prov-bulk select,.prov-bulk input{width:auto}
 .jam-cell{background:none;border:none;padding:2px;border-radius:8px;cursor:pointer;font:inherit}
 .jam-cell:hover{box-shadow:0 0 0 2px var(--accent-soft)} .jam-cell:focus-visible{outline:2px solid var(--accent)}
+.fc-chart{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.fc-col{flex:1 0 64px;display:flex;flex-direction:column;align-items:center}
+.fc-plot{position:relative;width:100%;height:calc(var(--fc-h) + 18px);margin-top:18px}
+.fc-bar{position:absolute;left:22%;right:22%;border-radius:5px;background:var(--accent)}
+.fc-col.low .fc-bar{background:var(--red)}
+.fc-val{position:absolute;left:0;right:0;text-align:center;font-size:10.5px;white-space:nowrap}
+.fc-m{font-size:11px;color:var(--muted);text-align:center} .fc-low{color:var(--red);font-weight:600}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -13650,14 +13657,32 @@ function onSectionDragEnd(){
   setForecastSectionOrderList(newOrder);
   sectionDrag = null;
 }
+// v5.0 horizon: 6 / 12 / 18 months, or 'end' = through Settings > Grid & Export End Month. Per device.
+const FORECAST_HORIZONS = ['6','12','18','end'];
+function getForecastHorizon(){ const v = localStorage.getItem('forecastHorizon'); return FORECAST_HORIZONS.includes(v)? v : 'end'; }
+function setForecastHorizon(v){ if(!FORECAST_HORIZONS.includes(String(v))) return; safeSetItemWarn('forecastHorizon', String(v)); renderForecastBody(); }
 function forecastMonthsWindow(){
   const months = [];
   const end = getGridEndMonth();
+  const h = getForecastHorizon();
+  const max = h==='end'? 600 : Number(h);
   let mk = forecastWindowStart;
   let guard = 0;
   // Always show at least 1 month, even if forecastWindowStart is somehow past the Grid End Month.
-  while((mk<=end || months.length===0) && guard<600){ months.push(mk); mk = nextMonthKeyPlain(mk); guard++; }
+  while((mk<=end || months.length===0) && months.length<max && guard<600){ months.push(mk); mk = nextMonthKeyPlain(mk); guard++; }
   return months;
+}
+// Closing balance per month (same rows as the Projected Cash Position table, so the same sign
+// settings apply), with the amount on every bar and the lowest point marked.
+function forecastClosingChartHTML(rows){
+  if(!rows.length) return '';
+  const vals = rows.map(r=>Number(r.closing)||0);
+  const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals), range = (hi-lo)||1;
+  const low = vals.indexOf(Math.min(...vals));
+  const H = 160, zeroY = hi/range*H;
+  return `<div class="panel"><div class="dash-head"><h2>Closing balance</h2><span class="mut" style="font-size:12px">Lowest: <b class="mono ${moneyClass(vals[low])}">${money(vals[low])}</b> in ${esc(monthLabel(rows[low].month))}</span></div>
+    <div class="fc-chart" role="img" aria-label="Closing balance by month; lowest ${money(vals[low])} in ${esc(monthLabel(rows[low].month))}" style="--fc-h:${H}px">${rows.map((r,i)=>{ const v = vals[i]; const h = Math.max(1, Math.abs(v)/range*H); const top = v>=0? zeroY-h : zeroY;
+      return `<div class="fc-col${i===low?' low':''}" title="${esc(monthLabel(r.month))}: ${money(v)}"><div class="fc-plot"><span class="fc-val mono ${v<0?'r':''}" style="top:${Math.max(0, v>=0? top-16 : top+h+2).toFixed(1)}px">${money(v)}</span><div class="fc-bar grow-y" style="top:${top.toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${i*40}ms"></div></div><div class="fc-m">${esc(monthLabel(r.month))}${i===low?'<div class="fc-low">lowest</div>':''}</div></div>`; }).join('')}</div></div>`;
 }
 function forecastShiftWindow(delta){
   const candidate = delta>0? nextMonthKeyPlain(forecastWindowStart) : prevMonthKey(forecastWindowStart);
@@ -14161,12 +14186,14 @@ function renderForecastBody(){
           <div class="mono" style="padding:0 10px">${esc(monthLabel(months[0]))} → ${esc(monthLabel(months[months.length-1]))}</div>
           <button class="btn ghost sm" onclick="forecastShiftWindow(1)">Next ›</button>
         </div>
+        <div class="seg" role="group" aria-label="Horizon" style="max-width:none">${[['6','6 months'],['12','12 months'],['18','18 months'],['end','End of reporting period']].map(([v,l])=>`<button aria-pressed="${getForecastHorizon()===v}" onclick="setForecastHorizon('${v}')" style="padding:0 10px">${l}</button>`).join('')}</div>
         <div class="row">
           <input type="month" id="forecastJumpInput" value="${forecastWindowStart}">
           <button class="btn ghost sm" onclick="forecastJumpToMonth()">Jump to month</button>
           <button class="btn ghost sm" onclick="forecastJumpToday()">Jump to current month</button>
         </div>
       </div>
+      ${forecastClosingChartHTML(computeMonthlyCashFlow(months, currentMonth))}
       ${renderCashFlowPanel(months, currentMonth)}
       ${order.map(key=>renderForecastCategorySection(key, FORECAST_CATEGORIES[key], byCat[key], months, currentMonth)).join('') || '<div class="panel empty">No accounts categorized yet — open ⚙ Forecast Settings above to assign categories.</div>'}
     `;

@@ -7991,6 +7991,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testAllocationLookupPreviewsLinesAndNet();
   await testAllocationLookupArabicStatementUsesOnlyThatAllocation();
   await testUnallocatedBoxesPerAccountWithAllActions();
+  await testForecastHorizonLimitsTheMonths();
+  await testForecastChartMatchesTheClosingBalanceRow();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8618,4 +8620,36 @@ async function testUnallocatedBoxesPerAccountWithAllActions(){
   sb.__set('allocTab', 'groups');
   sb.renderAlloc();
   assert(!/Arabic/.test(sb.document.getElementById('allocBody').innerHTML), 'No Arabic statement on the existing allocations list');
+}
+
+// ---- v5.0 step 4: Forecast ----
+async function testForecastHorizonLimitsTheMonths(){
+  const sb = dashSandbox();
+  sb.localStorage.setItem('gridEndMonth', '2027-12');
+  sb.__set('forecastWindowStart', '2026-11');
+  assert(sb.getForecastHorizon()==='end' && sb.forecastMonthsWindow().length===14, 'Default: through the Grid & Export End Month (Nov-26..Dec-27)');
+  sb.go('forecast');
+  sb.setForecastHorizon('6');
+  assert(sb.localStorage.getItem('forecastHorizon')==='6' && sb.forecastMonthsWindow().join()==='2026-11,2026-12,2027-01,2027-02,2027-03,2027-04', '6 months');
+  sb.setForecastHorizon('18');
+  assert(sb.forecastMonthsWindow().length===14, '18 months still stops at the end month');
+  sb.setForecastHorizon('99');
+  assert(sb.localStorage.getItem('forecastHorizon')==='18', 'Unknown horizons are ignored');
+  const seg = sb.document.querySelector('[aria-label="Horizon"]');
+  assert(seg && seg.querySelectorAll('button').length===4 && /18 months/.test((seg.querySelector('[aria-pressed="true"]')||{}).textContent||''), 'The page offers 6 / 12 / 18 / End of reporting period');
+}
+async function testForecastChartMatchesTheClosingBalanceRow(){
+  const sb = dashSandbox();
+  sb.localStorage.setItem('gridEndMonth', '2027-04');
+  sb.__set('forecastWindowStart', '2026-11');
+  sb.__set('computeMonthlyCashFlow', (months)=> months.map((m,i)=>({month:m, starting:0, inflow:0, outflow:0, change:0, closing:[5000, -1200.5, 300, 9000, 4000, 2500][i]||0, subrows:{}})));
+  sb.__set('renderCashFlowPanel', (months)=> '<div id="cfp">'+vm.runInContext('computeMonthlyCashFlow', sb)(months).map(r=>'<i>'+sb.money(r.closing)+'</i>').join('')+'</div>');
+  sb.go('forecast');
+  const chart = sb.document.querySelector('.fc-chart');
+  const vals = chart? [...chart.querySelectorAll('.fc-val')].map(e=>e.textContent) : [];
+  const table = [...sb.document.querySelectorAll('#cfp i')].map(e=>e.textContent);
+  assert(vals.length===6 && vals.join('|')===table.join('|'), 'Every bar carries the same amount as the Closing Balance row, got '+vals.join('|'));
+  const low = chart && chart.querySelector('.fc-col.low');
+  assert(low && /Dec-26/.test(low.textContent) && /lowest/.test(low.textContent), 'The lowest month is marked');
+  assert(/Lowest: -1,200\.50 in Dec-26/.test(sb.document.getElementById('app').textContent), 'And named above the chart');
 }
