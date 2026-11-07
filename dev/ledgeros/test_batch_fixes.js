@@ -7993,6 +7993,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testUnallocatedBoxesPerAccountWithAllActions();
   await testForecastHorizonLimitsTheMonths();
   await testForecastChartMatchesTheClosingBalanceRow();
+  await testThingsThatNeedYouShowsEightThenShowAll();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8372,7 +8373,7 @@ async function testBudgetChartsWriteAmountsOnBars(){
   const chart = {ctx, data:{datasets:[{data:[1500, 0]}, {data:[250.5, 99]}]}, getDatasetMeta:(i)=>({hidden: false, data:[{x:10,y:50},{x:20,y:60}]})};
   vm.runInContext('chartValueLabelsPlugin', sb).afterDatasetsDraw(chart);
   assert(texts.map(t=>t[0]).join('|')===[sb.money(1500), sb.money(250.5), sb.money(99)].join('|'), 'Every non-zero bar gets its amount');
-  assert(texts[0][1]===10 && texts[0][2]===47, 'The amount sits just above the bar');
+  assert(texts[0] && texts[0][1]===10 && texts[0][2]===47, 'The amount sits just above the bar');
   const src = fs.readFileSync(APP_JS, 'utf8');
   const fn = src.slice(src.indexOf('function renderBudgetCharts('), src.indexOf('function renderBudgetCharts(')+6000);
   assert((fn.match(/plugins:\[chartValueLabelsPlugin\]/g)||[]).length===2, 'Both the Budget vs Actual and the trend chart show amounts');
@@ -8643,13 +8644,28 @@ async function testForecastChartMatchesTheClosingBalanceRow(){
   sb.localStorage.setItem('gridEndMonth', '2027-04');
   sb.__set('forecastWindowStart', '2026-11');
   sb.__set('computeMonthlyCashFlow', (months)=> months.map((m,i)=>({month:m, starting:0, inflow:0, outflow:0, change:0, closing:[5000, -1200.5, 300, 9000, 4000, 2500][i]||0, subrows:{}})));
-  sb.__set('renderCashFlowPanel', (months)=> '<div id="cfp">'+vm.runInContext('computeMonthlyCashFlow', sb)(months).map(r=>'<i>'+sb.money(r.closing)+'</i>').join('')+'</div>');
+  // The table shows whole units; so do the bars (exact amount in the tooltip).
+  sb.__set('renderCashFlowPanel', (months)=> '<div id="cfp">'+vm.runInContext('computeMonthlyCashFlow', sb)(months).map(r=>'<i>'+Math.round(r.closing).toLocaleString()+'</i>').join('')+'</div>');
   sb.go('forecast');
   const chart = sb.document.querySelector('.fc-chart');
   const vals = chart? [...chart.querySelectorAll('.fc-val')].map(e=>e.textContent) : [];
   const table = [...sb.document.querySelectorAll('#cfp i')].map(e=>e.textContent);
   assert(vals.length===6 && vals.join('|')===table.join('|'), 'Every bar carries the same amount as the Closing Balance row, got '+vals.join('|'));
+  const tips = chart? [...chart.querySelectorAll('.fc-col')].map(c=>c.getAttribute('title')) : [];
+  assert(tips[1]==='Dec-26: '+sb.money(-1200.5), 'The tooltip carries the exact amount, got '+tips[1]);
   const low = chart && chart.querySelector('.fc-col.low');
   assert(low && /Dec-26/.test(low.textContent) && /lowest/.test(low.textContent), 'The lowest month is marked');
   assert(/Lowest: -1,200\.50 in Dec-26/.test(sb.document.getElementById('app').textContent), 'And named above the chart');
+}
+
+async function testThingsThatNeedYouShowsEightThenShowAll(){
+  const sb = dashSandbox();
+  sb.__set('dashboardTodoItems', ()=> Array.from({length:12}, (_,i)=>({tone:'warn', title:'Item '+i, sub:'s', label:'Go', onclick:'void 0'})));
+  sb.renderDashboard();
+  let app = sb.document.getElementById('app');
+  assert(app.querySelectorAll('.todo-item').length===8 && /12 things need you/.test(app.textContent), 'Shows the first 8 and counts all 12');
+  assert(/Show all 12/.test(app.textContent), 'Offers Show all');
+  sb.toggleDashTodoAll();
+  assert(sb.document.getElementById('app').querySelectorAll('.todo-item').length===12 && /Show fewer/.test(sb.document.getElementById('app').textContent), 'Show all lists every item');
+  sb.toggleDashTodoAll();
 }

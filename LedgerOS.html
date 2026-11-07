@@ -454,9 +454,11 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 .jam-cell:hover{box-shadow:0 0 0 2px var(--accent-soft)} .jam-cell:focus-visible{outline:2px solid var(--accent)}
 .fc-chart{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
 .fc-col{flex:1 0 64px;display:flex;flex-direction:column;align-items:center}
-.fc-plot{position:relative;width:100%;height:calc(var(--fc-h) + 18px);margin-top:18px}
+.fc-plot{position:relative;width:100%;height:calc(var(--fc-h) + 34px)}
 .fc-bar{position:absolute;left:22%;right:22%;border-radius:5px;background:var(--accent)}
+.fc-bar.neg{background:color-mix(in srgb,var(--red) 55%,var(--panel))}
 .fc-col.low .fc-bar{background:var(--red)}
+.seg button{white-space:nowrap}
 .fc-val{position:absolute;left:0;right:0;text-align:center;font-size:10.5px;white-space:nowrap}
 .fc-m{font-size:11px;color:var(--muted);text-align:center} .fc-low{color:var(--red);font-weight:600}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
@@ -532,12 +534,26 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '4.63.0';
+const APP_VERSION = '5.0.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.0.0', date:'2026-11-08', changes:[
+    'NEW LOOK: a slim side rail and a top bar with search (Ctrl+K), sync status, a Light / Dark switch and + New JV. The whole app now follows your accent colour. Geist is the new default font (the old fonts are still in Settings).',
+    'Settings \u2192 Appearance: accent colour swatches, Background (Plain, Tinted or Aurora) and Motion (On / Off). Your computer\u2019s reduced-motion setting always wins. These are per device.',
+    'Dashboard: click Edit layout to drag boxes into any order, drag a box\u2019s right edge (or use \u2212 / +) to change its width, add a box or reset the layout. The layout is saved to your account, so every device shows the same.',
+    'Dashboard: \u201CN things need you\u201D lists unreconciled and stale bank accounts, accounts with no statement balance, over-budget categories and drift alerts, each with a button to deal with it.',
+    'Dashboard: position boxes replace the three equity tables (same totals, now with running-total bars). Click a line to peek at its accounts. Edit any box, or make your own: lines add up account numbers you type or every account in a category (new accounts are then included automatically). Balances are as of today.',
+    'New JV: Budget impact and your draft JVs now sit below the JV. Ledger: lines are grouped per JV; click a JV to frame it and get Edit, Duplicate, Reverse and Download CSV. Accounts: category filter chips and a side panel with the balance, the 5 latest JVs and Full history in Ledger.',
+    'Budget: the amount is written on every bar, and the spending trend is shown as bars. Investments \u2192 Activity: filter by ledger account and date range, and Export CSV with each person\u2019s SAR, USD and rate.',
+    'Provisions reworked: search, the month\u2019s total provision expense, and Generate JV is greyed out with the reason while that month has an error. A Needs fixing bar lists every problem with Show me. Inside a group, months run downward and accounts across, with a net check per month. Bulk fill is inline and can balance onto a second line.',
+    'Jamiah: a tick only ever comes from a tagged transaction. Click an empty cell to see untagged transactions that month matching the pledge, or click a tick to see its transaction and Untag it. Tagged transactions leave every list. Pledge now follows Group, and everything to set up lives in one Jamiah settings panel.',
+    'Allocations: Look up an allocation by number to preview its lines and net, with its own Arabic statement. Forecast: choose a 6, 12 or 18 month horizon or End of reporting period, plus a closing balance chart with the amount on every bar and the lowest month marked.',
+    'Your old screen is kept as LedgerOS-classic.html (\u201CSwitch to classic\u201D at the bottom of the rail). Same data and connection. Please don\u2019t use Restore from backup in classic: it would clear your new Dashboard layout and position boxes.',
+    'DATABASE: two new columns on pd_ui_prefs (dashboard_layout, position_boxes). Run the SQL from Settings \u2192 Database Schema once. No new tables, so your backup script needs no change.',
+  ]},
   {version:'4.63.0', date:'2026-11-03', changes:[
     'NEW: \uD83D\uDD01 Move coins to another platform (in + Add, on each platform card, and from a position\u2019s window). Move one or several assets at once: for each, enter the units sent and the units received \u2014 the difference is the network fee. Everyone keeps their share; the fee comes off each person in proportion to it, and a per-person preview shows held / sent / fee / received before you save.',
     'The full cost moves with the coins (the fee just makes each remaining unit slightly dearer): no realised gain or loss, and the reconciliation against the ledger stays exact. Opening-balance cost keeps its opening tag when it moves.',
@@ -4702,19 +4718,23 @@ function dashKpisHTML(){
       <div class="kpi hero${anim}"><div class="l">Bank balance</div>${kpiValue(bankTotal, '', 'absMoney')}<div class="kpi-note">Across ${all.length} account${all.length===1?'':'s'}</div></div>
       <div class="kpi${anim}"><div class="l">Income this month</div>${kpiValue(incomeMTD, 'g', 'absMoney')}</div>
       <div class="kpi${anim}"><div class="l">Expense this month</div>${kpiValue(expenseMTD, '', 'absMoney')}<div class="kpi-note click" style="cursor:pointer" title="Open the P&amp;L for this month" onclick="goPnLThisMonth()">${dashboardExpenseBudgetLine(expBudget)}</div></div>
-      <div class="kpi soft${anim}"><div class="l">Net cash flow</div>${kpiValue(netCashflow, moneyClass(netCashflow), 'money')}${Math.abs(incomeMTD)>=0.005? `<div class="kpi-note">Saving ${(netCashflow/Math.abs(incomeMTD)*100).toFixed(1)}% of income</div>`:''}</div>
+      <div class="kpi soft${anim}"><div class="l">Net cash flow</div>${kpiValue(netCashflow, moneyClass(netCashflow), 'money')}${Math.abs(incomeMTD)>=0.005 && netCashflow>0? `<div class="kpi-note">Saving ${(netCashflow/Math.abs(incomeMTD)*100).toFixed(1)}% of income</div>`:''}</div>
     </div>`;
 }
+let dashTodoShowAll = false;
+const DASH_TODO_LIMIT = 8;
+function toggleDashTodoAll(){ dashTodoShowAll = !dashTodoShowAll; renderDashboard(); }
 function dashTodoHTML(){
-  const items = dashboardTodoItems();
+  const all = dashboardTodoItems();
+  const items = dashTodoShowAll? all : all.slice(0, DASH_TODO_LIMIT);
   return `<div class="panel">
-    <div class="dash-head"><h2>${items.length? items.length+' thing'+(items.length===1?'':'s')+' need'+(items.length===1?'s':'')+' you' : 'Nothing needs you'}</h2></div>
+    <div class="dash-head"><h2>${all.length? all.length+' thing'+(all.length===1?'':'s')+' need'+(all.length===1?'s':'')+' you' : 'Nothing needs you'}</h2></div>
     ${items.length? `<div class="todo-list">${items.map((x,i)=>`<div class="todo-item ${x.tone} rise" style="animation-delay:${i*70}ms">
       <span class="todo-dot" aria-hidden="true"></span>
       <div style="flex:1;min-width:0"><div class="todo-title">${esc(x.title)}</div><div class="mut todo-sub">${esc(x.sub)}</div></div>
       ${x.dismiss? `<button class="btn ghost sm" onclick="${x.dismiss}" title="Silence until a new month closes">Dismiss</button>`:''}
       <button class="btn ghost sm" onclick="${x.onclick}">${esc(x.label)}</button>
-    </div>`).join('')}</div>` : `<div class="mut" style="font-size:13px">Every bank account is reconciled, nothing is over budget and there are no drift alerts.</div>`}
+    </div>`).join('')}</div>${all.length>DASH_TODO_LIMIT? `<div class="row" style="justify-content:center;margin-top:10px"><button class="btn ghost sm" onclick="toggleDashTodoAll()">${dashTodoShowAll? 'Show fewer' : 'Show all '+all.length}</button></div>` : ''}` : `<div class="mut" style="font-size:13px">Every bank account is reconciled, nothing is over budget and there are no drift alerts.</div>`}
   </div>`;
 }
 function dashBanksHTML(){
@@ -13682,7 +13702,8 @@ function forecastClosingChartHTML(rows){
   const H = 160, zeroY = hi/range*H;
   return `<div class="panel"><div class="dash-head"><h2>Closing balance</h2><span class="mut" style="font-size:12px">Lowest: <b class="mono ${moneyClass(vals[low])}">${money(vals[low])}</b> in ${esc(monthLabel(rows[low].month))}</span></div>
     <div class="fc-chart" role="img" aria-label="Closing balance by month; lowest ${money(vals[low])} in ${esc(monthLabel(rows[low].month))}" style="--fc-h:${H}px">${rows.map((r,i)=>{ const v = vals[i]; const h = Math.max(1, Math.abs(v)/range*H); const top = v>=0? zeroY-h : zeroY;
-      return `<div class="fc-col${i===low?' low':''}" title="${esc(monthLabel(r.month))}: ${money(v)}"><div class="fc-plot"><span class="fc-val mono ${v<0?'r':''}" style="top:${Math.max(0, v>=0? top-16 : top+h+2).toFixed(1)}px">${money(v)}</span><div class="fc-bar grow-y" style="top:${top.toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${i*40}ms"></div></div><div class="fc-m">${esc(monthLabel(r.month))}${i===low?'<div class="fc-low">lowest</div>':''}</div></div>`; }).join('')}</div></div>`;
+      // Whole units on the bars, like the table below; the exact amount is in the tooltip.
+      return `<div class="fc-col${i===low?' low':''}" title="${esc(monthLabel(r.month))}: ${money(v)}"><div class="fc-plot"><span class="fc-val mono ${v<0?'r':''}" style="top:${(v>=0? top : top+h+16).toFixed(1)}px">${Math.round(v).toLocaleString()}</span><div class="fc-bar grow-y${v<0?' neg':''}" style="top:${(top+16).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${i*40}ms"></div></div><div class="fc-m">${esc(monthLabel(r.month))}${i===low?'<div class="fc-low">lowest</div>':''}</div></div>`; }).join('')}</div></div>`;
 }
 function forecastShiftWindow(delta){
   const candidate = delta>0? nextMonthKeyPlain(forecastWindowStart) : prevMonthKey(forecastWindowStart);
