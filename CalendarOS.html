@@ -1906,6 +1906,16 @@ body.dark-mode .splash-bypass:hover{ background:rgba(255,255,255,0.06); }
 @keyframes panelFadeIn{ from{ opacity:0; transform:translateY(4px); } to{ opacity:1; transform:translateY(0); } }
 .settings-panel{ animation: panelFadeIn 0.22s ease; }
 .notebook-page{ animation: panelFadeIn 0.2s ease; }
+/* v4.72.0: keyboard hint, desktop only (phones have no Alt key) */
+.kbd-hint{font-size:11px; color:var(--ink-soft); font-family:var(--font-mono);}
+@media (max-width:860px){ .kbd-hint{display:none;} }
+/* v4.72.0: per-muscle weekly targets */
+.muscle-target-range{font-size:10.5px; color:var(--ink-soft); font-family:var(--font-mono); margin-left:4px;}
+.muscle-targets-editor{margin-top:8px; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--paper);}
+.muscle-target-row{display:flex; align-items:center; gap:6px; padding:3px 0; font-size:13px;}
+.muscle-target-row .mt-name{flex:0 0 92px;}
+.muscle-target-row input.train-input{width:52px; min-height:34px; text-align:center;}
+.muscle-target-row .mt-sug{font-size:11px; color:var(--ink-soft); margin-left:auto;}
 </style>
 </head>
 
@@ -2356,7 +2366,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.71.1';
+const APP_VERSION = '4.72.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2364,6 +2374,14 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.72.0', changes: [
+    'No SQL migration needed \u2014 front-end only. The per-muscle targets are saved inside the existing synced weekly-band setting, and \u201cWeekdays\u201d is a new value in the existing repeat-type field.',
+    'NEW \u2014 \u201cWeekdays\u201d repeat for recurring tasks. It repeats on every day that is not one of your Weekend days in Settings (Sunday to Thursday with Friday/Saturday as the weekend), and follows that setting if you change it. It has its own colour and appears in the Frequency filter. Like Daily, an unfinished one is marked missed when the day rolls over instead of piling up under Overdue. A device still on an older version will not show these tasks until it reloads.',
+    'NEW \u2014 Health Log keyboard shortcut (computer only): Alt+\u2190 goes to the previous day and Alt+\u2192 to the next day, even while you are typing in a box. What you typed is saved to the day you typed it for, and the cursor goes back into the same box on the new day. Next stops at today. On phones, keep using the Prev Day / Next Day buttons.',
+    'NEW \u2014 Weekly set targets per muscle. Training \u2192 Weekly Volume \u2192 \u201cWeekly targets per muscle\u201d lets you set a minimum and maximum for each muscle group, with a \u201cReset to suggested\u201d button and a short \u201cWhy these numbers\u201d note. Suggested: Chest, Lats, Shoulders, Quads 10\u201316 (Lats up to 18); Biceps, Triceps, Hamstrings, Glutes 8\u201314; Traps and Abs 6\u201312; Lower Back 4\u20138. The body map colours and the Done / Est numbers now judge each muscle against its own range, shown next to its name.',
+    'CHANGED \u2014 Review Pack: it now lists each muscle\u2019s own weekly range with the reason behind it (more sets build more muscle with smaller returns per extra set; about 10 sets a week holds muscle in a calorie deficit; muscles that get indirect work have lower numbers), and each muscle\u2019s own minimum is its weekly floor. It also checks whether the minimums fit into your training days at 6 exercises and 3 sets a day, and tells the AI to say so plainly if they do not.',
+    'NEW \u2014 Rest timer tips for the muscle you just trained. Tips now alternate: one for the exercise\u2019s main muscle (for example a chest stretch after chest work), then one general tip. Works on the computer and in the phone workout\u2019s bottom bar.',
+  ]},
   { v:'4.71.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIX \u2014 Dashboard \u201cHide missed / moved\u201d was hiding too much: tasks that had been rescheduled in the past but are due today disappeared. It now hides only what is missed or moved for the date being shown: a recurring task marked missed on that date, or one whose occurrence on that date was moved away. A task that was moved onto today, or a one-time task rescheduled earlier but due today, stays visible.',
@@ -3191,7 +3209,7 @@ const CHANGELOG = [
 const DOW_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DOW_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const RECUR_TYPES = ['Daily','Days of Week','Weekly','Bi-Weekly','Monthly','Yearly','Every X Days'];
+const RECUR_TYPES = ['Daily','Weekdays','Days of Week','Weekly','Bi-Weekly','Monthly','Yearly','Every X Days'];
 const PRIORITIES = ['High','Medium','Low'];
 const MAX_UNDO = 5;
 const ACCENT_PRESETS = ['#B9862F','#2F6E68','#3E6491','#7C5C8C','#4C7A3D','#3A3F47'];
@@ -3229,6 +3247,7 @@ const DEFAULT_SETTINGS_EXTRAS = {
   accentColor: '#B9862F',
   recurTypeColors: {
     'Daily': '#B9862F',
+    'Weekdays': '#2F6E8E',
     'Days of Week': '#3C7A73',
     'Weekly': '#5C7999',
     'Bi-Weekly': '#8E661F',
@@ -3477,6 +3496,10 @@ function isDueOn(task, dateStr){
   switch(task.type){
     case 'Daily':
       return true;
+    case 'Weekdays':
+      // v4.72.0: every day that is NOT one of the Weekend days in Settings
+      // (Fri/Sat by default). Follows that setting if it changes.
+      return !isWeekendDate(dateStr);
     case 'Days of Week': {
       if(!task.detail) return false;
       const days = task.detail.split(',').map(s=>s.trim());
@@ -3651,11 +3674,17 @@ async function clearRescheduleForOccurrence(taskId, toDate){
    single day regardless, so pinning yesterday's unresolved one too would
    just be permanent duplicate clutter. Instead, an unresolved Daily
    occurrence gets auto-recorded as missed at day rollover (see confirmNewDay). */
+/* v4.72.0: Weekdays behaves like Daily here — a fresh occurrence comes back
+   on the next weekday anyway, so an unresolved one is recorded as missed at
+   rollover instead of piling up as a persistent Overdue row. */
+function isDailyLikeRecur(t){
+  return !!t && (t.type === 'Daily' || t.type === 'Weekdays');
+}
 function getOverdueRecurring(){
   const today = todayStr();
   const results = [];
   state.tasks.recurring.forEach(t=>{
-    if(t.type === 'Daily') return;
+    if(isDailyLikeRecur(t)) return;
     let cursor = addDays(today, -1);
     let guard = 0;
     while(guard < 400){
@@ -9098,9 +9127,10 @@ function renderHealthView(){
     </div>
 
     <div class="filter-bar">
-      <button class="btn ghost sm" onclick="shiftHealthDate(-1)">← Prev Day</button>
+      <button class="btn ghost sm" onclick="shiftHealthDate(-1)" title="Previous day (Alt+←, works while typing)">← Prev Day</button>
       <input type="date" class="filter-date" value="${viewDate}" max="${todayStr()}" onchange="setHealthViewDate(this.value)">
-      <button class="btn ghost sm" onclick="shiftHealthDate(1)" ${viewDate>=todayStr()?'disabled':''}>Next Day →</button>
+      <button class="btn ghost sm" onclick="shiftHealthDate(1)" ${viewDate>=todayStr()?'disabled':''} title="Next day (Alt+→, works while typing)">Next Day →</button>
+      <span class="kbd-hint">Alt+← / Alt+→</span>
       ${viewDate!==todayStr() ? `<button class="btn ghost sm" onclick="setHealthViewDate(todayStr())">↺ Jump to Today</button>` : ''}
       <span class="page-sub" style="margin-left:auto;">${fullDate(viewDate)}</span>
     </div>
@@ -9153,7 +9183,7 @@ function renderMetricCard(m, entry){
   if(m.type === 'number'){
     inputHtml = `
       <div class="big-input">
-        <input type="number" step="any" value="${val??''}" placeholder="0" onchange="setMetricValue('${m.id}', this.value)">
+        <input type="number" step="any" value="${val??''}" placeholder="0" data-metric-id="${m.id}" onchange="setMetricValue('${m.id}', this.value)">
         ${m.unit ? `<span class="unit">${escapeHtml(m.unit)}</span>` : ''}
       </div>`;
   } else if(m.type === 'yesno'){
@@ -9163,7 +9193,7 @@ function renderMetricCard(m, entry){
         <button class="${val===false?'active':''}" onclick="setMetricValue('${m.id}', false)">No</button>
       </div>`;
   } else {
-    inputHtml = `<input type="text" value="${escapeHtml(val||'')}" placeholder="—" onchange="setMetricValue('${m.id}', this.value)">`;
+    inputHtml = `<input type="text" value="${escapeHtml(val||'')}" placeholder="—" data-metric-id="${m.id}" onchange="setMetricValue('${m.id}', this.value)">`;
   }
   return `
     <div class="card health-input-card">
@@ -9188,6 +9218,32 @@ function shiftHealthDate(delta){
 function setHealthViewDate(d){
   state.healthViewDate = d;
   renderMain();
+}
+/* v4.72.0: Alt+Left / Alt+Right on the Health Log moves one day back/ahead
+   without leaving the box being typed in. The typed value is saved to the
+   date it was typed for FIRST, and that box's own on-change save is switched
+   off before it is removed, so nothing can land on the new date by accident.
+   Then the cursor goes back into the same metric's box on the new date. */
+async function healthDateShortcut(delta){
+  const active = document.activeElement;
+  const metricId = active && active.tagName === 'INPUT' && active.dataset ? (active.dataset.metricId || null) : null;
+  if(metricId){
+    const typed = active.value;
+    active.onchange = null;
+    active.removeAttribute('onchange');
+    const m = (state.healthMetricDefs||[]).find(x=>x.id===metricId);
+    const stored = m ? getMetricValue(getHealthEntry(state.healthViewDate), m) : undefined;
+    const storedStr = (stored === undefined || stored === null) ? '' : String(stored);
+    if(m && typed !== storedStr) await setMetricValue(metricId, typed);
+  }
+  shiftHealthDate(delta);
+  if(metricId){
+    const next = document.querySelector(`.health-input-card input[data-metric-id="${CSS.escape(metricId)}"]`);
+    if(next){
+      next.focus();
+      try{ const n = next.value.length; next.setSelectionRange(n, n); }catch(e){} // number inputs don't support selection ranges
+    }
+  }
 }
 async function deleteHealthDay(dateStr){
   if(!confirm(`Delete the entire entry for ${humanDate(dateStr)}? This can't be undone.`)) return;
@@ -9559,6 +9615,7 @@ function startRestTimer(seconds,exId){
   // don't count as a gesture at all, so the context stayed silently
   // suspended and nothing ever played.
   _getRestAudioCtx();
+  _tipTurn = 0; // v4.72.0: each rest period starts with a tip for the muscle just trained
   _rotateTip(); // picks the first tip from the shuffle bag rather than always starting at the same one
   _updateRestTimerUI();
   _restTimerHandle=setInterval(_updateRestTimerUI,1000);
@@ -9672,7 +9729,121 @@ const REST_TIPS=[
   'Check the machine\'s range of motion setting matches your last good set',
   'One more slow breath before you commit to the next set',
 ];
+/* v4.72.0: tips for the muscle just trained. While the rest timer runs, tips
+   alternate: one for the exercise's PRIMARY muscle(s), then one general tip
+   from REST_TIPS, starting with a muscle tip. Exercises with no primary
+   muscle (or a muscle with no tips) get general tips only. Shared by the
+   desktop rest timer and the phone workout's bottom bar (same element). */
+const MUSCLE_REST_TIPS = {
+  chest:[
+    'Chest: gentle doorway stretch, arm at shoulder height, 15\u201320s \u2014 no bouncing',
+    'Chest: set your shoulder blades back and down before the next set, and keep them there',
+    'Chest: elbows about 45\u00b0 from your body, not flared straight out to the side',
+    'Chest: lower the weight under control \u2014 the lowering half builds muscle too',
+    'Chest: feet planted, upper back pressed into the pad for every rep',
+  ],
+  lats:[
+    'Back: lead each pull with your elbows, not your hands',
+    'Back: let your arms reach fully at the top of each rep to feel the stretch',
+    'Back: hang gently from the machine frame or do a light lat stretch between sets',
+    'Back: if your grip or biceps give out first, try a looser grip or straps',
+    'Back: pause for a moment at the end of each pull before letting the weight back',
+  ],
+  traps:[
+    'Traps: slow shoulder rolls backwards, then let your shoulders drop fully',
+    'Traps: shrug straight up and down \u2014 no rolling at the top',
+    'Traps: keep your neck long and your chin level, not pushed forward',
+    'Traps: gently tilt your ear toward each shoulder to loosen your neck',
+  ],
+  lower_back:[
+    'Lower back: a few slow cat-cows to reset between sets',
+    'Lower back: brace your stomach before every rep, as if about to be poked',
+    'Lower back: keep your spine neutral \u2014 let the movement come from your hips',
+    'Lower back: if it feels sharp rather than tired, stop this exercise for today',
+  ],
+  shoulders:[
+    'Shoulders: on raises, lead with your elbows and stop around shoulder height',
+    'Shoulders: small-to-large arm circles keep the joint warm',
+    'Shoulders: light cross-body stretch for the back of the shoulder, 15s each side',
+    'Shoulders: a lighter weight with clean form beats swinging a heavier one',
+    'Shoulders: keep them down, away from your ears, as you press or raise',
+  ],
+  biceps:[
+    'Biceps: keep your elbows by your sides \u2014 no swinging',
+    'Biceps: lower the weight slowly, over 2\u20133 seconds',
+    'Biceps: gentle stretch with your arm straight back against a wall or post',
+    'Biceps: squeeze at the top, then straighten your arm fully at the bottom',
+  ],
+  triceps:[
+    'Triceps: keep your elbows still \u2014 only your forearms should move',
+    'Triceps: straighten fully and squeeze at the end of each rep',
+    'Triceps: gentle overhead stretch, hand behind your head, 15s each arm',
+    'Triceps: if your elbows ache, try a rope or a palms-facing grip next set',
+  ],
+  quads:[
+    'Quads: walk around slowly \u2014 standing still lets your legs stiffen',
+    'Quads: standing quad stretch, heel toward your bum, 15s each leg',
+    'Quads: push through your whole foot, knees in line with your toes',
+    'Quads: control the way down, then drive up \u2014 no bouncing at the bottom',
+    'Quads: breathe deeply \u2014 leg sets raise your heart rate more than upper-body sets',
+  ],
+  hamstrings:[
+    'Hamstrings: heel on a low step, back straight, gentle stretch 15s each leg',
+    'Hamstrings: on curls, control the way back \u2014 don\'t let the pad drop',
+    'Hamstrings: on hip hinges, push your hips back and keep the weight close',
+    'Hamstrings: on leg curls, toes pointed up slightly keeps tension on the muscle',
+  ],
+  glutes:[
+    'Glutes: squeeze hard for a full second at the top of each rep',
+    'Glutes: figure-4 stretch, ankle over the opposite knee, 15s each side',
+    'Glutes: push through your heels and finish with your hips fully straight',
+    'Glutes: a few slow bodyweight bridges keep them switched on between sets',
+  ],
+  abs:[
+    'Abs: breathe out fully as you crunch \u2014 it helps you curl all the way',
+    'Abs: move slowly \u2014 momentum takes the work away from your abs',
+    'Abs: keep your lower back in control and stop the set if it starts to arch',
+    'Abs: a gentle standing side bend, or lie back over a bench, to stretch',
+  ],
+};
+let _currentTipText = '';
+let _tipTurn = 0;
+let _muscleTipBags = {};
+function _shuffledIndexes(n){
+  const bag = Array.from({length:n}, (_,i)=>i);
+  for(let i=bag.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [bag[i],bag[j]]=[bag[j],bag[i]]; }
+  return bag;
+}
+/* The muscle tips for the exercise the rest timer is running for. */
+function restTipPoolForExercise(exId){
+  const ex = exId ? getTrainingExerciseById(exId) : null;
+  const tips = [];
+  exMuscleGroups(ex,'primary').forEach(mg=>{ (MUSCLE_REST_TIPS[mg]||[]).forEach(t=>{ if(!tips.includes(t)) tips.push(t); }); });
+  return tips;
+}
+function _nextMuscleTip(exId){
+  const pool = restTipPoolForExercise(exId);
+  if(!pool.length) return null;
+  const key = String(exId);
+  if(!_muscleTipBags[key] || !_muscleTipBags[key].length) _muscleTipBags[key] = _shuffledIndexes(pool.length);
+  return pool[_muscleTipBags[key].pop()] || null;
+}
+function currentRestTip(){ return _currentTipText; }
 function _rotateTip(){
+  // v4.72.0: alternate muscle tip / general tip (see MUSCLE_REST_TIPS).
+  const wantMuscle = (_tipTurn % 2) === 0;
+  _tipTurn++;
+  const muscleTip = wantMuscle ? _nextMuscleTip(_restTimerExId) : null;
+  if(muscleTip){
+    _currentTipText = muscleTip;
+  } else {
+    _rotateGeneralTip();
+    _currentTipText = REST_TIPS[_tipIndex];
+  }
+  const el=document.getElementById('restTimerTip');
+  if(el) el.textContent=_currentTipText;
+}
+function _rotateGeneralTip(){
   // v4.5x: was sequential (0,1,2,...,then wrap) — same predictable order
   // every single rest period. Now a shuffled "bag": walk through a random
   // permutation of all tips before reshuffling, so every tip is seen once
@@ -9686,8 +9857,6 @@ function _rotateTip(){
     }
   }
   _tipIndex=_tipBag.pop();
-  const el=document.getElementById('restTimerTip');
-  if(el) el.textContent=REST_TIPS[_tipIndex];
 }
 function _updateRestTimerUI(){
   const remaining=Math.max(0,Math.round((_restTimerEnd-Date.now())/1000));
@@ -9708,7 +9877,7 @@ function _updateRestTimerUI(){
       <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(-15)">\u221215s</button>
       <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(15)">+15s</button>
       <button class="btn ghost sm" onclick="stopRestTimer()"><span class="rd-long">Done early</span><span class="rd-short">Skip</span></button>
-      <div class="rest-timer-tip" id="restTimerTip">${REST_TIPS[_tipIndex]}</div>
+      <div class="rest-timer-tip" id="restTimerTip">${escapeHtml(_currentTipText || REST_TIPS[_tipIndex])}</div>
     </div>`;
   } else {
     const countEl=document.getElementById('restTimerCount');
@@ -11579,6 +11748,80 @@ function toggleSetDone(date, exId, setNo, restSec){
 
    Clicking any muscle region filters the Exercise Library to that muscle. */
 const MUSCLE_BAND_DEFAULT = { min:10, max:20 };
+/* v4.72.0: weekly hard-set target per muscle group (sets/week, warm-ups
+   excluded), replacing the single band for every muscle. These are the
+   suggested defaults, chosen for fat loss while keeping and building muscle:
+   more sets build more muscle but with diminishing returns per extra set
+   (Pelland et al. 2024 dose-response meta-regression), and ~10 hard sets a
+   week is enough to hold muscle in a calorie deficit (Roth et al.: 20 weekly
+   sets did no better than 12). Muscles that get a lot of indirect work from
+   compound lifts get lower numbers. Every value is editable in Training ->
+   Weekly Volume -> Weekly targets per muscle; edits are stored as
+   muscleBand.perMuscle inside the existing synced muscle_band jsonb column
+   (no SQL). muscleBand.min/max stay for older app versions. */
+const MUSCLE_TARGETS_SUGGESTED = {
+  chest:{min:10,max:16}, lats:{min:10,max:18}, shoulders:{min:10,max:16}, quads:{min:10,max:16},
+  biceps:{min:8,max:14}, triceps:{min:8,max:14}, hamstrings:{min:8,max:14}, glutes:{min:8,max:14},
+  traps:{min:6,max:12}, abs:{min:6,max:12}, lower_back:{min:4,max:8},
+};
+const MUSCLE_TARGET_REASONS = {
+  chest:'major pressing muscle; direct pressing also gives triceps and front shoulders indirect work',
+  lats:'large back muscle that recovers well; rows and pulldowns also work traps, biceps and rear shoulders',
+  shoulders:'front shoulders already get a lot from pressing, so direct sets should mostly be side and rear raises',
+  quads:'large muscle, but leg sets are very fatiguing in a calorie deficit, so the top of the range stays moderate',
+  biceps:'every row and pulldown already trains them indirectly',
+  triceps:'every press already trains them indirectly',
+  hamstrings:'trained by curls and hip hinges; hinges also add lower-back and glute work',
+  glutes:'squats, leg presses and hip hinges already train them indirectly',
+  traps:'rows, pulldowns and shoulder raises already train them heavily indirectly',
+  abs:'bracing on compound lifts trains them indirectly; direct work recovers fast',
+  lower_back:'hinges and rows train it indirectly; extra direct work adds fatigue quickly, so keep it low',
+};
+function _validMuscleRange(r){
+  return !!r && Number.isFinite(r.min) && Number.isFinite(r.max) && r.min >= 0 && r.max >= r.min;
+}
+/* The {min,max} target for one muscle group: its own edited value, else the
+   suggested default, else the old shared band. */
+function muscleBandFor(mg){
+  const band = state.settings.muscleBand || MUSCLE_BAND_DEFAULT;
+  const own = band.perMuscle && band.perMuscle[mg];
+  if(_validMuscleRange(own)) return { min:own.min, max:own.max };
+  if(MUSCLE_TARGETS_SUGGESTED[mg]) return { ...MUSCLE_TARGETS_SUGGESTED[mg] };
+  return { min:band.min, max:band.max };
+}
+function allMuscleTargets(){
+  const out = {};
+  MUSCLE_GROUPS.forEach(mg=>{ out[mg] = muscleBandFor(mg); });
+  return out;
+}
+function setMuscleTarget(mg, key, val){
+  if(!MUSCLE_GROUPS.includes(mg) || (key!=='min' && key!=='max')) return;
+  const n = Math.round(Number(val));
+  if(!Number.isFinite(n) || n < 0 || n > 50){ showToast('Enter a whole number from 0 to 50'); renderMain(); return; }
+  if(!state.settings.muscleBand) state.settings.muscleBand = { ...MUSCLE_BAND_DEFAULT };
+  const band = state.settings.muscleBand;
+  // First edit: freeze the full current table, so changing one muscle never
+  // silently changes another one's effective target.
+  if(!band.perMuscle || typeof band.perMuscle !== 'object') band.perMuscle = allMuscleTargets();
+  const cur = { ...muscleBandFor(mg) };
+  cur[key] = n;
+  if(key==='min' && cur.max < n) cur.max = n;
+  if(key==='max' && cur.min > n) cur.min = n;
+  band.perMuscle[mg] = cur;
+  saveSettings(); renderMain();
+}
+function resetMuscleTargets(){
+  if(!confirm('Reset every muscle\u2019s weekly target to the suggested ranges?')) return;
+  if(!state.settings.muscleBand) state.settings.muscleBand = { ...MUSCLE_BAND_DEFAULT };
+  const fresh = {};
+  MUSCLE_GROUPS.forEach(mg=>{ fresh[mg] = { ...(MUSCLE_TARGETS_SUGGESTED[mg] || MUSCLE_BAND_DEFAULT) }; });
+  state.settings.muscleBand.perMuscle = fresh;
+  saveSettings(); renderMain();
+}
+function toggleMuscleTargetsEditor(){
+  state.muscleTargetsOpen = !state.muscleTargetsOpen; // UI only, not saved
+  renderMain();
+}
 
 /* Convenience alias for "this week's done volume" — same single source of
    truth as the Weekly Volume panel and the review pack (computeCalendarWeekVolume,
@@ -11886,7 +12129,7 @@ function renderWeeklyVolumePanel(){
   const { weekStart, weekEnd, doneVol:vol, plannedVol:plannedRemaining } = computeCalendarWeekVolume(weekOffset);
   const band=state.settings.muscleBand||MUSCLE_BAND_DEFAULT;
   const LABELS = MUSCLE_GROUP_LABELS;
-  const fs=(mg)=>`fill:${muscleVolumeColour(vol[mg]||0,band)};fill-opacity:${muscleVolumeOpacity(vol[mg]||0,band)};cursor:pointer;`;
+  const fs=(mg)=>`fill:${muscleVolumeColour(vol[mg]||0,muscleBandFor(mg))};fill-opacity:${muscleVolumeOpacity(vol[mg]||0,muscleBandFor(mg))};cursor:pointer;`;
   const unmapped=state.training.exercises.filter(e=>e.category==='strength'&&!exMuscleGroups(e).length);
   const weekLabel = weekOffset===0 ? 'This week' : `${humanDate(weekStart)} – ${humanDate(weekEnd)}`;
   return `
@@ -11964,25 +12207,21 @@ function renderWeeklyVolumePanel(){
           <span style="flex:1;">Muscle</span><span style="width:38px;text-align:right;">Done</span><span style="width:52px;text-align:right;" title="Still on the calendar for the rest of this week (Sun-Sat), whether or not it's been logged yet">Planned</span><span style="width:44px;text-align:right;" title="Done + Planned">Est.</span>
         </div>
         ${MUSCLE_GROUPS.map(mg=>{
-          const sets=vol[mg]||0; const colour=muscleVolumeColour(sets,band); const textColour=muscleVolumeTextColour(sets,band);
+          const mb=muscleBandFor(mg);
+          const sets=vol[mg]||0; const colour=muscleVolumeColour(sets,mb); const textColour=muscleVolumeTextColour(sets,mb);
           const planned=plannedRemaining[mg]||0;
           const estTotal=sets+planned;
-          const estColour=muscleVolumeTextColour(estTotal,band);
+          const estColour=muscleVolumeTextColour(estTotal,mb);
           return `<div onclick="filterExercisesByMuscle('${mg}')" style="display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:6px;cursor:pointer;" onmouseover="this.style.background='var(--paper-dim)'" onmouseout="this.style.background=''">
             <span style="width:8px;height:8px;border-radius:2px;background:${colour};flex-shrink:0;"></span>
-            <span style="flex:1;font-size:13px;">${LABELS[mg]||mg}</span>
+            <span style="flex:1;font-size:13px;">${LABELS[mg]||mg} <span class="muscle-target-range" title="Weekly target (sets)">${mb.min}\u2013${mb.max}</span></span>
             <span style="width:38px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${textColour};">${sets||'—'}</span>
             <span style="width:52px;text-align:right;font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);">${planned?`+${planned}`:'—'}</span>
             <span style="width:44px;text-align:right;font-family:var(--font-mono);font-size:13px;font-weight:600;color:${estColour};" title="If everything still on the calendar for the rest of this week (Sun-Sat) gets logged as planned">${estTotal||'—'}</span>
           </div>`;
         }).join('')}
         ${unmapped.length?`<div class="page-sub" style="margin-top:8px;font-size:11.5px;">⚠ ${unmapped.length} exercise${unmapped.length===1?'':'s'} with no muscle group — set it in Exercise Library.</div>`:''}
-        <div style="margin-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span style="font-size:12px;color:var(--ink-soft);">Band:</span>
-          <input type="number" min="1" max="50" value="${band.min}" style="width:46px;" class="train-input" onchange="setMuscleBand('min',Number(this.value))"> –
-          <input type="number" min="1" max="50" value="${band.max}" style="width:46px;" class="train-input" onchange="setMuscleBand('max',Number(this.value))">
-          <span style="font-size:11px;color:var(--ink-soft);">sets / week</span>
-        </div>
+        ${renderMuscleTargetsEditor()}
         <label style="margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" ${state.settings.includeSecondaryMuscles?'checked':''} onchange="toggleIncludeSecondaryMuscles()">
           <span style="font-size:12px;color:var(--ink-soft);">Count secondary muscles (½ credit each) in the totals below</span>
@@ -11994,6 +12233,34 @@ function renderWeeklyVolumePanel(){
       </div>
     </div>
   </div>`;
+}
+/* v4.72.0: per-muscle weekly targets editor (replaces the single Band row). */
+function renderMuscleTargetsEditor(){
+  const open = !!state.muscleTargetsOpen;
+  const head = `<button type="button" class="btn ghost sm" style="margin-top:10px;" onclick="toggleMuscleTargetsEditor()">${open?'\u25be':'\u25b8'} Weekly targets per muscle</button>`;
+  if(!open) return head;
+  const rows = MUSCLE_GROUPS.map(mg=>{
+    const r = muscleBandFor(mg), sug = MUSCLE_TARGETS_SUGGESTED[mg];
+    return `<div class="muscle-target-row" data-muscle="${mg}">
+      <span class="mt-name">${MUSCLE_GROUP_LABELS[mg]||mg}</span>
+      <input type="number" min="0" max="50" inputmode="numeric" value="${r.min}" class="train-input mt-min" aria-label="${MUSCLE_GROUP_LABELS[mg]||mg} minimum" onchange="setMuscleTarget('${mg}','min',this.value)">
+      <span>\u2013</span>
+      <input type="number" min="0" max="50" inputmode="numeric" value="${r.max}" class="train-input mt-max" aria-label="${MUSCLE_GROUP_LABELS[mg]||mg} maximum" onchange="setMuscleTarget('${mg}','max',this.value)">
+      <span class="mt-sug">${sug ? `suggested ${sug.min}\u2013${sug.max}` : ''}</span>
+    </div>`;
+  }).join('');
+  return `${head}
+    <div class="muscle-targets-editor">
+      <div class="page-sub" style="font-size:11.5px;margin-bottom:6px;">Hard sets per week (warm-ups excluded). Colours, the Est column and the Review Pack all use these.</div>
+      ${rows}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+        <button type="button" class="btn ghost sm" onclick="resetMuscleTargets()">Reset to suggested</button>
+      </div>
+      <details style="margin-top:8px;font-size:12px;color:var(--ink-soft);">
+        <summary style="cursor:pointer;">Why these numbers</summary>
+        <p style="margin:6px 0;">More sets build more muscle, but each extra set adds less than the one before. In a calorie deficit about 10 hard sets a week per muscle is enough to keep muscle, and in one trial 20 weekly sets did no better than 12, so the minimums sit near 10 and the maximums are moderate. Muscles that get a lot of indirect work from compound lifts (traps, lower back, abs, and biceps/triceps from rows and presses) have lower numbers.</p>
+      </details>
+    </div>`;
 }
 function setMuscleBand(key,val){
   if(!state.settings.muscleBand) state.settings.muscleBand={...MUSCLE_BAND_DEFAULT};
@@ -14955,6 +15222,7 @@ function buildTrainingReviewPack(){
     adherence,
     weeklyVolumeByMuscle: volumeByMuscle,
     plannedRemainingVolumeByMuscle,
+    weeklySetTargets: allMuscleTargets(),
     sessionDetail: sessions,
     failureTests,
     currentSuggestions: upcomingSuggestions,
@@ -15052,6 +15320,23 @@ function goFillMissingData(date){
   state.healthViewDate = date;
   setView('health');
 }
+/* v4.72.0: the per-muscle weekly targets, with the reasoning behind them, as
+   sent to the AI in the Review Pack. */
+function buildWeeklySetTargetsPromptBlock(trainingDays){
+  const t = allMuscleTargets();
+  const lines = MUSCLE_GROUPS.map(mg=>{
+    const sug = MUSCLE_TARGETS_SUGGESTED[mg];
+    const edited = sug && (sug.min!==t[mg].min || sug.max!==t[mg].max);
+    return `- ${MUSCLE_GROUP_LABELS[mg]||mg} (${mg}): MIN ${t[mg].min}, MAX ${t[mg].max} sets/week${edited?' (my own setting)':''} \u2014 ${MUSCLE_TARGET_REASONS[mg]||''}`;
+  }).join('\n');
+  const sumMin = MUSCLE_GROUPS.reduce((a,mg)=>a+t[mg].min,0);
+  const days = Number(trainingDays)||0;
+  const room = days*6*3;
+  return `WEEKLY SET TARGETS PER MUSCLE (hard working sets per calendar week, Sunday to Saturday; warm-ups never count). I set these myself in the app, one range per muscle:
+${lines}
+WHY THESE RANGES: more weekly sets build more muscle, but each extra set adds less than the one before (Pelland et al. 2024 dose-response meta-regression). I am in a calorie deficit to lose fat while keeping and building muscle; about 10 hard sets per muscle per week is enough to hold muscle in a deficit, and in one trial 20 weekly sets did no better than 12 (Roth et al.). So the MINs sit near 10 and the MAXs are moderate: going above a MAX mostly adds fatigue I cannot recover from while dieting. Muscles that get a lot of indirect work from compound lifts have lower numbers. Sets count the way my app counts them: 1 per set for an exercise's primary muscles${state.settings.includeSecondaryMuscles ? ', plus 0.5 per set for its secondary muscles' : ' only (secondary muscles are not counted at the moment)'}.
+CAPACITY CHECK: the MINs add up to ${sumMin} sets/week. With ${days} training days, at most 6 exercises a day and 3 working sets each, there is room for about ${room} sets/week${sumMin>room?' \u2014 that is LESS than the MINs need, so say so plainly and propose the least-bad compromise instead of silently missing floors':''}.`;
+}
 function copyTrainingReviewPack(){
   const pack = buildTrainingReviewPack();
   const packJson = JSON.stringify(pack, null, 2);
@@ -15067,6 +15352,7 @@ function copyTrainingReviewPack(){
   const trainingGoals = state.settings.trainingGoals || { priorityMuscles:[], notes:'' };
   const priorityMuscleLabels = (trainingGoals.priorityMuscles||[]).map(mg=>MUSCLE_GROUP_LABELS[mg]||mg);
   const band = state.settings.muscleBand || MUSCLE_BAND_DEFAULT;
+  const weeklySetTargetsBlock = buildWeeklySetTargetsPromptBlock(pack.goals.weeklyTrainingDays);
 
   const prompt = `You are my coach: a world-class strength and hypertrophy coach with an excellent track record of building muscle in real people, and deep, current knowledge of programming, recovery and nutrition. Be direct. Do not sugar-coat anything, do not flatter me, and do not soften bad news: tell me exactly how it is, including when my own plan, rules or logging are the problem. If a rule I set looks wrong for my goal, say so plainly and still follow it in the plan unless it is physically impossible.\n\nYou are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
 
@@ -15076,8 +15362,10 @@ MY FIXED WEEKLY SCHEDULE (hard constraint, not a suggestion to optimize): ${pack
 \`\`\`json
 ${JSON.stringify(pack.trainingSchedule, null, 2)}
 \`\`\`
-EVERY tracked muscle group must get AT LEAST ${band.min} sets/week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, close the gap using the ordered steps in the working-sets rule below (extra training day, different primary exercise, secondary credit, and only then a 4th set), while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
-${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume target than the standard ${band.min}-${band.max} set band (aim toward the upper end, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (lower end of the usual band), not neglected, just not the focus.` : ''}
+${weeklySetTargetsBlock}
+
+EVERY tracked muscle group must get AT LEAST its own MIN from the WEEKLY SET TARGETS table above, every week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, close the gap using the ordered steps in the working-sets rule below (extra training day, different primary exercise, secondary credit, and only then a 4th set), while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
+${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume than the rest (aim toward the upper end of their own range in the WEEKLY SET TARGETS table, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (the lower end of their own range, never below its MIN), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 
 MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid; seatSetting, where present, is my own note on how I have that machine dialed in — purely informational, nothing for you to act on; lastCompleted is the date and heaviest working weight of my most recent completed session of that exercise, null if I have never done it):
@@ -15094,9 +15382,9 @@ WHAT I NEED FROM YOU:
 
 0. **Data sense-check (do this first, before anything else).** Go through the data pack and the library critically. List, bluntly, anything that does not make sense or looks wrong: impossible or implausible values (a weight or rep count that jumps wildly, a bodyweight that moves several kg in a day, sets with no weight or reps), sessions or days that contradict each other, exercises with no history, and any missing information. missingHealthData in the pack lists days where health-log metrics were left empty; say how much that weakens your conclusions. Do not quietly work around bad data: name it and say what you assumed. Then say what EXTRA data (a metric, a measurement, a log habit, a test) would let you coach me better and speed up my progress. If everything is clean, say so in one line.
 
-1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs the ${band.min}–${band.max} set band. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. ${state.settings.includeSecondaryMuscles ? "Secondary muscles are currently included at half credit per set (toggled on in the app) — a muscle only hit as a secondary target is already reflected fractionally in these numbers, you don't need to add anything for it separately." : "Secondary muscles are currently excluded entirely (toggled off in the app) — these numbers only reflect each exercise's primary target muscles, so a muscle that's only ever hit as a secondary target on my current exercises will read as under-volume even if it's getting real indirect work; keep that in mind rather than treating a low secondary-only muscle as purely neglected."} Add them together for each muscle and check the total against the band — if a muscle is still going to land under the band even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
+1. **Performance summary** (4–6 bullet points): what went well, what didn't — look at load progression, adherence, RIR trends, and weekly volume per muscle vs that muscle's own range in the WEEKLY SET TARGETS table. \`weeklyVolumeByMuscle\` and \`plannedRemainingVolumeByMuscle\` are both for the current calendar week (Sunday through Saturday) — Done and Planned within that same week, not a rolling window. ${state.settings.includeSecondaryMuscles ? "Secondary muscles are currently included at half credit per set (toggled on in the app) — a muscle only hit as a secondary target is already reflected fractionally in these numbers, you don't need to add anything for it separately." : "Secondary muscles are currently excluded entirely (toggled off in the app) — these numbers only reflect each exercise's primary target muscles, so a muscle that's only ever hit as a secondary target on my current exercises will read as under-volume even if it's getting real indirect work; keep that in mind rather than treating a low secondary-only muscle as purely neglected."} Add them together for each muscle and check the total against that muscle's own range — if a muscle is still going to land under its MIN even once everything already scheduled for the rest of THIS week gets done, that's a real gap, not just a snapshot of a week in progress: adjust one of the remaining days in the plan you produce below to close it (add a set, swap in an extra exercise, whatever's cleanest) rather than just noting the shortfall. Also look at \`bodyMetrics\` (weight, and whatever nutrition metrics I've logged — calories, protein, fiber, etc, self-described by name) alongside the training data: flag anything worth connecting, e.g. protein intake that's consistently low relative to training volume, a stall in lifts that lines up with a stretch of poor logging or a calorie deficit that looks too aggressive, or a metric that's gone untracked for most of the window. Don't force a connection that isn't really there.
 
-2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under or over the band, any anomalies.
+2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under its MIN or over its MAX in the WEEKLY SET TARGETS table, any anomalies.
 
 3. **Failure-test calibration.** My app automatically schedules one isolation exercise's last set as a true push-to-failure test roughly every 12 days — see \`failureTests\` in the data pack. This is the strongest signal available for whether an exercise's working weight is right: if a failure set logged well above its \`currentTargetRepRange\`, the working weight is too light and should increase; well below it, ease back. Call out any exercise where this happened, and reflect it directly in the weights/rep ranges you recommend for that exercise below. (The app keeps scheduling these failure tests on its own in future sessions regardless of what's in the imported plan — you don't need to add anything to make that happen, just use the results already collected.)
 
@@ -18398,6 +18686,11 @@ function recurDetailInputHtml(type, detail){
   if(type === 'Daily'){
     return `<label>Detail</label><input type="text" id="f_detail" value="" disabled placeholder="No detail needed for Daily">`;
   }
+  if(type === 'Weekdays'){
+    const wd = state.settings.weekendDays || [];
+    const days = DOW_ABBR.filter(d=>!wd.includes(d));
+    return `<label>Detail</label><input type="text" id="f_detail" value="" disabled placeholder="${days.length ? days.join(', ') : 'Every day'} (every day except your weekend days in Settings)">`;
+  }
   if(type === 'Days of Week'){
     const selected = (detail||'').split(',').map(s=>s.trim());
     return `<label>Days (select all that apply)</label>
@@ -18436,7 +18729,7 @@ function pickRecurType(type){
 
 function readRecurDetail(){
   const type = modalRecurType;
-  if(type === 'Daily') return '';
+  if(type === 'Daily' || type === 'Weekdays') return '';
   if(type === 'Days of Week'){
     const picked = Array.from(document.querySelectorAll('.dow-pill.active')).map(b=>b.dataset.day);
     return picked.join(',');
@@ -18900,7 +19193,7 @@ async function confirmNewDay(forDate){
   // computed so it's correctly excluded from that day's denominator instead
   // of counting as "not done".
   state.tasks.recurring.forEach(t=>{
-    if(t.type === 'Daily' && isEffectivelyDueOn(t, forDate) && !getOccurrence(t.id, forDate)){
+    if(isDailyLikeRecur(t) && isEffectivelyDueOn(t, forDate) && !getOccurrence(t.id, forDate)){
       setOccurrenceStatus(t.id, forDate, 'missed');
     }
   });
@@ -19576,6 +19869,15 @@ document.addEventListener('keydown', (e)=>{
 });
 
 document.addEventListener('keydown', (e)=>{
+  // v4.72.0: Health Log day shortcut. preventDefault also stops the browser
+  // treating Alt+Left/Right as Back/Forward while on this page.
+  if(state.view === 'health' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+     && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+     && !document.getElementById('modalOverlay')){
+    e.preventDefault();
+    healthDateShortcut(e.key === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
   if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){
     e.preventDefault();
     if(cmdPaletteOpen) closeCommandPalette(); else openCommandPalette();

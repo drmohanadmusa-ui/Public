@@ -1,6 +1,6 @@
 # Break-then-restore check: proves the new tests actually guard the new code.
 #
-# Usage: python3 dev/break_restore.py breaks.json
+# Usage: python3 dev/ledgeros/break_restore.py breaks.json
 #   breaks.json = [{"name": "what this break simulates",
 #                   "good": "exact snippet currently in LedgerOS.html (must occur exactly once)",
 #                   "bad":  "the broken replacement"}, ...]
@@ -12,7 +12,7 @@
 import json, os, shutil, subprocess, sys
 
 DEV = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.abspath(os.path.join(DEV, '..', 'LedgerOS.html'))
+APP = os.path.abspath(os.path.join(DEV, '..', '..', 'LedgerOS.html'))
 RUN = os.path.join(DEV, 'run_tests.sh')
 
 def run():

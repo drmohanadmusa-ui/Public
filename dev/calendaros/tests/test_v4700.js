@@ -1,0 +1,25 @@
+/* v4.70.0 Review Pack: 3 sets default / 4-set exception ladder / 6 exercises per day */
+const { loadApp } = require('./harness');
+let pass=0, fail=0; const check=(n,c,d)=>{ if(c) pass++; else { fail++; console.log('  FAIL',n,d||''); } };
+const win = loadApp(); const t = win.__t; let txt = '';
+win.matchMedia = (q)=>({ matches:false, media:q, addListener(){}, removeListener(){} });
+win.navigator.clipboard = { writeText:(x)=>{ txt = x; return Promise.resolve(); } };
+win.copyTrainingReviewPack();
+check('prompt produced', txt.length > 5000, String(txt.length));
+check('old "exactly 3" rule gone', !/exactly 3 working sets/i.test(txt));
+check('default 3 stated', txt.includes('The default is 3 working sets per exercise'));
+check('max 4', txt.includes('never more than 4'));
+check('ladder steps 1-4 in order', ['1. Move the muscle to an extra training day','2. Use a different exercise that has the muscle as a primary target','3. Count secondary-muscle credit','4. Only then add a 4th set'].map(s=>txt.indexOf(s)).every((v,i,a)=>v>0 && (i===0 || v>a[i-1])));
+check('raise to floor exactly', txt.includes('Raise the muscle to the floor exactly and do not exceed it'));
+check('step 5 last resort 7 or 8', txt.includes('7 or at most 8') && txt.includes('Last resort'));
+check('spread / no two 4-set same muscle same day', txt.includes('Do not put two 4-set blocks for the same muscle on one day'));
+check('not on non-progressing exercises', txt.includes('not progressing at their current volume'));
+check('4-set blocks listed in rules check', txt.includes('list every 4-set block') && txt.includes('"none"'));
+check('exercises-per-day rule', txt.includes('at most 6 exercises in any training day'));
+check('item 7 updated', txt.includes('3 by default, 4 only under the exception') && txt.includes('the 6-exercises-per-day limit'));
+check('floor paragraph points to ladder', txt.includes('ordered steps in the working-sets rule') && !txt.includes('increase sets per session or add a day'));
+check('warm-up note kept', txt.includes('counts working sets only'));
+check('JSON schema unchanged', txt.includes('"exerciseSuggestions"') && txt.includes('"calendar"'));
+check('changelog 4.70.0', t.CHANGELOG.some(c=>c.v==='4.70.0'));
+console.log(`test_v4700: ${pass} passed, ${fail} failed`);
+process.exit(fail?1:0);

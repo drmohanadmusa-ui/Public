@@ -1,0 +1,46 @@
+# Known stale failures in the CalendarOS suite (baseline as of v4.71.1, 2026-11-07).
+#
+# These assertions were already failing against the real app before the move to Claude Code
+# (they test behaviour that later versions deliberately changed). run_tests.sh marks them [known]
+# and still exits 0; any FAIL line NOT listed here is [NEW] and turns the run red.
+#
+# Rules:
+# - Never weaken a test to make it pass. Never add a line here to hide a new failure.
+# - Retiring a stale assertion (rewriting it to the current intended behaviour) is a separate,
+#   agreed piece of work. When one is retired, delete its line here in the same commit.
+# - Format: "<suite>: FAIL <text>" exactly as the runner prints it. A line ending in " *"
+#   matches by prefix (for lines that print a value that varies with the date).
+#
+# test_v441 is date-sensitive: on some weekdays the last two test_v441 lines below also fail.
+
+test_v439: FAIL no new synced table was introduced — 21
+test_v440: FAIL total is 18 — 21
+test_v441: FAIL chest (compound) → 90s
+test_v441: FAIL quads (compound) → 90s
+test_v441: FAIL null exercise → 90s fallback
+test_v4421: FAIL target badge div class present in HTML
+test_v4421: FAIL target badge shown for E1
+test_v4421: FAIL target rep range shown (8-12)
+test_v4421: FAIL target shown for E2 (10-15)
+test_v4421: FAIL suggested 40kg appears in target badge
+test_v4421: FAIL target-badge-met class applied
+test_v4421: FAIL 2/3 shown when one set removed
+test_v4421: FAIL E1 target rep range 8-12 appears
+test_v4421: FAIL E2 target rep range 10-15 appears
+test_v444: FAIL the set-mode group renders in the DOM
+test_v445: FAIL matched exercise updates in place (same id)
+test_v445: FAIL bicep curl tagged compound -> 90s (would guess 60s from muscleGroup alone)
+test_v445: FAIL no liftType set -> falls back to the muscle-group guess (chest -> 90s)
+test_v445: FAIL removing it and re-rendering does not silently re-add it
+test_v447: FAIL one compound group among isolation groups → 90s
+test_v448: FAIL an incomplete exercise is NOT collapsed
+test_v448: FAIL a fully-done exercise stays expanded by default (auto-collapse removed)
+test_v448: FAIL manually collapsing shows the one-line summary
+test_v448: FAIL saving while manually collapsed does NOT wipe existing notes (the bug this session found and fixed)
+test_v448: FAIL tapping expands the full card again
+test_v448: FAIL the expanded notes field shows the preserved value
+test_v448: FAIL toggling again re-collapses it
+test_v448: FAIL seat setting shown on the log card — card rendered
+test_v448: FAIL the picked exercise shows the failure-day banner
+test_v441: FAIL chest: 3 done working sets (1 warm-up excluded) *
+test_v441: FAIL sets from the previous calendar week excluded

@@ -9,13 +9,13 @@
 //     NEVER into the repo.
 //
 // Usage (outside the repo for output):
-//   SB_URL=https://<project>.supabase.co node dev/redesign/realdata_walk.js <path/to/LedgerOS.html> <outDir>
+//   SB_URL=https://<project>.supabase.co node dev/ledgeros/redesign/realdata_walk.js <path/to/LedgerOS.html> <outDir>
 const { chromium } = require('playwright');
 const http = require('http'); const fs = require('fs'); const path = require('path');
 const [htmlPath, outDir] = process.argv.slice(2);
 const SB_URL = process.env.SB_URL;
 if (!htmlPath || !outDir || !SB_URL) { console.error('usage: SB_URL=... node realdata_walk.js <html> <outDir>'); process.exit(1); }
-if (path.resolve(outDir).startsWith(path.resolve(__dirname, '..', '..'))) { console.error('Refusing to write real-data output inside the repo.'); process.exit(1); }
+if (path.resolve(outDir).startsWith(path.resolve(__dirname, '..', '..', '..'))) { console.error('Refusing to write real-data output inside the repo.'); process.exit(1); }
 fs.mkdirSync(outDir, { recursive: true });
 const srv = http.createServer((q, r) => { r.writeHead(200, { 'content-type': 'text/html' }); r.end(fs.readFileSync(htmlPath)); }).listen(8765);
 (async () => {

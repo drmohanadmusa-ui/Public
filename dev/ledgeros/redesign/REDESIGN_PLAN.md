@@ -1,16 +1,18 @@
 # LedgerOS v5.0.0: the new look (build plan)
 
 Agreed with Muhannad on 2026-11-07, in the design session. This file is the hand-over to the build session.
-Read `CLAUDE.md` first; everything there still applies. **No real figures, names or Supabase details in this repo.**
+Read `CLAUDE.md` and `.claude/rules/ledgeros.md` first; everything there still applies. Skills: `/ledgeros-check`, `/ledgeros-ship`, `/ledgeros-data`. **No real figures, names or Supabase details in this repo.**
 
 ## Where the design lives
 
 - **Interactive mockup (the visual reference):** https://claude.ai/artifact/8PFw8Xp17potKigegv2LT2
   (private to Muhannad; read it with the Artifact tool, `action: "read"`).
-- **Mockup sources:** `dev/redesign/mockup/*.dc.html`. `Command.dc.html` is the app shell and Dashboard;
+- **Mockup sources:** `dev/ledgeros/redesign/mockup/*.dc.html`. `Command.dc.html` is the app shell and Dashboard;
   `PosBox.dc.html` is the custom position box; `Pg*.dc.html` are the other pages. All data in them is invented.
   They are design references, not code to paste: the real app is plain inline JS, no framework.
-- **Design context:** `PRODUCT.md` (product truth) and `.impeccable/surfaces/ledgeros-html.md` (Impeccable notes).
+- **Design context:** `dev/ledgeros/redesign/impeccable/PRODUCT.md` (product truth) and `.../ledgeros-html.md` (Impeccable notes).
+  They are kept out of the repo root on purpose (the repo also hosts CalendarOS). To use the Impeccable skill in the build session,
+  copy them to `PRODUCT.md` and `.impeccable/surfaces/ledgeros-html.md` at the root, and list both in `.git/info/exclude` so they are never committed there.
   The Impeccable, design-taste-frontend and hallmark skills are installed by the environment's setup script.
 
 ## Ground rules
@@ -24,8 +26,8 @@ Read `CLAUDE.md` first; everything there still applies. **No real figures, names
    `position_boxes` (synced across devices). Add them to `DB_SCHEMA_CORE`; default them in
    `normalizeDataShape`; grep every list that enumerates `pd_ui_prefs` columns. No new tables, so the
    backup script needs no change. Tell Muhannad to run the SQL from Settings > Database Schema.
-4. Every change gets tests in `dev/test_batch_fixes.js` (registered in the runner), and break-then-restore
-   (`dev/break_restore.py`) before shipping. Baseline: 1701 passed at v4.63.0.
+4. Every change gets tests in `dev/ledgeros/test_batch_fixes.js` (registered in the runner), and break-then-restore
+   (`dev/ledgeros/break_restore.py`) before shipping. Baseline: 1701 passed at v4.63.0.
 
 ## Decisions (all confirmed by Muhannad)
 
@@ -50,7 +52,7 @@ Read `CLAUDE.md` first; everything there still applies. **No real figures, names
 Copy `LedgerOS.html` (v4.63.0) to `LedgerOS-classic.html`; add only the switch link. Tests still run on `LedgerOS.html`.
 
 ### 1. Look and shell
-CSS tokens derived from the accent (see `theme()` in `dev/redesign/mockup/Command.dc.html` for the colour maths),
+CSS tokens derived from the accent (see `theme()` in `dev/ledgeros/redesign/mockup/Command.dc.html` for the colour maths),
 rail + top bar, Geist, Background/Motion prefs, Settings > Appearance (accent swatches + custom, background,
 motion, font size, font family, positive/negative colours, content width). Dark mode keeps working.
 
@@ -120,11 +122,11 @@ motion, font size, font family, positive/negative colours, content width). Dark 
   Muhannad has reversed all categories on purpose; the new display must honour the same sign settings exactly.
 
 ### 5. Verification
-1. `bash dev/run_tests.sh`: all green, with new tests for every item above.
+1. `bash dev/ledgeros/run_tests.sh`: all green, with new tests for every item above.
 2. **Old vs new on real data (read-only).** In a cloud session, the Supabase anon key for the project is saved
    on the environment (header `apikey`, injected by the proxy). Get the project URL with the read-only Supabase
    connector (`get_project_url`); never write it into the repo. Then run
-   `SB_URL=<url> node dev/redesign/realdata_walk.js <html> <scratchpad dir>` for `LedgerOS-classic.html` and for
+   `SB_URL=<url> node dev/ledgeros/redesign/realdata_walk.js <html> <scratchpad dir>` for `LedgerOS-classic.html` and for
    the new `LedgerOS.html`. It blocks every non-read request. Compare: (a) values from the calculation functions
    evaluated in both pages (`computeMonthlyCashFlow` over the horizon, account balances, P&L totals,
    provisions sums, `invCashState`, position-box presets vs `netWorthPanels`); (b) the visible numbers per page.
