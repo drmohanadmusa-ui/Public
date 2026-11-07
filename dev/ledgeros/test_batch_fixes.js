@@ -7971,6 +7971,12 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testDashboardSchemaAndLoadingOfTheNewPrefs();
   await testEditLayoutModeShowsHandles();
   await testPositionBoxLineCanFollowAWholeCategory();
+  await testNewJvShowsBudgetImpactAndDraftsBelow();
+  await testLedgerGroupsByJvAndFramesTheSelectedOne();
+  await testAccountsCategoryChipsAndSidePanel();
+  await testBudgetChartsWriteAmountsOnBars();
+  await testInvActivityFiltersByAccountAndDates();
+  await testInvActivityCsvHasPerPersonColumns();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8089,6 +8095,7 @@ function dashSandbox(opts){
   opts = opts||{};
   const sb = makeSandbox();
   freezeDate(sb, opts.today||'2026-11-07T10:00:00.000Z');
+  sb.document.body.insertAdjacentHTML('afterbegin', '<nav id="nav"></nav><div id="modalRoot"></div>');
   const D = vm.runInContext('D', sb);
   const A = (id, category, extra) => Object.assign({id, name:'Acc '+id, descr:'Acc '+id, category, status:'Active', acc_type:'Individual Account'}, extra||{});
   D.accounts = [A(10101,'Bank Accounts'), A(10102,'Bank Accounts',{is_savings:true}), A(10199,'Bank Accounts'), A(11201,'Short Term Receivables'), A(12101,'Long Term Receivables'),
@@ -8284,4 +8291,106 @@ async function testPositionBoxLineCanFollowAWholeCategory(){
   sb.renderDashboard();
   const sel = sb.document.querySelector('.posbox-edrow select[aria-label="Which accounts"]');
   assert(sel && sel.value==='Bank Accounts' && /All in: Savings accounts/.test(sel.innerHTML), 'The editor shows the category toggle for lines');
+}
+
+// ---- v5.0 step 3: restyled pages ----
+async function testNewJvShowsBudgetImpactAndDraftsBelow(){
+  const sb = dashSandbox();
+  vm.runInContext('D', sb).ledger.push({id:80, jv:80, date:'2026-11-02', acc:60101, amt:700, descr:'food'});
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 1000 : 0);
+  sb.__set('jvDraft', {date:'2026-11-07', lines:[{key:'a', acc:60101, descr:'Food', amt:'400'}, {key:'b', acc:10101, descr:'Food', amt:'-400'}]});
+  sb.__set('jvDrafts', [{id:5, date:'2026-11-01', lines:[{acc:10101, descr:'x', amt:1}], savedAt:'2026-11-01T10:00'}]);
+  const rows = sb.jvBudgetImpactRows();
+  assert(rows.length===1 && rows[0].acc===60101 && Math.abs(rows[0].after-1100)<0.005, 'Only expense lines count: 700 spent + 400 in this JV');
+  sb.renderNewJV();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Goes over budget by 100\.00/.test(html), 'The impact says the JV takes the account over budget');
+  const jvAt = html.indexOf('New Journal Voucher'), impAt = html.indexOf('id="jvBudgetImpact"'), drAt = html.indexOf('Draft journal vouchers');
+  assert(jvAt>-1 && impAt>jvAt && drAt>jvAt, 'Budget impact and Draft JVs come below the JV');
+  assert(/continueDraft\(5\)/.test(html), 'Drafts can be continued from the page');
+}
+async function testLedgerGroupsByJvAndFramesTheSelectedOne(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.ledger.push({id:90, jv:500, date:'2026-10-05', acc:10101, amt:-50, descr:'pair'}, {id:91, jv:500, date:'2026-10-05', acc:60101, amt:50, descr:'pair'});
+  sb.go('ledger');
+  sb.__set('ledgerFilter', {acc:'', from:'', to:'', q:'', jv:'500', preset:'', unallocOnly:false});
+  sb.renderLedgerResults();
+  let trs = [...sb.document.querySelectorAll('#ledgerResults tbody tr')];
+  assert(trs.length===2 && trs[0].classList.contains('jv-first') && trs[1].classList.contains('jv-last'), 'Lines of one JV are grouped');
+  assert(/#500/.test(trs[0].textContent) && !/#500/.test(trs[1].textContent), 'The JV number shows once per group');
+  sb.selectLedgerJv(500);
+  trs = [...sb.document.querySelectorAll('#ledgerResults tbody tr')];
+  assert(trs.filter(t=>t.classList.contains('jv-sel')).length===2, 'Clicking frames the whole JV');
+  const act = sb.document.querySelector('#ledgerResults tr.jv-actions');
+  assert(act && /startEditJV\(500\)/.test(act.innerHTML) && /duplicateJV\(500\)/.test(act.innerHTML) && /reverseJV\(500\)/.test(act.innerHTML) && /exportJVCSV\(500\)/.test(act.innerHTML), 'Its actions appear: Edit, Duplicate, Reverse, Download CSV');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/#ledgerResults tr\.jv-sel td:first-child\{box-shadow:inset 2px 0 0 var\(--accent\)\}/.test(html) && /#ledgerResults tr\.jv-sel td\{background:none/.test(html), 'The selection is an accent frame, not a fill');
+  sb.selectLedgerJv(500);
+  assert(!sb.document.querySelector('#ledgerResults tr.jv-actions'), 'Clicking again clears it');
+}
+async function testAccountsCategoryChipsAndSidePanel(){
+  const sb = dashSandbox();
+  sb.__set('browsableAccounts', ()=> vm.runInContext('D', sb).accounts);
+  sb.go('accounts');
+  const chips = [...sb.document.querySelectorAll('#accCatChips .chipbtn')];
+  assert(chips.length>3 && chips[0].textContent==='All' && chips[0].getAttribute('aria-pressed')==='true', 'Category chips, All selected');
+  sb.setAccCatFilter('Accruals');
+  const rows = [...sb.document.querySelectorAll('#accountResults tbody tr')];
+  assert(rows.length===1 && /22901/.test(rows[0].textContent), 'A chip filters to that category');
+  sb.setAccCatFilter('Accruals');
+  sb.openAccSide(10101);
+  const side = sb.document.getElementById('accSide');
+  assert(side && /48,250\.50/.test(side.textContent), 'Side panel shows the balance');
+  assert(/jumpToLedgerForAccount\(10101\)">Full history in Ledger/.test(side.innerHTML), 'Side panel links to the full history in the Ledger');
+  const D = vm.runInContext('D', sb);
+  for(let i=0;i<7;i++) D.ledger.push({id:200+i, jv:200+i, date:'2026-10-1'+i, acc:10101, amt:i+1, descr:'t'+i});
+  sb.renderAccountResults();
+  const jvs = new Set([...side.querySelectorAll('tr')].map(t=>(t.getAttribute('onclick')||'')));
+  assert(jvs.size===5 && [...jvs].every(o=>/viewJV\(20[2-6]\)/.test(o)), 'The 5 most recent JVs are listed, newest first');
+}
+async function testBudgetChartsWriteAmountsOnBars(){
+  const sb = makeSandbox();
+  const texts = [];
+  const ctx = {save(){}, restore(){}, fillText(t,x,y){ texts.push([t,x,y]); }};
+  const chart = {ctx, data:{datasets:[{data:[1500, 0]}, {data:[250.5, 99]}]}, getDatasetMeta:(i)=>({hidden: false, data:[{x:10,y:50},{x:20,y:60}]})};
+  vm.runInContext('chartValueLabelsPlugin', sb).afterDatasetsDraw(chart);
+  assert(texts.map(t=>t[0]).join('|')===[sb.money(1500), sb.money(250.5), sb.money(99)].join('|'), 'Every non-zero bar gets its amount');
+  assert(texts[0][1]===10 && texts[0][2]===47, 'The amount sits just above the bar');
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  const fn = src.slice(src.indexOf('function renderBudgetCharts('), src.indexOf('function renderBudgetCharts(')+6000);
+  assert((fn.match(/plugins:\[chartValueLabelsPlugin\]/g)||[]).length===2, 'Both the Budget vs Actual and the trend chart show amounts');
+  assert(/_budgetChartTrend = new Chart\(ctxTrend, \{\s*type: 'bar'/.test(fn), 'The trend is shown as bars');
+}
+function actSandbox(){
+  const sb = moveSandbox({
+    invOwners:[{id:1, name:'Me', isSelf:true, outAcc:21001}, {id:2, name:'Relative', isSelf:false, outAcc:21002}],
+    invPlatforms:[{id:1, name:'A', outAcc:13001}, {id:2, name:'B', outAcc:13002}],
+    invCashMovements:[
+      {id:11, platformId:1, date:'2026-03-01', kind:'deposit', usdAmount:1000, owners:[{ownerId:1, usd:600, sar:2250}, {ownerId:2, usd:400, sar:1520}]},
+      {id:12, platformId:2, date:'2026-05-01', kind:'deposit', usdAmount:200, owners:[{ownerId:2, usd:200, sar:750}]}]});
+  return sb;
+}
+async function testInvActivityFiltersByAccountAndDates(){
+  const sb = actSandbox();
+  const set = (o) => sb.__set('invActivityFilter', Object.assign({platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100}, o));
+  set({}); assert(sb.invActivityFiltered().length===3, 'Everything shows by default');
+  set({acc:'13002'}); let r = sb.invActivityFiltered();
+  assert(r.length===1 && r[0].id===12, 'Filtering by a platform\'s ledger account keeps only that platform');
+  set({acc:'21001'}); r = sb.invActivityFiltered();
+  assert(r.length===2 && r.every(x=>x.ownerIds.includes(1)), 'Filtering by a person\'s ledger account keeps only rows with that person');
+  set({from:'2026-02-01', to:'2026-04-30'}); r = sb.invActivityFiltered();
+  assert(r.length===1 && r[0].id===11, 'Date range keeps only rows inside it');
+  assert(sb.invActivityLinkedAccounts().join()==='13001,13002,21001,21002', 'The account list offers every linked ledger account');
+}
+async function testInvActivityCsvHasPerPersonColumns(){
+  const sb = actSandbox();
+  sb.__set('invActivityFilter', {platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100});
+  const lines = sb.invActivityCsv().split('\n');
+  assert(lines[0]==='Date,Type,Platform,Detail,People,USD,SAR,Me SAR,Me USD,Me rate,Relative SAR,Relative USD,Relative rate', 'Header has SAR, USD and rate per person');
+  const dep = lines.find(l=>l.startsWith('2026-03-01'));
+  assert(dep && /,2250\.00,600\.00,3\.7500,1520\.00,400\.00,3\.8000$/.test(dep), 'A deposit shows each person\'s own SAR, USD and actual rate, got '+dep);
+  const buy = lines.find(l=>l.startsWith('2026-01-01'));
+  assert(buy && /,60000\.00,[\d.]+,[\d.]+,40000\.00,[\d.]+,[\d.]+$/.test(buy), 'A buy shows each person\'s SAR cost, got '+buy);
+  assert(lines.length===4, 'One line per Activity row plus the header');
 }

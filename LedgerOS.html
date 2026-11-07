@@ -419,6 +419,22 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .bud-row{padding:6px 0} .bud-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;flex-wrap:wrap}
 .bud-track{height:8px;border-radius:99px;background:var(--panel2);margin:6px 0 3px;overflow:hidden} .bud-fill{height:100%;border-radius:99px}
 .bud-note{font-size:12px}
+.jv-below{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:16px;align-items:start}
+.jv-below>.panel{margin:0}
+#ledgerResults tr.jv-first td{border-top:1px solid var(--line)}
+#ledgerResults tr:not(.jv-last) td{border-bottom-color:transparent}
+#ledgerResults tr.jv-sel td{background:none;box-shadow:inset 0 2px 0 -0px transparent}
+#ledgerResults tr.jv-sel td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+#ledgerResults tr.jv-sel td:last-child{box-shadow:inset -2px 0 0 var(--accent)}
+#ledgerResults tr.jv-sel.jv-first td{border-top:2px solid var(--accent)}
+#ledgerResults tr.jv-actions td{border:2px solid var(--accent);border-top:none;background:var(--accent-soft)}
+.chipbtn{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:999px;padding:5px 12px;font-size:12.5px}
+.chipbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.acc-split{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+.acc-split:has(#accSide:not(:empty)){grid-template-columns:minmax(0,1fr) minmax(280px,360px)}
+.acc-side{position:sticky;top:80px}
+tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
+@media(max-width:900px){.acc-split:has(#accSide:not(:empty)){grid-template-columns:1fr}.acc-side{position:static}}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -4885,6 +4901,10 @@ function renderNewJV(){
         </div>
         <button class="btn pri" id="jvPostBtn" ${jvBalanced()&&!syncInProgress&&!jvPosting?'':'disabled'} onclick="postJV()">Post JV</button>
       </div>
+    </div>
+    <div class="jv-below">
+      ${jvBudgetImpactHTML()}
+      <div class="panel"><div class="dash-head"><h2>Draft journal vouchers</h2></div>${jvDraftsTableHTML()}</div>
     </div>`;
 }
 // Lightweight update used while typing an amount — avoids re-rendering (and de-focusing) inputs
@@ -4895,6 +4915,7 @@ function updateJVTotals(){
   const btn = document.getElementById('jvPostBtn');
   if(btn){ btn.disabled = !bal || syncInProgress; }
   updateReconcileBanner();
+  const imp = document.getElementById('jvBudgetImpact'); if(imp) imp.outerHTML = jvBudgetImpactHTML();
   if(jvBalanceCheckMode){
     const {sum, count} = jvBalanceCheckSubtotal();
     const zero = Math.abs(sum)<0.005;
@@ -5478,13 +5499,40 @@ function openDraftsModal(){
   showModal(`
     <h3>📝 Draft Journal Vouchers</h3>
     <p class="mut" style="font-size:12px">${usingCloud? 'Synced with your cloud project, same as everything else.' : 'Saved on this device — connect cloud sync in Settings to carry drafts across devices too.'}</p>
-    <table><thead><tr><th>Date</th><th class="num">Lines</th><th class="num">Total</th><th>Saved</th><th></th></tr></thead>
+    ${jvDraftsTableHTML()}
+    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`, true);
+}
+function jvDraftsTableHTML(){
+  return `<table><thead><tr><th>Date</th><th class="num">Lines</th><th class="num">Total</th><th>Saved</th><th></th></tr></thead>
     <tbody>${jvDrafts.slice().reverse().map(d=>{
       const total = d.lines.reduce((s,l)=>s+(Number(l.amt)||0),0);
       return `<tr><td class="mono">${esc(d.date)}</td><td class="num">${d.lines.length}</td><td class="num mono ${moneyClass(total)}">${money(total)}</td><td class="mut">${esc((d.savedAt||'').slice(0,16).replace('T',' '))}</td>
         <td><button class="btn ghost sm" onclick="continueDraft(${d.id})">Continue</button> <button class="btn ghost sm" onclick="exportDraftCSV(${d.id})">⬇ CSV</button> <button class="x" onclick="deleteDraft(${d.id})">✕</button></td></tr>`;
-    }).join('') || '<tr><td colspan="5" class="empty">No drafts saved</td></tr>'}</tbody></table>
-    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`, true);
+    }).join('') || '<tr><td colspan="5" class="empty">No drafts saved</td></tr>'}</tbody></table>`;
+}
+// v5.0: what the JV being typed does to its month's budget, per expense account (P&L budget definitions).
+function jvBudgetImpactRows(){
+  const mk = String(jvDraft.date||todayStr()).slice(0,7);
+  const [from, to] = monthRange(mk);
+  const byAcc = {};
+  jvDraft.lines.forEach(l=>{ const acc = Number(l.acc); if(!acc || firstDigit(acc)!==6 || !ACC_BY_ID[acc]) return; byAcc[acc] = (byAcc[acc]||0) + (Number(l.amt)||0); });
+  return Object.entries(byAcc).map(([acc, draft])=>{
+    acc = Number(acc);
+    const before = sumAcc(l=>l.acc===acc, from, to);
+    const budget = pnlBudgetForAccountInRange(acc, from, to);
+    return {acc, mk, budget, before, after: before+draft, variance: pnlVarianceMagnitude(budget, before+draft)};
+  });
+}
+function jvBudgetImpactHTML(){
+  const rows = jvBudgetImpactRows();
+  const mk = String(jvDraft.date||todayStr()).slice(0,7);
+  return `<div class="panel" id="jvBudgetImpact"><div class="dash-head" style="margin-bottom:4px"><h2>Budget impact</h2></div>
+    <div class="mut" style="font-size:12px;margin-bottom:8px">What this JV does to ${monthLabel(mk)}'s budget</div>
+    ${rows.length? rows.map(r=>{ const cap = Math.abs(r.budget), b = Math.abs(r.before), a = Math.abs(r.after); const over = cap>=0.005 && r.variance < -0.005;
+      return `<div class="bud-row"><div class="bud-top"><span>${esc(accShort(r.acc))} <span class="mono mut" style="font-size:11px">${r.acc}</span></span><span class="mono">${money(b)} → <b>${money(a)}</b> <span class="mut">of ${cap>=0.005? money(cap) : 'no budget'}</span></span></div>
+        ${cap>=0.005? `<div class="bud-track"><div class="bud-fill" style="width:${Math.min(100,a/cap*100).toFixed(1)}%;background:${over?'var(--red)':(a/cap>=0.9?'var(--yellow)':'var(--accent)')}"></div></div>
+        <div class="bud-note" style="color:${over?'var(--red)':'var(--muted)'}">${over? 'Goes over budget by '+money(-r.variance) : money(r.variance)+' left after this JV'}</div>` : ''}</div>`; }).join('')
+    : '<div class="mut" style="font-size:13px">No expense lines in this JV yet.</div>'}</div>`;
 }
 async function continueDraft(id){
   if(blockIfSyncing()) return;
@@ -5685,6 +5733,8 @@ function pickLedgerAcc(accId){
   ledgerPage = 0; renderLedgerResults();
 }
 function closeLedgerAcDrop(){ const el=document.getElementById('ledgerAcdrop'); if(el){ el.innerHTML=''; el.className='acdrop'; } }
+let ledgerSelectedJv = null; // v5.0: clicking a JV in the Ledger frames it and shows its actions
+function selectLedgerJv(jv){ ledgerSelectedJv = ledgerSelectedJv===jv? null : jv; renderLedgerResults(); }
 function renderLedgerResults(){
   const rows = filteredLedger();
   const total = rows.reduce((s,l)=>s+(Number(l.amt)||0),0);
@@ -5696,11 +5746,21 @@ function renderLedgerResults(){
   el.innerHTML = `
     <div class="panel" style="padding:0">
       <table><thead><tr><th>JV#</th><th>Date</th><th>Account</th><th>Description</th><th class="num">Amount</th><th>Alloc</th></tr></thead>
-      <tbody>${pageRows.map(l=>`<tr class="click" onclick="viewJV(${l.jv})">
-        <td class="mono">#${l.jv}</td><td class="mono">${esc(l.date)}</td>
+      <tbody>${pageRows.map((l,i)=>{
+        const first = i===0 || pageRows[i-1].jv!==l.jv, last = i===pageRows.length-1 || pageRows[i+1].jv!==l.jv;
+        const sel = ledgerSelectedJv===l.jv;
+        return `<tr class="click${first?' jv-first':''}${last?' jv-last':''}${sel?' jv-sel':''}" onclick="selectLedgerJv(${l.jv})"${first?` aria-label="JV #${l.jv}, click for its actions"`:''}>
+        <td class="mono">${first?'#'+l.jv:''}</td><td class="mono">${first?esc(l.date):''}</td>
         <td>${l.acc}<div class="mut" style="font-size:11.5px">${esc(ledgerAccName(l))}</div></td>
         <td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td>
-        <td>${allocBadgeCell(l.alloc)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No transactions match these filters</td></tr>'}</tbody>
+        <td>${allocBadgeCell(l.alloc)}</td></tr>${sel && last? `<tr class="jv-actions"><td colspan="6"><div class="row">
+          <b style="margin-right:auto">JV #${l.jv}</b>
+          <button class="btn ghost sm" onclick="event.stopPropagation(); startEditJV(${l.jv})">✎ Edit</button>
+          <button class="btn ghost sm" onclick="event.stopPropagation(); duplicateJV(${l.jv})">⧉ Duplicate as New JV</button>
+          <button class="btn del sm" onclick="event.stopPropagation(); reverseJV(${l.jv})">↩ Reverse</button>
+          <button class="btn ghost sm" onclick="event.stopPropagation(); exportJVCSV(${l.jv})">⬇ Download CSV</button>
+          <button class="btn ghost sm" onclick="event.stopPropagation(); viewJV(${l.jv})">Open</button></div></td></tr>` : ''}`;
+      }).join('') || '<tr><td colspan="6" class="empty">No transactions match these filters</td></tr>'}</tbody>
       <tfoot><tr><td colspan="4">Filtered total (${rows.length.toLocaleString()} lines)</td><td class="num mono ${moneyClass(total)}">${money(total)}</td><td></td></tr></tfoot>
       </table>
       <div class="pagebar noprint">
@@ -6089,9 +6149,30 @@ function renderAccounts(){
       </div>
     </div>
     <div id="accBatchBar"></div>
-    <div id="accountResults"></div>
+    <div id="accCatChips" class="row noprint" style="margin-bottom:12px;gap:6px"></div>
+    <div class="acc-split"><div id="accountResults" style="min-width:0"></div><aside id="accSide"></aside></div>
   `;
   renderAccountResults();
+}
+// v5.0 Accounts list: category filter chips and a side panel (balance, 5 most recent JVs, full history).
+let accCatFilter = '';
+let accCatList = [''];
+let accSideId = null;
+function setAccCatFilter(c){ accCatFilter = accCatFilter===c? '' : c; renderAccountResults(); }
+function openAccSide(id){ accSideId = accSideId===id? null : id; renderAccountResults(); }
+function accSideHTML(){
+  const a = ACC_BY_ID[accSideId];
+  if(!a) return '';
+  const lines = reconcileRecentJvLines(a.id, 5);
+  const bal = accountBalance(a.id);
+  return `<div class="panel acc-side rise">
+    <div class="dash-head"><h2>${esc(accShort(a.id))}</h2><button class="x" onclick="openAccSide(${a.id})" aria-label="Close">✕</button></div>
+    <div class="mut mono" style="font-size:12px">${a.id} · ${esc(a.category||'')}</div>
+    <div class="mono ${moneyClass(bal)}" style="font-size:24px;font-weight:600;margin:10px 0 14px">${money(bal)}</div>
+    <div class="fl">5 most recent JVs</div>
+    ${lines.length? `<table><tbody>${lines.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono" style="white-space:nowrap">${esc(l.date)}<div class="mut">#${l.jv}</div></td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('')}</tbody></table>` : '<div class="mut" style="font-size:13px">No transactions yet.</div>'}
+    <div class="row" style="margin-top:14px"><button class="btn pri sm" onclick="jumpToLedgerForAccount(${a.id})">Full history in Ledger</button><button class="btn ghost sm" onclick="openStatement(${a.id})">Statement</button></div>
+  </div>`;
 }
 function allCategoryNames(){
   return [...new Set(D.subcategories.map(s=>s.name))].sort();
@@ -6256,8 +6337,16 @@ function renderAccountsGrid(){
 }
 
 function renderAccountResults(){
+  const allCats = [...new Set(browsableAccounts().filter(a=>accShowDeleted || a.status!=='Deleted').map(a=>a.category||'Other'))]
+    .sort((x,y)=> Math.min(...browsableAccounts().filter(a=>(a.category||'Other')===x).map(a=>a.id)) - Math.min(...browsableAccounts().filter(a=>(a.category||'Other')===y).map(a=>a.id)));
+  const chips = document.getElementById('accCatChips');
+  accCatList = ['', ...allCats];
+  if(chips) chips.innerHTML = accCatList.map((v,i)=>`<button class="chipbtn" aria-pressed="${accCatFilter===v}" onclick="setAccCatFilter(accCatList[${i}])">${esc(v||'All')}</button>`).join('');
+  const side = document.getElementById('accSide');
+  if(side) side.innerHTML = accSideHTML();
   const accs = browsableAccounts().filter(a=>{
     if(!accShowDeleted && a.status==='Deleted') return false;
+    if(accCatFilter && (a.category||'Other')!==accCatFilter) return false;
     if(!accQ) return true;
     return accountSearchMatches(accQ, [a]).length>0;
   });
@@ -6280,11 +6369,11 @@ function renderAccountResults(){
         <tbody>${byCat[cat].sort((a,b)=>a.id-b.id).map(a=>{
           const bal = accountBalance(a.id);
           const isDeleted = a.status==='Deleted';
-          return `<tr id="accRow_${a.id}" style="${accSelected.has(a.id)?'background:var(--chip)':(isDeleted?'background:#a3352c22':'')}">
+          return `<tr id="accRow_${a.id}" class="${accSideId===a.id?'acc-on':''}" style="${accSelected.has(a.id)?'background:var(--chip)':(isDeleted?'background:#a3352c22':'')}">
           ${accSelectMode?`<td style="text-align:center"><input type="checkbox" class="chk" ${accSelected.has(a.id)?'checked':''} onchange="toggleAccSelect(${a.id}, this.checked)"></td>`:''}
           <td class="mono click" onclick="openStatement(${a.id})">${a.id}</td>
-          <td class="click" onclick="openStatement(${a.id})">${esc(accShort(a.id))} ${a.status==='Inactive'?'<span class="badge">inactive</span>':''}${isDeleted?'<span class="badge neg">deleted</span>':''}${a.is_savings?'<span class="badge pos">savings</span>':''}${a.is_allocatable?'<span class="badge pos">allocatable</span>':''}${a.is_credit_card?'<span class="badge">credit card</span>':''}</td>
-          <td class="num mono click ${moneyClass(bal)}" onclick="openStatement(${a.id})">${money(bal)}</td>
+          <td class="click" onclick="openAccSide(${a.id})">${esc(accShort(a.id))} ${a.status==='Inactive'?'<span class="badge">inactive</span>':''}${isDeleted?'<span class="badge neg">deleted</span>':''}${a.is_savings?'<span class="badge pos">savings</span>':''}${a.is_allocatable?'<span class="badge pos">allocatable</span>':''}${a.is_credit_card?'<span class="badge">credit card</span>':''}</td>
+          <td class="num mono click ${moneyClass(bal)}" onclick="openAccSide(${a.id})">${money(bal)}</td>
           <td style="white-space:nowrap"><button class="x" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;vertical-align:middle" title="Historical Averages" onclick='openAccountStatsPopup(${a.id})'>📊</button><button class="x" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;vertical-align:middle" title="Edit" onclick='openAccountModal(${a.id})'>✎</button></td>
           <td class="mut click" onclick="openStatement(${a.id})">view →</td></tr>`;
         }).join('')}</tbody>
@@ -6680,6 +6769,23 @@ function openBudgetCategoryBreakdown(category, monthKey){
     <tbody>${txns.map(l=>`<tr><td class="mono">${esc(l.date)}</td><td>${esc(ledgerAccName(l))}</td><td class="mut">${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No transactions this month</td></tr>'}</tbody></table>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Close</button></div>`, true);
 }
+// v5.0: a tiny Chart.js plugin that writes each bar's (or point's) amount above it.
+const chartValueLabelsPlugin = {
+  id:'ledgerValueLabels',
+  afterDatasetsDraw(chart){
+    const ctx = chart.ctx;
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#111';
+    ctx.save();
+    ctx.font = '600 10.5px ' + (getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() || 'monospace');
+    ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    chart.data.datasets.forEach((ds, di)=>{
+      const meta = chart.getDatasetMeta(di);
+      if(meta.hidden) return;
+      meta.data.forEach((el, i)=>{ const v = Number(ds.data[i]); if(!v) return; ctx.fillText(money(v), el.x, el.y - 3); });
+    });
+    ctx.restore();
+  }
+};
 function renderBudgetCharts(){
   const el = document.getElementById('budgetCharts');
   if(!el) return;
@@ -6720,9 +6826,11 @@ function renderBudgetCharts(){
           const cat = catLabels[elements[0].index];
           openBudgetCategoryBreakdown(cat, budgetMonth);
         }, onHover: (evt, elements)=>{ evt.native.target.style.cursor = elements.length? 'pointer' : 'default'; },
+        layout:{ padding:{ top:18 } },
         plugins:{ legend:{position:'top', labels:{color:mutedColor, boxWidth:12} } },
         scales:{ x:{ ticks:{color:mutedColor}, grid:{display:false} }, y:{ ticks:{color:mutedColor}, grid:{color:lineColor} } }
-      }
+      },
+      plugins:[chartValueLabelsPlugin]
     });
   }
   // ---- Chart 2: total actual spending trend across the trailing months up to the selected one ----
@@ -6740,14 +6848,16 @@ function renderBudgetCharts(){
     const mutedColor = styles.getPropertyValue('--muted').trim();
     const lineColor = styles.getPropertyValue('--line').trim();
     _budgetChartTrend = new Chart(ctxTrend, {
-      type: 'line',
+      type: 'bar',
       data: { labels: trendMonths.map(monthLabel), datasets: [
-        { label:'Total Actual Spending', data: trendData, borderColor: accentColor, backgroundColor: accentColor+'33', fill:true, tension:0.3, pointRadius:3 },
+        { label:'Total Actual Spending', data: trendData, backgroundColor: accentColor, borderRadius:6 },
       ]},
       options: { responsive:true, maintainAspectRatio:false,
+        layout:{ padding:{ top:18 } },
         plugins:{ legend:{display:false} },
         scales:{ x:{ ticks:{color:mutedColor}, grid:{display:false} }, y:{ ticks:{color:mutedColor}, grid:{color:lineColor} } }
-      }
+      },
+      plugins:[chartValueLabelsPlugin]
     });
   }
 }
@@ -9665,7 +9775,7 @@ let invView = (function(){ try{ const v = localStorage.getItem('invView'); retur
 let invCcy = (function(){ try{ return localStorage.getItem('invCcy')==='USD'? 'USD' : 'SAR'; }catch(e){ return 'SAR'; } })();
 let invShowDetails = false;
 const invCardsExpanded = new Set();
-let invActivityFilter = {platformId:'', ownerId:'', type:'', limit:100};
+let invActivityFilter = {platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100};
 function setInvView(v){
   invView = INV_VIEWS.some(x=>x[0]===v)? v : 'mine';
   try{ localStorage.setItem('invView', invView); }catch(e){}
@@ -9974,12 +10084,59 @@ function invActivityRows(){
   rows.sort((a,b)=> a.date===b.date? (b.seq-a.seq || b.id-a.id) : (a.date<b.date? 1 : -1));
   return rows;
 }
+// v5.0: the ledger accounts a row touches = its platforms' and its people's linked accounts.
+function invActivityRowAccounts(r){
+  const out = new Set();
+  (r.platformIds || [r.platformId]).forEach(id=>{ const p = invPlatformById(id); if(p) [p.outAcc, p.inAcc, p.profitAcc].forEach(a=>{ if(a) out.add(Number(a)); }); });
+  (r.ownerIds||[]).forEach(id=>{ const o = invOwnerById(id); if(o) [o.outAcc, o.inAcc, o.profitAcc].forEach(a=>{ if(a) out.add(Number(a)); }); });
+  return out;
+}
+function invActivityLinkedAccounts(){
+  const s = new Set();
+  (D.invPlatforms||[]).concat(D.invOwners||[]).forEach(x=>[x.outAcc, x.inAcc, x.profitAcc].forEach(a=>{ if(a) s.add(Number(a)); }));
+  return [...s].sort((a,b)=>a-b);
+}
 function invActivityFiltered(){
   const f = invActivityFilter;
   return invActivityRows().filter(r=>
     (!f.platformId || (r.platformIds? r.platformIds.includes(Number(f.platformId)) : r.platformId===Number(f.platformId))) &&
     (!f.ownerId || r.ownerIds.includes(Number(f.ownerId))) &&
-    (!f.type || r.type===f.type));
+    (!f.type || r.type===f.type) &&
+    (!f.acc || invActivityRowAccounts(r).has(Number(f.acc))) &&
+    (!f.from || r.date>=f.from) && (!f.to || r.date<=f.to));
+}
+// Per-person SAR, USD and rate for one Activity row, from the same stored per-owner figures the engine uses.
+function invActivityOwnerAmounts(r){
+  const out = {};
+  const put = (id, sar, usd) => { const o = out[id] = out[id] || {sar:0, usd:0}; o.sar += Number(sar)||0; o.usd += Number(usd)||0; };
+  if(r.kind==='tx'){
+    const t = (D.invTransactions||[]).find(x=>x.id===r.id); if(!t) return out;
+    const a = invTxAttribution(t);
+    Object.keys(a.moneySar).forEach(k=>put(Number(k), a.moneySar[k], a.cashUsd[k]));
+  } else if(r.kind==='coinmove'){
+    Object.keys(r.perOwner||{}).forEach(k=>put(Number(k), r.perOwner[k].sar, 0));
+  } else {
+    const m = (D.invCashMovements||[]).find(x=>x.id===r.id); if(!m) return out;
+    (m.owners||[]).forEach(o=> m.kind==='costadj'? put(o.ownerId, (Number(o.after)||0)-(Number(o.before)||0), 0) : put(o.ownerId, o.sar, o.usd));
+  }
+  Object.values(out).forEach(o=>{ o.rate = (o.usd>0 && o.sar)? Math.abs(o.sar)/o.usd : null; });
+  return out;
+}
+function invActivityCsv(){
+  const owners = (D.invOwners||[]).slice().sort((a,b)=>a.id-b.id);
+  const head = ['Date','Type','Platform','Detail','People','USD','SAR'].concat(...owners.map(o=>[o.name+' SAR', o.name+' USD', o.name+' rate']));
+  const lines = [head.map(csvEscape).join(',')];
+  invActivityFiltered().forEach(r=>{
+    const p = invPlatformById(r.platformId), own = invActivityOwnerAmounts(r);
+    const cells = [r.date, r.label, r.platformText || (p? p.name : ''), r.detail + (r.note? ' ('+r.note+')' : ''), r.people, r.usd>0? r.usd.toFixed(2) : '', r.sar? Number(r.sar).toFixed(2) : ''];
+    owners.forEach(o=>{ const x = own[o.id]; cells.push(x? x.sar.toFixed(2) : '', x && x.usd? x.usd.toFixed(2) : '', x && x.rate? x.rate.toFixed(4) : ''); });
+    lines.push(cells.map(csvEscape).join(','));
+  });
+  return lines.join('\n');
+}
+function exportInvActivityCSV(){
+  const blob = new Blob([invActivityCsv()], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'investment-activity-'+todayStr()+'.csv'; a.click();
 }
 function setInvActivityFilter(field, val){
   invActivityFilter[field] = val;
@@ -10006,7 +10163,11 @@ function renderInvActivityView(nav){
       ${sel('platformId', [['','All platforms'], ...invPlatformsSorted().map(p=>[p.id, p.name])])}
       ${sel('ownerId', [['','Everyone'], ...(D.invOwners||[]).map(o=>[o.id, o.name+(o.isSelf?' (you)':'')])])}
       ${sel('type', [['','All types'],['buy','Buys'],['sell','Sells'],['deposit','Deposits'],['withdrawal','Withdrawals'],['transfer','Cash moves'],['move','Coin moves'],['adjustment','Cost corrections']])}
+      ${sel('acc', [['','Any ledger account'], ...invActivityLinkedAccounts().map(a=>[a, a+' \u2014 '+accShort(a)])])}
+      <label class="row" style="gap:4px;font-size:12px;color:var(--muted)">From <input type="date" value="${esc(f.from)}" onchange="setInvActivityFilter('from', this.value)" style="width:auto"></label>
+      <label class="row" style="gap:4px;font-size:12px;color:var(--muted)">To <input type="date" value="${esc(f.to)}" onchange="setInvActivityFilter('to', this.value)" style="width:auto"></label>
       <span class="mut" style="font-size:12px;align-self:center">${all.length} item${all.length===1?'':'s'}</span>
+      <button class="btn ghost sm" style="margin-left:auto" onclick="exportInvActivityCSV()">\u2B07 Export CSV</button>
     </div>
     <div style="overflow-x:auto"><table id="invActivityTable" style="min-width:760px"><thead><tr>
       <th>Date</th><th>Type</th><th>Platform</th><th>Detail</th><th>People</th><th class="num">USD</th><th class="num">SAR</th><th class="noprint"></th>
