@@ -357,6 +357,69 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .swatch .bars{display:flex;height:34px;border-radius:8px;overflow:hidden}
 .swatch .bars span{flex:1}.swatch .bars span:first-child{flex:2}
 .swatch input[type=color]{width:100%;height:34px;padding:0;border:none;border-radius:8px;background:transparent;cursor:pointer}
+/* ---- v5.0 Dashboard ---- */
+@keyframes growY{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes growX{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes riseIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.grow-y{transform-origin:bottom;animation:growY .7s cubic-bezier(.2,.8,.2,1) both}
+.grow-x{transform-origin:left;animation:growX .7s cubic-bezier(.2,.8,.2,1) both}
+.rise{animation:riseIn .4s cubic-bezier(.2,.8,.2,1) both}
+.dash-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px}
+.btn.dashed{border:1px dashed var(--accent);background:var(--accent-soft);color:var(--nav-on-fg)}
+.dash-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:20px;align-items:start}
+.dash-cell{position:relative;min-width:0}
+.dash-cell>.panel{margin:0}
+.dash-grid.editing .dash-cell{outline:2px dashed color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:6px;border-radius:18px;cursor:grab}
+.dash-cell.drop-target{outline:2px solid var(--accent)!important}
+.dash-editbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;margin-bottom:10px;border-radius:10px;background:var(--accent-soft);color:var(--nav-on-fg);font-size:12px}
+.dash-editbar .btn.sm{padding:3px 8px}
+.dash-resize{position:absolute;top:44px;bottom:0;right:-14px;width:14px;cursor:ew-resize;display:flex;align-items:center;justify-content:center;z-index:2}
+.dash-resize span{width:4px;height:48px;border-radius:99px;background:var(--accent)}
+.dash-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.dash-head h2{margin:0;font-size:15px;font-weight:600;font-family:var(--sans)}
+.kpi.hero{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.kpi.hero .l,.kpi.hero .v,.kpi.hero .kpi-note{color:var(--on-accent)!important}
+.kpi.hero::after{display:none}
+.kpi.soft{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
+.kpi .l{text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:500}
+.kpi-note{font-size:12px;margin-top:4px;opacity:.85}
+.todo-list{display:flex;flex-direction:column;gap:8px}
+.todo-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;border:1px solid}
+.todo-item.neg{background:var(--neg-soft);border-color:color-mix(in srgb,var(--red) 25%,transparent)}
+.todo-item.warn{background:var(--warn-soft);border-color:color-mix(in srgb,var(--yellow) 25%,transparent)}
+.todo-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.todo-item.neg .todo-dot{background:var(--red)} .todo-item.warn .todo-dot{background:var(--yellow)}
+.todo-title{font-weight:600;font-size:13.5px} .todo-sub{font-size:12px}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px}
+.posbox-final{font-size:20px;font-weight:600;color:var(--accent-text)}
+.posbox-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;padding:8px 0}
+.posbox-row.can-open{cursor:pointer}
+.posbox-row.can-open:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.posbox-row.is-sub{border-top:1px solid var(--text)} .posbox-row.is-total{border-top:2px solid var(--text)}
+.posbox-label{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.posbox-row.is-sub .posbox-label,.posbox-row.is-total .posbox-label,.posbox-row.is-sub .posbox-val,.posbox-row.is-total .posbox-val{color:var(--text);font-weight:600}
+.posbox-val{font-size:13px}
+.posbox-track{grid-column:1/-1;position:relative;height:6px;border-radius:3px;background:var(--panel2)}
+.posbox-row.is-sub .posbox-track{height:8px} .posbox-row.is-total .posbox-track{height:10px}
+.posbox-bar{position:absolute;top:0;bottom:0;border-radius:3px}
+.chev{display:inline-block;transition:transform .2s;font-weight:700} .chev.open{transform:rotate(90deg)}
+.posbox-peek{grid-column:1/-1;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 18px}
+.posbox-peek div{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.posbox-edrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;margin-bottom:6px;border-radius:10px;border:1px solid var(--line);background:var(--panel)}
+.posbox-edrow.tot{background:var(--panel2)}
+.posbox-edrow select{width:auto}
+.posbox-edrow .sign{min-width:32px;font-weight:700} .posbox-edrow .sign.neg{color:var(--red)}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--muted)} .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.cf-chart{display:flex;align-items:flex-end;gap:10px;min-height:170px}
+.cf-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.cf-bars{display:flex;align-items:flex-end;gap:4px;height:124px}
+.cf-bar{width:14px;border-radius:5px 5px 2px 2px}
+.cf-bar.in{background:var(--accent)} .cf-bar.ex{background:color-mix(in srgb,var(--muted) 45%,var(--panel))}
+.cf-net{font-size:11px;white-space:nowrap} .cf-m{font-size:11.5px;color:var(--muted)} .cf-col.cur .cf-m{color:var(--text);font-weight:600}
+.bud-row{padding:6px 0} .bud-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;flex-wrap:wrap}
+.bud-track{height:8px;border-radius:99px;background:var(--panel2);margin:6px 0 3px;overflow:hidden} .bud-fill{height:100%;border-radius:99px}
+.bud-note{font-size:12px}
+@media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 @media(max-width:760px){
@@ -1048,7 +1111,7 @@ const CHANGELOG = [
     'Added an iPhone/iPad home-screen icon, so adding the site to your home screen shows a real icon instead of a blank screenshot.',
   ]},
 ];
-let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0}, forecastSnapshots:[], invRoboValueLog:[]};
+let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null}, forecastSnapshots:[], invRoboValueLog:[]};
 let jvDrafts = []; // local-only scratchpad of unfinished JVs — not synced to cloud
 function loadJVDrafts(){ try{ return JSON.parse(localStorage.getItem('jvDrafts_v1')||'[]'); }catch(e){ return []; } }
 function saveJVDraftsList(){ try{ safeSetItem('jvDrafts_v1', JSON.stringify(jvDrafts)); }catch(e){} }
@@ -1121,6 +1184,8 @@ function normalizeDataShape(D){
   if(D.invSettings.reconStartDate===undefined) D.invSettings.reconStartDate = null;
   if(!D.uiPrefs || typeof D.uiPrefs!=='object') D.uiPrefs = {pageOrder:null};
   if(D.uiPrefs.balanceStaleDays===undefined || D.uiPrefs.balanceStaleDays===null) D.uiPrefs.balanceStaleDays = 0;
+  if(!Array.isArray(D.uiPrefs.dashboardLayout)) D.uiPrefs.dashboardLayout = null;
+  if(!Array.isArray(D.uiPrefs.positionBoxes)) D.uiPrefs.positionBoxes = null;
   if(!Array.isArray(D.realEstateBuildings)) D.realEstateBuildings = [];
   if(!Array.isArray(D.forecastAccountRules)) D.forecastAccountRules = [];
   if(!Array.isArray(D.customForecastCategories)) D.customForecastCategories = [];
@@ -2081,7 +2146,7 @@ async function fetchAllFromCloud(forceFullLedger){
   if(!invVal.error){ D.invValuations = invVal.data.map(v=>({id:v.id, positionId:v.position_id, date:v.entry_date, price:Number(v.price)||0, updated_at:v.updated_at||null})); }
   if(!invCash.error){ D.invCashMovements = invCash.data.map(m=>({id:m.id, platformId:m.platform_id, date:m.entry_date, kind:m.kind||'deposit', usdAmount:Number(m.usd_amount)||0, toPlatformId:m.to_platform_id||null, feeUsd:Number(m.fee_usd)||0, capitalUsd:Number(m.capital_usd)||0, profitUsd:Number(m.profit_usd)||0, owners:m.owners||[], note:m.note||'', updated_at:m.updated_at||null})); }
   if(!invSet.error && invSet.data.length){ D.invSettings = {fxUsdSar: Number(invSet.data[0].fx_usd_sar)||3.75, mgmtFeePct: Number(invSet.data[0].mgmt_fee_pct)||0, reconStartDate: invSet.data[0].recon_start_date||null, updated_at: invSet.data[0].updated_at||null}; }
-  if(!uiPrefs.error && uiPrefs.data.length){ D.uiPrefs = {pageOrder: Array.isArray(uiPrefs.data[0].page_order)? uiPrefs.data[0].page_order : null, balanceStaleDays: Number(uiPrefs.data[0].balance_stale_days)||0, updated_at: uiPrefs.data[0].updated_at||null}; }
+  if(!uiPrefs.error && uiPrefs.data.length){ const u = uiPrefs.data[0]; D.uiPrefs = {pageOrder: Array.isArray(u.page_order)? u.page_order : null, balanceStaleDays: Number(u.balance_stale_days)||0, dashboardLayout: Array.isArray(u.dashboard_layout)? u.dashboard_layout : null, positionBoxes: Array.isArray(u.position_boxes)? u.position_boxes : null, updated_at: u.updated_at||null}; }
   if(!fcSnaps.error){ D.forecastSnapshots = fcSnaps.data.map(s=>({id:s.id, anchorMonth:s.anchor_month, takenAt:s.taken_at, kind:s.kind||'auto', months:Array.isArray(s.months)?s.months:[], signFlips:(s.sign_flips&&typeof s.sign_flips==='object')?s.sign_flips:{}, updated_at:s.updated_at||null})); }
   if(!roboLog.error){ D.invRoboValueLog = roboLog.data.map(r=>({id:r.id, platformId:r.platform_id, date:r.entry_date, value:Number(r.value)||0, updated_at:r.updated_at||null})); }
   syncCustomForecastCategories();
@@ -2680,10 +2745,14 @@ create table if not exists pd_inv_settings (
 -- ---------- UI preferences ----------
 -- page_order is a jsonb array of screen ids, e.g. ["dashboard","ledger","budget"].
 -- Synced (rather than per-device) so the sidebar reads the same everywhere.
+-- dashboard_layout (v5.0): jsonb array of {id, span} for the Dashboard's 12-column grid.
+-- position_boxes (v5.0): jsonb array of the custom position boxes shown on the Dashboard.
 create table if not exists pd_ui_prefs (
   id                 bigint primary key,
   page_order         jsonb,
   balance_stale_days integer default 0,
+  dashboard_layout   jsonb,
+  position_boxes     jsonb,
   updated_at         timestamptz default now()
 );
 
@@ -4269,55 +4338,356 @@ function driftAlertsCard(){
   </div>`;
 }
 let forecastSnapshotCheckedThisSession = false;
-function renderDashboard(){
-  if(!forecastSnapshotCheckedThisSession){
-    forecastSnapshotCheckedThisSession = true;
-    checkAutoForecastSnapshot().then(()=>{ if(forecastSnapshotBannerMonth && screen==='dashboard') renderDashboard(); });
+/* ============================= DASHBOARD (v5.0 Command Center) =============================
+   A 12-column grid of boxes. The order and widths are synced in pd_ui_prefs.dashboard_layout
+   ([{id, span}]); custom position boxes in pd_ui_prefs.position_boxes. Both null = defaults.
+   Every figure here reads the same helpers as before (accountBalance, sumAcc, the P&L budget
+   helpers, computeDriftFlags); nothing in the calculation code changed. */
+const DASH_WIDGETS = {
+  snapshot:{title:'Forecast snapshot', span:12},
+  kpis:{title:'Month figures', span:12},
+  todo:{title:'Things that need you', span:7},
+  banks:{title:'Bank accounts', span:12},
+  cash:{title:'Cash flow', span:6},
+  budget:{title:'Budget this month', span:6},
+  watch:{title:'Closing Balance Watch', span:6},
+};
+const DASH_DEFAULT_LAYOUT = [['snapshot',12],['kpis',12],['todo',7],['box:ste',5],['banks',12],['cash',6],['budget',6],['box:cash',6],['box:lte',6],['watch',6]];
+let dashEditing = false;
+let dashDragFrom = null;
+let posBoxEdit = null;      // {id, draft} while a position box is being edited
+let posBoxOpen = {};        // 'boxId:rowIndex' -> true when a line is opened to peek at its accounts
+function clampDashSpan(n){ n = Math.round(Number(n)); return Number.isFinite(n)? Math.max(3, Math.min(12, n)) : 6; }
+
+/* ---- Position boxes ---- */
+// The three panels the Dashboard always had, rebuilt as boxes from today's chart of accounts.
+// Used until Muhannad edits a box; from then on the saved boxes are used as saved.
+function positionBoxPresets(){
+  const ids = cat => [...categoryAccountIds(cat)].sort((a,b)=>a-b).join(', ');
+  const L = (label, cat, sign) => ({type:'line', label, sign:sign||1, accs:ids(cat)});
+  const S = label => ({type:'subtotal', label}), T = label => ({type:'total', label});
+  return [
+    {id:'ste', title:'Short Term Equity', rows:[L('Bank Accounts','Bank Accounts'), L('Short Term Receivables','Short Term Receivables'), L('Temporary Projects Accounts','Temporary Projects Accounts'), S('Current Assets'),
+      L('Short Term Liabilities','Short Term Liabilities'), L('Accruals','Accruals'), L('Provisions','Provisions'), T('Short Term Equity')]},
+    {id:'cash', title:'Cash Bank Account', rows:[L('Bank Accounts','Bank Accounts'), L('Savings Accounts','__savings__',-1), L('Short Term Receivables','Short Term Receivables'), S('Liquid Cash'),
+      L('Short Term Liabilities','Short Term Liabilities'), L('Accruals','Accruals'), T('Liquid Cash After Liabilities')]},
+    {id:'lte', title:'Long Term Equity', rows:[L('Bank Accounts','Bank Accounts'), L('Short Term Receivables','Short Term Receivables'), L('Long Term Receivables','Long Term Receivables'), L('Temporary Projects Accounts','Temporary Projects Accounts'), S('Assets'),
+      L('Short Term Liabilities','Short Term Liabilities'), L('Long Term Liabilities','Long Term Liabilities'), L('Accruals','Accruals'), L('Provisions','Provisions'), T('Long Term Equity')]},
+  ];
+}
+function getPositionBoxes(){
+  const saved = (D.uiPrefs||{}).positionBoxes;
+  return Array.isArray(saved)? saved : positionBoxPresets();
+}
+function parseAccList(s){ return String(s||'').split(/[^0-9]+/).filter(Boolean).map(Number); }
+// Running totals for one box, balances as of `asOf` (default today; future-dated lines are left out).
+function computePositionBox(box, asOf){
+  asOf = asOf || todayStr();
+  const bal = {};
+  for(const l of D.ledger){ if(l.date && l.date>asOf) continue; bal[l.acc] = (bal[l.acc]||0) + (Number(l.amt)||0); }
+  let run = 0; const rows = [];
+  (box.rows||[]).forEach((r,i)=>{
+    if(r.type==='subtotal' || r.type==='total'){ rows.push({...r, i, value:run, from:0, to:run, kind:'total'}); return; }
+    const sign = Number(r.sign)===-1? -1 : 1;
+    const ids = parseAccList(r.accs);
+    const parts = ids.map(id=>({id, value:(bal[id]||0)*sign}));
+    const v = parts.reduce((s,p)=>s+p.value, 0);
+    rows.push({...r, sign, i, ids, parts, value:v, from:run, to:run+v, kind: v>=0? 'asset' : 'liab'});
+    run += v;
+  });
+  const totals = rows.filter(r=>r.kind==='total');
+  return {rows, final: totals.length? totals[totals.length-1].value : run};
+}
+function positionBoxHTML(box){
+  if(posBoxEdit && posBoxEdit.id===box.id) return positionBoxEditorHTML();
+  const c = computePositionBox(box);
+  const ends = c.rows.flatMap(r=>[r.from, r.to]);
+  const lo = Math.min(0, ...ends), hi = Math.max(0, ...ends), range = (hi-lo) || 1;
+  const pct = v => ((v-lo)/range*100).toFixed(2)+'%';
+  const bid = esc(String(box.id)).replace(/'/g,'');
+  return `<div class="panel posbox">
+    <div class="dash-head"><h2>${esc(box.title||'Position box')}</h2>
+      <span class="row" style="gap:10px"><span class="mono posbox-final">${money(c.final)}</span>
+      <button class="btn ghost sm" onclick="openPosBoxEditor('${bid}')" aria-label="Edit ${esc(box.title||'this box')}">Edit</button></span></div>
+    <div class="posbox-rows">${c.rows.map((r,k)=>{
+      const isTot = r.kind==='total', final = r.type==='total';
+      const canOpen = r.type==='line' && (r.ids||[]).length>0;
+      const open = canOpen && posBoxOpen[box.id+':'+r.i];
+      const color = isTot? 'var(--accent-text)' : (r.kind==='asset'? 'color-mix(in srgb,var(--accent) 65%,var(--panel))' : 'color-mix(in srgb,var(--red) 65%,var(--panel))');
+      return `<div class="posbox-row${isTot?(final?' is-total':' is-sub'):''}${canOpen?' can-open':''}"${canOpen?` role="button" tabindex="0" aria-expanded="${!!open}" onclick="togglePosBoxRow('${bid}',${r.i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePosBoxRow('${bid}',${r.i})}"`:''}>
+        <span class="posbox-label">${canOpen?`<span class="chev${open?' open':''}" aria-hidden="true">›</span>`:''}${esc(r.label||'')}${r.type==='account'&&r.ids[0]?` <span class="mono mut" style="font-size:11px">${r.ids[0]}</span>`:''}</span>
+        <span class="mono posbox-val ${!isTot && r.value<0? 'r':''}">${money(r.value)}</span>
+        <div class="posbox-track"><div class="posbox-bar grow-x" style="left:${pct(Math.min(r.from,r.to))};width:${Math.max(0.6,Math.abs(r.to-r.from)/range*100).toFixed(2)}%;background:${color};animation-delay:${k*70}ms"></div></div>
+        ${open? `<div class="posbox-peek rise">${r.parts.map(p=>`<div><span><span class="mono">${p.id}</span> ${esc(accShort(p.id))}</span><span class="mono">${money(p.value)}</span></div>`).join('')}</div>`:''}
+      </div>`;
+    }).join('')}</div>
+  </div>`;
+}
+function togglePosBoxRow(boxId, i){ const k = boxId+':'+i; posBoxOpen[k] = !posBoxOpen[k]; renderDashboard(); }
+function openPosBoxEditor(boxId){
+  const box = getPositionBoxes().find(b=>String(b.id)===String(boxId));
+  if(!box) return;
+  posBoxEdit = {id:box.id, draft:JSON.parse(JSON.stringify(box))};
+  renderDashboard();
+}
+function positionBoxEditorHTML(){
+  const d = posBoxEdit.draft;
+  return `<div class="panel posbox editing">
+    <div class="dash-head"><h2>Editing: ${esc(d.title||'')}</h2></div>
+    <label class="fl" style="margin-top:8px">Box name</label><input value="${esc(d.title||'')}" onchange="posBoxEditTitle(this.value)">
+    <div class="mut" style="font-size:12px;margin:8px 0">A <b>line</b> adds up the account numbers you type and shows only its total (click it on the Dashboard to peek inside). An <b>account</b> line shows one account on its own. A <b>subtotal</b> shows the running total so far; the <b>total</b> closes the box. Balances are as of today.</div>
+    ${d.rows.map((r,i)=>{ const tot = r.type==='subtotal'||r.type==='total'; const neg = Number(r.sign)===-1; return `<div class="posbox-edrow${tot?' tot':''}">
+      <select aria-label="Row type" onchange="posBoxEditSet(${i},'type',this.value)">${[['line','Line'],['account','Account'],['subtotal','Subtotal'],['total','Total']].map(([v,l])=>`<option value="${v}"${r.type===v?' selected':''}>${l}</option>`).join('')}</select>
+      ${tot? '' : `<button class="btn ghost sm sign${neg?' neg':''}" onclick="posBoxEditFlip(${i})" aria-label="${neg?'Subtracts; click to add':'Adds; click to subtract'}">${neg?'−':'+'}</button>`}
+      <input aria-label="Label" placeholder="Label" value="${esc(r.label||'')}" onchange="posBoxEditSet(${i},'label',this.value)" style="flex:1 1 150px">
+      ${tot? '' : `<input class="mono" aria-label="Account numbers" placeholder="10101, 10102" value="${esc(r.accs||'')}" onchange="posBoxEditSet(${i},'accs',this.value)" style="flex:1 1 160px">`}
+      <button class="btn ghost sm" onclick="posBoxEditMove(${i})" aria-label="Move up" ${i===0?'disabled':''}>↑</button>
+      <button class="btn del sm" onclick="posBoxEditRemove(${i})" aria-label="Remove row">✕</button>
+    </div>`; }).join('')}
+    <div class="row" style="margin-top:10px">
+      <button class="btn ghost sm" onclick="posBoxEditAdd('line')">+ Line</button>
+      <button class="btn ghost sm" onclick="posBoxEditAdd('account')">+ Account</button>
+      <button class="btn ghost sm" onclick="posBoxEditAdd('subtotal')">+ Subtotal</button>
+      <span style="flex:1"></span>
+      <button class="btn ghost sm" onclick="posBoxEditCancel()">Cancel</button>
+      <button class="btn pri sm" onclick="savePosBoxEdit()">Save box</button>
+    </div>
+  </div>`;
+}
+function posBoxEditTitle(v){ if(posBoxEdit) posBoxEdit.draft.title = v; }
+function posBoxEditSet(i, field, v){
+  if(!posBoxEdit) return; const r = posBoxEdit.draft.rows[i]; if(!r) return;
+  r[field] = v;
+  if(field==='type' && (v==='subtotal'||v==='total')){ delete r.accs; delete r.sign; }
+  if(field==='type' && (v==='line'||v==='account') && r.sign===undefined){ r.sign = 1; r.accs = r.accs||''; }
+  if(field==='type') renderDashboard();
+}
+function posBoxEditFlip(i){ const r = posBoxEdit && posBoxEdit.draft.rows[i]; if(!r) return; r.sign = Number(r.sign)===-1? 1 : -1; renderDashboard(); }
+function posBoxEditMove(i){ const R = posBoxEdit && posBoxEdit.draft.rows; if(!R || i<1) return; [R[i-1], R[i]] = [R[i], R[i-1]]; renderDashboard(); }
+function posBoxEditRemove(i){ if(!posBoxEdit) return; posBoxEdit.draft.rows.splice(i,1); renderDashboard(); }
+function posBoxEditAdd(type){
+  if(!posBoxEdit) return;
+  const R = posBoxEdit.draft.rows;
+  const row = type==='subtotal'? {type, label:'Subtotal'} : {type, label: type==='account'? 'Account' : 'New line', sign:1, accs:''};
+  const ti = R.findIndex(r=>r.type==='total');
+  R.splice(ti<0? R.length : ti, 0, row);
+  renderDashboard();
+}
+function posBoxEditCancel(){ posBoxEdit = null; renderDashboard(); }
+// Returns an error message, or '' when the box can be saved.
+function validatePositionBox(box){
+  if(!box.rows.length) return 'Add at least one row';
+  for(const r of box.rows){
+    if(r.type!=='line' && r.type!=='account') continue;
+    const ids = parseAccList(r.accs);
+    if(!ids.length) return '"'+(r.label||'A row')+'" needs at least one account number';
+    if(r.type==='account' && ids.length!==1) return '"'+(r.label||'An account row')+'" shows one account; use a line for several';
+    const unknown = ids.filter(id=>!ACC_BY_ID[id]);
+    if(unknown.length) return 'No account '+unknown.join(', ')+' in your chart of accounts';
   }
-  const allBankAccs = D.accounts.filter(a=>a.category==='Bank Accounts' && a.id!==10199 && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account') && a.status!=='Deleted').sort((a,b)=>a.id-b.id);
-  const bankAccs = allBankAccs.filter(a=>a.status!=='Inactive'); // reconciliation table: Inactive accounts aren't reconciled, so they're left off this list entirely
-  const bankTotal = allBankAccs.reduce((s,a)=>s+accountBalance(a.id),0); // KPI total still reflects every bank account's real balance, active or not
+  return '';
+}
+async function savePosBoxEdit(){
+  if(!posBoxEdit) return;
+  const draft = posBoxEdit.draft;
+  draft.title = String(draft.title||'').trim() || 'Position box';
+  const err = validatePositionBox(draft);
+  if(err){ toast(err, true); return; }
+  const boxes = getPositionBoxes().map(b=> String(b.id)===String(draft.id)? draft : b);
+  posBoxEdit = null;
+  await savePositionBoxes(boxes);
+  renderDashboard();
+  toast('Box saved ✓');
+}
+async function savePositionBoxes(boxes){
+  D.uiPrefs = D.uiPrefs || {};
+  const base = D.uiPrefs.updated_at||null;
+  D.uiPrefs.positionBoxes = boxes;
+  D.uiPrefs.updated_at = nowISO();
+  await syncWrite('pd_ui_prefs','upsert',{id:1, position_boxes:boxes}, base);
+  persistLocal();
+}
+
+/* ---- Layout ---- */
+function dashboardLayout(){
+  const boxes = getPositionBoxes();
+  const boxIds = new Set(boxes.map(b=>'box:'+b.id));
+  const valid = id => typeof id==='string' && (!!DASH_WIDGETS[id] || boxIds.has(id));
+  const saved = Array.isArray((D.uiPrefs||{}).dashboardLayout)? D.uiPrefs.dashboardLayout : DASH_DEFAULT_LAYOUT.map(([id,span])=>({id,span}));
+  const out = [], seen = new Set();
+  const add = (id, span) => { if(seen.has(id) || !valid(id)) return; seen.add(id); out.push({id, span:clampDashSpan(span)}); };
+  saved.forEach(w=>{ if(w) add(w.id, w.span); });
+  Object.keys(DASH_WIDGETS).forEach(id=>add(id, DASH_WIDGETS[id].span)); // boxes added by a later version still show up
+  boxes.forEach(b=>add('box:'+b.id, 6));
+  return out;
+}
+async function saveDashboardLayout(layout){
+  D.uiPrefs = D.uiPrefs || {};
+  const base = D.uiPrefs.updated_at||null;
+  D.uiPrefs.dashboardLayout = layout;
+  D.uiPrefs.updated_at = nowISO();
+  await syncWrite('pd_ui_prefs','upsert',{id:1, dashboard_layout:layout}, base);
+  persistLocal();
+}
+function toggleDashEditing(){ dashEditing = !dashEditing; posBoxEdit = null; renderDashboard(); }
+async function moveDashWidget(from, to){
+  const L = dashboardLayout();
+  if(from===to || from<0 || to<0 || from>=L.length || to>=L.length) return;
+  const [w] = L.splice(from, 1); L.splice(to, 0, w);
+  await saveDashboardLayout(L); renderDashboard();
+}
+async function resizeDashWidget(i, span){
+  const L = dashboardLayout(); if(!L[i]) return;
+  L[i].span = clampDashSpan(span);
+  await saveDashboardLayout(L); renderDashboard();
+}
+async function resetDashboardLayout(){
+  if(!confirm('Put every Dashboard box back in its original place and size? Your position boxes themselves are kept.')) return;
+  await saveDashboardLayout(null); renderDashboard(); toast('Layout reset ✓');
+}
+async function addDashPositionBox(){
+  const id = 'b'+Date.now().toString(36);
+  const boxes = getPositionBoxes().concat([{id, title:'New box', rows:[{type:'line', label:'New line', sign:1, accs:''}, {type:'total', label:'Total'}]}]);
+  await savePositionBoxes(boxes);
+  const L = dashboardLayout(); // already includes the new box at the end
+  await saveDashboardLayout(L);
+  posBoxEdit = {id, draft:JSON.parse(JSON.stringify(boxes[boxes.length-1]))};
+  renderDashboard();
+}
+async function removeDashPositionBox(boxId){
+  const box = getPositionBoxes().find(b=>String(b.id)===String(boxId)); if(!box) return;
+  if(!confirm('Remove the box "'+(box.title||'')+'"? This only removes the box, not any accounts or data.')) return;
+  await savePositionBoxes(getPositionBoxes().filter(b=>String(b.id)!==String(boxId)));
+  await saveDashboardLayout(dashboardLayout());
+  renderDashboard();
+}
+function dashDragStart(i, ev){ dashDragFrom = i; if(ev && ev.dataTransfer){ ev.dataTransfer.effectAllowed = 'move'; try{ ev.dataTransfer.setData('text/plain', String(i)); }catch(e){} } }
+function dashDragOver(i, ev){ if(dashDragFrom===null) return; ev.preventDefault(); document.querySelectorAll('.dash-cell.drop-target').forEach(el=>el.classList.remove('drop-target')); if(ev.currentTarget && ev.currentTarget.classList) ev.currentTarget.classList.add('drop-target'); }
+function dashDrop(i, ev){ if(ev) ev.preventDefault(); const from = dashDragFrom; dashDragFrom = null; if(from!==null) moveDashWidget(from, i); }
+function dashDragEnd(){ dashDragFrom = null; document.querySelectorAll('.dash-cell.drop-target').forEach(el=>el.classList.remove('drop-target')); }
+// Drag a box's right edge: the width follows the mouse in whole grid columns and is saved on release.
+function dashResizeStart(i, ev){
+  ev.preventDefault(); ev.stopPropagation();
+  const cell = ev.currentTarget.closest('.dash-cell'), grid = cell && cell.closest('.dash-grid');
+  if(!grid) return;
+  const colW = grid.getBoundingClientRect().width / 12, x0 = ev.clientX;
+  const span0 = dashboardLayout()[i].span; let span = span0;
+  const label = cell.querySelector('.dash-span');
+  const move = e => { span = clampDashSpan(span0 + (e.clientX - x0)/colW); cell.style.gridColumn = 'span '+span; if(label) label.textContent = span+'/12'; };
+  const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); if(span!==span0) resizeDashWidget(i, span); };
+  window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+}
+
+/* ---- Figures behind the boxes ---- */
+function bankReconState(a){
+  const ledgerBal = accountBalance(a.id);
+  const isCC = !!a.is_credit_card;
+  const noLimit = isCC && (a.credit_limit===null||a.credit_limit===undefined||a.credit_limit==='');
+  const typedVal = isCC ? a.stmt_available : a.stmt_balance;
+  const hasStmt = typedVal!==null && typedVal!==undefined && typedVal!=='';
+  const variance = hasStmt ? Number(a.stmt_balance) - ledgerBal : null;
+  const reconciled = hasStmt && Math.abs(variance)<0.005;
+  const daysSinceStmt = a.stmt_date? daysBetweenDates(a.stmt_date, todayStr()) : null;
+  const reconciledFresh = reconciled && daysSinceStmt!==null && daysSinceStmt<=getBalanceStaleDays();
+  return {ledgerBal, isCC, noLimit, typedVal, hasStmt, variance, reconciled, daysSinceStmt, reconciledFresh};
+}
+function dashboardBankAccounts(){
+  const all = D.accounts.filter(a=>a.category==='Bank Accounts' && a.id!==10199 && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account') && a.status!=='Deleted').sort((a,b)=>a.id-b.id);
+  return {all, active: all.filter(a=>a.status!=='Inactive')};
+}
+// This month's expense, per category: actual and budget (P&L definitions), largest budget first.
+function dashboardBudgetRows(ym){
+  const [from, to] = monthRange(ym);
+  const actual = {};
+  for(const l of D.ledger){ if(l.date<from || l.date>to || firstDigit(l.acc)!==6) continue; actual[l.acc] = (actual[l.acc]||0) + (Number(l.amt)||0); }
+  const byCat = {};
+  D.accounts.filter(a=>firstDigit(a.id)===6 && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account') && a.status!=='Deleted').forEach(a=>{
+    const c = byCat[a.category] ??= {cat:a.category, actual:0, budget:0};
+    c.actual += actual[a.id]||0; c.budget += pnlBudgetForAccountInRange(a.id, from, to);
+  });
+  return Object.values(byCat).filter(c=>Math.abs(c.budget)>=0.005 || Math.abs(c.actual)>=0.005)
+    .map(c=>({...c, variance: pnlVarianceMagnitude(c.budget, c.actual)}))
+    .sort((x,y)=>Math.abs(y.budget)-Math.abs(x.budget) || Math.abs(y.actual)-Math.abs(x.actual));
+}
+function dashboardTodoItems(){
+  const items = [];
+  dashboardBankAccounts().active.forEach(a=>{
+    const s = bankReconState(a);
+    if(s.noLimit) return;
+    const name = accShort(a.id);
+    const focus = `var el=document.getElementById('stmtBal_${a.id}'); if(el){ el.scrollIntoView({block:'center'}); el.focus(); }`;
+    if(!s.hasStmt) items.push({tone:'warn', title:name+' has no statement balance', sub:'Type it in the Bank accounts table', label:'Enter', onclick:focus});
+    else if(!s.reconciled) items.push({tone:'neg', title:name+' is off by '+money(s.variance), sub:'Statement vs ledger. Opens a New JV to clear it', label:'Work it off', onclick:`startReconcile(${a.id})`});
+    else if(!s.reconciledFresh) items.push({tone:'warn', title:name+' last reconciled '+(s.daysSinceStmt===null? 'on an unknown date' : s.daysSinceStmt+' day'+(s.daysSinceStmt===1?'':'s')+' ago'), sub:'Statement from '+(a.stmt_date? fmtDateShort(a.stmt_date) : '?')+'. Check a newer one', label:'Update', onclick:focus});
+  });
+  dashboardBudgetRows(todayStr().slice(0,7)).forEach(c=>{
+    if(Math.abs(c.budget)<0.005 || c.variance > -0.005) return;
+    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:'goPnLThisMonth()'});
+  });
+  computeDriftFlags().forEach(f=>{
+    const label = f.kind==='provision'? accShort(f.acc)+' — '+f.groupName : f.ruleName+' ('+accShort(f.acc)+')';
+    items.push({tone:'warn', drift:true, title:'Drift: '+label, sub:'Planned '+money(f.avgPlan)+' vs actual '+money(f.avgActual)+' (average)', label:'Update plan',
+      onclick: f.kind==='provision'? "go('provisions')" : 'goSmartRulesSettings()', dismiss:`dismissDriftFlag('${f.key}')`});
+  });
+  return items;
+}
+function dashboardCashFlowMonths(n){
+  const months = []; let mk = todayStr().slice(0,7);
+  for(let i=0;i<(n||6);i++){ months.unshift(mk); mk = prevMonthKey(mk); }
+  const by = {}; months.forEach(m=>by[m]={month:m, income:0, expense:0});
+  for(const l of D.ledger){ const m = by[(l.date||'').slice(0,7)]; if(!m) continue; const d = firstDigit(l.acc); if(d===3) m.income += Number(l.amt)||0; else if(d===6) m.expense += Number(l.amt)||0; }
+  return months.map(m=>({month:m, income:Math.abs(by[m].income), expense:Math.abs(by[m].expense), net:Math.abs(by[m].income)-Math.abs(by[m].expense)}));
+}
+
+/* ---- Box bodies ---- */
+function dashKpisHTML(){
+  const {all} = dashboardBankAccounts();
+  const bankTotal = all.reduce((s,a)=>s+accountBalance(a.id),0); // every bank account's real balance, active or not
   const ym = todayStr().slice(0,7);
   const incomeMTD = sumAcc(l=>firstDigit(l.acc)===3, ym+'-01', ym+'-31');
   const expenseMTD = sumAcc(l=>firstDigit(l.acc)===6, ym+'-01', ym+'-31');
   const netCashflow = Math.abs(incomeMTD) - Math.abs(expenseMTD);
   const expBudget = dashboardExpenseBudget(ym, expenseMTD);
-
-  const kpiAnim = dashboardNeedsCountUp ? ' fade-in' : '';
-  document.getElementById('app').innerHTML = `
-    ${forecastSnapshotBannerHTML()}
-    <div class="cards">
-      <div class="kpi${kpiAnim}"><div class="l">Bank Accounts Balance</div>${kpiValue(bankTotal, '', 'absMoney')}</div>
-      <div class="kpi${kpiAnim}"><div class="l">This Month Income</div>${kpiValue(incomeMTD, '', 'absMoney')}</div>
-      <div class="kpi${kpiAnim}"><div class="l">This Month Expense</div>${kpiValue(expenseMTD, '', 'absMoney')}<div class="mut click" style="font-size:11.5px;margin-top:4px;cursor:pointer" title="Open the P&amp;L for this month" onclick="goPnLThisMonth()">${dashboardExpenseBudgetLine(expBudget)}</div></div>
-      <div class="kpi${kpiAnim}"><div class="l">This Month Net Cashflow</div>${kpiValue(netCashflow, moneyClass(netCashflow), 'money')}</div>
-    </div>
-    ${driftAlertsCard()}
-    <div class="panel"><h3>Bank Accounts (10101 – 10198)</h3>
+  const anim = dashboardNeedsCountUp ? ' fade-in' : '';
+  return `<div class="cards" style="margin:0">
+      <div class="kpi hero${anim}"><div class="l">Bank balance</div>${kpiValue(bankTotal, '', 'absMoney')}<div class="kpi-note">Across ${all.length} account${all.length===1?'':'s'}</div></div>
+      <div class="kpi${anim}"><div class="l">Income this month</div>${kpiValue(incomeMTD, 'g', 'absMoney')}</div>
+      <div class="kpi${anim}"><div class="l">Expense this month</div>${kpiValue(expenseMTD, '', 'absMoney')}<div class="kpi-note click" style="cursor:pointer" title="Open the P&amp;L for this month" onclick="goPnLThisMonth()">${dashboardExpenseBudgetLine(expBudget)}</div></div>
+      <div class="kpi soft${anim}"><div class="l">Net cash flow</div>${kpiValue(netCashflow, moneyClass(netCashflow), 'money')}${Math.abs(incomeMTD)>=0.005? `<div class="kpi-note">Saving ${(netCashflow/Math.abs(incomeMTD)*100).toFixed(1)}% of income</div>`:''}</div>
+    </div>`;
+}
+function dashTodoHTML(){
+  const items = dashboardTodoItems();
+  return `<div class="panel">
+    <div class="dash-head"><h2>${items.length? items.length+' thing'+(items.length===1?'':'s')+' need'+(items.length===1?'s':'')+' you' : 'Nothing needs you'}</h2></div>
+    ${items.length? `<div class="todo-list">${items.map((x,i)=>`<div class="todo-item ${x.tone} rise" style="animation-delay:${i*70}ms">
+      <span class="todo-dot" aria-hidden="true"></span>
+      <div style="flex:1;min-width:0"><div class="todo-title">${esc(x.title)}</div><div class="mut todo-sub">${esc(x.sub)}</div></div>
+      ${x.dismiss? `<button class="btn ghost sm" onclick="${x.dismiss}" title="Silence until a new month closes">Dismiss</button>`:''}
+      <button class="btn ghost sm" onclick="${x.onclick}">${esc(x.label)}</button>
+    </div>`).join('')}</div>` : `<div class="mut" style="font-size:13px">Every bank account is reconciled, nothing is over budget and there are no drift alerts.</div>`}
+  </div>`;
+}
+function dashBanksHTML(){
+  const {all, active: bankAccs} = dashboardBankAccounts();
+  const bankTotal = all.reduce((s,a)=>s+accountBalance(a.id),0);
+  return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Bank accounts</h2><span class="mut" style="font-size:12px">10101 – 10198</span></div>
       <div class="mut" style="font-size:11.5px;margin-bottom:8px">Enter each account's balance from your latest bank statement to see what's still unreconciled. For credit cards, enter the card's <b>available limit</b> instead — the balance owed is calculated for you. Press Enter to move to the next account. Click a non-zero variance to jump into a New JV and work it off.</div>
       <div style="overflow-x:auto">
       <table class="sticky-table" style="min-width:600px"><thead><tr><th style="position:sticky;left:0;z-index:2;background:var(--panel)">Acc#</th><th style="position:sticky;left:52px;z-index:2;background:var(--panel)">Account</th><th class="num">Ledger Balance</th><th class="num" style="width:150px">Statement Balance</th><th class="num">Variance</th></tr></thead>
       <tbody>${bankAccs.map((a,i)=>{
-        const ledgerBal = accountBalance(a.id);
-        const isCC = !!a.is_credit_card;
-        const noLimit = isCC && (a.credit_limit===null||a.credit_limit===undefined||a.credit_limit==='');
-        const typedVal = isCC ? a.stmt_available : a.stmt_balance;
-        const hasStmt = typedVal!==null && typedVal!==undefined && typedVal!=='';
-        const variance = hasStmt ? Number(a.stmt_balance) - ledgerBal : null;
-        const reconciled = hasStmt && Math.abs(variance)<0.005;
+        const {ledgerBal, isCC, noLimit, typedVal, hasStmt, variance, reconciled, reconciledFresh} = bankReconState(a);
         const nextId = bankAccs[i+1]? bankAccs[i+1].id : null;
-        const daysSinceStmt = a.stmt_date? daysBetweenDates(a.stmt_date, todayStr()) : null;
-        const reconciledFresh = reconciled && daysSinceStmt!==null && daysSinceStmt<=getBalanceStaleDays();
         return `<tr>
           <td class="mono click" style="position:sticky;left:0;z-index:1;background:var(--panel)" onclick="openStatement(${a.id})">${a.id}</td>
           <td class="click" style="position:sticky;left:52px;z-index:1;background:var(--panel)" onclick="openStatement(${a.id})">${esc(accShort(a.id))}${isCC?' <span class="badge">credit card</span>':''}</td>
           <td class="num mono ${isCC? moneyClass(ledgerBal):''}">${isCC? money(ledgerBal) : absMoney(ledgerBal)}</td>
           <td class="num noprint">${noLimit? `<input disabled class="num" style="width:130px" placeholder="set limit first" title="Set a credit limit for this account in Accounts → edit">` : `
-          <input id="stmtBal_${a.id}" type="text" inputmode="decimal" class="num" style="width:130px" value="${hasStmt? fmt2(typedVal) : ''}" placeholder="${isCC?'avail. limit':'—'}" data-raw="${hasStmt? typedVal : ''}"
+          <input id="stmtBal_${a.id}" type="text" inputmode="decimal" class="num" style="width:130px" value="${hasStmt? fmt2(typedVal) : ''}" placeholder="${isCC?'avail. limit':'—'}" data-raw="${hasStmt? typedVal : ''}" aria-label="Statement balance for ${esc(accShort(a.id))}"
             onfocus="this.value = this.dataset.raw"
             onblur="this.value = this.dataset.raw? fmt2(this.dataset.raw) : ''"
             onkeydown="if(event.key==='Enter'){ event.preventDefault(); saveStmtBalance(${a.id}, this.value, ${nextId||'null'}); }">`}</td>
-          <td class="num mono">${!hasStmt? '<span class="mut">—</span>' : (reconciled? `<span style="font-weight:600;color:${reconciledFresh?'var(--green)':'var(--red)'}">Reconciled – ${fmtDateShort(a.stmt_date)}</span>` : `<span style="cursor:pointer;text-decoration:underline;color:var(--red)" onclick="startReconcile(${a.id})">${money(variance)}</span>`)}</td>
+          <td class="num mono">${!hasStmt? '<span class="mut">—</span>' : (reconciled? `<span class="pill" style="font-weight:600;color:${reconciledFresh?'var(--green)':'var(--red)'};background:${reconciledFresh?'var(--pos-soft)':'var(--neg-soft)'}">Reconciled – ${fmtDateShort(a.stmt_date)}</span>` : `<span style="cursor:pointer;text-decoration:underline;color:var(--red)" onclick="startReconcile(${a.id})" title="Start a New JV to work off this variance">${money(variance)}</span>`)}</td>
           </tr>`;
       }).join('') || '<tr><td colspan="5" class="empty">No bank accounts found</td></tr>'}</tbody>
       <tfoot><tr><td colspan="2" style="position:sticky;left:0;z-index:1;background:var(--panel)">Total</td><td class="num mono">${absMoney(bankTotal)}</td>
@@ -4325,9 +4695,67 @@ function renderDashboard(){
         <td class="num mono ${moneyClass(bankAccs.reduce((s,a)=> s+((a.stmt_balance!=null&&a.stmt_balance!=='')? Number(a.stmt_balance)-accountBalance(a.id):0),0))}">${money(bankAccs.reduce((s,a)=> s+((a.stmt_balance!=null&&a.stmt_balance!=='')? Number(a.stmt_balance)-accountBalance(a.id):0),0))}</td>
       </tr></tfoot></table>
       </div>
+    </div>`;
+}
+function dashCashHTML(){
+  const months = dashboardCashFlowMonths(6);
+  const max = Math.max(1, ...months.map(m=>Math.max(m.income, m.expense)));
+  return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Cash flow</h2><span class="legend"><span><i style="background:var(--accent)"></i>Income</span><span><i style="background:var(--bar2,color-mix(in srgb,var(--muted) 45%,var(--panel)))"></i>Expense</span></span></div>
+    <div class="cf-chart" role="img" aria-label="Income and expense, last six months">${months.map((m,i)=>`<div class="cf-col${i===months.length-1?' cur':''}" title="${monthLabel(m.month)}: income ${money(m.income)}, expense ${money(m.expense)}">
+      <div class="cf-bars"><div class="cf-bar in grow-y" style="height:${Math.round(m.income/max*120)}px;animation-delay:${i*80}ms"></div><div class="cf-bar ex grow-y" style="height:${Math.round(m.expense/max*120)}px;animation-delay:${i*80+40}ms"></div></div>
+      <div class="mono cf-net ${moneyClass(m.net)}">${m.net>=0?'+':''}${money(m.net)}</div><div class="cf-m">${monthLabel(m.month)}</div>
+    </div>`).join('')}</div></div>`;
+}
+function dashBudgetHTML(){
+  const rows = dashboardBudgetRows(todayStr().slice(0,7)).filter(c=>Math.abs(c.budget)>=0.005).slice(0,6);
+  return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Budget this month</h2><button class="btn ghost sm" onclick="go('budget')">Open Budget</button></div>
+    ${rows.length? rows.map((c,i)=>{ const spent = Math.abs(c.actual), cap = Math.abs(c.budget); const pct = cap? spent/cap*100 : 0; const over = c.variance < -0.005;
+      const col = over? 'var(--red)' : (pct>=90? 'var(--yellow)' : 'var(--accent)');
+      return `<div class="bud-row"><div class="bud-top"><span>${esc(c.cat)}</span><span class="mono"><b>${money(spent)}</b> <span class="mut">of ${money(cap)}</span></span></div>
+        <div class="bud-track"><div class="bud-fill grow-x" style="width:${Math.min(100,pct).toFixed(1)}%;background:${col};animation-delay:${i*80}ms"></div></div>
+        <div class="bud-note" style="color:${over?'var(--red)':(pct>=90?'var(--yellow)':'var(--muted)')}">${over? 'Over by '+money(-c.variance) : (Math.abs(c.variance)<0.005? 'Fully used' : money(c.variance)+' left')}</div></div>`; }).join('')
+    : '<div class="mut" style="font-size:13px">No budget set for this month.</div>'}</div>`;
+}
+function dashWidgetBody(id){
+  if(id==='snapshot') return forecastSnapshotBannerHTML();
+  if(id==='kpis') return dashKpisHTML();
+  if(id==='todo') return dashTodoHTML();
+  if(id==='banks') return dashBanksHTML();
+  if(id==='cash') return dashCashHTML();
+  if(id==='budget') return dashBudgetHTML();
+  if(id==='watch') return renderClosingBalanceWatchWidget();
+  if(id.startsWith('box:')){ const b = getPositionBoxes().find(x=>'box:'+x.id===id); return b? positionBoxHTML(b) : ''; }
+  return '';
+}
+function renderDashboard(){
+  if(!forecastSnapshotCheckedThisSession){
+    forecastSnapshotCheckedThisSession = true;
+    checkAutoForecastSnapshot().then(()=>{ if(forecastSnapshotBannerMonth && screen==='dashboard') renderDashboard(); });
+  }
+  const layout = dashboardLayout();
+  const boxTitle = id => id.startsWith('box:')? ((getPositionBoxes().find(b=>'box:'+b.id===id)||{}).title||'Position box') : DASH_WIDGETS[id].title;
+  const cells = layout.map((w,i)=>{
+    const body = dashWidgetBody(w.id);
+    if(!body && !dashEditing) return '';
+    const isBox = w.id.startsWith('box:');
+    return `<div class="dash-cell" data-widget="${esc(w.id)}" style="grid-column:span ${w.span}"${dashEditing? ` draggable="true" ondragstart="dashDragStart(${i},event)" ondragover="dashDragOver(${i},event)" ondrop="dashDrop(${i},event)" ondragend="dashDragEnd()"` : ''}>
+      ${dashEditing? `<div class="dash-editbar rise"><span aria-hidden="true">⠿</span><b>${esc(boxTitle(w.id))}</b><span class="mut" style="margin-right:auto">drag to move</span><span class="mono dash-span">${w.span}/12</span>
+        <button class="btn ghost sm" onclick="moveDashWidget(${i},${i-1})" ${i===0?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} earlier">↑</button>
+        <button class="btn ghost sm" onclick="moveDashWidget(${i},${i+1})" ${i===layout.length-1?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} later">↓</button>
+        <button class="btn ghost sm" onclick="resizeDashWidget(${i},${w.span-1})" aria-label="Narrower">−</button><button class="btn ghost sm" onclick="resizeDashWidget(${i},${w.span+1})" aria-label="Wider">+</button>
+        ${isBox? `<button class="btn del sm" onclick="removeDashPositionBox('${esc(w.id.slice(4)).replace(/'/g,'')}')">Remove</button>`:''}</div>
+        <div class="dash-resize" role="separator" aria-label="Resize ${esc(boxTitle(w.id))}" title="Drag to resize" onmousedown="dashResizeStart(${i},event)"><span></span></div>` : ''}
+      ${body || '<div class="panel mut" style="font-size:12.5px">Shows here when there is something to show.</div>'}
+    </div>`;
+  }).join('');
+  document.getElementById('app').innerHTML = `
+    <div class="dash-tools noprint">
+      ${dashEditing? `<span class="mut" style="margin-right:auto;font-size:13px">Drag boxes by their bar to reorder; drag a box's right edge to resize.</span>
+        <button class="btn ghost sm dashed" onclick="addDashPositionBox()">+ New box</button>
+        <button class="btn ghost sm" onclick="resetDashboardLayout()">Reset layout</button>` : ''}
+      <button class="btn ${dashEditing?'pri':'ghost'} sm" aria-pressed="${dashEditing}" onclick="toggleDashEditing()">${dashEditing? 'Done' : 'Edit layout'}</button>
     </div>
-    <div class="grid3">${netWorthPanels()}</div>
-    <div class="grid3">${renderClosingBalanceWatchWidget()}</div>`;
+    <div class="dash-grid${dashEditing?' editing':''}">${cells}</div>`;
   animateKpiCountUps();
 }
 
@@ -14329,7 +14757,7 @@ async function restoreFromBackup(parsed){
   if((D.invValuations||[]).length) await insertWithRetry('pd_inv_valuations', D.invValuations.map(v=>({id:v.id, position_id:v.positionId, entry_date:v.date, price:v.price})));
   if((D.invCashMovements||[]).length) await insertWithRetry('pd_inv_cash_movements', D.invCashMovements.map(m=>({id:m.id, platform_id:m.platformId, entry_date:m.date, kind:m.kind, usd_amount:Number(m.usdAmount)||0, to_platform_id:m.toPlatformId||null, fee_usd:Number(m.feeUsd)||0, capital_usd:Number(m.capitalUsd)||0, profit_usd:Number(m.profitUsd)||0, owners:m.owners||[], note:m.note||''})));
   if(D.invSettings && D.invSettings.fxUsdSar) await insertWithRetry('pd_inv_settings', [{id:1, fx_usd_sar:D.invSettings.fxUsdSar, mgmt_fee_pct:getInvMgmtFeePct(), recon_start_date:(D.invSettings||{}).reconStartDate||null}]);
-  if(D.uiPrefs && (D.uiPrefs.pageOrder || D.uiPrefs.balanceStaleDays)) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder||null, balance_stale_days:getBalanceStaleDays()}]);
+  if(D.uiPrefs && (D.uiPrefs.pageOrder || D.uiPrefs.balanceStaleDays || D.uiPrefs.dashboardLayout || D.uiPrefs.positionBoxes)) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder||null, balance_stale_days:getBalanceStaleDays(), dashboard_layout:D.uiPrefs.dashboardLayout||null, position_boxes:D.uiPrefs.positionBoxes||null}]);
   if((D.forecastSnapshots||[]).length) await insertWithRetry('pd_forecast_snapshots', D.forecastSnapshots.map(s=>({id:s.id, anchor_month:s.anchorMonth, taken_at:s.takenAt, kind:s.kind||'auto', months:s.months||[], sign_flips:s.signFlips||{}})));
   if((D.invRoboValueLog||[]).length) await insertWithRetry('pd_inv_robo_value_log', D.invRoboValueLog.map(r=>({id:r.id, platform_id:r.platformId, entry_date:r.date, value:Number(r.value)||0})));
   bump('Restoring Investments');

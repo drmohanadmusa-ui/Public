@@ -50,13 +50,13 @@ const srv = http.createServer((q, r) => { r.writeHead(200, { 'content-type': 'te
   await page.goto('http://127.0.0.1:8766/');
   await page.waitForTimeout(800);
   await page.evaluate(([data, dark]) => {
-    Object.assign(D, data); normalizeDataShape(D);
+    Object.assign(D, data); normalizeDataShape(D); rebuildIndex();
     if (dark) applyTheme('dark');
   }, [demoData(), darkArg === 'dark']);
   for (const s of screens) {
     await page.evaluate((x) => go(x), s).catch((e) => console.log('go err', s, e.message.slice(0, 160)));
     await page.waitForTimeout(700);
-    await page.screenshot({ path: path.join(outDir, s + '-' + width + (darkArg === 'dark' ? '-dark' : '') + '.png'), fullPage: false });
+    await page.screenshot({ path: path.join(outDir, s + '-' + width + (darkArg === 'dark' ? '-dark' : '') + '.png'), fullPage: true });
   }
   await b.close(); srv.close();
 })();

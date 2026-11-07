@@ -2539,28 +2539,20 @@ function findMatchingDivClose(html, openTagStart){
 }
 
 async function testClosingBalanceWatchIsInItsOwnRowNotTheNetWorthGrid(){
-  // Per item 4: Closing Balance Watch must be in its OWN grid row below the three net worth
-  // panels, not sharing their grid — the opposite of what an earlier version of this test checked.
+  // v5.0: the Dashboard is a grid of separate boxes. The Closing Balance Watch and each of the
+  // three position boxes (which replaced the old net worth panels) are their own boxes, so the
+  // watch never shares a box with the equity panels.
   const sb = makeSandbox();
   const data = vm.runInContext('D', sb);
   data.ledger.push({id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'});
   sb.renderDashboard();
-  const html = sb.document.getElementById('app').innerHTML;
-  const grids = [...html.matchAll(/class="grid3"/g)].map(m=>m.index);
-  assert(grids.length===2, 'Should render exactly two grid3 containers (net worth row, then the watch widget row), got ' + grids.length);
-
-  const firstGridStart = html.lastIndexOf('<div', grids[0]);
-  const firstGridClose = findMatchingDivClose(html, firstGridStart);
-  const secondGridStart = html.lastIndexOf('<div', grids[1]);
-  const secondGridClose = findMatchingDivClose(html, secondGridStart);
-  assert(firstGridClose!==-1 && secondGridClose!==-1, 'Should find both grids\' true matching closing tags');
-  assert(secondGridStart>firstGridClose, 'The second grid must come entirely after the first one closes — a genuinely separate row, not a nested or overlapping container');
-
-  const shortTermIdx = html.indexOf('Short Term Equity');
-  const watchIdx = html.indexOf('Closing Balance Watch');
-  assert(shortTermIdx>firstGridStart && shortTermIdx<firstGridClose, 'Short Term Equity should be inside the FIRST grid');
-  assert(watchIdx>secondGridStart && watchIdx<secondGridClose, 'Closing Balance Watch should be inside the SECOND grid, on its own row');
-  assert(!(watchIdx>firstGridStart && watchIdx<firstGridClose), 'Closing Balance Watch must NOT be inside the first grid alongside the net worth panels');
+  const cells = [...sb.document.querySelectorAll('#app .dash-cell')];
+  const cellOf = text => cells.filter(c=>c.textContent.includes(text));
+  assert(cellOf('Closing Balance Watch').length===1, 'The Closing Balance Watch is exactly one box');
+  assert(cellOf('Short Term Equity').length===1, 'Short Term Equity is exactly one box');
+  const watch = cellOf('Closing Balance Watch')[0], ste = cellOf('Short Term Equity')[0];
+  assert(watch && ste && watch!==ste, 'The watch is not in the same box as the equity panel');
+  assert(watch && !/Long Term Equity|Cash Bank Account/.test(watch.textContent), 'The watch box holds only the watch');
 }
 
 // ================= v4.36.0: Robo-Investment platforms, portfolio value, USD column, Out/In/Profit display =================
@@ -7968,6 +7960,16 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testTopBarShowsPageTitleAndThemeState();
   await testShellMarkupHasTopBarAndNoOldThemeButton();
   await testAppearanceSettingsOfferBackgroundMotionAndGeist();
+  await testPositionBoxPresetsEqualTheOldPanels();
+  await testPositionBoxesUseBalancesAsOfToday();
+  await testPositionBoxSignsAccountRowsAndPeek();
+  await testDashboardLayoutIsNormalised();
+  await testDashboardLayoutChangesSyncOnlyTheLayoutColumn();
+  await testPositionBoxEditorValidatesAndSaves();
+  await testNewAndRemovedPositionBoxes();
+  await testThingsThatNeedYouList();
+  await testDashboardSchemaAndLoadingOfTheNewPrefs();
+  await testEditLayoutModeShowsHandles();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8079,4 +8081,176 @@ async function testAppearanceSettingsOfferBackgroundMotionAndGeist(){
   const fam = [...app.querySelectorAll('select')].find(s=>/Geist/.test(s.innerHTML));
   assert(fam && fam.value==='geist', 'Geist is the default font');
   assert(fam && /Inter/.test(fam.innerHTML) && /Classic Serif/.test(fam.innerHTML), 'The existing font options are kept');
+}
+
+// ---- v5.0 step 2: Dashboard ----
+function dashSandbox(opts){
+  opts = opts||{};
+  const sb = makeSandbox();
+  freezeDate(sb, opts.today||'2026-11-07T10:00:00.000Z');
+  const D = vm.runInContext('D', sb);
+  const A = (id, category, extra) => Object.assign({id, name:'Acc '+id, descr:'Acc '+id, category, status:'Active', acc_type:'Individual Account'}, extra||{});
+  D.accounts = [A(10101,'Bank Accounts'), A(10102,'Bank Accounts',{is_savings:true}), A(10199,'Bank Accounts'), A(11201,'Short Term Receivables'), A(12101,'Long Term Receivables'),
+    A(14101,'Temporary Projects Accounts'), A(21511,'Short Term Liabilities'), A(24101,'Long Term Liabilities'), A(22901,'Accruals'), A(23101,'Provisions'), A(30101,'Salary'), A(60101,'Living')];
+  const L = (id, acc, amt, date) => ({id, jv:id, date:date||'2026-10-01', acc, amt, descr:'x'});
+  D.ledger = [L(1,10101,48250.5), L(2,10102,126400), L(3,10199,999), L(4,11201,6500), L(5,12101,15000), L(6,14101,2300), L(7,21511,-8900), L(8,24101,-42000), L(9,22901,-4150.25), L(10,23101,-11600), L(11,30101,-32500), L(12,60101,6000)];
+  sb.rebuildIndex();
+  sb.confirm = () => true;
+  const calls = [];
+  sb.__set('syncWrite', async (table, kind, row) => { calls.push({table, kind, row}); return {ok:true}; });
+  sb.__set('persistLocal', ()=>{});
+  sb.__calls = calls;
+  sb.__set('forecastSnapshotCheckedThisSession', true); // keep the auto snapshot's own write out of these checks
+  sb.__prefs = () => calls.filter(c=>c.table==='pd_ui_prefs').pop();
+  return sb;
+}
+async function testPositionBoxPresetsEqualTheOldPanels(){
+  const sb = dashSandbox();
+  const bank = sb.bankBalance(), cb = c => sb.categoryBalance(c), sav = sb.savingsBalance();
+  const stRec = cb('Short Term Receivables'), ltRec = cb('Long Term Receivables'), temp = cb('Temporary Projects Accounts');
+  const stLiab = cb('Short Term Liabilities'), ltLiab = cb('Long Term Liabilities'), accr = cb('Accruals'), prov = cb('Provisions');
+  // The old netWorthPanels() formulas
+  const expect = {
+    ste: {'Current Assets': bank+stRec+temp, 'Short Term Equity': bank+stRec+temp+stLiab+accr+prov},
+    cash:{'Liquid Cash': bank-sav+stRec, 'Liquid Cash After Liabilities': bank-sav+stRec+stLiab+accr},
+    lte: {'Assets': bank+stRec+ltRec+temp, 'Long Term Equity': bank+stRec+ltRec+temp+stLiab+ltLiab+accr+prov},
+  };
+  const html = sb.netWorthPanels();
+  const boxes = sb.getPositionBoxes();
+  assert(boxes.length===3 && boxes.map(b=>b.id).join()==='ste,cash,lte', 'Three presets: Short Term Equity, Cash Bank Account, Long Term Equity');
+  boxes.forEach(b=>{
+    const c = sb.computePositionBox(b);
+    Object.entries(expect[b.id]).forEach(([label, v])=>{
+      const row = c.rows.find(r=>r.label===label && r.kind==='total');
+      assert(row && Math.abs(row.value - v) < 0.005, b.title+': "'+label+'" equals the old panel ('+v+'), got '+(row&&row.value));
+      assert(html.includes(sb.money(v)) || html.includes(sb.absMoney(v)), b.title+': the old panel really shows '+sb.money(v));
+    });
+  });
+  assert(!/10199/.test(boxes[0].rows[0].accs), 'Working Capital 10199 stays out of Bank Accounts, as before');
+}
+async function testPositionBoxesUseBalancesAsOfToday(){
+  const sb = dashSandbox();
+  vm.runInContext('D', sb).ledger.push({id:99, jv:99, date:'2026-11-20', acc:10101, amt:500, descr:'future'});
+  const box = {id:'t', title:'T', rows:[{type:'line', label:'Bank', sign:1, accs:'10101'}, {type:'total', label:'Total'}]};
+  assert(Math.abs(sb.computePositionBox(box).final - 48250.5) < 0.005, 'A line dated after today is left out');
+  assert(Math.abs(sb.computePositionBox(box, '2026-11-30').final - 48750.5) < 0.005, 'It counts once its date is reached');
+}
+async function testPositionBoxSignsAccountRowsAndPeek(){
+  const sb = dashSandbox();
+  const box = {id:'p', title:'Peek box', rows:[{type:'line', label:'Banks', sign:1, accs:'10101, 10102'}, {type:'account', label:'Savings', sign:-1, accs:'10102'}, {type:'subtotal', label:'Sub'}, {type:'line', label:'Loans', sign:1, accs:'11201'}, {type:'total', label:'All'}]};
+  const c = sb.computePositionBox(box);
+  assert(Math.abs(c.rows[1].value + 126400) < 0.005, 'A minus sign subtracts the account');
+  assert(Math.abs(c.rows[2].value - 48250.5) < 0.005 && Math.abs(c.final - 54750.5) < 0.005, 'Subtotal is the running total; the total closes the box');
+  sb.__set('dashEditing', false);
+  vm.runInContext('D', sb).uiPrefs.positionBoxes = [box];
+  sb.renderDashboard();
+  let cell = sb.document.querySelector('[data-widget="box:p"]');
+  assert(cell && !cell.querySelector('.posbox-peek'), 'A line shows only its total at first');
+  sb.togglePosBoxRow('p', 0);
+  cell = sb.document.querySelector('[data-widget="box:p"]');
+  const peek = cell && cell.querySelector('.posbox-peek');
+  assert(peek && /10101/.test(peek.textContent) && /10102/.test(peek.textContent), 'Clicking a line peeks at its accounts');
+  assert(cell && cell.querySelectorAll('.posbox-row.is-total').length===1 && cell.querySelectorAll('.posbox-row.is-sub').length===1, 'Subtotal and total rows get the thick rule styles');
+}
+async function testDashboardLayoutIsNormalised(){
+  const sb = dashSandbox();
+  const ids = () => sb.dashboardLayout().map(w=>w.id);
+  assert(ids().join()==='snapshot,kpis,todo,box:ste,banks,cash,budget,box:cash,box:lte,watch', 'Default layout follows the mockup');
+  const D = vm.runInContext('D', sb);
+  D.uiPrefs.dashboardLayout = [{id:'banks', span:40}, {id:'nope', span:6}, {id:'banks', span:4}, {id:'box:gone', span:6}, {id:'kpis', span:1}, null];
+  const L = sb.dashboardLayout();
+  assert(L[0].id==='banks' && L[0].span===12 && L[1].id==='kpis' && L[1].span===3, 'Saved order kept, widths clamped to 3..12');
+  assert(!L.some(w=>w.id==='nope' || w.id==='box:gone') && L.filter(w=>w.id==='banks').length===1, 'Unknown, removed and duplicate boxes are dropped');
+  assert(['todo','cash','budget','watch','snapshot','box:ste','box:cash','box:lte'].every(id=>L.some(w=>w.id===id)), 'Boxes missing from the saved layout are added back');
+}
+async function testDashboardLayoutChangesSyncOnlyTheLayoutColumn(){
+  const sb = dashSandbox();
+  await sb.moveDashWidget(0, 2);
+  let c = sb.__prefs();
+  assert(c && c.table==='pd_ui_prefs' && Object.keys(c.row).sort().join()==='dashboard_layout,id', 'Moving a box writes only dashboard_layout');
+  assert(c && (c.row.dashboard_layout||[])[2] && c.row.dashboard_layout[2].id==='snapshot', 'The moved box lands where it was dropped');
+  await sb.resizeDashWidget(1, 4);
+  c = sb.__prefs();
+  assert(c && (c.row.dashboard_layout||[])[1] && c.row.dashboard_layout[1].span===4, 'Resizing saves the new width');
+  await sb.resetDashboardLayout();
+  c = sb.__prefs();
+  assert(c && c.row.dashboard_layout===null && sb.dashboardLayout()[0].id==='snapshot', 'Reset layout goes back to the default');
+}
+async function testPositionBoxEditorValidatesAndSaves(){
+  const sb = dashSandbox();
+  sb.openPosBoxEditor('ste');
+  const d = vm.runInContext('posBoxEdit', sb);
+  assert(d && d.id==='ste', 'Edit opens the box editor');
+  sb.posBoxEditSet(0, 'accs', '10101, 99999');
+  await sb.savePosBoxEdit();
+  assert(!sb.__prefs() && vm.runInContext('posBoxEdit', sb), 'An unknown account number is refused and nothing is saved');
+  sb.posBoxEditSet(0, 'accs', '10101');
+  sb.posBoxEditTitle('My equity');
+  sb.posBoxEditFlip(0);
+  await sb.savePosBoxEdit();
+  const c = sb.__prefs();
+  assert(c && Object.keys(c.row).sort().join()==='id,position_boxes', 'Saving writes only position_boxes');
+  const saved = c && c.row.position_boxes.find(b=>b.id==='ste');
+  assert(saved && saved.title==='My equity' && saved.rows[0].sign===-1 && saved.rows[0].accs==='10101', 'The edited box is saved');
+  assert(c && c.row.position_boxes.length===3, 'The other presets are saved alongside it');
+  sb.openPosBoxEditor('cash'); sb.posBoxEditSet(1, 'type', 'account'); sb.posBoxEditSet(1, 'accs', '10101, 10102');
+  await sb.savePosBoxEdit();
+  assert(vm.runInContext('posBoxEdit', sb), 'An account row with several accounts is refused');
+}
+async function testNewAndRemovedPositionBoxes(){
+  const sb = dashSandbox();
+  await sb.addDashPositionBox();
+  const D = vm.runInContext('D', sb);
+  const boxes = D.uiPrefs.positionBoxes;
+  assert(boxes && boxes.length===4, '+ New box adds a fourth box');
+  const nb = boxes[3];
+  assert(sb.dashboardLayout().some(w=>w.id==='box:'+nb.id) && vm.runInContext('posBoxEdit', sb).id===nb.id, 'The new box is on the Dashboard and open for editing');
+  await sb.removeDashPositionBox(nb.id);
+  assert(D.uiPrefs.positionBoxes.length===3 && !sb.dashboardLayout().some(w=>w.id==='box:'+nb.id), 'Remove deletes the box and its place');
+}
+async function testThingsThatNeedYouList(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.find(a=>a.id===10101).stmt_balance = 48000; // off by -250.50
+  const sav = D.accounts.find(a=>a.id===10102); sav.stmt_balance = 126400; sav.stmt_date = '2026-10-01'; // reconciled, 37 days old
+  D.accounts.push({id:10103, name:'New bank', category:'Bank Accounts', status:'Active', acc_type:'Individual Account'}); // no statement
+  D.accounts.push({id:10104, name:'Old bank', category:'Bank Accounts', status:'Inactive', acc_type:'Individual Account'}); // inactive: ignored
+  D.ledger.push({id:50, jv:50, date:'2026-11-03', acc:60101, amt:1300, descr:'food'});
+  sb.rebuildIndex();
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 1000 : 0);
+  sb.__set('computeDriftFlags', ()=>[{key:'smartrule:1', kind:'smartrule', ruleName:'Fuel', acc:60101, avgPlan:900, avgActual:1150}]);
+  const items = sb.dashboardTodoItems();
+  const t = items.map(i=>i.title);
+  assert(t.some(x=>/Acc 10101 is off by -250\.50/.test(x)) && items.find(i=>/off by/.test(i.title)).onclick==='startReconcile(10101)', 'An unreconciled account is listed and opens a reconciliation');
+  assert(t.some(x=>/Acc 10102 last reconciled 37 days ago/.test(x)), 'A stale reconciliation is listed');
+  assert(t.some(x=>/New bank has no statement balance/.test(x)), 'An account with no statement is listed');
+  assert(!t.some(x=>/Old bank|10199/.test(x)), 'Inactive accounts and Working Capital are left out');
+  assert(t.some(x=>/Living is over budget by 300\.00/.test(x)), 'An over-budget category is listed');
+  assert(t.some(x=>/^Drift: Fuel/.test(x)) && items.find(i=>i.drift).dismiss==="dismissDriftFlag('smartrule:1')", 'Drift alerts are listed with Dismiss');
+  sb.renderDashboard();
+  assert(/5 things need you/.test(sb.document.getElementById('app').textContent), 'The box heading counts them ('+items.length+')');
+}
+async function testDashboardSchemaAndLoadingOfTheNewPrefs(){
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  assert(/alter table pd_ui_prefs add column if not exists dashboard_layout jsonb/i.test(sql) && /alter table pd_ui_prefs add column if not exists position_boxes jsonb/i.test(sql), 'The schema script adds both pd_ui_prefs columns idempotently');
+  const bare = {uiPrefs:{pageOrder:null}};
+  sb.normalizeDataShape(bare);
+  assert(bare.uiPrefs.dashboardLayout===null && bare.uiPrefs.positionBoxes===null, 'Old caches get both defaults');
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  assert(/dashboardLayout: Array\.isArray\(u\.dashboard_layout\)/.test(src) && /positionBoxes: Array\.isArray\(u\.position_boxes\)/.test(src), 'Cloud load reads both columns');
+  assert(/dashboard_layout:D\.uiPrefs\.dashboardLayout\|\|null, position_boxes:D\.uiPrefs\.positionBoxes\|\|null/.test(src), 'Restore from backup writes both columns back');
+}
+async function testEditLayoutModeShowsHandles(){
+  const sb = dashSandbox();
+  sb.renderDashboard();
+  assert(!sb.document.querySelector('.dash-cell[draggable]') && !sb.document.querySelector('.dash-resize'), 'Normal view has no drag handles');
+  sb.toggleDashEditing();
+  const cells = [...sb.document.querySelectorAll('.dash-cell')];
+  assert(cells.length>=9 && cells.every(c=>c.getAttribute('draggable')==='true' && c.querySelector('.dash-resize')), 'Edit layout: every box can be dragged and resized');
+  const app = sb.document.getElementById('app').innerHTML;
+  assert(/addDashPositionBox\(\)">\+ New box/.test(app) && /resetDashboardLayout\(\)">Reset layout/.test(app), 'Edit layout offers + New box and Reset layout');
+  assert(sb.document.querySelectorAll('.dash-cell [onclick^="removeDashPositionBox"]').length===3, 'Only position boxes can be removed');
+  sb.toggleDashEditing();
+  assert(!sb.document.querySelector('.dash-cell[draggable]'), 'Done leaves edit mode');
 }
