@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Ledger</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 16px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <section class="rise" style="padding: 14px 16px; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px">
+    <div style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Quick range
+      <div role="group" aria-label="Quick range" style="display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: {{t.panel2}}">
+        <sc-for list="{{ranges}}" as="r" hint-placeholder-count="4">
+          <button onClick="{{r.pick}}" aria-pressed="{{r.on}}" style="height: 32px; padding: 0 11px; border: none; border-radius: 7px; cursor: pointer; font-size: 12.5px; background: {{r.bg}}; color: {{r.fg}}; font-weight: {{r.weight}}">{{r.label}}</button>
+        </sc-for>
+      </div>
+    </div>
+    <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">From<input type="date" value="2026-11-01" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+    <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">To<input type="date" value="2026-11-30" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+    <label style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Search
+      <span style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <input value="{{q}}" onChange="{{onSearch}}" placeholder="Description, account or amount" style="border: none; background: transparent; outline: none; font: inherit; font-size: 13px; color: {{t.text}}; width: 100%">
+      </span>
+    </label>
+    <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Export CSV</button>
+  </section>
+
+  <section class="rise" style="padding: 6px 0 0; border-radius: 16px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow: hidden">
+    <div style="overflow-x: auto">
+      <table style="width: 100%; border-collapse: collapse; min-width: 760px">
+        <thead>
+          <tr style="font-size: 11.5px; color: {{t.muted}}; text-align: left">
+            <th style="padding: 10px 16px; font-weight: 500">JV#</th>
+            <th style="padding: 10px 12px; font-weight: 500">Date</th>
+            <th style="padding: 10px 12px; font-weight: 500">Account</th>
+            <th style="padding: 10px 12px; font-weight: 500">Description</th>
+            <th style="padding: 10px 12px; font-weight: 500; text-align: right">Amount</th>
+            <th style="padding: 10px 16px; font-weight: 500">Alloc</th>
+          </tr>
+        </thead>
+        <tbody>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="10">
+            <tr onClick="{{r.toggle}}" style="cursor: pointer; border-top: {{r.groupRule}}; background: {{r.bg}}">
+              <td style="padding: 9px 16px; border-left: {{r.side}}; font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{r.jvColor}}; font-weight: 600">{{r.jvS}}</td>
+              <td style="padding: 9px 12px; font-family: 'Geist Mono', monospace; font-size: 12.5px; color: {{t.muted}}">{{r.dateS}}</td>
+              <td style="padding: 9px 12px"><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}">{{r.code}}</span> {{r.acc}}</td>
+              <td style="padding: 9px 12px">{{r.desc}}</td>
+              <td style="padding: 9px 12px; text-align: right; font-family: 'Geist Mono', monospace; color: {{r.amtColor}}">{{r.amtS}}</td>
+              <td style="padding: 9px 16px; border-right: {{r.side}}"><sc-if value="{{r.hasAlloc}}" hint-placeholder-val="{{false}}"><span style="padding: 2px 8px; border-radius: 99px; font-size: 11.5px; font-weight: 600; background: {{t.accentSoft}}; color: {{t.navOnFg}}">{{r.alloc}}</span></sc-if></td>
+            </tr>
+            <sc-if value="{{r.showActions}}" hint-placeholder-val="{{false}}">
+              <tr>
+                <td colspan="6" style="padding: 10px 16px; background: {{t.panel}}; border: 2px solid {{t.accent}}; border-top: none">
+                  <div class="rise" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+                    <span style="font-weight: 600; margin-right: auto; color: {{t.navOnFg}}">JV {{r.jv}} · {{r.lineCount}} lines · balanced</span>
+                    <button style="min-height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Edit</button>
+                    <button style="min-height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Duplicate as New JV</button>
+                    <button style="min-height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Reverse this JV</button>
+                    <button style="min-height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Download CSV</button>
+                  </div>
+                </td>
+              </tr>
+            </sc-if>
+          </sc-for>
+        </tbody>
+      </table>
+    </div>
+    <sc-if value="{{empty}}" hint-placeholder-val="{{false}}">
+      <p style="margin: 0; padding: 28px; text-align: center; color: {{t.muted}}">No entries match. Try a wider date range or fewer words.</p>
+    </sc-if>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid {{t.line}}; font-size: 12.5px; color: {{t.muted}}">
+      <span>{{countS}}</span>
+      <span style="display: flex; gap: 6px">
+        <button disabled="{{true}}" style="min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}">Previous</button>
+        <button style="min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Next</button>
+      </span>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { q: '', range: 'month', open: 1041 }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF' }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const L = [
+      [1042, '07 Nov', '60110', 'Groceries', 'Weekly groceries', 612.4, ''], [1042, '07 Nov', '10101', 'Main Current', 'Weekly groceries', -612.4, ''],
+      [1041, '06 Nov', '10101', 'Main Current', 'November salary', 32500, ''], [1041, '06 Nov', '30100', 'Salary', 'November salary', -32500, ''],
+      [1040, '05 Nov', '60120', 'Utilities', 'Electricity bill', 384, ''], [1040, '05 Nov', '10103', 'Joint Account', 'Electricity bill', -384, ''],
+      [1039, '04 Nov', '21510', 'Jamiah payable', 'Jamiah round 6', 2000, 'A-118'], [1039, '04 Nov', '10101', 'Main Current', 'Jamiah round 6', -2000, ''],
+      [1038, '03 Nov', '60150', 'Transport', 'Fuel', 210, ''], [1038, '03 Nov', '10105', 'Rewards Card', 'Fuel', -210, ''],
+      [1037, '02 Nov', '10102', 'Family Savings', 'Transfer to savings', 10000, ''], [1037, '02 Nov', '10101', 'Main Current', 'Transfer to savings', -10000, ''],
+      [1036, '01 Nov', '10103', 'Joint Account', 'Rent received, flat 2', 4500, 'A-117'], [1036, '01 Nov', '31200', 'Rental income', 'Rent received, flat 2', -4500, 'A-117']
+    ];
+    const q = this.state.q.trim().toLowerCase();
+    const counts = {}; L.forEach(r => { counts[r[0]] = (counts[r[0]] || 0) + 1; });
+    const filtered = q ? L.filter(r => (r[0] + ' ' + r[2] + ' ' + r[3] + ' ' + r[4] + ' ' + Math.abs(r[5])).toLowerCase().includes(q)) : L;
+    let prev = null, band = 0;
+    const rows = filtered.map((r, i) => {
+      const first = r[0] !== prev; if (first) band++; prev = r[0];
+      const next = filtered[i + 1]; const lastOfJv = !next || next[0] !== r[0];
+      const open = this.state.open === r[0];
+      return { jv: r[0], jvS: first ? r[0] : '', dateS: first ? r[1] : '', code: r[2], acc: r[3], desc: r[4], amtS: fmt(r[5]), amtColor: r[5] < 0 ? t.neg : t.text,
+        alloc: r[6], hasAlloc: !!r[6], lineCount: counts[r[0]], groupRule: first ? (open ? '2px solid ' + t.accent : '1px solid ' + t.line) : 'none', bg: band % 2 ? 'transparent' : t.panel2, side: open ? '2px solid ' + t.accent : 'none',
+        jvColor: t.accentText, showActions: open && lastOfJv,
+        toggle: () => this.setState({ open: this.state.open === r[0] ? null : r[0] }) };
+    });
+    const jvs = new Set(filtered.map(r => r[0])).size;
+    const ranges = [['month', 'This month'], ['last', 'Last month'], ['year', 'This year'], ['all', 'All']].map(([v, label]) => { const on = this.state.range === v; return { label, on, bg: on ? t.panel : 'transparent', fg: on ? t.text : t.muted, weight: on ? '600' : '500', pick: () => this.setState({ range: v }) }; });
+    return { t, rows, ranges, q: this.state.q, bgFill: this.props.t ? 'transparent' : t.ground, empty: rows.length === 0,
+      countS: jvs + ' journal vouchers · ' + rows.length + ' lines · click a voucher for its actions',
+      onSearch: (e) => this.setState({ q: e.target.value }) };
+  }
+}
+</script>
+</body>
+</html>

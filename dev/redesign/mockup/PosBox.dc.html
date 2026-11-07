@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: custom position box</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div class="lift" style="padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}">
+  <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap">
+    <h2 style="margin: 0; font-size: 15px; font-weight: 600">{{title}}</h2>
+    <span style="display: flex; align-items: center; gap: 10px">
+      <span style="font-family: 'Geist Mono', monospace; font-size: 20px; font-weight: 600; color: {{t.accentText}}">{{finalS}}</span>
+      <button onClick="{{toggleEdit}}" aria-pressed="{{editing}}" aria-label="Edit this box" style="height: 30px; padding: 0 10px; border-radius: 8px; cursor: pointer; font-size: 12px; border: 1px solid {{editBorder}}; background: {{editBg}}; color: {{editFg}}">{{editLabel}}</button>
+    </span>
+  </div>
+
+  <sc-if value="{{viewing}}" hint-placeholder-val="{{true}}">
+    <div style="display: flex; flex-direction: column; margin-top: 10px">
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="8">
+        <div onClick="{{r.toggle}}" style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; padding: 8px 0; border-top: {{r.rule}}; cursor: {{r.cursor}}">
+          <span style="font-size: 13px; font-weight: {{r.weight}}; color: {{r.labelColor}}; display: flex; align-items: center; gap: 6px">
+            <sc-if value="{{r.canOpen}}" hint-placeholder-val="{{false}}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: {{r.chev}}; transition: transform .2s"><path d="M9 6l6 6-6 6"></path></svg></sc-if>{{r.label}}<sc-if value="{{r.isAcc}}" hint-placeholder-val="{{false}}"><span style="font-family: 'Geist Mono', monospace; font-size: 11px; color: {{t.muted}}">{{r.accNo}}</span></sc-if>
+          </span>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 13px; font-weight: {{r.weight}}; color: {{r.valColor}}">{{r.valS}}</span>
+          <div style="grid-column: 1 / -1; position: relative; height: {{r.barH}}; border-radius: 3px; background: {{t.panel2}}">
+            <div class="grow-x" style="position: absolute; top: 0; bottom: 0; border-radius: 3px; left: {{r.left}}; width: {{r.width}}; background: {{r.color}}; animation-delay: {{r.delay}}"></div>
+          </div>
+          <sc-if value="{{r.open}}" hint-placeholder-val="{{false}}">
+            <div class="rise" style="grid-column: 1 / -1; display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px 18px">
+              <sc-for list="{{r.detail}}" as="d" hint-placeholder-count="3"><div style="display: flex; justify-content: space-between; font-size: 12px; color: {{t.muted}}"><span><span style="font-family: 'Geist Mono', monospace">{{d.no}}</span> {{d.name}}</span><span style="font-family: 'Geist Mono', monospace">{{d.valS}}</span></div></sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{editing}}" hint-placeholder-val="{{false}}">
+    <div class="rise" style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px">
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Box name<input value="{{draftTitle}}" onChange="{{onTitle}}" style="height: 36px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+      <p style="margin: 0; font-size: 12px; color: {{t.muted}}">A line sums the account numbers you type and shows only its total (click it on the dashboard to peek inside). An account line shows one account on its own. A subtotal shows the running total so far; the total closes the box.</p>
+      <sc-for list="{{edRows}}" as="e" hint-placeholder-count="8">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-radius: 10px; background: {{e.bg}}; border: 1px solid {{t.line}}">
+          <select value="{{e.type}}" onChange="{{e.onType}}" aria-label="Row type" style="height: 32px; padding: 0 6px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; font: inherit; font-size: 12.5px"><option value="line">Line</option><option value="account">Account</option><option value="subtotal">Subtotal</option><option value="total">Total</option></select>
+          <sc-if value="{{e.hasSign}}" hint-placeholder-val="{{true}}"><button onClick="{{e.flip}}" aria-label="Add or subtract" style="width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-weight: 700; border: 1px solid {{t.line}}; background: {{e.signBg}}; color: {{e.signFg}}">{{e.signS}}</button></sc-if>
+          <input value="{{e.label}}" onChange="{{e.onLabel}}" aria-label="Label" placeholder="Label" style="flex: 1 1 150px; height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; font: inherit; font-size: 12.5px">
+          <sc-if value="{{e.hasAccs}}" hint-placeholder-val="{{true}}"><input value="{{e.accs}}" onChange="{{e.onAccs}}" aria-label="Account numbers" placeholder="10101, 10102" style="flex: 1 1 160px; height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; font-family: 'Geist Mono', monospace; font-size: 12px"></sc-if>
+          <button onClick="{{e.up}}" aria-label="Move up" style="width: 30px; height: 30px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+          <button onClick="{{e.remove}}" aria-label="Remove row" style="width: 30px; height: 30px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.neg}}; cursor: pointer"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+        </div>
+      </sc-for>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px">
+        <button onClick="{{addLine}}" style="height: 34px; padding: 0 12px; border-radius: 8px; border: 1px dashed {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; cursor: pointer; font-size: 12.5px">+ Line</button>
+        <button onClick="{{addAccount}}" style="height: 34px; padding: 0 12px; border-radius: 8px; border: 1px dashed {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; cursor: pointer; font-size: 12.5px">+ Account</button>
+        <button onClick="{{addSubtotal}}" style="height: 34px; padding: 0 12px; border-radius: 8px; border: 1px dashed {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; cursor: pointer; font-size: 12.5px">+ Subtotal</button>
+        <span style="flex: 1"></span>
+        <button onClick="{{cancel}}" style="height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 12.5px">Cancel</button>
+        <button onClick="{{save}}" style="height: 34px; padding: 0 14px; border-radius: 8px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; cursor: pointer; font-size: 12.5px; font-weight: 600">Save box</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"box":{"editor":null},"saveBox":{"editor":null},"$preview":{"width":460,"height":560}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { editing: false, draft: null, open: {}, own: null }; }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF', liab: mx('#B42318', p, 0.35) }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    /* Invented balances. In the app these come from the ledger, as of today. */
+    const BAL = { 10101: ['Main Current', 48250], 10102: ['Family Savings', 126400], 10103: ['Joint Account', 18930.5], 10104: ['Cash Wallet', 1240], 10105: ['Rewards Card', -3412.8],
+      11200: ['Loan to brother', 6500], 11210: ['Deposit refund due', 1800], 12100: ['Long-term loan to friend', 15000], 14100: ['Kitchen renovation', 2300],
+      21510: ['Jamiah payable', -5487.2], 21520: ['Credit card instalments', -3412.8], 22900: ['School fees accrual', -4150], 23100: ['Car service provision', -11600], 24100: ['Car lease balloon', -42000] };
+    const sample = { title: 'Short-term equity', rows: [
+      { type: 'line', label: 'Bank accounts', sign: 1, accs: '10101, 10102, 10103, 10104' }, { type: 'line', label: 'Short-term receivables', sign: 1, accs: '11200, 11210' },
+      { type: 'account', label: 'Kitchen renovation', sign: 1, accs: '14100' }, { type: 'subtotal', label: 'Current assets' },
+      { type: 'line', label: 'Short-term liabilities', sign: 1, accs: '21510, 10105' }, { type: 'line', label: 'Accruals', sign: 1, accs: '22900' }, { type: 'line', label: 'Provisions', sign: 1, accs: '23100' },
+      { type: 'total', label: 'Short-term equity' } ] };
+    const box = this.state.own || this.props.box || sample;
+    const parse = (s) => String(s || '').split(/[^0-9]+/).filter(Boolean).map(Number);
+    let run = 0; const calc = [];
+    box.rows.forEach((r, i) => {
+      if (r.type === 'subtotal' || r.type === 'total') { calc.push({ r, i, v: run, from: 0, to: run, kind: 'total' }); return; }
+      const ids = parse(r.accs); const v = ids.reduce((s, id) => s + (BAL[id] ? BAL[id][1] : 0), 0) * (r.sign || 1);
+      calc.push({ r, i, v, from: run, to: run + v, kind: v >= 0 ? 'asset' : 'liab', ids }); run += v;
+    });
+    const scale = Math.max(1, ...calc.map(c => Math.max(Math.abs(c.from), Math.abs(c.to))));
+    const rows = calc.map((c, k) => { const isTot = c.kind === 'total'; const final = c.r.type === 'total'; const canOpen = c.r.type === 'line' && (c.ids || []).length > 1; const open = !!this.state.open[c.i];
+      return { label: c.r.label, valS: fmt(c.v), isAcc: c.r.type === 'account', accNo: (c.ids || [])[0] || '', canOpen, open: canOpen && open, chev: open ? 'rotate(90deg)' : 'none', cursor: canOpen ? 'pointer' : 'default',
+        left: (Math.min(c.from, c.to) / scale * 100).toFixed(2) + '%', width: Math.max(0.6, Math.abs(c.to - c.from) / scale * 100).toFixed(2) + '%',
+        color: isTot ? t.accentText : (c.kind === 'asset' ? mx(t.accent, t.panel, 0.35) : t.liab), barH: isTot ? (final ? '10px' : '8px') : '6px',
+        weight: isTot ? '600' : '400', labelColor: isTot ? t.text : t.muted, valColor: c.v < 0 && !isTot ? t.neg : t.text, rule: isTot ? (final ? '2px solid ' + t.text : '1px solid ' + t.text) : 'none', delay: (k * 70) + 'ms',
+        detail: (c.ids || []).map(id => ({ no: id, name: BAL[id] ? BAL[id][0] : 'Unknown account', valS: fmt(BAL[id] ? BAL[id][1] * (c.r.sign || 1) : 0) })),
+        toggle: () => { if (canOpen) this.setState({ open: { ...this.state.open, [c.i]: !open } }); } }; });
+    const lastTotal = calc.filter(c => c.kind === 'total').pop();
+    const draft = this.state.draft || box;
+    const upd = (i, patch) => this.setState({ draft: { ...draft, rows: draft.rows.map((r, j) => j === i ? { ...r, ...patch } : r) } });
+    const edRows = draft.rows.map((r, i) => { const tot = r.type === 'subtotal' || r.type === 'total'; const neg = (r.sign || 1) < 0;
+      return { type: r.type, label: r.label, accs: r.accs || '', hasSign: !tot, hasAccs: !tot, signS: neg ? '−' : '+', signBg: neg ? mx(t.panel, t.neg, 0.1) : t.accentSoft, signFg: neg ? t.neg : t.navOnFg, bg: tot ? t.panel2 : t.panel,
+        onType: (e) => upd(i, { type: e.target.value }), onLabel: (e) => upd(i, { label: e.target.value }), onAccs: (e) => upd(i, { accs: e.target.value }), flip: () => upd(i, { sign: -(r.sign || 1) }),
+        up: () => { if (i === 0) return; const R = draft.rows.slice(); const x = R[i]; R[i] = R[i - 1]; R[i - 1] = x; this.setState({ draft: { ...draft, rows: R } }); },
+        remove: () => this.setState({ draft: { ...draft, rows: draft.rows.filter((_, j) => j !== i) } }) }; });
+    const add = (row) => () => { const R = draft.rows.slice(); const ti = R.findIndex(r => r.type === 'total'); R.splice(ti < 0 ? R.length : ti, 0, row); this.setState({ draft: { ...draft, rows: R } }); };
+    const ed = this.state.editing;
+    return { t, rows, edRows, title: box.title, finalS: lastTotal ? fmt(lastTotal.v) : '', editing: ed, viewing: !ed, draftTitle: draft.title,
+      editLabel: ed ? 'Editing' : 'Edit', editBg: ed ? t.accent : t.panel, editFg: ed ? t.onAccent : t.text, editBorder: ed ? t.accent : t.line,
+      toggleEdit: () => this.setState({ editing: !ed, draft: ed ? null : JSON.parse(JSON.stringify(box)) }),
+      onTitle: (e) => this.setState({ draft: { ...draft, title: e.target.value } }),
+      addLine: add({ type: 'line', label: 'New line', sign: 1, accs: '' }), addAccount: add({ type: 'account', label: 'Account', sign: 1, accs: '' }), addSubtotal: add({ type: 'subtotal', label: 'Subtotal' }),
+      cancel: () => this.setState({ editing: false, draft: null }),
+      save: () => { if (this.props.saveBox) this.props.saveBox(draft); else this.setState({ own: draft }); this.setState({ editing: false, draft: null }); } };
+  }
+}
+</script>
+</body>
+</html>

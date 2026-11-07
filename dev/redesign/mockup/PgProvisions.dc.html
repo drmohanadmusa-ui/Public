@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: Provisions</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 16px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+
+  <section class="rise" style="padding: 16px 18px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+      <span style="font-size: 13px; color: {{t.muted}}">Month</span>
+      <div role="group" aria-label="Month" style="display: flex; flex-wrap: wrap; gap: 4px">
+        <sc-for list="{{monthChips}}" as="m" hint-placeholder-count="6">
+          <button onClick="{{m.pick}}" aria-pressed="{{m.on}}" style="height: 34px; padding: 0 12px; border-radius: 9px; cursor: pointer; font-size: 13px; border: 1px solid {{m.border}}; background: {{m.bg}}; color: {{m.fg}}; font-weight: {{m.weight}}">{{m.label}}</button>
+        </sc-for>
+      </div>
+      <span style="flex: 1"></span>
+      <button style="min-height: 38px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Export grid</button>
+      <button style="min-height: 38px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Import grid</button>
+      <button disabled="{{hasErrors}}" style="min-height: 40px; padding: 0 16px; border-radius: 10px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 700; cursor: pointer">{{genLabel}}</button>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; padding-top: 10px; border-top: 1px solid {{t.line}}; font-size: 13px">
+      <span>Expense this month from provisions <span style="font-family: 'Geist Mono', monospace; font-weight: 700; color: {{t.accentText}}">{{expTotal}}</span></span>
+      <span style="color: {{t.muted}}">{{groupCount}}</span>
+      <label style="margin-left: auto; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; flex: 0 1 300px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <input value="{{q}}" onChange="{{onSearch}}" placeholder="Find a group or account" aria-label="Find a group" style="border: none; background: transparent; outline: none; font: inherit; font-size: 13px; color: {{t.text}}; width: 100%">
+      </label>
+    </div>
+  </section>
+
+  <sc-if value="{{hasErrors}}" hint-placeholder-val="{{true}}">
+    <section class="rise" role="alert" style="padding: 14px 18px; border-radius: 16px; background: {{t.negSoft}}; border: 1px solid {{t.neg}}; display: flex; flex-direction: column; gap: 8px">
+      <p style="margin: 0; font-weight: 600; color: {{t.neg}}">Needs fixing before the JV can be generated</p>
+      <sc-for list="{{errors}}" as="e" hint-placeholder-count="1">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 13px">
+          <span><b>{{e.group}}</b> · {{e.month}} doesn't net to zero: off by <span style="font-family: 'Geist Mono', monospace; font-weight: 600">{{e.off}}</span></span>
+          <button onClick="{{e.show}}" style="height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.neg}}; background: {{t.panel}}; color: {{t.neg}}; font-weight: 600; cursor: pointer; font-size: 12.5px">Show me</button>
+        </div>
+      </sc-for>
+    </section>
+  </sc-if>
+
+  <section class="rise" style="border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow: hidden">
+    <div style="display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.6fr) 150px 90px; gap: 12px; padding: 10px 18px; font-size: 11.5px; color: {{t.muted}}; background: {{t.panel2}}">
+      <span>Group</span><span>JV description</span><span style="text-align: right">Hits expenses</span><span style="text-align: right">Status</span>
+    </div>
+    <sc-for list="{{groups}}" as="g" hint-placeholder-count="6">
+      <div style="border-top: 1px solid {{t.line}}">
+        <button onClick="{{g.toggle}}" aria-expanded="{{g.open}}" style="width: 100%; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.6fr) 150px 90px; gap: 12px; align-items: center; padding: 12px 18px; border: none; background: {{g.rowBg}}; color: {{t.text}}; cursor: pointer; text-align: left; font: inherit">
+          <span style="display: flex; align-items: center; gap: 8px; font-weight: 600"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: {{g.chev}}; transition: transform .2s; flex: none"><path d="M9 6l6 6-6 6"></path></svg>{{g.name}}</span>
+          <span style="font-size: 13px; color: {{t.muted}}">{{g.descr}}</span>
+          <span style="text-align: right; font-family: 'Geist Mono', monospace; font-weight: 600; color: {{g.expColor}}">{{g.expS}}</span>
+          <span style="text-align: right"><span style="padding: 3px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; background: {{g.stBg}}; color: {{g.stFg}}">{{g.status}}</span></span>
+        </button>
+
+        <sc-if value="{{g.open}}" hint-placeholder-val="{{false}}">
+          <div class="rise" style="padding: 4px 18px 18px; display: flex; flex-direction: column; gap: 12px; background: {{g.rowBg}}">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px">
+              <sc-for list="{{g.lineCards}}" as="c" hint-placeholder-count="2">
+                <div style="padding: 10px 12px; border-radius: 12px; background: {{t.panel}}; border: 1px solid {{t.line}}; font-size: 12px">
+                  <p style="margin: 0; font-weight: 600; font-size: 13px"><span style="font-family: 'Geist Mono', monospace; color: {{t.accentText}}">{{c.acc}}</span> {{c.name}}</p>
+                  <p style="margin: 2px 0 6px; color: {{t.muted}}">{{c.descr}}</p>
+                  <div style="display: flex; justify-content: space-between"><span style="color: {{t.muted}}">Balance now</span><span style="font-family: 'Geist Mono', monospace">{{c.now}}</span></div>
+                  <div style="display: flex; justify-content: space-between"><span style="color: {{t.muted}}">Still planned</span><span style="font-family: 'Geist Mono', monospace">{{c.planned}}</span></div>
+                  <div style="display: flex; justify-content: space-between; font-weight: 600"><span>Projected</span><span style="font-family: 'Geist Mono', monospace">{{c.proj}}</span></div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="border-radius: 12px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow-x: auto">
+              <table style="width: 100%; border-collapse: collapse; min-width: 520px">
+                <thead><tr style="font-size: 11.5px; color: {{t.muted}}; text-align: right"><th style="padding: 9px 14px; font-weight: 500; text-align: left; width: 90px">Month</th><sc-for list="{{g.heads}}" as="h" hint-placeholder-count="2"><th style="padding: 9px 8px; font-weight: 500">{{h}}</th></sc-for><th style="padding: 9px 14px; font-weight: 600; width: 130px">Net</th></tr></thead>
+                <tbody>
+                  <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="12">
+                    <tr style="border-top: 1px solid {{t.line}}; background: {{r.bg}}; outline: {{r.outline}}; outline-offset: -2px">
+                      <td style="padding: 6px 14px; font-weight: {{r.weight}}; color: {{r.mColor}}">{{r.m}}</td>
+                      <sc-for list="{{r.cells}}" as="c" hint-placeholder-count="2">
+                        <td style="padding: 4px 8px; text-align: right"><input value="{{c.v}}" onChange="{{c.onEdit}}" inputmode="decimal" aria-label="{{c.aria}}" placeholder="0.00" style="width: 120px; height: 32px; padding: 0 8px; text-align: right; border-radius: 7px; border: 1px solid {{c.border}}; background: {{t.panel2}}; color: {{c.color}}; font-family: 'Geist Mono', monospace; font-size: 12.5px"></td>
+                      </sc-for>
+                      <td style="padding: 6px 14px; text-align: right"><span style="padding: 2px 9px; border-radius: 99px; font-family: 'Geist Mono', monospace; font-size: 12px; font-weight: 600; background: {{r.netBg}}; color: {{r.netFg}}">{{r.net}}</span></td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+              <button onClick="{{g.toggleFill}}" aria-expanded="{{g.fillOpen}}" style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Bulk fill</button>
+              <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">+ Add account</button>
+              <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">+ Add month</button>
+              <button style="min-height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; font-size: 13px">Rename group</button>
+              <span style="flex: 1"></span>
+              <button style="min-height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; cursor: pointer; font-size: 13px; font-weight: 600">Generate JV for this group only</button>
+            </div>
+
+            <sc-if value="{{g.fillOpen}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="padding: 14px; border-radius: 12px; background: {{t.panel}}; border: 1px dashed {{t.accent}}; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px">
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Line<select value="{{g.fill.line}}" onChange="{{g.fill.onLine}}" style="height: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"><sc-for list="{{g.fill.lineOpts}}" as="o" hint-placeholder-count="2"><option value="{{o.v}}">{{o.label}}</option></sc-for></select></label>
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">From<select value="{{g.fill.from}}" onChange="{{g.fill.onFrom}}" style="height: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"><sc-for list="{{g.fill.monthOpts}}" as="o" hint-placeholder-count="12"><option value="{{o.v}}">{{o.label}}</option></sc-for></select></label>
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Months<input value="{{g.fill.n}}" onChange="{{g.fill.onN}}" inputmode="numeric" style="width: 70px; height: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></label>
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Amount<input value="{{g.fill.amt}}" onChange="{{g.fill.onAmt}}" inputmode="decimal" style="width: 110px; height: 36px; padding: 0 8px; text-align: right; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font-family: 'Geist Mono', monospace; font-size: 13px"></label>
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Balance it on<select value="{{g.fill.mirror}}" onChange="{{g.fill.onMirror}}" style="height: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"><option value="-1">Don't balance</option><sc-for list="{{g.fill.lineOpts}}" as="o" hint-placeholder-count="2"><option value="{{o.v}}">{{o.label}}</option></sc-for></select></label>
+                <span style="flex: 1 1 160px; font-size: 12.5px; color: {{t.muted}}">{{g.fill.preview}}</span>
+                <button onClick="{{g.fill.apply}}" style="height: 36px; padding: 0 14px; border-radius: 8px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 600; cursor: pointer">Fill</button>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+    </sc-for>
+    <sc-if value="{{noMatch}}" hint-placeholder-val="{{false}}"><p style="margin: 0; padding: 22px; text-align: center; color: {{t.muted}}">No group matches that search.</p></sc-if>
+  </section>
+  <div style="display: flex; justify-content: flex-end"><button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px dashed {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; cursor: pointer; font-weight: 600">+ New group</button></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const G = [
+      { name: 'School fees, next year', descr: 'School fees provision', lines: [[60130, 'School fees', 1500], [23200, 'School fees provision', -1500]] },
+      { name: 'Car service and tyres', descr: 'Car service provision', lines: [[60150, 'Car maintenance', 600], [23100, 'Car service provision', -600]] },
+      { name: 'Annual holiday', descr: 'Holiday provision', lines: [[60170, 'Travel', 2000], [23300, 'Holiday provision', -2000]] },
+      { name: 'Home rent, quarterly', descr: 'Home rent', lines: [[60505, 'Rent', 4000], [23400, 'Rent provision', -4000], [23400, 'Rent provision (payment)', 0], [10101, 'Main Current', 0]], quarter: true },
+      { name: 'Eid gifts', descr: 'Eid gifts provision', lines: [[60608, 'Gifts', 350], [23500, 'Eid gifts provision', -350]], err: 3 },
+      { name: 'Car lease balloon', descr: 'Car lease (balloon)', lines: [[60201, 'Car lease', 1200], [24100, 'Lease balloon payable', -1200]] }
+    ];
+    const cells = G.map(g => Array.from({ length: 12 }, (_, m) => g.lines.map((l, li) => {
+      let v = l[2];
+      if (g.quarter && (m % 3 === 1)) { if (li === 2) v = 12000; if (li === 3) v = -12000; }
+      if (g.err === m && li === 1) v = -300;
+      return String(v);
+    })));
+    this.state = { month: 0, open: null, focus: null, q: '', cells, groups: G, fill: {} };
+  }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF', posSoft: mx(p, '#047857', 0.12), negSoft: mx(p, '#B42318', 0.1), warnSoft: mx(p, '#A15C07', 0.12) }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const num = (v) => { const x = Number(String(v).replace(/,/g, '')); return isNaN(x) ? 0 : x; };
+    const MN = ['Nov-26', 'Dec-26', 'Jan-27', 'Feb-27', 'Mar-27', 'Apr-27', 'May-27', 'Jun-27', 'Jul-27', 'Aug-27', 'Sep-27', 'Oct-27'];
+    const s = this.state; const M = s.month;
+    const netOf = (gi, m) => s.cells[gi][m].reduce((a, v) => a + num(v), 0);
+    const errors = [];
+    s.groups.forEach((g, gi) => MN.forEach((mn, m) => { const n = netOf(gi, m); if (Math.abs(n) > 0.005) errors.push({ group: g.name, month: mn, off: fmt(n), show: () => this.setState({ open: gi, focus: m }) }); }));
+    const q = s.q.trim().toLowerCase();
+    let expTotal = 0, shown = 0;
+    const groups = [];
+    s.groups.forEach((g, gi) => {
+      const exp = g.lines.reduce((a, l, li) => a + (String(l[0])[0] === '6' ? num(s.cells[gi][M][li]) : 0), 0); expTotal += exp;
+      if (q && !(g.name + ' ' + g.descr + ' ' + g.lines.map(l => l[0] + ' ' + l[1]).join(' ')).toLowerCase().includes(q)) return;
+      shown++;
+      const bad = MN.some((_, m) => Math.abs(netOf(gi, m)) > 0.005); const open = s.open === gi;
+      const fill = s.fill[gi] || { line: '0', from: String(M), n: '12', amt: '', mirror: '1' };
+      const setFill = (patch) => this.setState({ fill: { ...this.state.fill, [gi]: { ...fill, ...patch } } });
+      const editCell = (m, li) => (e) => { const C = this.state.cells.map(r => r.map(c => c.slice())); C[gi][m][li] = e.target.value; this.setState({ cells: C }); };
+      groups.push({ name: g.name, descr: g.descr + ' - ' + MN[M], expS: exp ? fmt(exp) : '—', expColor: exp ? t.text : t.muted,
+        status: bad ? 'Error' : 'OK', stBg: bad ? t.negSoft : t.posSoft, stFg: bad ? t.neg : t.pos, open, chev: open ? 'rotate(90deg)' : 'none', rowBg: open ? t.panel2 : t.panel,
+        toggle: () => this.setState({ open: open ? null : gi, focus: null }),
+        heads: g.lines.map(l => l[0] + ' ' + l[1]),
+        lineCards: g.lines.map((l, li) => { const planned = MN.reduce((a, _, m) => a + (m >= 0 ? num(s.cells[gi][m][li]) : 0), 0); const now = String(l[0])[0] === '6' ? 0 : -(Math.abs(l[2]) * 7); return { acc: l[0], name: l[1], descr: g.descr, now: fmt(now), planned: fmt(planned), proj: fmt(now + planned) }; }),
+        rows: MN.map((mn, m) => { const n = netOf(gi, m); const ok = Math.abs(n) < 0.005; const foc = s.focus === m && open; const cur = m === M;
+          return { m: mn, weight: cur ? '700' : '500', mColor: cur ? t.accentText : t.text, bg: foc ? t.negSoft : (cur ? t.accentSoft : 'transparent'), outline: foc ? '2px solid ' + t.neg : 'none',
+            net: ok ? '0.00' : fmt(n), netBg: ok ? t.posSoft : t.negSoft, netFg: ok ? t.pos : t.neg,
+            cells: g.lines.map((l, li) => { const v = s.cells[gi][m][li]; return { v: v === '0' ? '' : v, aria: l[1] + ' ' + mn, color: num(v) < 0 ? t.neg : t.text, border: !ok ? t.neg : t.line, onEdit: editCell(m, li) }; }) }; }),
+        fillOpen: !!fill.open,
+        toggleFill: () => setFill({ open: !fill.open }),
+        fill: { line: fill.line, from: fill.from, n: fill.n, amt: fill.amt, mirror: fill.mirror,
+          lineOpts: g.lines.map((l, li) => ({ v: String(li), label: l[0] + ' ' + l[1] })), monthOpts: MN.map((mn, m) => ({ v: String(m), label: mn })),
+          onLine: (e) => setFill({ line: e.target.value }), onFrom: (e) => setFill({ from: e.target.value }), onN: (e) => setFill({ n: e.target.value }), onAmt: (e) => setFill({ amt: e.target.value }), onMirror: (e) => setFill({ mirror: e.target.value }),
+          preview: fill.amt ? 'Sets ' + Math.min(Number(fill.n) || 0, 12 - Number(fill.from)) + ' months of ' + g.lines[Number(fill.line)][1] + ' to ' + fmt(num(fill.amt)) + (fill.mirror !== '-1' ? ', and ' + g.lines[Number(fill.mirror)][1] + ' to ' + fmt(-num(fill.amt)) : '') : 'Type an amount to see what will change',
+          apply: () => { if (!fill.amt) return; const C = this.state.cells.map(r => r.map(c => c.slice())); const from = Number(fill.from), n = Number(fill.n) || 0;
+            for (let m = from; m < Math.min(12, from + n); m++) { C[gi][m][Number(fill.line)] = String(num(fill.amt)); if (fill.mirror !== '-1') C[gi][m][Number(fill.mirror)] = String(-num(fill.amt)); }
+            this.setState({ cells: C, fill: { ...this.state.fill, [gi]: { ...fill, open: false } } }); } } });
+    });
+    const monthChips = MN.slice(0, 6).map((mn, m) => { const on = M === m; return { label: mn, on, bg: on ? t.accent : t.panel, fg: on ? t.onAccent : t.text, border: on ? t.accent : t.line, weight: on ? '600' : '500', pick: () => this.setState({ month: m }) }; });
+    return { t, groups, errors, monthChips, bgFill: this.props.t ? 'transparent' : t.ground, q: s.q, onSearch: (e) => this.setState({ q: e.target.value }),
+      hasErrors: errors.length > 0, noMatch: shown === 0, expTotal: fmt(expTotal), groupCount: s.groups.length + ' groups · ' + shown + ' shown',
+      genLabel: errors.length ? 'Fix errors to generate' : 'Generate JV, all groups, ' + MN[M] };
+  }
+}
+</script>
+</body>
+</html>

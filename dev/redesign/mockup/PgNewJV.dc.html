@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LedgerOS: New JV</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="padding: 24px clamp(16px, 2.4vw, 32px) 48px; display: flex; flex-direction: column; gap: 20px; font-family: Geist, system-ui, sans-serif; font-size: 14px; color: {{t.text}}; background: {{bgFill}}">
+  <sc-if value="{{reconciling}}" hint-placeholder-val="{{true}}">
+    <section class="rise" style="padding: 16px 18px; border-radius: 18px; background: {{t.accentSoft}}; border: 1px solid {{t.accent}}; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px">
+        <div style="margin-right: auto">
+          <p style="margin: 0; font-weight: 600; color: {{t.navOnFg}}">Reconciling 10103 · Joint Account</p>
+          <p style="margin: 2px 0 0; font-size: 12.5px; color: {{t.muted}}">Statement <span style="font-family: 'Geist Mono', monospace; color: {{t.text}}">18,705.50</span> · Ledger including this draft <span style="font-family: 'Geist Mono', monospace; color: {{t.text}}">{{recProjS}}</span></p>
+        </div>
+        <div style="text-align: right"><p style="margin: 0; font-size: 12px; color: {{t.muted}}">Still to clear</p><p class="pop" style="margin: 0; font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 700; color: {{recColor}}">{{recLeftS}}</p></div>
+        <button onClick="{{stopRec}}" aria-label="Stop reconciling" style="width: 34px; height: 34px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      </div>
+      <div style="border-radius: 12px; background: {{t.panel}}; border: 1px solid {{t.line}}; overflow-x: auto">
+        <p style="margin: 0; padding: 10px 14px 4px; font-size: 12.5px; font-weight: 600">Last 3 posted JVs on this account</p>
+        <table style="width: 100%; border-collapse: collapse; min-width: 480px; font-size: 13px">
+          <thead><tr style="font-size: 11px; color: {{t.muted}}; text-align: left"><th style="padding: 6px 14px; font-weight: 500">Date</th><th style="padding: 6px 8px; font-weight: 500">JV#</th><th style="padding: 6px 8px; font-weight: 500">Description</th><th style="padding: 6px 14px; font-weight: 500; text-align: right">Amount</th></tr></thead>
+          <tbody>
+            <sc-for list="{{recJvs}}" as="r" hint-placeholder-count="3"><tr style="border-top: 1px solid {{t.line}}; cursor: pointer"><td style="padding: 7px 14px; font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}">{{r.d}}</td><td style="padding: 7px 8px; font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.accentText}}; font-weight: 600">{{r.jv}}</td><td style="padding: 7px 8px">{{r.desc}}</td><td style="padding: 7px 14px; text-align: right; font-family: 'Geist Mono', monospace; color: {{r.color}}">{{r.amt}}</td></tr></sc-for>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </sc-if>
+  <div style="display: flex; flex-direction: column; gap: 20px">
+
+    <section class="rise" style="min-width: 0; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 14px">
+      <div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px">
+        <h2 style="margin: 0 auto 0 0; font-size: 18px; font-weight: 600">New journal voucher</h2>
+        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Date
+          <input type="date" value="2026-11-07" style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px">
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {{t.muted}}">Load a template
+          <select style="height: 38px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px; min-width: 200px">
+            <option>Monthly salary</option><option>Rent received, flat 2</option><option>Jamiah round</option><option>Month-start provisions</option>
+          </select>
+        </label>
+      </div>
+      <div style="overflow-x: auto">
+        <table style="width: 100%; border-collapse: collapse; min-width: 620px">
+          <thead>
+            <tr style="font-size: 11.5px; color: {{t.muted}}; text-align: left; background: {{t.panel2}}">
+              <th style="padding: 9px 10px; font-weight: 500; width: 36px; border-radius: 8px 0 0 8px">#</th>
+              <th style="padding: 9px 10px; font-weight: 500; width: 34%">Account</th>
+              <th style="padding: 9px 10px; font-weight: 500">Description</th>
+              <th style="padding: 9px 10px; font-weight: 500; text-align: right; width: 160px">Amount</th>
+              <th style="padding: 9px 10px; width: 44px; border-radius: 0 8px 8px 0"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <sc-for list="{{lines}}" as="l" hint-placeholder-count="3">
+              <tr style="border-bottom: 1px solid {{t.line}}">
+                <td style="padding: 8px 10px; font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}">{{l.n}}</td>
+                <td style="padding: 6px 10px"><input value="{{l.acc}}" onChange="{{l.onAcc}}" aria-label="Account" style="width: 100%; height: 36px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></td>
+                <td style="padding: 6px 10px"><input value="{{l.desc}}" onChange="{{l.onDesc}}" aria-label="Description" style="width: 100%; height: 36px; padding: 0 10px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{t.text}}; font: inherit; font-size: 13px"></td>
+                <td style="padding: 6px 10px"><input value="{{l.amt}}" onChange="{{l.onAmt}}" inputmode="decimal" aria-label="Amount" style="width: 100%; height: 36px; padding: 0 10px; text-align: right; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel2}}; color: {{l.amtColor}}; font-family: 'Geist Mono', monospace; font-size: 13px"></td>
+                <td style="padding: 6px 4px; text-align: center"><button onClick="{{l.remove}}" aria-label="Remove line" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.muted}}; cursor: pointer; display: inline-flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+        <button onClick="{{addLine}}" style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px dashed {{t.accent}}; background: {{t.accentSoft}}; color: {{t.navOnFg}}; font-weight: 600; cursor: pointer">+ Add line</button>
+        <button style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Balance check</button>
+        <button onClick="{{clearAll}}" style="min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Clear all</button>
+        <span class="pop" style="margin-left: auto; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; font-weight: 600; font-size: 13px; background: {{balBg}}; color: {{balFg}}"><span style="font-family: 'Geist Mono', monospace">{{totalS}}</span>{{balLabel}}</span>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; padding-top: 12px; border-top: 1px solid {{t.line}}">
+        <button style="min-height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Save as template</button>
+        <button style="min-height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; cursor: pointer">Save as draft</button>
+        <button disabled="{{cantPost}}" style="min-height: 42px; padding: 0 22px; border-radius: 10px; border: none; background: {{t.accent}}; color: {{t.onAccent}}; font-weight: 700; cursor: pointer">Post JV</button>
+      </div>
+    </section>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; min-width: 0">
+      <section class="rise" style="flex: 1 1 380px; min-width: 0; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+        <h2 style="margin: 0 0 4px; font-size: 15px; font-weight: 600">Budget impact</h2>
+        <p style="margin: 0 0 12px; font-size: 12.5px; color: {{t.muted}}">What this JV does to November's budget</p>
+        <sc-for list="{{impact}}" as="i" hint-placeholder-count="2">
+          <div style="padding: 10px 0; border-top: 1px solid {{t.line}}">
+            <div style="display: flex; justify-content: space-between; font-size: 13px"><span style="font-weight: 500">{{i.cat}}</span><span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: {{t.muted}}">{{i.after}} / {{i.budget}}</span></div>
+            <div style="position: relative; height: 8px; border-radius: 99px; background: {{t.panel2}}; margin-top: 6px; overflow: hidden">
+              <div style="position: absolute; left: 0; top: 0; bottom: 0; width: {{i.afterW}}; background: {{i.afterColor}}; opacity: 0.45"></div>
+              <div class="grow-x" style="position: absolute; left: 0; top: 0; bottom: 0; width: {{i.beforeW}}; background: {{i.afterColor}}"></div>
+            </div>
+            <p style="margin: 4px 0 0; font-size: 12px; color: {{i.afterColor}}">{{i.note}}</p>
+          </div>
+        </sc-for>
+      </section>
+      <section class="rise" style="flex: 1 1 380px; min-width: 0; padding: 20px; border-radius: 18px; background: {{t.panel}}; border: 1px solid {{t.line}}">
+        <h2 style="margin: 0 0 8px; font-size: 15px; font-weight: 600">Draft journal vouchers</h2>
+        <sc-for list="{{drafts}}" as="d" hint-placeholder-count="2">
+          <div class="lift" style="display: flex; align-items: center; gap: 10px; padding: 10px; margin: 0 -10px; border-radius: 10px">
+            <div style="flex: 1; min-width: 0"><p style="margin: 0; font-weight: 500">{{d.title}}</p><p style="margin: 0; font-size: 12px; color: {{t.muted}}">{{d.meta}}</p></div>
+            <span style="font-family: 'Geist Mono', monospace; font-size: 12.5px">{{d.amt}}</span>
+            <button style="min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text}}; font-size: 12px; cursor: pointer">Continue</button>
+          </div>
+        </sc-for>
+      </section>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"t":{"editor":null},"$preview":{"width":1200,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { reconciling: true, lines: [
+      { acc: '60110 Groceries', desc: 'Weekly groceries', amt: '612.40' },
+      { acc: '60140 Dining out', desc: 'Family dinner', amt: '185.00' },
+      { acc: '10101 Main Current', desc: 'Card payments', amt: '-797.40' }
+    ] };
+  }
+  renderVals() {
+    const hx = (h) => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+    const mx = (a, b, w) => { const A = hx(a), B = hx(b); return '#' + A.map((v, i) => Math.round(v * (1 - w) + B[i] * w).toString(16).padStart(2, '0')).join(''); };
+    const defT = () => { const a = '#0F766E', p = '#FFFFFF'; return { ground: mx('#F4F5F7', a, 0.07), panel: p, panel2: mx('#F1F3F6', a, 0.05), line: '#E1E5EA', text: '#111827', muted: '#556070', pos: '#047857', neg: '#B42318', warn: '#A15C07', bar2: '#CDD3DB', accent: a, accentSoft: mx(p, a, 0.13), accentText: mx(a, '#000000', 0.12), navOnFg: mx(a, '#000000', 0.3), onAccent: '#FFFFFF', posSoft: mx(p, '#047857', 0.12), negSoft: mx(p, '#B42318', 0.1), warnSoft: mx(p, '#A15C07', 0.12) }; };
+    const t = this.props.t || defT();
+    const fmt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const num = (v) => { const x = Number(String(v).replace(/,/g, '')); return isNaN(x) ? 0 : x; };
+    const set = (i, k) => (e) => { const L = this.state.lines.map((l, j) => j === i ? { ...l, [k]: e.target.value } : l); this.setState({ lines: L }); };
+    const lines = this.state.lines.map((l, i) => ({ ...l, n: i + 1, amtColor: num(l.amt) < 0 ? t.neg : t.text, onAcc: set(i, 'acc'), onDesc: set(i, 'desc'), onAmt: set(i, 'amt'), remove: () => this.setState({ lines: this.state.lines.filter((_, j) => j !== i) }) }));
+    const total = this.state.lines.reduce((a, l) => a + num(l.amt), 0);
+    const balanced = Math.abs(total) < 0.005 && this.state.lines.length >= 2;
+    const BUD = { '60110': ['Groceries', 2840, 3500], '60140': ['Dining out', 1310, 1000], '60120': ['Utilities', 960, 1200], '60150': ['Transport', 1150, 1500] };
+    const impact = [];
+    this.state.lines.forEach(l => { const code = String(l.acc).slice(0, 5); const b = BUD[code]; if (!b) return; const after = b[1] + num(l.amt); const over = after > b[2];
+      impact.push({ cat: b[0], budget: fmt(b[2]), after: fmt(after), beforeW: Math.min(100, b[1] / b[2] * 100).toFixed(1) + '%', afterW: Math.min(100, after / b[2] * 100).toFixed(1) + '%', afterColor: over ? t.neg : (after / b[2] >= 0.9 ? t.warn : t.accent), note: over ? 'Goes over budget by ' + fmt(after - b[2]) : fmt(b[2] - after) + ' left after posting' }); });
+    const recProj = 18930.5 + this.state.lines.filter(l => String(l.acc).trim().indexOf('10103') === 0).reduce((a, l) => a + num(l.amt), 0);
+    const recLeft = 18705.5 - recProj; const recDone = Math.abs(recLeft) < 0.005;
+    return {
+      reconciling: this.state.reconciling, stopRec: () => this.setState({ reconciling: false }),
+      recProjS: fmt(recProj), recLeftS: recDone ? 'Reconciled' : fmt(recLeft), recColor: recDone ? t.pos : t.neg,
+      recJvs: [{ d: '06 Nov', jv: 1040, desc: 'Electricity bill', amt: fmt(-384), color: t.neg }, { d: '01 Nov', jv: 1036, desc: 'Rent received, flat 2', amt: fmt(4500), color: t.text }, { d: '28 Oct', jv: 1031, desc: 'Water bill', amt: fmt(-96), color: t.neg }],
+      t, lines, impact, bgFill: this.props.t ? 'transparent' : t.ground,
+      totalS: fmt(total), balLabel: balanced ? 'Balanced' : 'Out of balance',
+      balBg: balanced ? t.posSoft : t.negSoft, balFg: balanced ? t.pos : t.neg, cantPost: !balanced,
+      addLine: () => this.setState({ lines: [...this.state.lines, { acc: '', desc: '', amt: '' }] }),
+      clearAll: () => this.setState({ lines: [{ acc: '', desc: '', amt: '' }, { acc: '', desc: '', amt: '' }] }),
+      drafts: [
+        { title: 'Accrual: school fees, term 2', meta: 'Saved 03 Nov · 4 lines', amt: '8,400.00' },
+        { title: 'Split: shared car service', meta: 'Saved 28 Oct · 3 lines', amt: '1,260.00' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
