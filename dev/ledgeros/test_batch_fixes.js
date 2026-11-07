@@ -7961,6 +7961,20 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testDeletingACashMovementFromActivityStillDeletesIt();
   await testMoveIsOfferedEverywhereAndCashMoveIsRelabelled();
   await testOlderTransferPairsStillShowAsOneMove();
+  await testClassicCopyIsFrozenAndBothPagesLinkEachOther();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
+
+// v5.0 step 0: LedgerOS-classic.html is the frozen v4.63.0 app; each page links to the other.
+async function testClassicCopyIsFrozenAndBothPagesLinkEachOther(){
+  const classicPath = path.join(path.dirname(APP_HTML), 'LedgerOS-classic.html');
+  assert(fs.existsSync(classicPath), 'LedgerOS-classic.html exists next to LedgerOS.html');
+  if(!fs.existsSync(classicPath)) return;
+  const classic = fs.readFileSync(classicPath, 'utf8');
+  const app = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/const APP_VERSION = '4\.63\.0';/.test(classic), 'Classic stays at v4.63.0');
+  assert(/<a [^>]*id="lookSwitchLink" href="LedgerOS\.html"[^>]*>Switch to the new look<\/a>/.test(classic), 'Classic links to the new look');
+  assert(/<a [^>]*id="lookSwitchLink" href="LedgerOS-classic\.html"[^>]*>Switch to classic<\/a>/.test(app), 'The new app links to classic');
+  assert((classic.match(/id="lookSwitchLink"/g)||[]).length===1, 'Classic has exactly one switch link');
+}
