@@ -1,0 +1,11 @@
+{
+  "name": "calendaros-dev",
+  "private": true,
+  "description": "Regression test harness for CalendarOS.html (Node + jsdom). Not part of the app.",
+  "scripts": {
+    "test": "bash run_tests.sh"
+  },
+  "dependencies": {
+    "jsdom": "30.1.3"
+  }
+}
