@@ -4057,7 +4057,7 @@ async function testProvisionDescrSurvivesBlockedSync(){
   sb.__set('D', D);
   sb.__set('syncInProgress', true); // force blockIfSyncing() to report "still syncing"
   sb.__set('syncWrite', async () => { throw new Error('syncWrite should not be reached while blocked'); });
-  await sb.saveProvisionLineDescr(1, 0, 'Comprehensive cover');
+  await sb.setProvisionLineDescr(1, 0, 'Comprehensive cover'); // v5.0: replaced saveProvisionLineDescr, same rule
   assert(D.provisionGroups[0].lines[0].descrBase === 'Comprehensive cover', 'Description should be applied locally even when blockIfSyncing() reports busy — got ' + D.provisionGroups[0].lines[0].descrBase);
 }
 
@@ -7977,6 +7977,12 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testBudgetChartsWriteAmountsOnBars();
   await testInvActivityFiltersByAccountAndDates();
   await testInvActivityCsvHasPerPersonColumns();
+  await testProvisionIssuesListEveryBadMonthAndDuplicate();
+  await testProvisionGenerateAllIsBlockedWithAReason();
+  await testProvisionGroupRowsSearchAndShowMe();
+  await testProvisionMonthsRunDownwardWithNetCheck();
+  await testProvisionBulkFillBalancesOnASecondLine();
+  await testProvisionCellTabMovesAcrossAccounts();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8393,4 +8399,124 @@ async function testInvActivityCsvHasPerPersonColumns(){
   const buy = lines.find(l=>l.startsWith('2026-01-01'));
   assert(buy && /,60000\.00,[\d.]+,[\d.]+,40000\.00,[\d.]+,[\d.]+$/.test(buy), 'A buy shows each person\'s SAR cost, got '+buy);
   assert(lines.length===4, 'One line per Activity row plus the header');
+}
+
+// ---- v5.0 step 4: Provisions ----
+function provSandbox(){
+  const sb = dashSandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="toast"></div>');
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:23102, name:'Car reserve', category:'Provisions', status:'Active', acc_type:'Individual Account'}, {id:60601, name:'Car service', category:'Car', status:'Active', acc_type:'Individual Account'});
+  sb.rebuildIndex();
+  D.provisionGroups = [
+    {id:1, name:'Car service', lines:[{acc:60601, lineId:1, descrBase:'Car service provision'}, {acc:23102, lineId:2, descrBase:'Car reserve'}],
+      months:{'2026-11':{1:500, 2:-500}, '2026-12':{1:500, 2:-450}, '2027-01':{1:500, 2:-500}, '2026-09':{1:999}}},
+    {id:2, name:'School', lines:[{acc:60101, lineId:10, descrBase:'School'}, {acc:22901, lineId:11, descrBase:'School accrual'}, {acc:22901, lineId:12, descrBase:'School release'}],
+      months:{'2026-11':{10:300, 11:-300}, '2026-12':{10:300, 11:-300}}},
+  ];
+  sb.__set('provisionsSelectedMonth', '2026-11');
+  sb.__set('provisionEditingId', null);
+  return sb;
+}
+async function testProvisionIssuesListEveryBadMonthAndDuplicate(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  D.provisionGroups[0].months['2027-02'] = {1:100};
+  const car = sb.provisionGroupIssues(D.provisionGroups[0]);
+  assert(car.map(i=>i.mk+':'+i.sum).join()==='2026-12:50,2027-02:100', 'Every unbalanced visible month is listed (past months ignored), got '+JSON.stringify(car));
+  const school = sb.provisionGroupIssues(D.provisionGroups[1]);
+  assert(school.length===1 && school[0].dup && school[0].dup.acc===22901 && Math.abs(school[0].dup.total+600)<0.005, 'Unbalanced duplicate-account lines are listed');
+  D.provisionGroups[1].dupBalanceExempt = true;
+  assert(sb.provisionGroupIssues(D.provisionGroups[1]).length===0, 'Exempted groups do not list duplicates');
+  assert(Math.abs(sb.provisionMonthExpense(D.provisionGroups[0], '2026-11') - 500) < 0.005, 'Expense for the month is the amount on 6xxxx accounts');
+}
+async function testProvisionGenerateAllIsBlockedWithAReason(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  D.provisionGroups[1].dupBalanceExempt = true;
+  sb.renderProvisions();
+  let btn = sb.document.getElementById('provGenAllBtn');
+  assert(btn && !btn.disabled, 'November is balanced: Generate is enabled');
+  assert(/Provision expense for Nov-26/.test(sb.document.getElementById('app').textContent) && /800\.00/.test(sb.document.querySelector('.prov-summary').textContent), 'Total provision expense for the month is shown (500 + 300)');
+  sb.__set('provisionsSelectedMonth', '2026-12');
+  sb.renderProvisionGroupsList();
+  btn = sb.document.getElementById('provGenAllBtn');
+  assert(btn && btn.disabled, 'December has an error: Generate is disabled');
+  assert(/Fix this first: Car service: Dec-26 is off by 50\.00/.test(sb.document.querySelector('.prov-summary').textContent), 'The reason is shown');
+  let jv = null; sb.__set('go', ()=>{ jv = vm.runInContext('jvDraft', sb); });
+  sb.combinedGenerateProvisionJV();
+  assert(jv===null, 'Generating December is refused even if called directly');
+  sb.__set('provisionsSelectedMonth', '2026-11');
+  sb.combinedGenerateProvisionJV();
+  assert(jv && jv.lines.length===4 && jv.date==='2026-11-01', 'November generates all groups\' lines');
+}
+async function testProvisionGroupRowsSearchAndShowMe(){
+  const sb = provSandbox();
+  sb.renderProvisions();
+  const heads = [...sb.document.querySelectorAll('.prov-head')];
+  assert(heads.length===2, 'One row per group');
+  assert(/Car service provision - Nov - 26'/.test(heads[0].textContent) && /500\.00/.test(heads[0].textContent) && /Error/.test(heads[0].textContent), 'Group row: name, the month\'s JV description, expense amount, status');
+  sb.setProvSearch('22901');
+  assert(sb.document.querySelectorAll('.prov-head').length===1 && /School/.test(sb.document.querySelector('.prov-head').textContent), 'Search by account number');
+  sb.setProvSearch('car');
+  assert(sb.document.querySelectorAll('.prov-head').length===1, 'Search by group name');
+  sb.setProvSearch('');
+  const bar = sb.document.querySelector('.needs-fix');
+  assert(bar && /Needs fixing \(2\)/.test(bar.textContent) && /Dec-26 is off by 50\.00/.test(bar.textContent), 'Needs fixing lists every problem with the amount');
+  const show = [...bar.querySelectorAll('button')].find(b=>/'2026-12'/.test(b.getAttribute('onclick')));
+  assert(show, 'Each problem has Show me');
+  sb.provShowMe(1, '2026-12');
+  const row = sb.document.getElementById('provRow_1_2026-12');
+  assert(row && row.classList.contains('hl') && row.classList.contains('bad'), 'Show me opens the group and highlights the month');
+}
+async function testProvisionMonthsRunDownwardWithNetCheck(){
+  const sb = provSandbox();
+  sb.renderProvisions();
+  sb.toggleProvisionEdit(1);
+  const table = sb.document.querySelector('#provGroup_1 .prov-grid');
+  assert(table, 'An open group shows its grid');
+  const heads = [...table.querySelectorAll('thead th')].map(t=>t.textContent);
+  assert(/^Month/.test(heads[0]) && /60601/.test(heads[1]) && /23102/.test(heads[2]) && /Net/.test(heads[3]), 'Accounts run across, with a Net column');
+  const rows = [...table.querySelectorAll('tbody tr')];
+  assert(rows.map(r=>r.id).join()==='provRow_1_2026-11,provRow_1_2026-12,provRow_1_2027-01', 'Months run downward, from this month on');
+  assert(rows[0].classList.contains('cur') && !rows[1].classList.contains('cur'), 'The current month is highlighted');
+  assert(/0\.00/.test(rows[0].lastElementChild.textContent) && /50\.00/.test(rows[1].lastElementChild.textContent) && rows[1].classList.contains('bad'), 'Each month shows its net check');
+  const cards = [...sb.document.querySelectorAll('#provGroup_1 .prov-card')];
+  assert(cards.length===2 && /Balance now/.test(cards[0].textContent) && /Still planned/.test(cards[0].textContent) && /Projected/.test(cards[0].textContent), 'Line cards show balance now, still planned and projected');
+  assert(/1,500\.00/.test(cards[0].textContent), 'Still planned sums the visible months (500 x 3)');
+  assert(sb.document.getElementById('genMonthSel_1') && sb.document.getElementById('provAddMonth_1') && sb.document.getElementById('provAddAcc_1') && sb.document.getElementById('pbfLine_1'), 'Generate for this group, add month, add account and bulk fill are there');
+}
+async function testProvisionBulkFillBalancesOnASecondLine(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  const g = D.provisionGroups[1];
+  let r = sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:3, amt:200, balanceLineId:12});
+  assert(r.months && r.months.join()==='2027-01,2027-02,2027-03', 'Fills the right months');
+  assert(g.months['2027-02'][11]===200 && g.months['2027-02'][12]===-200 && g.months['2027-02'][10]===undefined, 'Writes the amount and its opposite on the two duplicate-account lines only');
+  assert(g.lastBulkFillMonths===3, 'Remembers the month count');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:3, amt:200, balanceLineId:11}).error, 'Balancing on the same line is refused');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'', count:3, amt:200}).error, 'A month is required');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:0, amt:200}).error, 'At least one month');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:2, amt:''}).error, 'An amount is required');
+  const before = JSON.stringify(g.months);
+  sb.provBulkFillApply(g, {lineId:99, from:'2027-01', count:2, amt:5});
+  assert(JSON.stringify(g.months)===before, 'A refused fill changes nothing');
+  sb.provBulkFillApply(g, {lineId:10, from:'2027-05', count:1, amt:-12.346});
+  assert(g.months['2027-05'][10]===-12.35, 'Amounts are rounded to cents');
+}
+async function testProvisionCellTabMovesAcrossAccounts(){
+  const sb = provSandbox();
+  sb.renderProvisions();
+  sb.toggleProvisionEdit(1);
+  const cell = sb.document.getElementById('provCell_1_0_0');
+  assert(cell, 'Cells are there');
+  cell.focus();
+  sb.provCellKey({key:'Tab', shiftKey:false, preventDefault(){}, target:cell}, 1, 0, 0, 2, 3);
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_1_0', 'Tab moves to the next account in the same month');
+  const c2 = sb.document.activeElement;
+  sb.provCellKey({key:'Tab', shiftKey:false, preventDefault(){}, target:c2}, 1, 1, 0, 2, 3);
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_0_1', 'From the last account, Tab goes to the next month');
+  const c3 = sb.document.activeElement;
+  sb.provCellKey({key:'Enter', shiftKey:false, preventDefault(){}, target:c3}, 1, 0, 1, 2, 3);
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_0_2', 'Enter moves down a month');
 }

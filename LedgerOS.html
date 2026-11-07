@@ -435,6 +435,21 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .acc-side{position:sticky;top:80px}
 tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 @media(max-width:900px){.acc-split:has(#accSide:not(:empty)){grid-template-columns:1fr}.acc-side{position:static}}
+.prov-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer}
+.prov-head:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}
+.prov-name{font-size:15px} .prov-descr{flex:1;min-width:160px;font-size:12.5px} .prov-amt{font-weight:600}
+.prov-group.open{border-color:var(--accent)}
+.prov-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.prov-card{border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--panel2);min-width:0}
+.prov-figs{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:12px;color:var(--muted)}
+.prov-grid input{width:110px;padding:5px 8px}
+.prov-grid tr.cur td{background:var(--accent-soft)}
+.prov-grid tr.cur td:first-child{font-weight:700}
+.prov-grid tr.bad td:last-child{background:var(--neg-soft)}
+.prov-grid tr.hl td{box-shadow:inset 0 2px 0 var(--red),inset 0 -2px 0 var(--red);animation:riseIn .4s both}
+.prov-bulk{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:12px;padding:10px;border-radius:12px;background:var(--accent-soft)}
+.prov-bulk label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.prov-bulk select,.prov-bulk input{width:auto}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -7598,12 +7613,11 @@ let provisionsSelectedMonth = todayStr().slice(0,7);
 function renderProvisions(){
   document.getElementById('app').innerHTML = `
     <div class="panel noprint">
-      <div class="mut" style="font-size:12.5px;margin-bottom:10px">Plan recurring provision journal entries months in advance. Pick a month below to see which groups have it planned, then generate one combined JV for all of them at once.</div>
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <div class="row"><label class="fl" style="margin:0">Month</label><input type="month" id="provisionsMonthPicker" value="${provisionsSelectedMonth}" onchange="provisionsSelectedMonth=this.value; renderProvisionGroupsList()"></div>
-        <button class="btn pri" onclick="combinedGenerateProvisionJV()">⚡ Generate JV — All Groups for This Month</button>
-      </div>
-      <div class="row" style="justify-content:flex-end;margin-top:10px;gap:8px">
+      <div class="mut" style="font-size:12.5px;margin-bottom:10px">Plan recurring provision journal entries months in advance. Pick a month to see what each group puts through, then generate one combined JV for all of them.</div>
+      <div class="row" style="gap:10px">
+        <div class="row"><label class="fl" style="margin:0">Month</label><input type="month" id="provisionsMonthPicker" value="${provisionsSelectedMonth}" onchange="provisionsSelectedMonth=this.value; renderProvisionGroupsList()" style="width:auto"></div>
+        <input id="provSearchInput" type="search" placeholder="Search groups or accounts…" aria-label="Search groups or accounts" value="${esc(provSearch)}" oninput="setProvSearch(this.value)" style="flex:1;min-width:200px;max-width:360px">
+        <span style="flex:1"></span>
         <button class="btn ghost sm" onclick="exportProvisionsCSV()">⬇ Export Grid</button>
         <button class="btn ghost sm" onclick="document.getElementById('provImportInput').click()">⬆ Import Grid</button>
         <input id="provImportInput" type="file" accept=".csv" style="display:none" onchange="handleProvisionsImport(this)">
@@ -7760,6 +7774,8 @@ function combinedGenerateProvisionJV(){
     toast('Can\'t generate — duplicate-account lines aren\'t balanced yet:\n'+msg, true);
     return;
   }
+  const monthBad = D.provisionGroups.flatMap(g=>provisionGroupIssues(g)).filter(i=>i.mk===monthKey);
+  if(monthBad.length){ toast('Can\'t generate: '+monthBad.map(i=>(D.provisionGroups.find(g=>g.id===i.gid)||{}).name+' is off by '+money(i.sum)).join(', ')+' in '+monthLabel(monthKey), true); return; }
   const tag = monthTag(monthKey);
   const lines = [];
   D.provisionGroups.forEach(g=>{
@@ -7779,54 +7795,185 @@ function combinedGenerateProvisionJV(){
   go('newjv');
   toast('Generated combined provision JV for '+monthLabel(monthKey)+' from every group with data that month — review and post');
 }
+/* ---- v5.0 Provisions: one list of groups, months running downward inside each group ----
+   The data shape (lines[{acc,lineId,descrBase}], months{YYYY-MM:{lineId:amt}}, dupBalanceExempt)
+   and every rule (each month nets to zero; duplicate-account lines net to zero overall unless
+   exempted) are unchanged. Only the screen is new. */
+let provSearch = '';
+let provHighlight = null; // {gid, mk} set by "Show me"
+// Every problem in a group, not just the first: each visible month that doesn't net to zero,
+// plus unbalanced duplicate-account lines (unless the group is exempted).
+function provisionGroupIssues(g){
+  ensureLineIds(g);
+  const valid = new Set(g.lines.map(l=>l.lineId));
+  const out = [];
+  provisionsVisibleMonthKeys(g).forEach(k=>{
+    const vals = Object.entries(g.months[k]||{}).filter(([lid,v])=>valid.has(Number(lid)) && v!==''&&v!==null&&v!==undefined).map(([,v])=>v);
+    if(!vals.length) return;
+    const sum = vals.reduce((s,v)=>s+roundCents(v),0);
+    if(Math.abs(sum)>0.01) out.push({gid:g.id, mk:k, sum});
+  });
+  if(!g.dupBalanceExempt) findUnbalancedDuplicateAccounts(g).forEach(u=>out.push({gid:g.id, dup:u}));
+  return out;
+}
+function provCellVal(g, mk, lineId){ const v = (g.months[mk]||{})[lineId]; return (v===undefined||v===null||v==='')? null : Number(v); }
+// What the month's JV puts on expense accounts (6xxxx), i.e. the provision expense for that month.
+function provisionMonthExpense(g, mk){ return g.lines.reduce((s,l)=> s + (firstDigit(l.acc)===6? (provCellVal(g, mk, l.lineId)||0) : 0), 0); }
+function provisionMonthDescriptions(g, mk){
+  const withVal = g.lines.filter(l=>{ const v = provCellVal(g, mk, l.lineId); return v!==null && Math.abs(v)>=0.005; });
+  const exp = withVal.filter(l=>firstDigit(l.acc)===6);
+  return (exp.length? exp : withVal).map(l=>(l.descrBase||accShort(l.acc))+' - '+monthTag(mk));
+}
+function provGroupMatches(g, q){
+  if(!q) return true;
+  q = q.toLowerCase();
+  return g.name.toLowerCase().includes(q) || g.lines.some(l=> String(l.acc).includes(q) || accShort(l.acc).toLowerCase().includes(q) || String(l.descrBase||'').toLowerCase().includes(q));
+}
+// Writes `amt` on one line for `count` months from `from`; with balanceLineId, the opposite amount
+// on that line in the same months. Lines are picked by lineId, so duplicate-account lines work.
+function provBulkFillApply(g, o){
+  const line = g.lines.find(l=>l.lineId===o.lineId);
+  const bal = o.balanceLineId? g.lines.find(l=>l.lineId===o.balanceLineId) : null;
+  if(!line) return {error:'Pick a line'};
+  if(o.balanceLineId && !bal) return {error:'Pick the line to balance it on'};
+  if(bal && bal.lineId===line.lineId) return {error:'Balance it on a different line'};
+  if(!/^\d{4}-\d{2}$/.test(o.from||'')) return {error:'Pick a starting month'};
+  const count = Math.round(Number(o.count)), amt = roundCents(o.amt);
+  if(!(count>=1 && count<=600)) return {error:'Number of months must be between 1 and 600'};
+  if(!Number.isFinite(amt) || o.amt===''||o.amt===null||o.amt===undefined) return {error:'Enter an amount'};
+  const months = [];
+  let mk = o.from;
+  for(let i=0;i<count;i++){
+    if(!g.months[mk]) g.months[mk] = {};
+    g.months[mk][line.lineId] = amt;
+    if(bal) g.months[mk][bal.lineId] = roundCents(-amt);
+    months.push(mk); mk = nextMonthKeyPlain(mk);
+  }
+  g.lastBulkFillMonths = count;
+  return {months};
+}
+function applyProvBulkFill(gid){
+  if(blockIfSyncing()) return;
+  const g = findProvisionGroup(gid); if(!g) return;
+  const v = id => (document.getElementById(id+'_'+gid)||{}).value;
+  const res = provBulkFillApply(g, {lineId:Number(v('pbfLine')), from:v('pbfFrom'), count:v('pbfCount'), amt: v('pbfAmt')===''? '' : Number(String(v('pbfAmt')).replace(/,/g,'')), balanceLineId:Number(v('pbfBal'))||null});
+  if(res.error){ toast(res.error, true); return; }
+  persistProvisionGroup(g);
+  renderProvisionGroupsList();
+  const unbalanced = g.dupBalanceExempt? [] : findUnbalancedDuplicateAccounts(g);
+  if(unbalanced.length) toast('Filled '+res.months.length+' month(s). Heads up: duplicate-account lines in "'+g.name+'" don\'t net to zero yet:\n'+unbalancedDuplicateMessage(unbalanced), true);
+  else toast('Filled '+res.months.length+' month(s) ✓');
+}
+function setProvSearch(v){ provSearch = v; renderProvisionGroupsList(); }
+function provShowMe(gid, mk){
+  provisionEditingId = gid; provHighlight = mk? {gid, mk} : null;
+  renderProvisionGroupsList();
+  requestAnimationFrame(()=>{ const el = document.getElementById(mk? 'provRow_'+gid+'_'+mk : 'provGroup_'+gid); if(el && el.scrollIntoView) el.scrollIntoView({block:'center'}); });
+}
+function setProvisionLineDescr(gid, li, val){
+  const g = findProvisionGroup(gid); if(!g || !g.lines[li]) return;
+  g.lines[li].descrBase = String(val).trim() || accShort(g.lines[li].acc);
+  if(blockIfSyncing()){ persistLocal(); return; }
+  persistProvisionGroup(g);
+}
+// Tab moves across the accounts of a month, then on to the next month; Enter moves down a month.
+function provCellKey(ev, gid, li, mi, nLines, nMonths){
+  let tl = li, tm = mi;
+  if(ev.key==='Tab'){ const dir = ev.shiftKey? -1 : 1; tl = li+dir; if(tl>=nLines){ tl = 0; tm++; } else if(tl<0){ tl = nLines-1; tm--; } }
+  else if(ev.key==='Enter'){ tm = mi + (ev.shiftKey? -1 : 1); }
+  else return;
+  if(tm<0 || tm>=nMonths) return;
+  ev.preventDefault();
+  ev.target.blur(); // saves and re-renders
+  const next = document.getElementById('provCell_'+gid+'_'+tl+'_'+tm);
+  if(next){ next.focus(); next.select(); }
+}
 function renderProvisionGroupsList(){
   const el = document.getElementById('provisionGroupsList');
   if(!el) return;
-  // Editing a cell re-renders this whole list, which rebuilds each group's scrollable grid as a
-  // fresh DOM node — browsers don't preserve scroll position across that, so without this, being
-  // scrolled over to see future months would silently snap back to the leftmost column on every
-  // single edit. Capture before, restore after.
-  const scrollPositions = {};
-  D.provisionGroups.forEach(g=>{
-    const wrap = document.getElementById('provGridWrap_'+g.id);
-    if(wrap) scrollPositions[g.id] = wrap.scrollLeft;
-  });
   const selMonth = provisionsSelectedMonth;
-  el.innerHTML = D.provisionGroups.map(g=>{
-    ensureLineIds(g);
-    const status = groupStatus(g);
-    const isEditing = provisionEditingId===g.id;
-    const months = provisionsVisibleMonthKeys(g);
-    const hasSelMonth = selMonth && g.months[selMonth] && Object.keys(g.months[selMonth]).length>0;
-    const monthMissing = selMonth && !hasSelMonth;
-    return `<div class="panel" style="${monthMissing?'border-color:var(--red)':(hasSelMonth?'border-color:var(--green)':'')}">
-      <div class="row" style="justify-content:space-between">
-        <div class="row">
-          <span class="badge ${status.ok?'pos':'neg'}">${status.ok?'OK':'Error'}</span>
-          <input value="${esc(g.name)}" onchange="renameProvisionGroup(${g.id},this.value)" style="font-size:16px;font-weight:600;border:none;background:transparent;padding:2px 4px;min-width:220px">
-        </div>
-        <div class="row">
-          <button class="btn ghost sm" onclick="toggleProvisionEdit(${g.id})">${isEditing?'Collapse':'Edit Grid'}</button>
-          <button class="x" title="Delete group" onclick="deleteProvisionGroup(${g.id})">✕</button>
+  const groups = D.provisionGroups;
+  const issues = groups.flatMap(g=>provisionGroupIssues(g));
+  const blocking = issues.filter(i=>i.dup || i.mk===selMonth);
+  const total = groups.reduce((s,g)=>s+provisionMonthExpense(g, selMonth), 0);
+  const gName = id => (groups.find(g=>g.id===id)||{}).name||'';
+  const issueText = i => i.dup? gName(i.gid)+': '+accShort(i.dup.acc)+' ('+i.dup.acc+') lines total '+money(i.dup.total)+', not zero' : gName(i.gid)+': '+monthLabel(i.mk)+' is off by '+money(i.sum);
+  const shown = groups.filter(g=>provGroupMatches(g, provSearch));
+  const curMonth = todayStr().slice(0,7);
+  el.innerHTML = `
+    <div class="panel prov-summary">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div><div class="fl" style="margin:0">Provision expense for ${esc(monthLabel(selMonth))}</div><div class="mono" style="font-size:22px;font-weight:600">${money(total)}</div></div>
+        <div style="text-align:right">
+          <button class="btn pri" id="provGenAllBtn" ${blocking.length?'disabled':''} onclick="combinedGenerateProvisionJV()">⚡ Generate JV, all groups</button>
+          ${blocking.length? `<div class="r" style="font-size:12px;margin-top:4px">Fix ${blocking.length===1?'this':'these'} first: ${esc(blocking.map(issueText).join('; '))}</div>` : ''}
         </div>
       </div>
-      ${!status.ok? `<div class="mut" style="font-size:12px;color:var(--red);margin-top:6px">${status.badMonth? esc(monthLabel(status.badMonth))+' doesn\'t net to zero — check the grid below ('+money(status.badSum)+').' : '⚠ Duplicate-account lines aren\'t balanced yet:<br>'+esc(unbalancedDuplicateMessage(status.duplicateIssue)).replace(/\n/g,'<br>')}</div>`:''}
-      ${status.ok && status.duplicateInfo? `<div class="mut" style="font-size:12px;margin-top:6px">ℹ Duplicate-account lines don't net to zero (exempted):<br>${esc(unbalancedDuplicateMessage(status.duplicateInfo)).replace(/\n/g,'<br>')}</div>`:''}
-      ${groupHasDuplicateAccounts(g)? `<label class="row noprint" style="gap:6px;margin-top:6px;font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" class="chk" ${g.dupBalanceExempt?'checked':''} onchange="toggleDupBalanceExempt(${g.id},this.checked)"> Duplicate-account lines in this group don't need to net to zero</label>`:''}
-      ${selMonth? (hasSelMonth? `<div class="mut" style="font-size:12px;color:var(--green);margin-top:6px">✓ Has data planned for ${esc(monthLabel(selMonth))} — included if you generate the combined JV.</div>` : `<div class="mut" style="font-size:12px;color:var(--red);margin-top:6px">⚠ No data planned for ${esc(monthLabel(selMonth))} — won't be included in the combined JV.</div>`) : ''}
-      ${isEditing? `
-      <div class="row noprint" style="margin-top:10px;gap:8px">
-        <select id="genMonthSel_${g.id}">${months.map(k=>`<option value="${k}">${esc(monthLabel(k))}</option>`).join('') || '<option value="">No months planned yet</option>'}</select>
-        <button class="btn ghost sm" ${months.length?'':'disabled'} onclick="generateProvisionJV(${g.id})">Generate JV (this group only)</button>
-      </div>` : ''}
-      ${isEditing? renderProvisionGrid(g) : ''}
-    </div>`;
-  }).join('') || '<div class="empty">No provision groups yet — click "+ New Group" to plan your first one.</div>';
-  Object.entries(scrollPositions).forEach(([gid, left])=>{
-    if(!left) return;
-    const wrap = document.getElementById('provGridWrap_'+gid);
-    if(wrap) wrap.scrollLeft = left;
-  });
+    </div>
+    ${issues.length? `<div class="panel needs-fix" role="region" aria-label="Needs fixing"><div class="dash-head" style="margin-bottom:6px"><h2>Needs fixing (${issues.length})</h2></div>
+      ${issues.map(i=>`<div class="todo-item neg" style="margin-bottom:6px"><span class="todo-dot" aria-hidden="true"></span><div style="flex:1;min-width:0">${esc(issueText(i))}</div><button class="btn ghost sm" onclick="provShowMe(${i.gid}, ${i.mk? `'${i.mk}'` : 'null'})">Show me</button></div>`).join('')}</div>` : ''}
+    ${shown.map(g=>{
+      const gi = issues.filter(i=>i.gid===g.id);
+      const open = provisionEditingId===g.id;
+      const descrs = provisionMonthDescriptions(g, selMonth);
+      const amt = provisionMonthExpense(g, selMonth);
+      return `<div class="panel prov-group${open?' open':''}" id="provGroup_${g.id}">
+        <div class="prov-head" role="button" tabindex="0" aria-expanded="${open}" onclick="toggleProvisionEdit(${g.id})" onkeydown="if(event.key==='Enter'){toggleProvisionEdit(${g.id})}">
+          <span class="badge ${gi.length?'neg':'pos'}">${gi.length?'Error':'OK'}</span>
+          <b class="prov-name">${esc(g.name)}</b>
+          <span class="mut prov-descr">${descrs.length? esc(descrs[0])+(descrs.length>1? ' +'+(descrs.length-1)+' more' : '') : 'Nothing planned for '+esc(monthLabel(selMonth))}</span>
+          <span class="mono prov-amt">${money(amt)}</span>
+        </div>
+        ${open? provisionGroupBodyHTML(g, curMonth) : ''}
+      </div>`;
+    }).join('') || `<div class="empty">${groups.length? 'No group or account matches your search.' : 'No provision groups yet. Click "+ New Group" to plan your first one.'}</div>`}`;
+}
+function provisionGroupBodyHTML(g, curMonth){
+  const months = provisionsVisibleMonthKeys(g);
+  const drift = driftFlagsFor('provision', g.id);
+  const nL = g.lines.length, nM = months.length;
+  const lineOpt = sel => g.lines.map(l=>`<option value="${l.lineId}"${sel===l.lineId?' selected':''}>${esc(accShort(l.acc))} (${l.acc})${l.descrBase && l.descrBase!==accShort(l.acc)? ' — '+esc(l.descrBase) : ''}</option>`).join('');
+  return `<div class="prov-body">
+    <div class="row noprint" style="gap:8px;margin:12px 0">
+      <label class="fl" style="margin:0">Name</label><input value="${esc(g.name)}" onchange="renameProvisionGroup(${g.id},this.value)" style="max-width:280px">
+      ${groupHasDuplicateAccounts(g)? `<label class="row" style="gap:6px;font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" class="chk" style="width:auto" ${g.dupBalanceExempt?'checked':''} onchange="toggleDupBalanceExempt(${g.id}, this.checked)"> Duplicate-account lines don't need to net to zero</label>` : ''}
+      <span style="flex:1"></span>
+      <select id="genMonthSel_${g.id}" style="width:auto">${months.map(k=>`<option value="${k}"${k===provisionsSelectedMonth?' selected':''}>${esc(monthLabel(k))}</option>`).join('') || '<option value="">No months planned yet</option>'}</select>
+      <button class="btn ghost sm" ${months.length?'':'disabled'} onclick="generateProvisionJV(${g.id})">Generate JV (this group only)</button>
+      <button class="x" title="Delete group" aria-label="Delete group" onclick="deleteProvisionGroup(${g.id})">✕</button>
+    </div>
+    <div class="prov-cards">${g.lines.map((line,li)=>{ const s = provisionLineSummary(g, line); const ld = drift.find(f=>f.lineId===line.lineId); return `<div class="prov-card">
+      <div class="row" style="justify-content:space-between;gap:6px;flex-wrap:nowrap"><span class="click" style="color:var(--accent);font-weight:600;min-width:0" onclick="jumpToLedgerForAccount(${line.acc})" title="View in Ledger">${esc(accShort(line.acc))} <span class="mono mut" style="font-size:11px">${line.acc}</span></span><button class="x" aria-label="Remove this line" onclick="removeProvisionLine(${g.id},${li})">✕</button></div>
+      <input aria-label="Line description" placeholder="Description" value="${line.descrBase && line.descrBase!==accShort(line.acc)? esc(line.descrBase) : ''}" onchange="setProvisionLineDescr(${g.id},${li},this.value)" style="margin:6px 0;font-size:12px;padding:5px 8px">
+      ${ld? `<span class="badge neg" title="Planned ${money(ld.avgPlan)} vs actual ${money(ld.avgActual)} (average)">Drift</span>` : ''}
+      <div class="prov-figs"><span>Balance now</span><span class="mono">${money(s.current)}</span><span>Still planned</span><span class="mono">${money(s.plannedSum)}</span><span><b>Projected</b></span><span class="mono"><b>${money(s.projected)}</b></span></div>
+    </div>`; }).join('') || '<div class="mut" style="font-size:13px">No accounts yet. Add one below.</div>'}</div>
+    ${nL? `<div style="overflow-x:auto;margin-top:12px"><table class="prov-grid">
+      <thead><tr><th>Month</th>${g.lines.map(l=>`<th class="num">${esc(accShort(l.acc))}<div class="mono mut" style="font-weight:400">${l.acc}</div></th>`).join('')}<th class="num">Net</th></tr></thead>
+      <tbody>${months.map((k,mi)=>{ const net = g.lines.reduce((s,l)=>s+roundCents(provCellVal(g,k,l.lineId)||0),0); const any = g.lines.some(l=>provCellVal(g,k,l.lineId)!==null); const bad = any && Math.abs(net)>0.01;
+        const hl = provHighlight && provHighlight.gid===g.id && provHighlight.mk===k;
+        return `<tr id="provRow_${g.id}_${k}" class="${k===curMonth?'cur':''}${hl?' hl':''}${bad?' bad':''}"><td class="mono">${esc(monthLabel(k))}</td>${g.lines.map((l,li)=>{ const v = provCellVal(g,k,l.lineId); return `<td class="num"><input id="provCell_${g.id}_${li}_${mi}" type="text" inputmode="decimal" class="num" aria-label="${esc(accShort(l.acc))}, ${esc(monthLabel(k))}" value="${v!==null?fmt2(v):''}" placeholder="—" data-raw="${v!==null?v:''}"
+          onfocus="this.value=this.dataset.raw" onblur="if(this.value!==this.dataset.raw) setProvisionCell(${g.id},'${k}',${l.lineId},this.value); else this.value=this.dataset.raw? fmt2(this.dataset.raw) : ''" onkeydown="provCellKey(event,${g.id},${li},${mi},${nL},${nM})"></td>`; }).join('')}
+          <td class="num mono">${!any? '<span class="mut">—</span>' : (bad? `<span class="r">${money(net)}</span>` : '<span class="g">✓ 0.00</span>')}</td></tr>`; }).join('') || `<tr><td colspan="${nL+2}" class="empty">No months planned from ${esc(monthLabel(curMonth))} onward. Add a month or use Bulk fill.</td></tr>`}</tbody>
+    </table></div>` : ''}
+    <div class="row noprint" style="margin-top:12px;gap:8px">
+      <div class="autoc" style="position:relative;width:260px">
+        <input id="provAddAcc_${g.id}" placeholder="Add account… (can repeat)" oninput="provAccInput(${g.id},this.value)" onfocus="provAccInput(${g.id},this.value)"
+          onkeydown="provAccKey(event,${g.id})" onblur="setTimeout(()=>provCloseAcDrop(${g.id}),150)">
+        <div class="acdrop" id="provAcdrop_${g.id}"></div>
+      </div>
+      <input type="month" id="provAddMonth_${g.id}" min="${curMonth}" style="width:auto">
+      <button class="btn ghost sm" onclick="addProvisionMonth(${g.id})">+ Add month</button>
+    </div>
+    ${nL? `<div class="prov-bulk noprint"><b>Bulk fill</b>
+      <label>Line<select id="pbfLine_${g.id}">${lineOpt(null)}</select></label>
+      <label>From<input type="month" id="pbfFrom_${g.id}" value="${curMonth}"></label>
+      <label>Months<input type="number" min="1" id="pbfCount_${g.id}" value="${g.lastBulkFillMonths||6}" style="width:80px"></label>
+      <label>Amount<input type="text" inputmode="decimal" id="pbfAmt_${g.id}" placeholder="e.g. 3334 or -3334" style="width:130px"></label>
+      <label>Balance it on<select id="pbfBal_${g.id}"><option value="">— no —</option>${lineOpt(null)}</select></label>
+      <button class="btn pri sm" onclick="applyProvBulkFill(${g.id})">Fill</button>
+    </div>` : ''}
+  </div>`;
 }
 function renameProvisionGroup(id, name){
   if(blockIfSyncing()) return;
@@ -7835,17 +7982,12 @@ function renameProvisionGroup(id, name){
   if(!trimmed){ toast('Name cannot be empty', true); renderProvisionGroupsList(); return; }
   g.name = trimmed;
   persistProvisionGroup(g);
+  renderProvisionGroupsList();
 }
 function toggleProvisionEdit(id){
   provisionEditingId = provisionEditingId===id? null : id;
+  provHighlight = null;
   renderProvisionGroupsList();
-  if(provisionEditingId===id){
-    const curMonth = todayStr().slice(0,7);
-    requestAnimationFrame(()=>{
-      const th = document.getElementById('provMonthTh_'+id+'_'+curMonth);
-      if(th && th.scrollIntoView) th.scrollIntoView({inline:'start', block:'nearest'});
-    });
-  }
 }
 function provisionLineSummary(g, line){
   const current = accountBalance(line.acc);
@@ -7857,144 +7999,6 @@ function provisionLineSummary(g, line){
     if(v!==undefined && v!==null && v!=='') plannedSum += Number(v);
   });
   return {current, plannedSum, projected: current+plannedSum};
-}
-function renderProvisionGrid(g){
-  const months = provisionsVisibleMonthKeys(g);
-  const drift = driftFlagsFor('provision', g.id);
-  return `
-    <div id="provGridWrap_${g.id}" style="overflow-x:auto;margin-top:12px">
-    <table style="min-width:700px" class="sticky-table">
-      <thead><tr><th style="width:32px;position:sticky;left:0;z-index:2;background:var(--panel)"></th><th style="min-width:280px;position:sticky;left:32px;z-index:2;background:var(--panel)">Account</th>${months.map(k=>`<th id="provMonthTh_${g.id}_${k}" class="num">${esc(monthLabel(k))}</th>`).join('')}</tr></thead>
-      <tbody>${g.lines.map((line,li)=>{
-        const sum = provisionLineSummary(g, line);
-        const lineDrift = drift.find(f=>f.lineId===line.lineId);
-        return `<tr>
-        <td style="position:sticky;left:0;z-index:1;background:var(--panel);text-align:center"><button class="x" title="Remove account" onclick="removeProvisionLine(${g.id},${li})">✕</button></td>
-        <td style="position:sticky;left:32px;z-index:1;background:var(--panel)">
-          <div class="mono click" style="font-size:12.5px;cursor:pointer;color:var(--accent);font-weight:600" onclick="jumpToLedgerForAccount(${line.acc})" title="View this account's transactions in the Ledger">${esc(accShort(line.acc))}</div>
-          <div class="mut" id="provLineDescr_${g.id}_${li}" style="font-size:11px;margin-top:2px;cursor:pointer" onclick="startEditProvisionLineDescr(${g.id},${li})" title="Click to edit this line's description">${line.descrBase && line.descrBase!==accShort(line.acc)? esc(line.descrBase) : '<span style="opacity:.55">+ Add description</span>'}</div>
-          ${lineDrift? `<div style="margin-top:4px"><span class="badge neg" style="font-size:9px;cursor:pointer" onclick="go('dashboard')" title="Planned ${money(lineDrift.avgPlan)} vs. actual ${money(lineDrift.avgActual)} (avg) — see Dashboard">📉 drifted</span></div>` : ''}
-          <div class="mut" style="font-size:10.5px;margin-top:4px;line-height:1.6">
-            Current Balance: <span class="mono">${money(sum.current)}</span><br>
-            Sum of Planned Months: <span class="mono">${money(sum.plannedSum)}</span><br>
-            Projected Total: <span class="mono" style="font-weight:700">${money(sum.projected)}</span>
-          </div>
-          <button type="button" class="btn ghost sm" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="openBulkFillModal(${g.id},${li})">Bulk Fill…</button>
-        </td>
-        ${months.map((k,mi)=>{
-          const v = (g.months[k]||{})[line.lineId];
-          const has = v!==undefined && v!==null && v!=='';
-          return `<td class="num"><input id="provCell_${g.id}_${li}_${mi}" type="text" inputmode="decimal" class="num" style="width:100px" value="${has?fmt2(v):''}" placeholder="—" data-raw="${has?v:''}"
-            onfocus="this.value=this.dataset.raw" onblur="setProvisionCell(${g.id},'${k}',${line.lineId},this.value)"
-            onkeydown="provCellKey(event,${g.id},${li},${mi},${months.length})"></td>`;
-        }).join('')}
-      </tr>`;
-      }).join('')}</tbody>
-    </table>
-    </div>
-    <div class="row noprint" style="margin-top:12px;gap:8px">
-      <div class="autoc" style="position:relative;width:260px">
-        <input id="provAddAcc_${g.id}" placeholder="Add account… (can repeat)" oninput="provAccInput(${g.id},this.value)" onfocus="provAccInput(${g.id},this.value)"
-          onkeydown="provAccKey(event,${g.id})" onblur="setTimeout(()=>provCloseAcDrop(${g.id}),150)">
-        <div class="acdrop" id="provAcdrop_${g.id}"></div>
-      </div>
-      <input type="month" id="provAddMonth_${g.id}" min="${todayStr().slice(0,7)}">
-      <button class="btn ghost sm" onclick="addProvisionMonth(${g.id})">+ Add Month</button>
-    </div>`;
-}
-function startEditProvisionLineDescr(gid, li){
-  const g = findProvisionGroup(gid); if(!g) return;
-  const line = g.lines[li]; if(!line) return;
-  const el = document.getElementById('provLineDescr_'+gid+'_'+li);
-  if(!el) return;
-  const current = (line.descrBase && line.descrBase!==accShort(line.acc))? line.descrBase : '';
-  el.innerHTML = `<input type="text" id="provLineDescrInput_${gid}_${li}" value="${esc(current)}" placeholder="Description…" style="font-size:11px;padding:2px 6px;width:150px" onblur="saveProvisionLineDescr(${gid},${li},this.value)" onkeydown="if(event.key==='Enter'){this.blur();}">`;
-  const input = document.getElementById('provLineDescrInput_'+gid+'_'+li);
-  if(input){ input.focus(); input.select(); }
-}
-async function saveProvisionLineDescr(gid, li, val){
-  const g = findProvisionGroup(gid); if(!g) return;
-  const line = g.lines[li]; if(!line) return;
-  const clean = String(val).trim();
-  line.descrBase = clean || accShort(line.acc);
-  // Deliberately NOT calling renderProvisionGroupsList() here — a full re-render mid-edit can
-  // destroy another line's currently-focused input (e.g. if you tab through several description
-  // fields quickly), silently dropping whatever was being typed there. Update just this one
-  // element instead; everything else on the page is untouched.
-  const el = document.getElementById('provLineDescr_'+gid+'_'+li);
-  if(el){
-    const isCustom = line.descrBase && line.descrBase!==accShort(line.acc);
-    el.innerHTML = isCustom? esc(line.descrBase) : '<span style="opacity:.55">+ Add description</span>';
-  }
-  // The local edit above always applies and is saved to localStorage regardless of sync state —
-  // only the remote write is gated, and even then syncWrite() queues it for retry rather than
-  // dropping it, so a description is never lost just because a sync happened to be in flight.
-  if(blockIfSyncing()) { persistLocal(); return; }
-  await persistProvisionGroup(g);
-}
-function provCellKey(ev, gid, li, mi, monthCount){
-  if(ev.key!=='Tab') return;
-  const dir = ev.shiftKey ? -1 : 1;
-  const targetMi = mi + dir;
-  if(targetMi<0 || targetMi>=monthCount) return; // let native Tab move to the next control past the grid
-  ev.preventDefault();
-  ev.target.blur(); // commits the value and re-renders the grid synchronously (via setProvisionCell)
-  const next = document.getElementById('provCell_'+gid+'_'+li+'_'+targetMi); // fresh lookup — the old node no longer exists
-  if(next){ next.focus(); next.select(); }
-}
-function monthsUntilGridEnd(fromKey){
-  const end = getGridEndMonth();
-  if(!fromKey || fromKey>end) return 0;
-  const [y1,m1] = fromKey.split('-').map(Number);
-  const [y2,m2] = end.split('-').map(Number);
-  return (y2-y1)*12 + (m2-m1) + 1; // inclusive of both the starting month and the end month
-}
-function openBulkFillModal(gid, li){
-  const g = findProvisionGroup(gid); if(!g) return;
-  const line = g.lines[li];
-  const startDefault = todayStr().slice(0,7);
-  showModal(`
-    <h3>Bulk Fill — ${line.acc} — ${esc(accShort(line.acc))}</h3>
-    <label class="fl">Starting Month</label><input id="bfStartMonth" type="month" value="${startDefault}" oninput="updateBfMonthsRemaining()" style="margin-bottom:10px">
-    <label class="fl">Amount</label><input id="bfAmount" type="text" inputmode="decimal" placeholder="e.g. 3334 or -3334" style="margin-bottom:10px">
-    <label class="fl">Number of Months</label><input id="bfMonthCount" type="number" min="1" value="${g.lastBulkFillMonths||6}" style="margin-bottom:4px">
-    <div class="mut" id="bfMonthsRemaining" style="font-size:11px;margin-bottom:14px">${monthsUntilGridEnd(startDefault)} month(s) until your Grid End Month (${getGridEndMonth()})</div>
-    <div class="mut" style="font-size:11.5px;margin-bottom:14px">Fills this account's row for that many consecutive months starting from the month above, adding any months to the grid that don't already exist. You can still edit individual months afterward for exceptions.</div>
-    <div class="row" style="justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn pri" onclick="applyBulkFill(${gid},${li})">Fill</button></div>`);
-}
-function updateBfMonthsRemaining(){
-  const el = document.getElementById('bfMonthsRemaining');
-  const startEl = document.getElementById('bfStartMonth');
-  if(!el || !startEl) return;
-  const n = monthsUntilGridEnd(startEl.value);
-  el.textContent = n+' month(s) until your Grid End Month ('+getGridEndMonth()+')';
-}
-function applyBulkFill(gid, li){
-  if(blockIfSyncing()) return;
-  const g = findProvisionGroup(gid); if(!g) return;
-  const line = g.lines[li];
-  const startMonth = document.getElementById('bfStartMonth').value;
-  const amtRaw = document.getElementById('bfAmount').value;
-  const count = parseInt(document.getElementById('bfMonthCount').value,10);
-  const amt = Number(String(amtRaw).replace(/,/g,'').trim());
-  if(!startMonth || isNaN(amt) || !count || count<1){ toast('Fill in a valid starting month, amount, and number of months', true); return; }
-  let [y,m] = startMonth.split('-').map(Number);
-  for(let i=0;i<count;i++){
-    const key = y+'-'+String(m).padStart(2,'0');
-    if(!g.months[key]) g.months[key] = {};
-    g.months[key][line.lineId] = amt;
-    m++; if(m>12){ m=1; y++; }
-  }
-  g.lastBulkFillMonths = count;
-  persistProvisionGroup(g);
-  closeModal();
-  renderProvisionGroupsList();
-  const unbalanced = g.dupBalanceExempt? [] : findUnbalancedDuplicateAccounts(g);
-  if(unbalanced.length){
-    toast('Filled '+count+' month(s) — heads up, duplicate-account lines in "'+g.name+'" don\'t net to zero yet:\n'+unbalancedDuplicateMessage(unbalanced), true);
-  } else {
-    toast('Filled '+count+' month(s) ✓');
-  }
 }
 function openNewProvisionGroup(){
   if(blockIfSyncing()) return;
