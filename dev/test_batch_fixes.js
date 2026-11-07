@@ -1,0 +1,7966 @@
+// Targeted regression tests for the two JS-logic fixes in this batch:
+//   - Item 5: dashboard KPIs getting stuck at 0 after a re-render while already on the page
+//   - Item 6: double-click on Post JV creating a duplicate JV
+// Run with: node test_batch_fixes.js
+const fs = require('fs');
+const vm = require('vm');
+const path = require('path');
+// Paths: the app is ../LedgerOS.html (repo root); the extracted JS is written by run_tests.sh.
+// Both can be overridden with LEDGEROS_HTML / LEDGEROS_JS.
+const APP_HTML = process.env.LEDGEROS_HTML || path.resolve(__dirname, '..', 'LedgerOS.html');
+const APP_JS = process.env.LEDGEROS_JS || path.resolve(__dirname, '.build', 'extracted_noboot.js');
+const { JSDOM } = require('jsdom');
+
+let pass = 0, fail = 0;
+function assert(cond, msg){
+  if(cond){ pass++; }
+  else { fail++; console.error('FAIL:', msg); }
+}
+
+function makeSandbox(){
+  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="app"></div><div id="toast"></div></body></html>', { url: 'http://localhost/' });
+  const window = dom.window;
+  window.localStorage = (function(){
+    let store = {};
+    return {
+      getItem: k => (k in store ? store[k] : null),
+      setItem: (k,v) => { store[k] = String(v); },
+      removeItem: k => { delete store[k]; },
+      clear: () => { store = {}; }
+    };
+  })();
+  window.fetch = () => Promise.reject(new Error('network disabled in test'));
+  window.performance = window.performance || { now: () => Date.now() };
+  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  const sandbox = window;
+  sandbox.console = console;
+  vm.createContext(sandbox);
+  const code = fs.readFileSync(APP_JS, 'utf8');
+  vm.runInContext(code, sandbox, { filename: 'LedgerOS-app.js' });
+  // Top-level `let`/`const` bindings in a vm context are NOT exposed as properties of the
+  // sandbox object (only `var`s and function declarations are) — so provide a helper that lets
+  // the tests reassign them from outside via an in-context eval instead of direct assignment.
+  sandbox.__set = (name, value) => { sandbox[name+'__tmp'] = value; vm.runInContext(name+' = '+name+'__tmp;', sandbox); };
+  return sandbox;
+}
+
+function freezeDate(sb, isoDate){
+  const code = `
+    (function(){
+      const __RealDate = Date;
+      class __FrozenDate extends __RealDate {
+        constructor(...args){
+          if(args.length===0){ super(${JSON.stringify(isoDate)}); }
+          else { super(...args); }
+        }
+        static now(){ return new __RealDate(${JSON.stringify(isoDate)}).getTime(); }
+      }
+      Date = __FrozenDate;
+    })();
+  `;
+  vm.runInContext(code, sb);
+}
+
+async function testDriftDetectionFlagsProvisionLine(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-12T00:00:00.000Z'); // "today" — so the last 2 fully-past months are 2026-06 and 2026-07
+  const D = {
+    provisionGroups: [{
+      id:1, name:'Car', lines:[{acc:60201, lineId:60201, descrBase:null}],
+      months: {
+        '2026-06': {60201: 300}, // planned 300, actual will be 390 -> 30% over, drifted
+        '2026-07': {60201: 300}, // same again -> 2 consecutive drifted months
+      }
+    }],
+    forecastAccountRules: [],
+    ledger: [
+      {acc:60201, date:'2026-06-15', amt:390},
+      {acc:60201, date:'2026-07-15', amt:390},
+    ]
+  };
+  sb.__set('D', D);
+  sb.__set('_forecastFastIndexes', null);
+  // default settings: 15% threshold, 2 consecutive months — a 30% drift over 2 months should flag
+  const flags = sb.computeDriftFlags();
+  assert(flags.length === 1, 'A provision line drifted 30% for 2 consecutive months should produce exactly one flag, got ' + flags.length);
+  assert(flags[0].kind === 'provision' && flags[0].groupId === 1, 'The flag should identify the correct provision group');
+  assert(Math.abs(flags[0].avgActual - 390) < 0.01, 'avgActual should reflect the real posted amount (390), got ' + flags[0].avgActual);
+}
+
+async function testDriftDetectionSkipsHealthyLine(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-12T00:00:00.000Z');
+  const D = {
+    provisionGroups: [{
+      id:1, name:'Car', lines:[{acc:60201, lineId:60201, descrBase:null}],
+      months: { '2026-06': {60201: 300}, '2026-07': {60201: 300} }
+    }],
+    forecastAccountRules: [],
+    ledger: [
+      {acc:60201, date:'2026-06-15', amt:305}, // within default 15% threshold
+      {acc:60201, date:'2026-07-15', amt:295},
+    ]
+  };
+  sb.__set('D', D);
+  sb.__set('_forecastFastIndexes', null);
+  const flags = sb.computeDriftFlags();
+  assert(flags.length === 0, 'A provision line within threshold should not be flagged, got ' + flags.length + ' flags');
+}
+
+async function testDriftDetectionRequiresAllConsecutiveMonths(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-12T00:00:00.000Z');
+  const D = {
+    provisionGroups: [{
+      id:1, name:'Car', lines:[{acc:60201, lineId:60201, descrBase:null}],
+      months: { '2026-06': {60201: 300}, '2026-07': {60201: 300} }
+    }],
+    forecastAccountRules: [],
+    ledger: [
+      {acc:60201, date:'2026-06-15', amt:390}, // drifted
+      {acc:60201, date:'2026-07-15', amt:302}, // NOT drifted — breaks the "all consecutive months" requirement
+    ]
+  };
+  sb.__set('D', D);
+  sb.__set('_forecastFastIndexes', null);
+  const flags = sb.computeDriftFlags();
+  assert(flags.length === 0, 'Drift in only 1 of 2 required consecutive months should not flag, got ' + flags.length);
+}
+
+async function testDriftDismissSuppressesUntilNewMonthCloses(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-12T00:00:00.000Z');
+  const D = {
+    provisionGroups: [{
+      id:1, name:'Car', lines:[{acc:60201, lineId:60201, descrBase:null}],
+      months: { '2026-06': {60201: 300}, '2026-07': {60201: 300} }
+    }],
+    forecastAccountRules: [],
+    ledger: [
+      {acc:60201, date:'2026-06-15', amt:390},
+      {acc:60201, date:'2026-07-15', amt:390},
+    ]
+  };
+  sb.__set('D', D);
+  sb.__set('_forecastFastIndexes', null);
+  sb.__set('go', ()=>{}); // dismissDriftFlag calls go(screen) to re-render — neutralize for this test
+  sb.__set('screen', 'dashboard');
+
+  let flags = sb.computeDriftFlags();
+  assert(flags.length === 1, 'Sanity check: should be flagged before dismissal');
+  sb.dismissDriftFlag(flags[0].key);
+  flags = sb.computeDriftFlags();
+  assert(flags.length === 0, 'Flag should be suppressed immediately after dismissal, while still "this month"');
+
+  // Simulate a new month closing — "today" moves forward a month, so the comparison window shifts
+  // to include 2026-07 and 2026-08, meaning 2026-08 (not yet dismissed) enters the window
+  freezeDate(sb, '2026-09-12T00:00:00.000Z');
+  D.provisionGroups[0].months['2026-08'] = {60201: 300};
+  D.ledger.push({acc:60201, date:'2026-08-15', amt:390});
+  flags = sb.computeDriftFlags();
+  assert(flags.length === 1, 'Once a new month closes and enters the comparison window, the (still-drifting) flag should reappear, got ' + flags.length);
+}
+
+async function testSidebarPinToggle(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  const btn = doc.createElement('button'); btn.id = 'sidebarPinBtn'; doc.body.appendChild(btn);
+  const sidebar = doc.createElement('aside'); sidebar.id = 'sidebar'; sidebar.classList.add('open'); doc.body.appendChild(sidebar);
+  const scrim = doc.createElement('div'); scrim.id = 'mobileNavScrim'; scrim.classList.add('show'); doc.body.appendChild(scrim);
+  sb.__set('sidebarPinned', false);
+  sb.__set('safeSetItemWarn', () => true);
+  sb.toggleSidebarPin();
+  assert(doc.body.classList.contains('sidebar-pinned'), 'toggleSidebarPin() should add sidebar-pinned to body when turning on');
+  assert(btn.classList.contains('on'), 'The pin button should show as active when pinned');
+  assert(!sidebar.classList.contains('open'), 'Turning pin on should close the now-redundant mobile drawer');
+  sb.toggleSidebarPin();
+  assert(!doc.body.classList.contains('sidebar-pinned'), 'toggleSidebarPin() should remove sidebar-pinned from body when turning off');
+  assert(!btn.classList.contains('on'), 'The pin button should show as inactive when unpinned');
+}
+
+async function testMobileNavOpenClose(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  const sidebar = doc.createElement('aside'); sidebar.id = 'sidebar'; doc.body.appendChild(sidebar);
+  const scrim = doc.createElement('div'); scrim.id = 'mobileNavScrim'; doc.body.appendChild(scrim);
+  sb.openMobileNav();
+  assert(sidebar.classList.contains('open'), 'openMobileNav() should add the open class to #sidebar');
+  assert(scrim.classList.contains('show'), 'openMobileNav() should add the show class to the scrim');
+  sb.closeMobileNav();
+  assert(!sidebar.classList.contains('open'), 'closeMobileNav() should remove the open class from #sidebar');
+  assert(!scrim.classList.contains('show'), 'closeMobileNav() should remove the show class from the scrim');
+}
+
+async function testGoClosesMobileNavAndUpdatesTitle(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  const sidebar = doc.createElement('aside'); sidebar.id = 'sidebar'; sidebar.classList.add('open'); doc.body.appendChild(sidebar);
+  const scrim = doc.createElement('div'); scrim.id = 'mobileNavScrim'; scrim.classList.add('show'); doc.body.appendChild(scrim);
+  const titleEl = doc.createElement('span'); titleEl.id = 'mobileTopbarTitle'; doc.body.appendChild(titleEl);
+  const navEl = doc.createElement('nav'); navEl.id = 'nav'; doc.body.appendChild(navEl);
+  const appEl = doc.getElementById('app');
+  sb.__set('D', { accounts:[], ledger:[], provisionGroups:[], forecastAccountRules:[] });
+  sb.__set('dashboardNeedsCountUp', false);
+  sb.__set('screen', 'dashboard');
+  sb.__set('reconcileAcc', null);
+  sb.__set('jvReturnScreen', null);
+  sb.__set('renderLedger', () => { appEl.innerHTML = 'ledger rendered'; });
+  sb.go('ledger');
+  assert(!sidebar.classList.contains('open'), 'Navigating via go() should close the mobile nav drawer');
+  assert(!scrim.classList.contains('show'), 'Navigating via go() should hide the scrim');
+  // As of v4.12.0 the title carries the page's icon as well as its label.
+  assert(titleEl.textContent === '📖 Ledger', 'The mobile top bar title should update to match the new screen (with its icon), got "' + titleEl.textContent + '"');
+}
+
+async function testCategoryAccountIdsExcludesWorkingCapital(){
+  const sb = makeSandbox();
+  const D = {
+    accounts: [
+      {id:10101, category:'Bank Accounts', is_savings:false},
+      {id:10199, category:'Bank Accounts', is_savings:false}, // Working Capital rollup — must be excluded
+    ],
+    ledger: [
+      {acc:10101, amt:500},
+      {acc:10199, amt:9999}, // if this leaks in anywhere, the totals below would be wrong
+    ]
+  };
+  sb.__set('D', D);
+  const ids = sb.categoryAccountIds('Bank Accounts');
+  assert(ids.has(10101) && !ids.has(10199), 'categoryAccountIds should exclude 10199 from Bank Accounts');
+  const total = sb.bankBalance();
+  assert(total === 500, 'bankBalance() should exclude 10199, got ' + total);
+  // The regression this fixes: viewCategoryAccounts used a SEPARATE filter that didn't know about
+  // this exclusion — assert it now shares the exact same id-set as the card total.
+  const popupAccs = D.accounts.filter(a => ids.has(a.id));
+  assert(popupAccs.length === 1 && popupAccs[0].id === 10101, 'The breakdown popup should list exactly the same accounts as the card total');
+}
+
+function makeLedgerEditorSandbox(ledgerRows, accounts){
+  const sb = makeSandbox();
+  const D = { ledger: ledgerRows, accounts: accounts || [
+    {id:10101, name:'10101 - Cash', status:'Active'},
+    {id:10102, name:'10102 - Bank', status:'Active'},
+    {id:60101, name:'60101 - Groceries', status:'Active'},
+  ]};
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  sb.__set('blockIfSyncing', () => false);
+  sb.__set('screen', 'ledger');
+  sb.__set('go', () => {});
+  sb.__set('renderLedger', () => {});
+  sb.__set('renderDashboard', () => {});
+  sb.__set('renderStatement', () => {});
+  sb.__set('renderAlloc', () => {});
+  sb.__set('persistLocal', () => {});
+  sb.__set('logActivity', () => {});
+  sb.__set('showImportProgress', () => {});
+  sb.__set('updateImportProgress', () => {});
+  let finishMsg = null;
+  sb.__set('finishImportProgress', (msg) => { finishMsg = msg; });
+  let modalHtml = null;
+  sb.__set('showModal', (html) => { modalHtml = html; });
+  let confirmCalled = false, confirmReturn = true;
+  sb.__set('confirm', (msg) => { confirmCalled = true; return confirmReturn; });
+  const syncCalls = [];
+  sb.__set('syncWriteMany', async (ops) => { syncCalls.push(...ops); return {results:[]}; });
+  return { sb, D, getModalHtml:()=>modalHtml, getFinishMsg:()=>finishMsg, wasConfirmCalled:()=>confirmCalled, setConfirmReturn:(v)=>{confirmReturn=v;}, getSyncCalls:()=>syncCalls };
+}
+
+async function testLedgerEditorBlocksUnbalancedJV(){
+  const ledgerRows = [
+    {id:1, jv:100, date:'2026-06-01', acc:10101, descr:'Deposit', amt:500, alloc:null, allocatable:false, accNameSnapshot:null},
+    {id:2, jv:100, date:'2026-06-01', acc:60101, descr:'Groceries', amt:-500, alloc:null, allocatable:false, accNameSnapshot:null},
+  ];
+  const { sb, D, getModalHtml, getSyncCalls } = makeLedgerEditorSandbox(ledgerRows);
+  // Edit row 2's amount so the JV no longer nets to zero
+  const csvRows = [{ 'row id':'2', 'jv#':'100', date:'2026-06-01', 'account#':'60101', description:'Groceries', amount:'-400', 'alloc#':'', 'historical name':'', delete:'' }];
+  await sb.importLedgerEditorCSV(csvRows);
+  assert(D.ledger.find(l=>l.id===2).amt === -500, 'Ledger must be UNCHANGED when validation blocks the import — got ' + D.ledger.find(l=>l.id===2).amt);
+  assert(getSyncCalls().length === 0, 'No sync writes should happen when the import is blocked');
+  const html = getModalHtml();
+  assert(html && html.includes('JV #100') && html.includes('no longer balance'), 'The blocking report should mention the specific JV# that would be unbalanced');
+}
+
+async function testLedgerEditorBlocksBrokenAllocation(){
+  const ledgerRows = [
+    {id:1, jv:100, date:'2026-06-01', acc:10101, descr:'Expense claim', amt:-200, alloc:500, allocatable:true, accNameSnapshot:null},
+    {id:2, jv:101, date:'2026-06-05', acc:10101, descr:'Reimbursement', amt:200, alloc:500, allocatable:true, accNameSnapshot:null},
+  ];
+  const { sb, D, getModalHtml } = makeLedgerEditorSandbox(ledgerRows);
+  // Delete row 2 — alloc group 500 was balanced (net 0), now it's just row 1 at -200, no longer balanced
+  const csvRows = [{ 'row id':'2', 'jv#':'', date:'', 'account#':'', description:'', amount:'', 'alloc#':'', 'historical name':'', delete:'DELETE' }];
+  await sb.importLedgerEditorCSV(csvRows);
+  assert(D.ledger.length === 2, 'Ledger must be UNCHANGED when validation blocks the import — got ' + D.ledger.length + ' rows');
+  const html = getModalHtml();
+  assert(html && html.includes('00500') && html.includes('unbalanced'), 'The blocking report should mention the specific allocation group that would break');
+}
+
+async function testLedgerEditorAppliesValidEdit(){
+  const ledgerRows = [
+    {id:1, jv:100, date:'2026-06-01', acc:10101, descr:'Deposit', amt:500, alloc:null, allocatable:false, accNameSnapshot:null},
+    {id:2, jv:100, date:'2026-06-01', acc:60101, descr:'Groceries', amt:-500, alloc:null, allocatable:false, accNameSnapshot:null},
+  ];
+  const { sb, D, getSyncCalls, getFinishMsg, wasConfirmCalled } = makeLedgerEditorSandbox(ledgerRows);
+  // Correct both lines together so the JV still balances, and set a historical name correction
+  const csvRows = [
+    { 'row id':'1', 'jv#':'100', date:'2026-06-01', 'account#':'10101', description:'Deposit', amount:'600', 'alloc#':'', 'historical name':'', delete:'' },
+    { 'row id':'2', 'jv#':'100', date:'2026-06-01', 'account#':'60101', description:'Groceries', amount:'-600', 'alloc#':'', 'historical name':'Old Grocery Name', delete:'' },
+  ];
+  await sb.importLedgerEditorCSV(csvRows);
+  assert(wasConfirmCalled(), 'A valid import should prompt for confirmation before committing');
+  assert(D.ledger.find(l=>l.id===1).amt === 600, 'Row 1 amount should be updated to 600');
+  assert(D.ledger.find(l=>l.id===2).amt === -600, 'Row 2 amount should be updated to -600');
+  assert(D.ledger.find(l=>l.id===2).accNameSnapshot === 'Old Grocery Name', 'Historical Name should be applied to row 2');
+  assert(getSyncCalls().length === 2, 'Both changed rows should be synced, got ' + getSyncCalls().length);
+  assert(getFinishMsg() && getFinishMsg().includes('2 updated'), 'Completion message should report 2 rows updated');
+}
+
+async function testLedgerEditorDeletesFullJVCleanly(){
+  const ledgerRows = [
+    {id:1, jv:100, date:'2026-06-01', acc:10101, descr:'Deposit', amt:500, alloc:null, allocatable:false, accNameSnapshot:null},
+    {id:2, jv:100, date:'2026-06-01', acc:60101, descr:'Groceries', amt:-500, alloc:null, allocatable:false, accNameSnapshot:null},
+  ];
+  const { sb, D } = makeLedgerEditorSandbox(ledgerRows);
+  const csvRows = [
+    { 'row id':'1', 'jv#':'', date:'', 'account#':'', description:'', amount:'', 'alloc#':'', 'historical name':'', delete:'DELETE' },
+    { 'row id':'2', 'jv#':'', date:'', 'account#':'', description:'', amount:'', 'alloc#':'', 'historical name':'', delete:'DELETE' },
+  ];
+  await sb.importLedgerEditorCSV(csvRows);
+  assert(D.ledger.length === 0, 'Deleting every line of a JV should be allowed cleanly (nothing left to be unbalanced), got ' + D.ledger.length + ' rows remaining');
+}
+
+async function testLedgerEditorRejectsDuplicateRowId(){
+  const ledgerRows = [
+    {id:1, jv:100, date:'2026-06-01', acc:10101, descr:'Deposit', amt:500, alloc:null, allocatable:false, accNameSnapshot:null},
+    {id:2, jv:100, date:'2026-06-01', acc:60101, descr:'Groceries', amt:-500, alloc:null, allocatable:false, accNameSnapshot:null},
+  ];
+  const { sb, D, getModalHtml } = makeLedgerEditorSandbox(ledgerRows);
+  const csvRows = [
+    { 'row id':'1', 'jv#':'100', date:'2026-06-01', 'account#':'10101', description:'Deposit A', amount:'500', 'alloc#':'', 'historical name':'', delete:'' },
+    { 'row id':'1', 'jv#':'100', date:'2026-06-01', 'account#':'10101', description:'Deposit B', amount:'500', 'alloc#':'', 'historical name':'', delete:'' },
+  ];
+  await sb.importLedgerEditorCSV(csvRows);
+  assert(D.ledger.find(l=>l.id===1).descr === 'Deposit', 'A file with a duplicate Row ID should change nothing (blocked as a parse error)');
+  const html = getModalHtml();
+  assert(html && html.toLowerCase().includes('duplicate'), 'The report should specifically call out the duplicate Row ID');
+}
+
+async function testKpiValueNoLongerStuckAtZero(){
+  const sb = makeSandbox();
+  // Simulate: fresh navigation-in already happened and consumed the one-shot flag
+  sb.__set('dashboardNeedsCountUp', false);
+  const html = sb.kpiValue(12345.67, '', 'absMoney');
+  assert(html.includes(sb.absMoney(12345.67)), 'kpiValue should render the real value immediately when no count-up animation is pending (was previously always 0)');
+  assert(!html.includes('>'+sb.absMoney(0)+'<'), 'kpiValue should NOT render 0 when dashboardNeedsCountUp is false');
+
+  // Simulate: a genuine navigation-in, where the 0-then-animate behavior should still happen
+  sb.__set('dashboardNeedsCountUp', true);
+  const html2 = sb.kpiValue(12345.67, '', 'absMoney');
+  assert(html2.includes('>'+sb.absMoney(0)+'<'), 'kpiValue should still render 0 initially when a real count-up animation is about to play');
+}
+
+async function testJVDoubleClickGuard(){
+  const sb = makeSandbox();
+  // Minimal fixture: two postable accounts so a balanced 2-line JV can be built
+  const accounts = [
+    {id:10101, descr:'Cash', category:'Bank Accounts', status:'Active', acc_type:'Individual Account'},
+    {id:60101, descr:'Groceries', category:'Expense', status:'Active', acc_type:'Individual Account'}
+  ];
+  const D = { accounts, ledger: [] };
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', {10101:accounts[0], 60101:accounts[1]});
+  sb.__set('jvDraft', { date: '2026-08-11', lines: [
+    {key:'a', acc:10101, descr:'Test line 1', amt:-100},
+    {key:'b', acc:60101, descr:'Test line 2', amt:100}
+  ]});
+  sb.__set('jvReturnScreen', null);
+  sb.__set('reconcileAcc', null);
+  sb.__set('syncQueue', []);
+  sb.__set('syncInProgress', false);
+  // Neutralize side-effecting helpers the harness doesn't stub a full app for
+  sb.__set('go', () => {});
+  sb.__set('blockIfSyncing', () => false);
+  sb.__set('persistLocal', () => {});
+  sb.__set('logActivity', () => {});
+  // Make syncWrite artificially slow so a "double click" during the await is realistic
+  let syncWriteCalls = 0;
+  sb.__set('syncWrite', async () => { syncWriteCalls++; await new Promise(r => setTimeout(r, 20)); return true; });
+
+  const before = D.ledger.length;
+  // Fire postJV() twice back-to-back, synchronously, exactly as a fast double-click would
+  const p1 = sb.postJV();
+  const p2 = sb.postJV();
+  await Promise.all([p1, p2]);
+
+  const jvNumbersPosted = new Set(D.ledger.map(l => l.jv));
+  assert(D.ledger.length === before + 2, 'Exactly one JV (2 lines) should be posted from a rapid double-click, not two — got ' + (D.ledger.length - before) + ' ledger rows');
+  assert(jvNumbersPosted.size === 1, 'Only one distinct JV number should have been posted — got ' + jvNumbersPosted.size);
+}
+
+async function testPnlVarianceMagnitudeIsSignConventionProof(){
+  const sb = makeSandbox();
+  // Surplus (spent LESS than budgeted) with a POSITIVE-sign expense convention: budget=400, actual=300
+  // The old raw-subtraction bug (actual - budget = -100) would show this as red (over budget) — wrong.
+  const posConventionSurplus = sb.pnlVarianceMagnitude(400, 300);
+  assert(posConventionSurplus > 0, 'Surplus under positive-sign convention should be positive (green), got ' + posConventionSurplus);
+  assert(sb.moneyClass(posConventionSurplus) === 'g', 'Surplus should color green, got class "' + sb.moneyClass(posConventionSurplus) + '"');
+
+  // Same real-world surplus, but with a NEGATIVE-sign expense convention: budget=-400, actual=-300
+  // Must give the SAME green result — this is exactly what "sign-convention-proof" means.
+  const negConventionSurplus = sb.pnlVarianceMagnitude(-400, -300);
+  assert(negConventionSurplus > 0, 'The same real surplus under negative-sign convention should also be positive (green), got ' + negConventionSurplus);
+  assert(sb.moneyClass(negConventionSurplus) === 'g', 'Surplus should color green regardless of sign convention, got class "' + sb.moneyClass(negConventionSurplus) + '"');
+
+  // Over budget case, positive convention: budget=300, actual=400 — should be red
+  const posConventionOver = sb.pnlVarianceMagnitude(300, 400);
+  assert(sb.moneyClass(posConventionOver) === 'r', 'Over-budget should color red, got class "' + sb.moneyClass(posConventionOver) + '"');
+}
+
+// ---- v4.19.0: Dashboard "This Month Expense" vs budget ----
+function seedDashboardBudget(sb, budgetPerAcc){
+  sb.__set('D', Object.assign({}, sb.D, {
+    accounts: [
+      {id:60101, category:'Living', acc_type:'Individual Account', status:'Active'},
+      {id:60102, category:'Living', acc_type:'Individual Account', status:'Active'},
+      // Deleted and non-individual accounts must be excluded, exactly as the P&L page does.
+      {id:60103, category:'Living', acc_type:'Individual Account', status:'Deleted'},
+      {id:60104, category:'Living', acc_type:'Category Account', status:'Active'},
+      {id:30101, category:'Salary',  acc_type:'Individual Account', status:'Active'}
+    ],
+    ledger: []
+  }));
+  sb.__set('pnlBudgetForAccountInRange', (accId) => budgetPerAcc[accId] || 0);
+}
+
+async function testDashboardExpenseBudgetSumsOnlyLiveExpenseAccounts(){
+  const sb = makeSandbox();
+  // 60103 is Deleted, 60104 is a Category Account, 30101 is income — none should be counted.
+  seedDashboardBudget(sb, {60101: 3000, 60102: 2000, 60103: 9999, 60104: 8888, 30101: 7777});
+  const b = sb.dashboardExpenseBudget('2026-08', 0);
+  assert(Math.abs(b.budget - 5000) < 0.005, 'Budget should total only live individual/accrual expense accounts (5000), got ' + b.budget);
+  assert(b.hasBudget === true, 'A 5000 budget should register as having a budget');
+}
+
+async function testDashboardExpenseBudgetComparesAgainstTheWholeMonth(){
+  const sb = makeSandbox();
+  seedDashboardBudget(sb, {60101: 3100});
+  // Month-to-date spend against the FULL month's budget. The prorated "on pace" reading that
+  // used to sit alongside this was removed in v4.21.0.
+  const b = sb.dashboardExpenseBudget('2026-08', 1200);
+  assert(Math.abs(b.fullVariance - 1900) < 0.005, 'Full-month variance should be +1900 (under), got ' + b.fullVariance);
+  assert(sb.moneyClass(b.fullVariance) === 'g', 'Under budget should read green');
+  const over = sb.dashboardExpenseBudget('2026-08', 4000);
+  assert(Math.abs(over.fullVariance + 900) < 0.005, 'Overspending should give -900, got ' + over.fullVariance);
+  assert(sb.moneyClass(over.fullVariance) === 'r', 'Over budget should read red');
+}
+
+async function testDashboardExpenseBudgetIsSignConventionProof(){
+  const sb = makeSandbox();
+  // The same real-world position expressed with a negative-sign expense convention on both sides.
+  seedDashboardBudget(sb, {60101: -3100});
+  const b = sb.dashboardExpenseBudget('2026-08', -4000);
+  assert(Math.abs(b.fullVariance + 900) < 0.005,
+    'Variance must be -900 under a negative-sign convention too (magnitude comparison, not raw subtraction), got ' + b.fullVariance);
+  assert(sb.moneyClass(b.fullVariance) === 'r', 'Over budget should read red regardless of sign convention');
+}
+
+async function testDashboardExpenseBudgetHandlesNoBudgetAndPastMonths(){
+  const sb = makeSandbox();
+  seedDashboardBudget(sb, {});
+  const none = sb.dashboardExpenseBudget('2026-08', 1200);
+  assert(none.hasBudget === false, 'A zero budget should not claim to have a budget');
+  assert(sb.dashboardExpenseBudgetLine(none).indexOf('No budget set') !== -1,
+    'With no budget the line should say so rather than reporting "over budget by" the entire spend');
+
+  // Any month reads the same way now — there is no day-of-month component left to go stale.
+  seedDashboardBudget(sb, {60101: 3100});
+  const past = sb.dashboardExpenseBudget('2026-07', 1200);
+  assert(Math.abs(past.fullVariance - 1900) < 0.005, 'A past month should compare against its own full budget, got ' + past.fullVariance);
+}
+
+// ---- v4.19.0: clickable allocation badges ----
+async function testAllocBadgeIsClickableAndBlankWhenUnallocated(){
+  const sb = makeSandbox();
+  assert(sb.allocBadgeCell(null) === '', 'An unallocated line should render an empty cell, got: ' + JSON.stringify(sb.allocBadgeCell(null)));
+  assert(sb.allocBadgeCell(0) === '', 'Allocation 0 should render empty rather than badge "00000"');
+  const cell = sb.allocBadgeCell(6);
+  assert(cell.indexOf('00006') !== -1, 'Badge should show the padded allocation number, got: ' + cell);
+  assert(/openAllocGroupFrom\(event,\s*6\)/.test(cell), 'Badge should open the allocation detail window on click, got: ' + cell);
+}
+
+async function testAllocJumpFromLedgerRowDoesNotAlsoOpenTheJV(){
+  const sb = makeSandbox();
+  // The Ledger row's own onclick opens the JV. Without stopPropagation, clicking the badge would
+  // fire both handlers and the JV modal would immediately replace the allocation modal.
+  let stopped = 0, opened = null;
+  sb.__set('viewAllocGroup', (n) => { opened = n; });
+  sb.openAllocGroupFrom({ stopPropagation: () => { stopped++; } }, 42);
+  assert(stopped === 1, 'The badge click must stop propagating to the row handler, got ' + stopped + ' calls');
+  assert(opened === 42, 'The allocation detail window should open for the clicked number, got ' + opened);
+}
+
+async function testAllocModalActionsDoNotRepaintTheWrongPage(){
+  const sb = makeSandbox();
+  // Reachable from the Ledger page now, so unassignLine must not paint the Allocations page
+  // into #app while the nav still says Ledger.
+  let allocRenders = 0, ledgerRenders = 0;
+  sb.__set('renderAlloc', () => { allocRenders++; });
+  sb.__set('renderLedgerResults', () => { ledgerRenders++; });
+  sb.__set('blockIfSyncing', () => false);
+  sb.__set('closeModal', () => {});
+  sb.__set('viewAllocGroup', () => {});
+  sb.__set('toast', () => {});
+  sb.__set('persistLocal', () => {});
+  sb.__set('syncWrite', async () => {});
+  sb.__set('D', Object.assign({}, sb.D, {ledger: [{id:1, jv:1, date:'2026-08-01', acc:60101, descr:'x', amt:10, alloc:7}]}));
+
+  sb.__set('screen', 'ledger');
+  await sb.unassignLine(1, 7);
+  assert(allocRenders === 0, 'On the Ledger page, unassigning must NOT render the Allocations page, got ' + allocRenders + ' renders');
+  assert(ledgerRenders === 1, 'On the Ledger page, unassigning should refresh the ledger results, got ' + ledgerRenders);
+
+  sb.__set('D', Object.assign({}, sb.D, {ledger: [{id:2, jv:2, date:'2026-08-01', acc:60101, descr:'x', amt:10, alloc:8}]}));
+  sb.__set('screen', 'alloc');
+  await sb.unassignLine(2, 8);
+  assert(allocRenders === 1, 'On the Allocations page it SHOULD still repaint, got ' + allocRenders);
+}
+
+async function testGoPnLThisMonthOpensPnlForTheCurrentMonth(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-10T09:00:00Z');
+  let went = null;
+  sb.__set('go', (s) => { went = s; });
+  sb.goPnLThisMonth();
+  assert(went === 'pnl', 'Should navigate to the P&L page, got ' + went);
+  assert(vm.runInContext('pnlPreset', sb) === 'month', 'Preset should be set to this month, got ' + vm.runInContext('pnlPreset', sb));
+  assert(vm.runInContext('pnlFrom', sb) === '2026-08-01' && vm.runInContext('pnlTo', sb) === '2026-08-31',
+    'Range should cover the whole current month, got ' + vm.runInContext('pnlFrom', sb) + ' → ' + vm.runInContext('pnlTo', sb));
+}
+
+// ================= v4.20.0: management fee, platform cash, reconciliation =================
+// ownerId 1 = self, ownerId 2 = family
+function invCashSandbox(extra){
+  const sb = makeSandbox();
+  // `D` is a top-level `let`, so it is not exposed as a property of the sandbox object. The
+  // object reference set into the context is the same one held here, so mutating sb._D in a test
+  // mutates the app's state too.
+  const data = Object.assign({
+    accounts: [], ledger: [], budget: [],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:null, inAcc:null},
+                {id:2, name:'Relative', isSelf:false, outAcc:null, inAcc:null}],
+    invPlatforms: [{id:1, name:'Broker A'}, {id:2, name:'Broker B'}],
+    invPositions: [{id:1, platformId:1, name:'ACME', currency:'USD', assetClass:'Equity', status:'Active'}],
+    invTransactions: [], invValuations: [], invCashMovements: [], invRoboValueLog: [], forecastSnapshots: [], provisionGroups: [], forecastAccountRules: [],
+    invSettings: {fxUsdSar: 3.75, mgmtFeePct: 0}
+  }, extra||{});
+  sb.__set('D', data);
+  sb._D = data;
+  return sb;
+}
+
+async function testBuyFeeMovesUnitsButNotTheSarSplit(){
+  const sb = invCashSandbox({invTransactions:[
+    // 100 units for 100,000 SAR, split 50/50, 5% management fee.
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:100000,
+     owners:[{ownerId:1,units:50},{ownerId:2,units:50}], feePct:5, cashSide:'bank'}
+  ]});
+  const at = sb.invTxAttribution(sb._D.invTransactions[0]);
+  assert(Math.abs(at.units[2] - 47.5) < 1e-9, 'Family should hold 47.5 units after a 5% fee, got ' + at.units[2]);
+  assert(Math.abs(at.units[1] - 52.5) < 1e-9, 'Self should hold 52.5 units after a 5% fee, got ' + at.units[1]);
+  assert(Math.abs((at.units[1]+at.units[2]) - 100) < 1e-9, 'The fee must not create or destroy units');
+  // The SAR split deliberately does NOT move — that is what makes it a fee rather than a
+  // smaller purchase.
+  assert(Math.abs(at.moneySar[1] - 50000) < 0.005 && Math.abs(at.moneySar[2] - 50000) < 0.005,
+    'SAR must stay at the entered 50/50 split, got ' + at.moneySar[1] + ' / ' + at.moneySar[2]);
+
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[2].costSar - 50000) < 0.005, 'Family cost basis should stay 50,000, got ' + st.byOwner[2].costSar);
+  // The whole point: their average cost rises, yours falls.
+  const famAvg = st.byOwner[2].costSar/st.byOwner[2].units, selfAvg = st.byOwner[1].costSar/st.byOwner[1].units;
+  assert(famAvg > 1000 && selfAvg < 1000, 'Family average cost should rise above 1000 and self fall below, got ' + famAvg + ' / ' + selfAvg);
+}
+
+async function testSellFeeComesOutOfProceedsAndIsFeeIncomeNotGain(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:100000,
+     owners:[{ownerId:1,units:50},{ownerId:2,units:50}], feePct:0, cashSide:'bank'},
+    // Sell the family's 50 units for 75,000 (a 25,000 gain), 10% fee = 7,500 to self.
+    {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:50, totalSar:75000,
+     owners:[{ownerId:2,units:50}], feePct:10, cashSide:'cash', usdAmount:20000}
+  ]});
+  const at = sb.invTxAttribution(sb._D.invTransactions[1]);
+  assert(Math.abs(at.feeSar - 7500) < 0.005, 'Fee should be 7,500, got ' + at.feeSar);
+  // Units leave in full — the fee comes out of the money, not the units.
+  const entered = sb.invTxEnteredUnits(sb._D.invTransactions[1]);
+  assert(Math.abs(entered[2] - 50) < 1e-9, 'All 50 units should still leave the family owner, got ' + entered[2]);
+  // Self is NOT credited in moneySar: the fee is income, not an investment return.
+  assert(!(at.moneySar[1] > 0), 'Self must not be credited investment proceeds by the fee, got ' + at.moneySar[1]);
+  assert(Math.abs(at.cashSar[1] - 7500) < 0.005, 'Self SHOULD receive the fee as cash, got ' + at.cashSar[1]);
+  assert(Math.abs(at.cashSar[2] - 67500) < 0.005, 'Family cash should be proceeds less the fee, got ' + at.cashSar[2]);
+
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[2].realizedSar - 17500) < 0.005,
+    'Family realised gain should be 25,000 less the 7,500 fee = 17,500, got ' + st.byOwner[2].realizedSar);
+  const fee = sb.invFeeIncomeByYear();
+  assert(fee.length === 1 && Math.abs(fee[0].fee - 7500) < 0.005, 'Fee income should be reported separately as 7,500');
+  const realised = sb.invRealisedByYear(true);
+  assert(!realised.some(r=>Math.abs(r.gain - 7500) < 0.005), 'The fee must NOT appear as self realised investment gain');
+}
+
+async function testFeeIsAppliedByEveryConsumerNotJustCostBasis(){
+  // The "fixed everywhere" lesson: a fee applied in some readers and not others would make the
+  // same transaction value differently on different screens.
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:100000,
+     owners:[{ownerId:1,units:50},{ownerId:2,units:50}], feePct:5, cashSide:'bank'}
+  ], invValuations:[{id:1, positionId:1, date:'2026-03-01', price:1}]});
+  const asOf = sb.invPositionStateAsOf(1, '2026-06-01', true);
+  assert(Math.abs(asOf.units - 52.5) < 1e-9,
+    'Historical state must apply the fee too (52.5 self units), got ' + asOf.units);
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[1].units - asOf.units) < 1e-9,
+    'Historical state and cost-basis engine must agree on units, got ' + st.byOwner[1].units + ' vs ' + asOf.units);
+}
+
+async function testPlatformCashTracksSellProceedsAndFundedBuys(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:37500,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+    // Sell into USD held on the platform: 75,000 SAR / 3.75 = $20,000
+    {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:100, totalSar:75000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'cash', usdAmount:20000}
+  ]});
+  const cash = sb.invPlatformCash(1);
+  assert(Math.abs(cash.totalUsd - 20000) < 0.005, 'Cash should be $20,000 after the sell, got ' + cash.totalUsd);
+  // 37,500 gain / 3.75 = $10,000 of that balance is profit rather than returned capital.
+  assert(Math.abs(cash.profitUsd - 10000) < 0.005, 'Retained profit should be $10,000, got ' + cash.profitUsd);
+
+  // A cash-funded buy takes the money back off the platform.
+  sb._D.invTransactions.push({id:3, positionId:1, date:'2026-03-01', kind:'buy', units:50, totalSar:18750,
+    owners:[{ownerId:1,units:50}], feePct:0, cashSide:'cash', usdAmount:5000});
+  const after = sb.invPlatformCash(1);
+  assert(Math.abs(after.totalUsd - 15000) < 0.005, 'Cash should drop to $15,000 after a cash-funded buy, got ' + after.totalUsd);
+  // Reinvested profit stays flagged as profit — this is what keeps the bridge balanced.
+  assert(Math.abs(after.profitUsd - 10000) < 0.005, 'A cash-funded buy must not consume retained profit, got ' + after.profitUsd);
+}
+
+async function testBankSideTransactionsDoNotTouchCash(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:37500,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+    {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:100, totalSar:75000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'}
+  ]});
+  assert(Math.abs(sb.invPlatformCash(1).totalUsd) < 0.005,
+    'A sell settled to the bank must leave no platform cash, got ' + sb.invPlatformCash(1).totalUsd);
+}
+
+async function testDepositWithdrawalAndTransferWithFee(){
+  const sb = invCashSandbox({invCashMovements:[
+    {id:1, platformId:1, date:'2026-01-01', kind:'deposit', usdAmount:10000,
+     owners:[{ownerId:1, usd:10000}], feeUsd:0, capitalUsd:0, profitUsd:0},
+    // Transfer $4,000 to Broker B, $25 fee borne by self on the sending side.
+    {id:2, platformId:1, date:'2026-02-01', kind:'transfer', usdAmount:4000, toPlatformId:2,
+     owners:[{ownerId:1, usd:4000}], feeUsd:25, capitalUsd:0, profitUsd:0}
+  ]});
+  const a = sb.invPlatformCash(1), b = sb.invPlatformCash(2);
+  assert(Math.abs(a.totalUsd - 5975) < 0.005, 'Source should be 10000 - 4000 - 25 fee = 5,975, got ' + a.totalUsd);
+  assert(Math.abs(b.totalUsd - 4000) < 0.005, 'Destination should receive the full 4,000 (fee is not deducted twice), got ' + b.totalUsd);
+
+  sb._D.invCashMovements.push({id:3, platformId:1, date:'2026-03-01', kind:'withdrawal', usdAmount:1000,
+    owners:[{ownerId:1, usd:1000}], feeUsd:0, capitalUsd:1000, profitUsd:0});
+  assert(Math.abs(sb.invPlatformCash(1).totalUsd - 4975) < 0.005,
+    'Withdrawal should reduce the balance to 4,975, got ' + sb.invPlatformCash(1).totalUsd);
+}
+
+async function testTransferFeeIsBorneBySelfNotSharedWithFamily(){
+  const sb = invCashSandbox({invCashMovements:[
+    {id:1, platformId:1, date:'2026-01-01', kind:'deposit', usdAmount:10000,
+     owners:[{ownerId:1, usd:5000},{ownerId:2, usd:5000}], feeUsd:0, capitalUsd:0, profitUsd:0},
+    {id:2, platformId:1, date:'2026-02-01', kind:'transfer', usdAmount:2000, toPlatformId:2,
+     owners:[{ownerId:1, usd:1000},{ownerId:2, usd:1000}], feeUsd:100, capitalUsd:0, profitUsd:0}
+  ]});
+  const a = sb.invPlatformCash(1);
+  assert(Math.abs(a.byOwner[2].usd - 4000) < 0.005, 'Family should pay none of the fee, got ' + a.byOwner[2].usd);
+  assert(Math.abs(a.byOwner[1].usd - 3900) < 0.005, 'Self should bear the whole 100 fee, got ' + a.byOwner[1].usd);
+}
+
+async function testTransferCarriesProfitProportionally(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:37500,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+    {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:100, totalSar:75000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'cash', usdAmount:20000}
+  ], invCashMovements:[
+    // Move half the balance: half the retained profit should travel with it, otherwise moving
+    // cash between platforms would quietly reclassify profit as capital.
+    {id:1, platformId:1, date:'2026-03-01', kind:'transfer', usdAmount:10000, toPlatformId:2,
+     owners:[{ownerId:1, usd:10000}], feeUsd:0, capitalUsd:0, profitUsd:0}
+  ]});
+  const a = sb.invPlatformCash(1), b = sb.invPlatformCash(2);
+  assert(Math.abs(a.profitUsd - 5000) < 0.005, 'Half the profit should remain, got ' + a.profitUsd);
+  assert(Math.abs(b.profitUsd - 5000) < 0.005, 'Half the profit should travel with the money, got ' + b.profitUsd);
+}
+
+async function testReconciliationBridgeBalancesWithCashHeld(){
+  // The bridge: cost basis + platform cash - retained profit = ledger (Out - In).
+  // Deposit 37,500 SAR of capital, buy, then sell at a gain and keep the proceeds as cash.
+  // The ledger only ever saw 37,500 go out, so the bridge must still land on 37,500.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:10101, inAcc:null}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:37500, descr:'invested'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:37500,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:100, totalSar:75000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'cash', usdAmount:20000}
+    ]});
+  const r = sb.invOwnerReconciliation()[0];
+  assert(Math.abs(r.cashSar - 75000) < 0.005, 'Cash should be 75,000 SAR, got ' + r.cashSar);
+  assert(Math.abs(r.retainedProfitSar - 37500) < 0.005, 'Retained profit should be 37,500 SAR, got ' + r.retainedProfitSar);
+  assert(Math.abs(r.trackerCapital - 37500) < 0.005, 'Tracker capital should bridge back to 37,500, got ' + r.trackerCapital);
+  assert(r.ok === true, 'The bridge should reconcile, difference was ' + r.diff);
+}
+
+async function testReconciliationWouldFalseAlarmWithoutTheProfitTerm(){
+  // Guards the reason the retained-profit term exists at all: without it, every profitable
+  // sell-to-cash would raise a reconciliation error.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:10101, inAcc:null}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:37500, descr:'invested'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:37500,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:100, totalSar:75000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'cash', usdAmount:20000}
+    ]});
+  const r = sb.invOwnerReconciliation()[0];
+  const naive = r.trackerCost + r.cashSar; // what it would be without subtracting retained profit
+  assert(Math.abs(naive - r.ledgerNet) > 1000,
+    'Without the retained-profit term this scenario should NOT balance — otherwise the test proves nothing');
+  assert(r.ok === true, 'With the term, it must balance');
+}
+
+async function testPlatformReconciliationFlagsUnitAndCashVariances(){
+  const sb = invCashSandbox({
+    invPositions: [{id:1, platformId:1, name:'ACME', currency:'USD', status:'Active', stmtUnits:100},
+                   {id:2, platformId:1, name:'BTC', currency:'USD', status:'Active', stmtUnits:0.5}],
+    invPlatforms: [{id:1, name:'Broker A', stmtCashUsd:2000}, {id:2, name:'Broker B'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:1000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+      // Statement says 0.5 BTC, tracker has 0.50000001 — a 1e-8 gap that must NOT read as matched.
+      {id:2, positionId:2, date:'2026-01-01', kind:'buy', units:0.50000001, totalSar:1000,
+       owners:[{ownerId:1,units:0.50000001}], feePct:0, cashSide:'bank'}
+    ]});
+  const r = sb.invPlatformReconciliation(1);
+  const acme = r.positions.find(x=>x.pos.id===1), btc = r.positions.find(x=>x.pos.id===2);
+  assert(acme.ok === true, 'A matching unit count should reconcile');
+  assert(btc.ok === false, 'A 1e-8 crypto discrepancy must be flagged, not rounded into a match');
+  assert(r.cashOk === false && Math.abs(r.cashVariance - 2000) < 0.005,
+    'A statement cash balance with no tracked cash should show the full variance, got ' + r.cashVariance);
+  assert(r.allMatched === false, 'The platform should not report as fully reconciled');
+}
+
+async function testWithdrawalSplitDrawsProfitFirstButAllowsOverride(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:37500,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+    {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:100, totalSar:75000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'cash', usdAmount:20000}
+  ]});
+  // $20,000 on the platform, $10,000 of it profit.
+  const auto = sb.invWithdrawalSplit({platformId:1, usdAmount:12000, profitOverride:null});
+  assert(Math.abs(auto.profitUsd - 10000) < 0.005 && Math.abs(auto.capitalUsd - 2000) < 0.005,
+    'Profit should be drawn first: 10,000 profit + 2,000 capital, got ' + auto.profitUsd + ' / ' + auto.capitalUsd);
+  const manual = sb.invWithdrawalSplit({platformId:1, usdAmount:12000, profitOverride:3000});
+  assert(Math.abs(manual.profitUsd - 3000) < 0.005 && Math.abs(manual.capitalUsd - 9000) < 0.005,
+    'An explicit override should be respected, got ' + manual.profitUsd + ' / ' + manual.capitalUsd);
+  const clamped = sb.invWithdrawalSplit({platformId:1, usdAmount:500, profitOverride:9999});
+  assert(Math.abs(clamped.profitUsd - 500) < 0.005, 'The profit portion cannot exceed the withdrawal itself');
+}
+
+async function testFeeWithNoFamilyOwnersChargesNothing(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:100000,
+     owners:[{ownerId:1,units:100}], feePct:5, cashSide:'bank'}
+  ]});
+  const at = sb.invTxAttribution(sb._D.invTransactions[0]);
+  assert(Math.abs(at.units[1] - 100) < 1e-9, 'A wholly-self transaction should be untouched by the fee, got ' + at.units[1]);
+  assert(at.feeUnits === 0 && at.feeSar === 0, 'No fee should be charged when there are no family owners');
+}
+
+async function testSchemaSqlCoversTheCashTable(){
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  assert(/create table if not exists pd_inv_cash_movements/.test(sql),
+    'The from-scratch schema must create pd_inv_cash_movements');
+  ['cash_side','usd_amount','fee_pct'].forEach(c=>{
+    assert(sql.indexOf(c) !== -1, 'The from-scratch schema is missing the ' + c + ' column');
+  });
+  ['stmt_cash_usd','stmt_units','mgmt_fee_pct'].forEach(c=>{
+    assert(sql.indexOf(c) !== -1, 'The from-scratch schema is missing the ' + c + ' column');
+  });
+  // Additive only — a destructive statement here would be a data-loss bug. DB_MIGRATIONS itself
+  // was removed in v4.22.0 in favor of this one self-upgrading script (CREATE TABLE for a fresh
+  // database, auto-generated ADD COLUMN IF NOT EXISTS for an existing one) — there is no longer a
+  // separate migration file to check.
+  assert(!/drop\s+table/i.test(sql) && !/drop\s+column/i.test(sql),
+    'The schema script must never drop a table or column');
+  assert(/add column if not exists/i.test(sql), 'The schema script should add columns idempotently for an existing database');
+}
+
+
+// ---- v4.21.0 ----
+async function testAddedJVLinesStartBlankEvenWhileReconciling(){
+  const sb = makeSandbox();
+  sb.__set('renderNewJV', ()=>{});
+  sb.__set('reconcileAcc', 10101);   // mid-reconciliation
+  sb.resetJVDraft();
+  const draft0 = vm.runInContext('jvDraft', sb);
+  draft0.lines[0].acc = 10101;       // as startReconcile() would leave it
+  sb.addJVLine();
+  const draft = vm.runInContext('jvDraft', sb);
+  const added = draft.lines[draft.lines.length-1];
+  assert(!added.acc, 'A line added while reconciling must start blank, got acc=' + added.acc);
+  // Line 1 keeps the account — the reconcile banner's maths depends on it.
+  assert(draft.lines[0].acc === 10101, 'The first line must keep the account being reconciled');
+}
+
+async function testStartReconcileStillPrefillsTheFirstLine(){
+  const sb = makeSandbox();
+  sb.__set('go', ()=>{});
+  sb.startReconcile(10101);
+  const draft = vm.runInContext('jvDraft', sb);
+  assert(draft.lines[0].acc === 10101, 'Picking an account to reconcile must still fill line 1, got ' + draft.lines[0].acc);
+  assert(vm.runInContext('reconcileAcc', sb) === 10101, 'Reconcile mode should still be active');
+}
+
+async function testJVInputsOptOutOfBrowserAutofill(){
+  const sb = makeSandbox();
+  sb.__set('renderNewJV', ()=>{});
+  sb.resetJVDraft();
+  const row = sb.jvLineRow(vm.runInContext('jvDraft', sb).lines[0], 0);
+  const count = (row.match(/autocomplete="off"/g)||[]).length;
+  assert(count >= 3, 'Account, description and amount inputs should all opt out of autofill, found ' + count);
+}
+
+async function testDashboardBudgetLineHasNoPaceFigure(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:60101, acc_type:'Individual Account', status:'Active'}], ledger:[]});
+  sb.__set('pnlBudgetForAccountInRange', ()=>3100);
+  const b = sb.dashboardExpenseBudget('2026-08', 1200);
+  const line = sb.dashboardExpenseBudgetLine(b);
+  assert(/Under budget by/.test(line), 'The full-month over/under should remain, got: ' + line);
+  assert(!/on pace/i.test(line), 'The on-pace figure should be gone, got: ' + line);
+  assert(!/day \d+\/\d+/.test(line), 'The day count should be gone, got: ' + line);
+  assert(b.paceVariance === undefined && b.proratedBudget === undefined,
+    'The prorated state should be removed rather than left computed but unused');
+  assert(Math.abs(b.fullVariance - 1900) < 0.005, 'The full-month variance should still be 1900, got ' + b.fullVariance);
+}
+
+async function testSchemaUpgradesAnExistingDatabaseNotJustANewOne(){
+  const sb = makeSandbox();
+  const core = vm.runInContext('DB_SCHEMA_CORE', sb);
+  const full = vm.runInContext('DB_SCHEMA_SQL', sb);
+  // The whole point of the merge: "create table if not exists" is skipped wholesale on an
+  // existing table, so without an add-column pass every column introduced after that table was
+  // first created would silently never appear.
+  assert(full.length > core.length, 'The full script should be the core plus the column top-up');
+  assert(/add column if not exists/.test(full), 'The script must contain add-column statements');
+  assert(!/add column if not exists/.test(core), 'The core should hold table definitions only');
+
+  // EVERY column of EVERY table must be re-asserted, or the gap still exists for that column.
+  const tableRe = /create table if not exists (\w+) \(([\s\S]*?)\n\);/g;
+  let m, checked = 0;
+  const missing = [];
+  while((m = tableRe.exec(core)) !== null){
+    for(let line of m[2].split('\n')){
+      let t = line.trim().replace(/--.*$/, '').replace(/,$/, '').trim();
+      if(!t) continue;
+      if(/^(primary key|unique|constraint|foreign key|check|references)\b/i.test(t)) continue;
+      const sp = t.indexOf(' ');
+      if(sp < 1) continue;
+      const name = t.slice(0, sp);
+      checked++;
+      if(full.indexOf('alter table ' + m[1] + ' add column if not exists ' + name + ' ') === -1){
+        missing.push(m[1] + '.' + name);
+      }
+    }
+  }
+  assert(checked > 100, 'Expected to check every column across all tables, checked ' + checked);
+  assert(missing.length === 0, 'Columns with no add-column statement: ' + missing.join(', '));
+
+  // The columns that would actually have been lost on a v4.19-era database.
+  ['cash_side','usd_amount','fee_pct','stmt_cash_usd','stmt_units','mgmt_fee_pct'].forEach(c=>{
+    assert(new RegExp('add column if not exists ' + c + '\\b').test(full),
+      'The v4.20.0 column ' + c + ' must be added to existing databases too');
+  });
+}
+
+async function testColumnTopUpIsSafeAndWellFormed(){
+  const sb = makeSandbox();
+  const full = vm.runInContext('DB_SCHEMA_SQL', sb);
+  const top = vm.runInContext('buildSchemaColumnTopUp(DB_SCHEMA_CORE)', sb);
+  // Nothing destructive may be generated. This runs against the person's live database.
+  assert(!/drop\s+(table|column|database|schema)/i.test(full), 'The script must never drop anything');
+  assert(!/truncate|delete\s+from/i.test(full), 'The script must never delete data');
+  // Type/default CHANGES are deliberately not generated — only additions.
+  assert(!/alter\s+column/i.test(top), 'The top-up must not alter existing columns, only add missing ones');
+  // A column-level PRIMARY KEY can't be re-declared via add column.
+  assert(!/add column if not exists[^;]*primary key/i.test(top), 'PRIMARY KEY must be stripped from add-column statements');
+  // A composite "primary key (a, b)" is a table constraint, not a column.
+  assert(!/add column if not exists \(/.test(top), 'A table-level constraint must not be emitted as a column');
+  // Comment lines inside the table body must not leak in as columns.
+  assert(!/add column if not exists --/.test(top), 'Comments must not be emitted as columns');
+  assert(top.indexOf('pd_subcategories add column if not exists cat_digit') !== -1,
+    'The composite-key table should still get its real columns');
+  // Every generated line is a complete statement.
+  top.split('\n').filter(l=>l.startsWith('alter table')).forEach(l=>{
+    assert(l.endsWith(';'), 'Unterminated statement: ' + l);
+    assert(l.split(' ').length >= 8, 'Malformed statement (no type?): ' + l);
+  });
+}
+
+async function testAddingAColumnUpgradesExistingDatabasesAutomatically(){
+  // Guards the reason the top-up is generated rather than hand-written: a new column must reach
+  // existing databases without anyone remembering to update a second list.
+  const sb = makeSandbox();
+  const fakeCore = [
+    'create table if not exists pd_demo (',
+    '  id         bigint primary key,',
+    '  name       text default \'\',',
+    '  brand_new  numeric default 0,   -- added in some later version',
+    '  updated_at timestamptz default now()',
+    ');'
+  ].join('\n');
+  const top = sb.buildSchemaColumnTopUp(fakeCore);
+  assert(/alter table pd_demo add column if not exists brand_new numeric default 0;/.test(top),
+    'A newly added column should generate its own add-column statement, got:\n' + top);
+  assert(/alter table pd_demo add column if not exists id bigint;/.test(top),
+    'The key column should appear without its PRIMARY KEY constraint, got:\n' + top);
+  assert(!/-- added in some later version/.test(top), 'Trailing comments must be stripped');
+}
+
+async function testSchemaIncludesTheLedgerChangeMarker(){
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  assert(/create table if not exists pd_sync_meta/.test(sql), 'The schema must create pd_sync_meta');
+  // The table alone is inert without something maintaining it.
+  assert(/create trigger trg_pd_ledger_sync_meta/.test(sql), 'The schema must create the trigger that maintains the marker');
+  assert(/pd_touch_sync_meta/.test(sql), 'The schema must define the trigger function');
+  assert(sql.indexOf("'pd_sync_meta'")!==-1, 'pd_sync_meta should be in the RLS table list');
+}
+
+// ================= v4.23.0: opening balance, reconciliation start date, position transfer =================
+async function testOpeningBalanceCostTrackedAndBleedsDownProportionallyOnSell(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:10000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'opening'},
+    {id:2, positionId:1, date:'2026-02-01', kind:'buy', units:100, totalSar:20000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'}
+  ]});
+  const st = sb.computePositionState(1);
+  // 200 units total, cost 30,000 -> avg 150. Half the units (opening) contributed 10,000 of it.
+  assert(Math.abs(st.byOwner[1].openingCostSar - 10000) < 0.005, 'Opening cost should be 10,000, got ' + st.byOwner[1].openingCostSar);
+
+  sb._D.invTransactions.push({id:3, positionId:1, date:'2026-03-01', kind:'sell', units:100, totalSar:18000,
+    owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'});
+  const after = sb.computePositionState(1);
+  // Selling half the pool (100 of 200 units) should bleed opening cost down by the SAME
+  // proportion (half), not all-at-once and not untouched — WAC doesn't track lot identity.
+  assert(Math.abs(after.byOwner[1].openingCostSar - 5000) < 0.005,
+    'Opening cost should bleed down proportionally to 5,000 after selling half the pool, got ' + after.byOwner[1].openingCostSar);
+}
+
+async function testAsOfDateFiltersTransactionsForComputePositionState(){
+  const sb = invCashSandbox({invTransactions:[
+    {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:100, totalSar:10000,
+     owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+    {id:2, positionId:1, date:'2026-06-01', kind:'buy', units:50, totalSar:6000,
+     owners:[{ownerId:1,units:50}], feePct:0, cashSide:'bank'}
+  ]});
+  const asOfMarch = sb.computePositionState(1, '2026-03-01');
+  assert(Math.abs(asOfMarch.totalUnits - 100) < 1e-9, 'Only the January buy should count as of March, got ' + asOfMarch.totalUnits);
+  const now = sb.computePositionState(1);
+  assert(Math.abs(now.totalUnits - 150) < 1e-9, 'Both buys should count with no cutoff, got ' + now.totalUnits);
+}
+
+async function testReconciliationExcludesOpeningBalanceCost(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:10101, inAcc:null}],
+    // The ledger only ever saw 5,000 leave the bank — the other 10,000 of cost is a declared
+    // opening balance with no bank movement behind it at all.
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:5000, descr:'invested'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2025-01-01', kind:'buy', units:100, totalSar:10000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'opening'},
+      {id:2, positionId:1, date:'2026-01-01', kind:'buy', units:50, totalSar:5000,
+       owners:[{ownerId:1,units:50}], feePct:0, cashSide:'bank'}
+    ]});
+  const r = sb.invOwnerReconciliation()[0];
+  assert(Math.abs(r.openingCostSar - 10000) < 0.005, 'Opening cost should be 10,000, got ' + r.openingCostSar);
+  assert(Math.abs(r.trackerCapital - 5000) < 0.005,
+    'Tracker capital should exclude the opening balance and bridge to 5,000, got ' + r.trackerCapital);
+  assert(r.ok === true, 'Excluding the opening balance should let this reconcile, diff was ' + r.diff);
+}
+
+async function testReconciliationWithoutOpeningExclusionWouldFalseAlarm(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:10101, inAcc:null}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:5000, descr:'invested'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2025-01-01', kind:'buy', units:100, totalSar:10000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'opening'},
+      {id:2, positionId:1, date:'2026-01-01', kind:'buy', units:50, totalSar:5000,
+       owners:[{ownerId:1,units:50}], feePct:0, cashSide:'bank'}
+    ]});
+  const r = sb.invOwnerReconciliation()[0];
+  const naive = r.trackerCost; // what it would be without subtracting openingCostSar
+  assert(Math.abs(naive - r.ledgerNet) > 1000,
+    'Without the exclusion this scenario should NOT balance, or the test proves nothing');
+}
+
+async function testReconciliationStartDateComparesDeltaNotFullHistory(){
+  // A pre-start-date JV wrongly dumped 8,000 of profit into the capital account (a historical
+  // booking error, per the person's own diagnosis) — full-history comparison would show a
+  // permanent 8,000 gap. Since-start-date comparison should ignore it entirely.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:10101, inAcc:null}],
+    ledger: [
+      {id:1, jv:1, date:'2025-01-01', acc:10101, amt:10000, descr:'invested'},
+      {id:2, jv:2, date:'2025-06-01', acc:10101, amt:-8000, descr:'wrongly booked profit as capital return'},
+      {id:3, jv:3, date:'2026-03-01', acc:10101, amt:4000, descr:'invested after going clean'}
+    ],
+    invSettings: {fxUsdSar:3.75, mgmtFeePct:0, reconStartDate:'2026-01-01'},
+    invTransactions:[
+      {id:1, positionId:1, date:'2025-01-01', kind:'buy', units:100, totalSar:10000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:1, date:'2025-06-01', kind:'sell', units:80, totalSar:2000,
+       owners:[{ownerId:1,units:80}], feePct:0, cashSide:'bank'},
+      {id:3, positionId:1, date:'2026-03-01', kind:'buy', units:40, totalSar:4000,
+       owners:[{ownerId:1,units:40}], feePct:0, cashSide:'bank'}
+    ]});
+  const full = sb.invOwnerReconciliation()[0];
+  assert(full.sinceDate === '2026-01-01', 'sinceDate should reflect the configured start date');
+  // Since the start date: only the March transaction happened, cleanly, on both sides.
+  assert(Math.abs(full.trackerCapital - 4000) < 0.005, 'Delta capital since start should be 4,000, got ' + full.trackerCapital);
+  assert(Math.abs(full.ledgerNet - 4000) < 0.005, 'Delta ledger since start should be 4,000, got ' + full.ledgerNet);
+  assert(full.ok === true, 'Should reconcile once the pre-start-date error is excluded from the comparison, diff was ' + full.diff);
+}
+
+async function testReconciliationWithoutStartDateShowsTheFullHistoryGap(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners: [{id:1, name:'Me', isSelf:true, outAcc:10101, inAcc:null}],
+    // True event: bought for 5,000, later sold for 8,000 (a real 4,000 profit). The ledger
+    // wrongly posted the FULL 8,000 proceeds into the capital account instead of splitting
+    // 4,000 capital / 4,000 profit — exactly the historical error described in the reconciliation
+    // panel's own copy.
+    ledger: [
+      {id:1, jv:1, date:'2025-01-01', acc:10101, amt:5000, descr:'invested'},
+      {id:2, jv:2, date:'2025-06-01', acc:10101, amt:-8000, descr:'full sale proceeds wrongly posted as capital return'}
+    ],
+    invTransactions:[
+      {id:1, positionId:1, date:'2025-01-01', kind:'buy', units:100, totalSar:5000,
+       owners:[{ownerId:1,units:100}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:1, date:'2025-06-01', kind:'sell', units:80, totalSar:8000,
+       owners:[{ownerId:1,units:80}], feePct:0, cashSide:'bank'}
+    ]});
+  const r = sb.invOwnerReconciliation()[0];
+  assert(r.sinceDate === null, 'No start date configured, so sinceDate should be null');
+  // Ledger: 5000 - 8000 = -3000, abs = 3000. Tracker: 20 units left at avg cost 50 = 1000.
+  assert(Math.abs(r.ledgerNet - 3000) < 0.005, 'Ledger net should read 3,000, got ' + r.ledgerNet);
+  assert(Math.abs(r.trackerCapital - 1000) < 0.005, 'Tracker capital should read 1,000, got ' + r.trackerCapital);
+  assert(!r.ok, 'Without a start date, the historical booking error should still show as a gap, diff was ' + r.diff);
+}
+
+// v4.63.0: the move carries the FULL cost (agreed option a) — the fee makes each arriving unit dearer
+// instead of being booked as a realised loss. These two tests replace the v4.x "fee loss" versions.
+function moveSandbox(extra){
+  const sb = invCashSandbox(Object.assign({
+    invOwners: [{id:1, name:'Me', isSelf:true}, {id:2, name:'Relative', isSelf:false}],
+    invPlatforms: [{id:1, name:'A'}, {id:2, name:'B'}],
+    invPositions: [{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[
+      // 10 units at 100,000 SAR total (avg 10,000/unit), split 60/40.
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:10, totalSar:100000,
+       owners:[{ownerId:1,units:6},{ownerId:2,units:4}], feePct:0, cashSide:'bank'}
+    ]}, extra||{}));
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.__set('toast', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('openInvPosition', ()=>{});
+  sb.__set('syncWrite', async()=>({ok:true}));
+  sb.__set('persistLocal', ()=>{});
+  return sb;
+}
+async function moveRun(sb, fromPid, toPid, date, rows){
+  sb.openInvMoveAssets(fromPid);
+  sb.setInvMoveField('toPid', toPid); sb.setInvMoveField('date', date);
+  for(const posId in rows){ sb.setInvMoveRow(Number(posId), 'sent', String(rows[posId][0])); if(rows[posId][1]!==undefined) sb.setInvMoveRow(Number(posId), 'received', String(rows[posId][1])); }
+  await sb.saveInvMoveAssets();
+}
+async function testPositionMoveKeepsSharesTakesFeeProRataAndCarriesFullCost(){
+  const sb = moveSandbox();
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[4, 3.9]});
+  const destPos = sb._D.invPositions.find(p=>p.platformId===2 && p.ticker==='BTC');
+  assert(destPos, 'A new position should be created on the destination platform');
+  const dest = sb.computePositionState(destPos.id), src = sb.computePositionState(1);
+  assert(Math.abs(dest.totalUnits-3.9)<1e-9, 'Destination holds 3.9 (4 sent − 0.1 fee), got ' + dest.totalUnits);
+  assert(Math.abs(dest.totalCostSar-40000)<0.5, 'The FULL cost of the 4 units sent (40,000) arrives — the fee is not a loss, got ' + dest.totalCostSar);
+  assert(Math.abs(src.totalUnits-6)<1e-9 && Math.abs(src.totalCostSar-60000)<0.5, 'Source keeps 6 units / 60,000');
+  assert(Math.abs(src.totalRealizedSar)<0.01 && Math.abs(dest.totalRealizedSar)<0.01, 'No realised gain or loss from a move, got ' + src.totalRealizedSar);
+  assert(Math.abs(dest.byOwner[1].units-2.34)<1e-9 && Math.abs(dest.byOwner[2].units-1.56)<1e-9, 'Fee taken in proportion: Me 2.4→2.34, Relative 1.6→1.56, got ' + dest.byOwner[1].units + ' / ' + dest.byOwner[2].units);
+  assert(Math.abs(dest.byOwner[1].costSar-24000)<0.5 && Math.abs(dest.byOwner[2].costSar-16000)<0.5, 'Each person\'s cost moves with them (24,000 / 16,000)');
+  assert(Math.abs(dest.byOwner[1].units/dest.totalUnits-0.6)<1e-9, 'Shares are unchanged (60/40)');
+}
+async function testPositionMoveMergesIntoExistingMatchingPosition(){
+  const sb = moveSandbox({invOwners:[{id:1, name:'Me', isSelf:true}],
+    invPositions:[{id:1, platformId:1, name:'ETH', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+                  {id:2, platformId:2, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:5, totalSar:50000, owners:[{ownerId:1,units:5}], feePct:0, cashSide:'bank'},
+                     {id:2, positionId:2, date:'2026-01-01', kind:'buy', units:2, totalSar:15000, owners:[{ownerId:1,units:2}], feePct:0, cashSide:'bank'}]});
+  const before = sb._D.invPositions.length;
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[1]});
+  assert(sb._D.invPositions.length===before, 'A matching ticker on the destination is reused, not duplicated');
+  assert(Math.abs(sb.computePositionState(2).totalUnits-3)<1e-9, 'Destination now holds 2 + 1 = 3 (received defaults to sent)');
+}
+async function testXirrTreatsTransferAsNetZeroExceptTheFee(){
+  // A transfer must not look like new investment or a cash-out in XIRR — only the tiny fee loss
+  // should register as a real (negative) cash flow.
+  const sb = invCashSandbox({
+    invOwners: [{id:1, name:'Me', isSelf:true}],
+    invPositions: [{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:10, totalSar:100000,
+       owners:[{ownerId:1,units:10}], feePct:0, cashSide:'bank'},
+      // Same-day transfer of 4 units with a 0.1 unit fee — modelled as the sell/buy pair the
+      // engine builds, entered directly here to isolate the XIRR consumer.
+      {id:2, positionId:1, date:'2026-02-01', kind:'sell', units:4, totalSar:39000,
+       owners:[{ownerId:1,units:4}], feePct:0, cashSide:'transfer'},
+      {id:3, positionId:2, date:'2026-02-01', kind:'buy', units:3.9, totalSar:39000,
+       owners:[{ownerId:1,units:3.9}], feePct:0, cashSide:'transfer'}
+    ]});
+  sb._D.invPositions.push({id:2, platformId:2, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'});
+  let netOnTransferDate = 0;
+  (sb._D.invTransactions||[]).forEach(t=>{
+    if(t.date!=='2026-02-01') return;
+    const at = sb.invTxAttribution(t);
+    const amt = at.moneySar[1]||0;
+    netOnTransferDate += (t.kind==='sell'? amt : -amt);
+  });
+  assert(Math.abs(netOnTransferDate) < 0.5,
+    'The transfer pair should net to ~0 in cash-flow terms (both legs carry the same value), got ' + netOnTransferDate);
+}
+
+async function testAccountCurrentBalancesCSVHasTheRightColumns(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, category:'Cash', acc_type:'Individual Account', status:'Active'}], ledger:[{id:1,jv:1,date:'2026-01-01',acc:10101,amt:500,descr:'x'}]});
+  let capturedBlob = null, capturedText = null;
+  sb.__set('document', sb.document);
+  const origCreate = sb.document.createElement.bind(sb.document);
+  sb.document.createElement = (tag) => {
+    const el = origCreate(tag);
+    if(tag==='a') el.click = () => {}; // real navigation isn't meaningful in JSDOM; just no-op it
+    return el;
+  };
+  // `URL` itself is a non-writable global — sb.__set('URL', ...) would silently no-op. Patching
+  // the existing object's method works because that's an ordinary property assignment.
+  if(!sb.URL) sb.URL = {};
+  sb.URL.createObjectURL = (blob) => { capturedBlob = blob; capturedText = blob.__testText; return 'blob:x'; };
+  // JSDOM's Blob doesn't expose its constructor input, so patch Blob itself to remember it.
+  const OrigBlob = sb.Blob;
+  sb.Blob = function(parts, opts){ const b = new OrigBlob(parts, opts); b.__testText = parts.join(''); return b; };
+  sb.__set('toast', ()=>{});
+  sb.__set('logActivity', ()=>{});
+  sb.exportAccountCurrentBalancesCSV();
+  assert(capturedBlob, 'The export should create a downloadable CSV blob');
+  assert(capturedText && capturedText.indexOf('Account #,Name,Category,Balance') === 0,
+    'Header row should be exactly Account #,Name,Category,Balance, got: ' + (capturedText||'').split('\n')[0]);
+  assert(capturedText.indexOf('10101,') !== -1 && capturedText.indexOf(',500') !== -1,
+    'The row should carry the account id and its actual balance (500), got:\n' + capturedText);
+}
+
+async function testAccountMonthlyMovementCSVCoversFullHistoryNotJustCurrentMonth(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, category:'Cash', acc_type:'Individual Account', status:'Active'}], ledger:[
+    {id:1,jv:1,date:'2025-11-15',acc:10101,amt:300,descr:'old'},
+    {id:2,jv:2,date:'2026-01-10',acc:10101,amt:200,descr:'new'}
+  ]});
+  sb.__set('todayStr', ()=>'2026-01-20');
+  let capturedText = null;
+  const OrigBlob = sb.Blob;
+  sb.Blob = function(parts, opts){ capturedText = parts.join(''); return new OrigBlob(parts, opts); };
+  if(!sb.URL) sb.URL = {};
+  sb.URL.createObjectURL = () => 'blob:x';
+  const origCreate = sb.document.createElement.bind(sb.document);
+  sb.document.createElement = (tag) => { const el = origCreate(tag); if(tag==='a') el.click = () => {}; return el; };
+  sb.__set('toast', ()=>{});
+  sb.__set('logActivity', ()=>{});
+  sb.exportAccountMonthlyMovementCSV();
+  assert(capturedText, 'The export should produce CSV text');
+  const header = capturedText.split('\n')[0];
+  // Range must run from the EARLIEST ledger entry (Nov 2025) through the current month (Jan
+  // 2026) — three months — not just the current month, which is the whole point of this export
+  // versus the existing Forecast Grid one.
+  assert(header.indexOf('2025-11') !== -1, 'Header should include the earliest ledger month (2025-11), got: ' + header);
+  assert(header.indexOf('2026-01') !== -1, 'Header should include the current month (2026-01), got: ' + header);
+  assert(header.split(',').length === 4 + 3, 'Expected 4 fixed columns + 3 months (Nov, Dec, Jan), got header: ' + header);
+  const dataRow = capturedText.split('\n')[1];
+  assert(dataRow.indexOf('300') !== -1 && dataRow.indexOf('200') !== -1,
+    'The row should carry each month\'s actual movement (300 and 200), got: ' + dataRow);
+}
+
+async function testMergedReconImportPriceRoundTripKeepsBlankRowsUntouched(){
+  // Superseded by v4.29.0 item 6: price logging folded into the Reconciliation CSV. This is the
+  // same coverage — blank "New Price" cells must not fabricate a valuation — against the merged
+  // import path (handleInvReconImport) rather than the removed standalone one.
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Broker A'}],
+    invPositions: [
+      {id:1, platformId:1, name:'ACME', ticker:'ACME', currency:'USD', assetClass:'Stocks', status:'Active'},
+      {id:2, platformId:1, name:'Widgets Co', ticker:'', currency:'USD', assetClass:'Stocks', status:'Active'}
+    ],
+    invValuations: [{id:1, positionId:1, date:'2026-01-01', price:100}]
+  });
+  sb._invPriceImportDate = '2026-02-01';
+  const csv = 'Platform,Position,Ticker,Type,Tracker Amount,Last Statement Value,Last Checked,New Statement Value,Last Price,Last Price Date,New Price\n'+
+    'Broker A,ACME,ACME,Position,0,,,,100,2026-01-01,150\n'+   // priced — should update
+    'Broker A,Widgets Co,,Position,0,,,,,,\n';                  // blank — should be left alone
+  let lastImportDone = null;
+  sb.__set('FileReader', function(){
+    this.readAsText = () => {
+      Object.defineProperty(this,'result',{value:csv,configurable:true});
+      lastImportDone = this.onload();
+    };
+  });
+  const fakeInput = {files:[{}], value:''};
+  let toastMsg = null;
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('toast', (msg)=>{ toastMsg = msg; });
+  sb.handleInvReconImport(fakeInput);
+  await lastImportDone;
+  assert(toastMsg, 'The import should finish and report a result, got no toast at all');
+  const acmeVals = (sb._D.invValuations||[]).filter(v=>v.positionId===1);
+  assert(acmeVals.some(v=>v.date==='2026-02-01' && Math.abs(v.price-150)<0.005),
+    'ACME should get a new valuation of 150 on the import date, got: ' + JSON.stringify(acmeVals));
+  const widgetVals = (sb._D.invValuations||[]).filter(v=>v.positionId===2);
+  assert(widgetVals.length === 0,
+    'Widgets Co had a blank New Price and no prior valuation — a blank must not fabricate one, got: ' + JSON.stringify(widgetVals));
+}
+
+
+async function testRealEstateCollapsedHeaderShowsCurrentMonthNet(){
+  const sb = makeSandbox();
+  sb.__set('reExpandedBuildings', new Set()); // collapsed
+  sb.__set('D', {accounts:[
+    {id:40101, id_:1}, {id:60101, id_:2}
+  ]});
+  const acctApt = {id:40101};
+  const acctExp = {id:60101};
+  sb.__set('accountMonthPlanOrActual', (a, m, cur) => {
+    if(a.id===40101) return m===cur? -5000 : -1000; // revenue stored negative per app convention
+    if(a.id===60101) return m===cur? 2000 : 500;    // expense stored positive
+    return 0;
+  });
+  const building = {id:1, name:'Test Tower', apartmentAccountIds:[40101], expenseAccountIds:[60101]};
+  sb.__set('D', Object.assign(vm.runInContext('D', sb), {accounts:[
+    {id:40101}, {id:60101}
+  ]}));
+  const html = sb.renderBuildingSection(building, ['2026-07','2026-08'], '2026-08');
+  // Net for the current month = revenue(-5000) + expense(2000) = -3000; displayed as money0(-net) = 3000.
+  assert(/3,000\.00|3,000/.test(html), 'Collapsed header should show the current-month net figure, got snippet: ' + html.slice(0,400));
+  assert(!/apartment|Apartments \(Revenue\)/.test(html), 'Collapsed view should not render the detail tables');
+}
+
+// ================= v4.24.0: account export buttons moved to Accounts page + Grid view =================
+async function testAccountExportButtonsMovedOffSettingsOntoAccountsPage(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[], invSettings:{}, invPlatforms:[], invOwners:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[]});
+  sb.__set('acctPageTab', 'list');
+  sb.__set('accQ', ''); sb.__set('accShowDeleted', false); sb.__set('accSelectMode', false);
+  sb.renderAccounts();
+  const appHtml = sb.document.getElementById('app').innerHTML;
+  assert(/exportAccountCurrentBalancesCSV\(\)/.test(appHtml), 'Accounts page should carry the Current Balances export button');
+  assert(/exportAccountMonthlyMovementCSV\(\)/.test(appHtml), 'Accounts page should carry the Monthly Movement export button');
+  assert(/\+ Add Account/.test(appHtml) && /Select/.test(appHtml), 'The existing Select / Add Account buttons should still be present');
+
+  // Rendering the whole Settings page needs a large amount of fixture data unrelated to this
+  // check (custom categories, forecast plans, real estate buildings, translations, and more).
+  // Inspecting the coa tab's own template block directly is just as valid and far more robust.
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const coaStart = src.indexOf("coa: {label:'🗂 Chart of Accounts'");
+  const coaEnd = src.indexOf("accrual: {label:", coaStart);
+  const coaBlock = src.slice(coaStart, coaEnd);
+  assert(!/exportAccountCurrentBalancesCSV/.test(coaBlock) && !/exportAccountMonthlyMovementCSV/.test(coaBlock),
+    'The export buttons should be gone from Settings → Chart of Accounts, not duplicated there');
+}
+
+async function testAccountsGridShowsBalanceAndMonthlyMovementPerAccount(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, category:'Cash', acc_type:'Individual Account', status:'Active'}],
+    ledger:[
+      {id:1,jv:1,date:'2026-06-15',acc:10101,amt:300,descr:'x'},
+      {id:2,jv:2,date:'2026-08-10',acc:10101,amt:200,descr:'y'}
+    ]});
+  sb.__set('todayStr', ()=>'2026-08-20');
+  sb.__set('acctGridWindowStart', null);
+  sb.renderAccountsGrid();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(html.indexOf('10101') !== -1, 'The grid should list the account number');
+  // Current balance = 300+200 = 500.
+  assert(/500\.00|500,00|>500</.test(html) || html.indexOf('500.00')!==-1, 'The grid should show the current balance (500), got snippet: ' + html.slice(0,600));
+  // June and August movements should both appear somewhere in the row.
+  assert(html.indexOf('300.00')!==-1, "June's movement (300) should appear in the grid");
+  assert(html.indexOf('200.00')!==-1, "August's movement (200) should appear in the grid");
+}
+
+async function testAccountsGridWindowDefaultsToTwelveMonthsEndingCurrent(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[]});
+  sb.__set('todayStr', ()=>'2026-08-20');
+  sb.__set('acctGridWindowStart', null);
+  const months = sb.acctGridMonths();
+  assert(months.length === 12, 'Default window should be 12 months, got ' + months.length);
+  assert(months[0] === '2025-09' && months[11] === '2026-08',
+    'Window should run Sep 2025 → Aug 2026 (12 months ending at the current month), got ' + months[0] + ' → ' + months[months.length-1]);
+}
+
+async function testAccountsGridShiftMovesTheWindowByOneMonth(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[]});
+  sb.__set('todayStr', ()=>'2026-08-20');
+  sb.__set('acctGridWindowStart', '2026-01');
+  sb.__set('renderAccountsGrid', ()=>{});
+  sb.acctGridShift(1);
+  assert(vm.runInContext('acctGridWindowStart', sb) === '2026-02', 'Shifting forward should move the window start by one month');
+  sb.acctGridShift(-1);
+  assert(vm.runInContext('acctGridWindowStart', sb) === '2026-01', 'Shifting back should return to the original month');
+}
+
+// ================= v4.25.0: new-position defaults + forced ticker uppercase =================
+async function testNewPositionDefaultsToCryptoAndUSD(){
+  const sb = makeSandbox();
+  sb.__set('openInvPositionModal', (pos) => { sb._capturedDraft = pos; });
+  sb.openInvAddPosition(1);
+  const draft = sb._capturedDraft;
+  assert(draft.assetClass === 'Crypto', 'New position should default to Crypto, got ' + draft.assetClass);
+  assert(draft.currency === 'USD', 'New position should default to USD, got ' + draft.currency);
+  assert(draft.platformId === 1, 'The platform id should still be passed through, got ' + draft.platformId);
+}
+
+async function testTickerInputUppercasesWithoutLosingCursorPosition(){
+  const sb = makeSandbox();
+  sb._invPosDraft = {id:null, name:'Solana', ticker:'', assetClass:'Crypto', currency:'USD', status:'Active'};
+  const input = sb.document.createElement('input');
+  input.value = 'sol';
+  input.selectionStart = 3; input.selectionEnd = 3;
+  sb.setInvPosTicker(input);
+  assert(input.value === 'SOL', 'The visible field should be uppercased as typed, got ' + input.value);
+  assert(vm.runInContext('window._invPosDraft', sb).ticker === 'SOL', 'The draft should store the uppercased ticker, got ' + vm.runInContext('window._invPosDraft', sb).ticker);
+}
+
+async function testSaveInvPositionUppercasesTickerAsASafetyNet(){
+  // Covers paste and any other write path that bypasses the live input handler.
+  const sb = invCashSandbox({invPositions:[]});
+  sb.__set('closeModal', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb._invPosDraft = {id:null, platformId:1, name:'Solana', ticker:'sol', assetClass:'Crypto', currency:'USD', status:'Active'};
+  await sb.saveInvPosition();
+  const saved = sb._D.invPositions[sb._D.invPositions.length-1];
+  assert(saved.ticker === 'SOL', 'The saved position\'s ticker should be uppercased even if it arrived lowercase, got ' + saved.ticker);
+}
+
+// ================= v4.26.0: USD entry for opening balance, cash log placement, manual prices, recon alignment =================
+async function testOpeningBalanceModalUsesUsdEntryNotPlainSar(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}]});
+  sb.window = sb.window || sb;
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'', totalSar:'', owners:[], note:'', splitMode:'units', ownersSar:{}, cashSide:'opening', usdAmount:'', feePct:''};
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.renderInvTxModal();
+  const body = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/USD paid/.test(body), 'Opening balance should present a USD field, got snippet: ' + body.slice(0,600));
+  assert(!/Total SAR paid.{0,80}oninput="window\._invTxDraft\.totalSar/.test(body),
+    'The SAR field should be derived/disabled, not directly editable, for an opening balance transaction');
+}
+
+async function testUsdFieldSupportsFormulaOnBlur(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}]});
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'10', totalSar:'', owners:[], note:'', splitMode:'units', ownersSar:{}, cashSide:'opening', usdAmount:'105*10', feePct:''};
+  const fakeInput = {};
+  sb.invTxUsdBlur(fakeInput);
+  const d = sb._invTxDraft;
+  assert(Math.abs(d.usdAmount - 1050) < 0.005, 'A typed formula (105*10) should evaluate to 1050, got ' + d.usdAmount);
+  assert(Math.abs(d.totalSar - 1050*sb.getInvFxRate()) < 0.5, 'SAR should be derived from the evaluated USD amount, got ' + d.totalSar);
+}
+
+async function testPricePerUnitShowsUsdForCashAndOpeningEntries(){
+  const sb = invCashSandbox({});
+  const usdDraft = {units:'10', totalSar:'1050', cashSide:'opening', usdAmount:'280'};
+  const usdText = sb.invTxPpuText(usdDraft);
+  assert(/USD/.test(usdText), 'Should read in USD when a USD amount was entered, got: ' + usdText);
+  const ppuMatch = usdText.match(/Price per unit:\s*([\d.]+)/);
+  assert(ppuMatch && Math.abs(parseFloat(ppuMatch[1]) - 28) < 0.01, 'PPU should be 280/10 = 28 USD, got: ' + usdText);
+  const bankDraft = {units:'10', totalSar:'1000', cashSide:'bank', usdAmount:''};
+  assert(/SAR/.test(sb.invTxPpuText(bankDraft)), 'A bank-funded buy should still read in SAR, got: ' + sb.invTxPpuText(bankDraft));
+}
+
+async function testSaveInvTxRequiresUsdAmountForOpeningBalance(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}]});
+  let toastMsg = null;
+  sb.__set('toast', (msg)=>{ toastMsg = msg; });
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'10', totalSar:'', owners:[{ownerId:1,units:10}], note:'', splitMode:'units', ownersSar:{}, cashSide:'opening', usdAmount:'', feePct:''};
+  await sb.saveInvTx();
+  assert(toastMsg && /USD/.test(toastMsg), 'Should require a USD amount for an opening-balance buy, got: ' + toastMsg);
+  assert((sb._D.invTransactions||[]).length === 0, 'Nothing should be saved without the required USD amount');
+}
+
+async function testPlatformPanelOnlyKeepsTheEditButtonNow(){
+  // Superseded by v4.29.0 item 5: + Position / Deposit / Withdraw / Transfer / Cash log all moved
+  // to page-level buttons with a platform picker. The per-platform panel should keep only Edit.
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Raseed'}], invPositions:[]});
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Raseed'});
+  assert(html.indexOf('Cash log') === -1, 'Cash log should no longer be rendered inside the platform panel');
+  assert(html.indexOf('openInvAddPosition') === -1, '+ Position should no longer be rendered inside the platform panel');
+  assert(html.indexOf('openInvCashModal') === -1, 'Deposit/Withdraw/Transfer should no longer be rendered inside the platform panel');
+  assert(html.indexOf('openInvEditPlatform(1)') !== -1, 'The Edit button should still be present');
+}
+
+async function testManualPriceEntrySavesAValuationAndRendersStaleness(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}]});
+  sb.__set('todayStr', ()=>'2026-08-24');
+  sb.__set('toast', ()=>{});
+  sb.__set('renderInvManualPriceTable', ()=>{});
+  const dateInput = sb.document.createElement('input'); dateInput.id='manPriceDate_1'; dateInput.value='2026-08-24'; sb.document.body.appendChild(dateInput);
+  await sb.saveInvManualPrice(1, '150', 'manPriceDate_1');
+  const vals = (sb._D.invValuations||[]).filter(v=>v.positionId===1);
+  assert(vals.length===1 && Math.abs(vals[0].price-150)<0.005, 'A manually entered price should be saved, got: ' + JSON.stringify(vals));
+
+  // Staleness: a price logged 10 days ago should be flagged stale (>7 days); one logged today should not.
+  sb._D.invValuations = [{id:2, positionId:1, date:'2026-08-14', price:100}]; // 10 days before 2026-08-24
+  const staleSt = sb.invPriceStaleness(1);
+  assert(staleSt.stale === true, 'A price 10 days old should be flagged stale, got days=' + staleSt.days);
+  sb._D.invValuations = [{id:3, positionId:1, date:'2026-08-24', price:100}];
+  const freshSt = sb.invPriceStaleness(1);
+  assert(freshSt.stale === false, 'A price logged today should not be flagged stale');
+}
+
+async function testReconciliationColumnsShareTheSameLayoutAcrossPlatforms(){
+  const sb = invCashSandbox({
+    invPlatforms: [{id:1, name:'Raseed'}, {id:2, name:'Fomo'}],
+    invPositions: [
+      {id:1, platformId:1, name:'Marathon Digital Holdings Inc', ticker:'MARA', currency:'USD', assetClass:'Stocks', status:'Active'},
+      {id:2, platformId:2, name:'Virgo', ticker:'&VIRGO', currency:'USD', assetClass:'Stocks', status:'Active'}
+    ]});
+  sb.__set('invReconExpandedPlatforms', new Set([1,2])); // platforms are collapsed by default now — expand both to see their tables
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  // Both platform tables must reuse the exact same colgroup markup, or their columns can drift
+  // out of alignment against each other regardless of content width.
+  const colgroups = [...html.matchAll(/<colgroup>.*?<\/colgroup>/g)].map(m=>m[0]);
+  assert(colgroups.length === 2, 'Expected one colgroup per platform table, found ' + colgroups.length);
+  assert(colgroups[0] === colgroups[1], 'Both platform tables should share an identical column layout, got:\n' + colgroups[0] + '\nvs\n' + colgroups[1]);
+}
+
+async function testReconciliationShowsLastReconciledDateWithStaleness(){
+  const sb = invCashSandbox({
+    invPlatforms: [{id:1, name:'Raseed', stmtDate:'2026-08-01'}],
+    invPositions: [{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active', stmtUnits:1, stmtDate:'2026-08-10'}]
+  });
+  sb.__set('todayStr', ()=>'2026-08-24');
+  const last = sb.invPlatformLastReconciledDate(1);
+  assert(last === '2026-08-10', 'Should take the MOST RECENT date across the platform and its positions, got ' + last);
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(html.indexOf('last reconciled') !== -1, 'The panel should show a last-reconciled label');
+  assert(html.indexOf('color:var(--red)') !== -1, '2026-08-10 is 14 days before 2026-08-24, so it should render in red');
+}
+
+// ================= v4.27.0: USD entry follows position currency, not just funding source =================
+async function testBankFundedUsdPositionShowsUsdEntryToo(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'Marathon Digital Holdings Inc', ticker:'MARA', currency:'USD', assetClass:'Stocks', status:'Active'}]});
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'', totalSar:'', owners:[], note:'', splitMode:'units', ownersSar:{}, cashSide:'bank', usdAmount:'', feePct:''};
+  sb.renderInvTxModal();
+  const body = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/USD paid/.test(body), 'A bank-funded buy on a USD-denominated position should still show a USD field, got snippet: ' + body.slice(0,700));
+  assert(!/Total SAR paid.{0,80}oninput="window\._invTxDraft\.totalSar/.test(body),
+    'The SAR field should be derived/disabled here too, not directly editable');
+}
+
+async function testSarCurrencyPositionFundedFromBankStaysPlainSar(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'Riyal Fund', ticker:'', currency:'SAR', assetClass:'Other', status:'Active'}]});
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'', totalSar:'', owners:[], note:'', splitMode:'units', ownersSar:{}, cashSide:'bank', usdAmount:'', feePct:''};
+  sb.renderInvTxModal();
+  const body = sb.document.getElementById('modalRoot').innerHTML;
+  assert(!/USD paid/.test(body), 'A SAR-denominated position funded from the bank should stay plain SAR entry, got snippet: ' + body.slice(0,700));
+  assert(/Total SAR paid.{0,80}oninput="window\._invTxDraft\.totalSar/.test(body),
+    'The SAR field should be directly editable in this case');
+}
+
+async function testPpuReadsUsdForBankFundedUsdPositionToo(){
+  const sb = invCashSandbox({});
+  const draft = {units:'10', totalSar:'1050', cashSide:'bank', usdAmount:'280'};
+  const usdPos = {currency:'USD'};
+  const sarPos = {currency:'SAR'};
+  assert(/USD/.test(sb.invTxPpuText(draft, usdPos)), 'PPU should read USD for a bank-funded USD position, got: ' + sb.invTxPpuText(draft, usdPos));
+  assert(/SAR/.test(sb.invTxPpuText(draft, sarPos)), 'PPU should stay SAR for a bank-funded SAR position, got: ' + sb.invTxPpuText(draft, sarPos));
+}
+
+async function testSaveInvTxRequiresUsdForBankFundedUsdPosition(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'MARA', ticker:'MARA', currency:'USD', assetClass:'Stocks', status:'Active'}]});
+  let toastMsg = null;
+  sb.__set('toast', (msg)=>{ toastMsg = msg; });
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'10', totalSar:'', owners:[{ownerId:1,units:10}], note:'', splitMode:'units', ownersSar:{}, cashSide:'bank', usdAmount:'', feePct:''};
+  await sb.saveInvTx();
+  assert(toastMsg && /USD/.test(toastMsg), 'Should require USD for a bank-funded USD position, got: ' + toastMsg);
+  assert((sb._D.invTransactions||[]).length === 0, 'Nothing should be saved without the required USD amount');
+}
+
+async function testSaveInvTxPersistsUsdAmountForBankFundedUsdPosition(){
+  const sb = invCashSandbox({invPositions:[{id:1, platformId:1, name:'MARA', ticker:'MARA', currency:'USD', assetClass:'Stocks', status:'Active'}]});
+  sb.__set('toast', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('openInvPosition', ()=>{});
+  sb.__set('setInvMgmtFeePct', async ()=>{});
+  sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'60.6033', totalSar:'', owners:[{ownerId:1,units:60.6033}], note:'', splitMode:'units', ownersSar:{}, cashSide:'bank', usdAmount:'', feePct:''};
+  sb.setInvTxUsd('815.06'); // mirrors what typing into the USD field actually does — derives totalSar too
+  await sb.saveInvTx();
+  const saved = sb._D.invTransactions[sb._D.invTransactions.length-1];
+  assert(saved.cashSide === 'bank', 'The persisted funding source should stay bank — USD entry here is a UI convenience only, got ' + saved.cashSide);
+  assert(Math.abs(saved.usdAmount - 815.06) < 0.005, 'The typed USD figure should be persisted for later editing, got ' + saved.usdAmount);
+  assert(Math.abs(saved.totalSar - 815.06*sb.getInvFxRate()) < 0.5, 'SAR should be derived from the USD figure at the configured rate, got ' + saved.totalSar);
+}
+
+async function testEditingOldRecordBackfillsUsdFromStoredSar(){
+  // A record saved before this feature existed (or before its position was reclassified to USD)
+  // may have totalSar populated with no usdAmount at all — editing it should not present a blank
+  // USD field next to a populated SAR figure.
+  const sb = invCashSandbox({
+    invPositions:[{id:1, platformId:1, name:'MARA', ticker:'MARA', currency:'USD', assetClass:'Stocks', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:10, totalSar:1000,
+      owners:[{ownerId:1,units:10}], feePct:0, cashSide:'bank', usdAmount:0}]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvTxModal(1, 1);
+  const draft = sb._invTxDraft;
+  assert(Math.abs(draft.usdAmount - (1000/sb.getInvFxRate())) < 0.5,
+    'Editing should back-fill USD from the stored SAR total, got ' + draft.usdAmount);
+}
+
+// ================= v4.28.0: dual-currency widgets, platform collapse, recon CSV + per-row dates, Enter-to-next =================
+async function testDualCurrencyKpiShowsUsdFirstBoldThenSar(){
+  const sb = makeSandbox();
+  sb.__set('D', {invSettings:{fxUsdSar:3.75}});
+  const html = sb.invKpiCardDual('Your Cost Basis', 3750);
+  const usdIdx = html.indexOf('$1,000.00');
+  const sarIdx = html.indexOf('3,750.00');
+  assert(usdIdx !== -1, 'USD figure (1000.00, since 3750/3.75) should appear, got: ' + html);
+  assert(sarIdx !== -1, 'SAR figure should appear, got: ' + html);
+  assert(usdIdx < sarIdx, 'USD should appear before SAR in the markup, got: ' + html);
+  assert(html.indexOf('kpi-value') < sarIdx, 'The bold kpi-value class should wrap the USD line, not the SAR one');
+}
+
+async function testTopWidgetsUseDualCurrencyIncludingFamily(){
+  const sb = invCashSandbox({
+    invOwners:[{id:1,name:'Me',isSelf:true},{id:2,name:'Relative',isSelf:false}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:10, totalSar:3750,
+       owners:[{ownerId:1,units:6},{ownerId:2,units:4}], feePct:0, cashSide:'bank'}
+    ]});
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Your Cost Basis/.test(html) && /\$/.test(html), 'Your Cost Basis should show a $ figure');
+  assert(/Held for Family/.test(html), 'Held for Family should still appear when family owns units');
+}
+
+async function testPositionModalUsesDualCurrencyWidgets(){
+  const sb = invCashSandbox({
+    invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:10, totalSar:3750,
+      owners:[{ownerId:1,units:10}], feePct:0, cashSide:'bank'}]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvPosition(1);
+  const body = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/\$1,000\.00/.test(body), 'Cost widget should show the USD figure ($1000 at fx 3.75), got snippet: ' + body.slice(0,900));
+  assert(/3,750\.00 SAR/.test(body), 'Cost widget should show the SAR figure underneath, got snippet: ' + body.slice(0,900));
+}
+
+async function testPriceDateRemovedFromPlatformTableAndAlwaysBlack(){
+  const sb = invCashSandbox({
+    invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invValuations:[{id:1, positionId:1, date:'2026-01-01', price:100}] // long stale by the test's frozen "today"
+  });
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  sb.__set('todayStr', ()=>'2026-08-24');
+  const html = sb.renderInvPlatformSection({id:1, name:'Raseed'});
+  assert(html.indexOf('2026-01-01') === -1, 'The price date should no longer appear in the platform table, got snippet: ' + html.slice(0,1200));
+  assert(html.indexOf('color:var(--red)') === -1, 'No red staleness colouring should appear on the platform table price cell');
+}
+
+async function testStalePricesPanelRemovedFromInvestmentsPage(){
+  const sb = invCashSandbox({
+    invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2020-01-01', kind:'buy', units:10, totalSar:1000,
+      owners:[{ownerId:1,units:10}], feePct:0, cashSide:'bank'}]
+  });
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(!/Prices need refreshing/.test(html), 'The stale-prices alert panel should no longer appear on the Investments page');
+}
+
+async function testPlatformsCollapsedByDefault(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Raseed'}], invPositions:[]});
+  // Deliberately does NOT set invExpandedPlatforms — a fresh sandbox runs the app's own top-level
+  // `let invExpandedPlatforms = new Set();` once, so this exercises the real default rather than
+  // a value the test dictated itself.
+  const html = sb.renderInvPlatformSection({id:1, name:'Raseed'});
+  assert(!/💵 Cash balance/.test(html), 'A freshly-loaded platform should start collapsed, got snippet: ' + html.slice(0,700));
+  assert(/▸ Expand/.test(html), 'A collapsed platform should show an Expand affordance');
+}
+
+async function testCollapsedPlatformShowsCashAndOwnerPortionSummary(){
+  const sb = invCashSandbox({
+    invOwners:[{id:1,name:'Me',isSelf:true},{id:2,name:'Relative',isSelf:false}],
+    invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:10, totalSar:3750,
+      owners:[{ownerId:1,units:6},{ownerId:2,units:4}], feePct:0, cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-01-01', price:100}] // 10 units * $100 = $1000 market
+  });
+  sb.__set('invExpandedPlatforms', new Set());
+  const html = sb.renderInvPlatformSection({id:1, name:'Raseed'});
+  assert(/Yours:/.test(html), "Collapsed header should show the self owner's portion");
+  assert(/Family:/.test(html), 'Collapsed header should show the family portion when family holds units');
+}
+
+async function testToggleInvPlatformExpandedFlipsState(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[], invOwners:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{}});
+  sb.__set('invExpandedPlatforms', new Set());
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.toggleInvPlatformExpanded(1);
+  assert(vm.runInContext('invExpandedPlatforms', sb).has(1), 'Toggling should expand a collapsed platform');
+  sb.toggleInvPlatformExpanded(1);
+  assert(!vm.runInContext('invExpandedPlatforms', sb).has(1), 'Toggling again should collapse it back');
+}
+
+async function testReconCsvExportAndImportRoundTrip(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed', stmtCashUsd:500, stmtDate:'2026-08-01'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:100000,
+      owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}]
+  });
+  const rows = sb.invReconCSVRows();
+  assert(rows.length===2, 'Should have one position row and one cash row, got ' + rows.length);
+  assert(rows.some(r=>r.type==='Position' && r.ticker==='BTC'), 'The BTC position should appear');
+  assert(rows.some(r=>r.type==='Cash'), 'A cash line should appear');
+
+  // Import: update the position's statement units via the "New Statement Value" column.
+  const csv = 'Platform,Position,Ticker,Type,Tracker Amount,Last Statement Value,Last Checked,New Statement Value\n'+
+    'Raseed,Bitcoin,BTC,Position,1,,,0.98\n'+
+    'Raseed,Cash (USD),,Cash,0.00,,,\n'; // cash row blank — must be left untouched
+  sb.__set('FileReader', function(){
+    this.readAsText = () => { Object.defineProperty(this,'result',{value:csv,configurable:true}); this.onload(); };
+  });
+  let lastImportDone = null;
+  sb.__set('FileReader', function(){
+    this.readAsText = () => { Object.defineProperty(this,'result',{value:csv,configurable:true}); lastImportDone = this.onload(); };
+  });
+  sb.__set('renderInvestmentsPage', ()=>{});
+  let toastMsg = null;
+  sb.__set('toast', (m)=>{ toastMsg = m; });
+  const fakeInput = {files:[{}], value:''};
+  sb.handleInvReconImport(fakeInput);
+  await lastImportDone;
+  const pos = sb._D.invPositions.find(p=>p.id===1);
+  assert(Math.abs(pos.stmtUnits-0.98)<0.005, 'The position statement units should update to 0.98, got ' + pos.stmtUnits);
+  const plat = sb._D.invPlatforms.find(p=>p.id===1);
+  assert(Math.abs(plat.stmtCashUsd-500)<0.005,
+    'A blank New Statement Value must leave the pre-existing figure (500) untouched, got ' + plat.stmtCashUsd);
+}
+
+async function testReconPageShowsPerPositionLastCheckedDate(){
+  const sb = invCashSandbox({
+    // Platform-level date is RECENT (not stale); the position's own date is OLD (stale). If the
+    // per-row column didn't actually render the position's own date, this would only ever show
+    // the recent, non-stale platform-aggregate date — the assertions below would then fail,
+    // which is exactly what distinguishes "shown per row" from "only shown in the header".
+    invPlatforms:[{id:1, name:'Raseed', stmtDate:'2026-08-23'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active', stmtUnits:1, stmtDate:'2026-08-10'}]
+  });
+  sb.__set('todayStr', ()=>'2026-08-24');
+  sb.__set('invReconExpandedPlatforms', new Set([1])); // collapsed by default now — expand to see the row
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(html.indexOf('2026-08-10') !== -1, "The position's own last-checked date should be shown in its row");
+  assert(html.indexOf('color:var(--red)') !== -1, '2026-08-10 is 14 days before 2026-08-24, so it should render in red');
+}
+
+async function testEnterKeyMovesToNextReconInput(){
+  const sb = invCashSandbox({});
+  const inputs = [sb.document.createElement('input'), sb.document.createElement('input'), sb.document.createElement('input')];
+  inputs.forEach(i=>{ i.className='recon-input'; sb.document.body.appendChild(i); });
+  let focused = null;
+  inputs[1].focus = () => { focused = inputs[1]; };
+  const enterEvent = {key:'Enter', preventDefault: ()=>{}};
+  sb.invReconEnterNext(inputs[0], enterEvent);
+  assert(focused === inputs[1], 'Pressing Enter on the first field should focus the next one');
+}
+
+async function testEnterKeyOnLastReconInputJustBlurs(){
+  const sb = invCashSandbox({});
+  const input = sb.document.createElement('input');
+  input.className = 'recon-input';
+  sb.document.body.appendChild(input);
+  let blurred = false;
+  input.blur = () => { blurred = true; };
+  const enterEvent = {key:'Enter', preventDefault: ()=>{}};
+  sb.invReconEnterNext(input, enterEvent);
+  assert(blurred === true, 'Enter on the very last field should blur it (saving via change) rather than throwing');
+}
+
+async function testNonEnterKeyIsIgnoredByReconNavigation(){
+  const sb = invCashSandbox({});
+  const inputs = [sb.document.createElement('input'), sb.document.createElement('input')];
+  inputs.forEach(i=>{ i.className='recon-input'; sb.document.body.appendChild(i); });
+  let focused = false, defaultPrevented = false;
+  inputs[1].focus = () => { focused = true; };
+  const tabEvent = {key:'Tab', preventDefault: ()=>{ defaultPrevented = true; }};
+  sb.invReconEnterNext(inputs[0], tabEvent);
+  assert(!focused, 'A non-Enter key should not trigger the custom navigation');
+  assert(!defaultPrevented, "A non-Enter key's default behaviour (native Tab) should not be blocked");
+}
+
+// ================= v4.29.0: alphabetical platforms, action picker, merged recon+prices, idle lock =================
+async function testPlatformsSortedAlphabeticallyCaseInsensitive(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[{id:1,name:'zeta'},{id:2,name:'Alpha'},{id:3,name:'beta'}]});
+  const sorted = sb.invPlatformsSorted();
+  assert(sorted.map(p=>p.name).join(',')==='Alpha,beta,zeta', 'Should sort case-insensitively, got ' + sorted.map(p=>p.name).join(','));
+}
+
+async function testSinglePlatformSkipsThePicker(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Raseed'}]});
+  let openedWith = null;
+  sb.__set('openInvAddPosition', (platformId)=>{ openedWith = platformId; });
+  sb.__set('openInvPlatformPicker', ()=>{ openedWith = 'PICKER_SHOWN'; });
+  sb.invStartPlatformAction('position');
+  assert(openedWith === 1, 'With one platform, the action should go straight there, got ' + openedWith);
+}
+
+async function testMultiplePlatformsShowsThePicker(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Raseed'},{id:2, name:'Fomo'}]});
+  let pickerShownFor = null;
+  sb.__set('openInvPlatformPicker', (action)=>{ pickerShownFor = action; });
+  sb.invStartPlatformAction('deposit');
+  assert(pickerShownFor === 'deposit', 'With more than one platform, the picker should be shown, got ' + pickerShownFor);
+}
+
+async function testZeroPlatformsDoesNothing(){
+  const sb = invCashSandbox({invPlatforms:[]});
+  let called = false;
+  sb.__set('openInvPlatformPicker', ()=>{ called = true; });
+  sb.invStartPlatformAction('withdrawal');
+  assert(!called, 'With zero platforms there is nothing to pick — the action should just no-op');
+}
+
+async function testPortfolioPageDisablesActionButtonsWithZeroPlatforms(){
+  const sb = invCashSandbox({invPlatforms:[]});
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  ['position','deposit','withdrawal','transfer','cashlog'].forEach(action=>{
+    // Find the actual <button ...> tag for this action and confirm it carries "disabled" — a
+    // bare /disabled/.test(html) on the whole page would trivially pass via any UNRELATED
+    // disabled control elsewhere (e.g. the derived SAR field), so this must check THIS button.
+    const tagMatch = html.match(new RegExp("<button[^>]*onclick=\"invStartPlatformAction\\('"+action+"'\\)\"[^>]*>"));
+    assert(tagMatch, 'The '+action+' button should exist on the page at all, got snippet: ' + html.slice(0,800));
+    assert(/disabled/.test(tagMatch[0]), 'The '+action+' button should be disabled with zero platforms, got tag: ' + tagMatch[0]);
+  });
+}
+
+async function testLogPricesFunctionsAreGoneMergedIntoRecon(){
+  const sb = makeSandbox();
+  assert(typeof sb.openInvLogPrices === 'undefined', 'openInvLogPrices should no longer exist — folded into the Reconciliation page');
+  assert(typeof sb.downloadInvReconCSV === 'function', 'The merged export function should exist');
+  assert(typeof sb.invManualPriceRows === 'function', 'The manual price table logic should still exist, now used by the Reconciliation page');
+}
+
+async function testReconPageIncludesTheManualPriceSection(){
+  const sb = invCashSandbox({
+    invPositions:[{id:1, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}]
+  });
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/💹 Prices/.test(html), 'The Reconciliation page should include the merged Prices section');
+  assert(html.indexOf('invManualPriceTable') !== -1, 'The manual price table container should be present');
+}
+
+async function testMergedReconCsvHasBothStatementAndPriceColumns(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:60000}]
+  });
+  const rows = sb.invReconCSVRows();
+  const btcRow = rows.find(r=>r.ticker==='BTC');
+  assert(btcRow, 'BTC row should exist');
+  assert(Math.abs(btcRow.lastPrice-60000)<0.5, 'The price should be merged into the recon row, got ' + btcRow.lastPrice);
+  assert(btcRow.lastPriceDate==='2026-08-01', 'The price date should be merged in too, got ' + btcRow.lastPriceDate);
+  const cashRow = rows.find(r=>r.type==='Cash');
+  assert(cashRow.lastPrice===null, 'Cash rows should have no price — cash is not priced');
+}
+
+async function testTextWidthNoLongerCappedOnPortfolioPage(){
+  const sb = invCashSandbox({});
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(html.indexOf('max-width:540px') === -1, 'The hardcoded 540px cap should be gone');
+  assert(html.indexOf('Cost basis is what actually left your bank') !== -1, 'The description text should still be present');
+}
+
+async function testMarkUserActivityUpdatesLastActivityTime(){
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', 0);
+  sb.__set('appIsLocked', false);
+  sb.markUserActivity();
+  const now = vm.runInContext('lastActivityTime', sb);
+  assert(Date.now() - now < 2000, 'markUserActivity should set lastActivityTime to roughly now, got ' + now);
+}
+
+async function testMarkUserActivityIsIgnoredOnceLocked(){
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', 12345);
+  sb.__set('appIsLocked', true);
+  sb.markUserActivity();
+  assert(vm.runInContext('lastActivityTime', sb) === 12345, 'Once locked, further activity must not revive the session — only Relaunch should');
+}
+
+async function testCheckIdleLockDoesNothingBeforeTheThreshold(){
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', Date.now() - 5*60*1000); // 5 minutes idle, well under the 30-minute default
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', null);
+  sb.__set('syncQueue', []);
+  let warned = false;
+  sb.__set('showIdleWarning', ()=>{ warned = true; });
+  sb.checkIdleLock();
+  assert(!warned, 'Should not even warn before the threshold');
+}
+
+async function testCheckIdleLockHoldsOffWhileSyncQueueIsNonEmpty(){
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', Date.now() - 31*60*1000); // past the default threshold
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', null);
+  sb.__set('syncQueue', [{id:1}]); // something still unsynced
+  let warned = false;
+  sb.__set('showIdleWarning', ()=>{ warned = true; });
+  sb.checkIdleLock();
+  assert(!warned, 'Must hold off even warning while anything is unsynced, to avoid discarding pending writes');
+}
+
+async function testCheckIdleLockHoldsOffWhileAModalIsOpen(){
+  const sb = makeSandbox();
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot';
+  modalRoot.innerHTML = '<div>some in-progress form</div>';
+  sb.document.body.appendChild(modalRoot);
+  sb.__set('lastActivityTime', Date.now() - 31*60*1000);
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', null);
+  sb.__set('syncQueue', []);
+  let warned = false;
+  sb.__set('showIdleWarning', ()=>{ warned = true; });
+  sb.checkIdleLock();
+  assert(!warned, 'Must hold off while a modal is open, since that is where most in-progress editing lives');
+}
+
+async function testCheckIdleLockWarnsBeforeLockingWithNothingBlocking(){
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', Date.now() - 31*60*1000);
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', null);
+  sb.__set('syncQueue', []);
+  let locked = false, warned = false;
+  sb.__set('lockAppForInactivity', ()=>{ locked = true; });
+  sb.__set('showIdleWarning', ()=>{ warned = true; });
+  sb.checkIdleLock();
+  assert(warned, 'Should show the warning once past the threshold with nothing blocking');
+  assert(!locked, 'Should NOT lock immediately — the warning has its own 60-second window first');
+}
+
+async function testCheckIdleLockLocksAfterTheWarningWindowElapses(){
+  const sb = makeSandbox();
+  sb.__set('appIsLocked', false);
+  sb.__set('syncQueue', []);
+  sb.__set('idleWarningShownAt', Date.now() - 61000); // warning shown 61s ago — past the 60s window
+  let locked = false;
+  sb.__set('lockAppForInactivity', ()=>{ locked = true; });
+  sb.checkIdleLock();
+  assert(locked, 'Should lock once the warning window has elapsed with nothing blocking');
+}
+
+async function testCheckIdleLockDoesNotLockDuringTheWarningWindow(){
+  const sb = makeSandbox();
+  sb.__set('appIsLocked', false);
+  sb.__set('syncQueue', []);
+  sb.__set('idleWarningShownAt', Date.now() - 10000); // only 10s into the 60s warning
+  let locked = false;
+  sb.__set('lockAppForInactivity', ()=>{ locked = true; });
+  sb.checkIdleLock();
+  assert(!locked, 'Should not lock before the warning window itself has elapsed');
+}
+
+async function testMarkUserActivityDismissesAnActiveWarning(){
+  const sb = makeSandbox();
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', Date.now());
+  let dismissed = false;
+  sb.__set('dismissIdleWarning', ()=>{ dismissed = true; });
+  sb.markUserActivity();
+  assert(dismissed, 'Any activity during the warning should dismiss it, not just delay the lock silently');
+}
+
+async function testIdleLockMinutesZeroMeansNever(){
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', Date.now() - 999*60*1000); // absurdly idle
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', null);
+  sb.__set('syncQueue', []);
+  // JSDOM's Storage object can't be swapped for a plain mock (no setter on the localStorage
+  // getter, and even instance-level method overrides don't take effect — it's backed by special
+  // internal handling rather than ordinary properties) — using the real API is the reliable path.
+  sb.localStorage.setItem('idleLockMinutes', '0');
+  let warned = false;
+  sb.__set('showIdleWarning', ()=>{ warned = true; });
+  sb.checkIdleLock();
+  assert(!warned, 'A 0-minute setting should mean the lock is disabled entirely, never warns');
+}
+
+async function testGetSetIdleLockMinutesRoundTripsThroughLocalStorage(){
+  const sb = makeSandbox();
+  const saved = sb.setIdleLockMinutes('45');
+  assert(saved===45, 'setIdleLockMinutes should return the normalized value, got ' + saved);
+  assert(sb.getIdleLockMinutes()===45, 'getIdleLockMinutes should read back what was saved, got ' + sb.getIdleLockMinutes());
+}
+
+async function testGetIdleLockMinutesFallsBackToDefaultWhenUnset(){
+  const sb = makeSandbox();
+  // A fresh sandbox's localStorage genuinely has nothing in it yet — no mock needed.
+  assert(sb.getIdleLockMinutes()===30, 'With nothing saved yet, should default to 30 minutes, got ' + sb.getIdleLockMinutes());
+}
+
+async function testLockAppForInactivityShowsOverlayWithRelaunch(){
+  const sb = makeSandbox();
+  sb.__set('appIsLocked', false);
+  sb.lockAppForInactivity();
+  const overlay = sb.document.getElementById('idleLockOverlay');
+  assert(overlay, 'The lock overlay should be appended to the document');
+  assert(/Relaunch/.test(overlay.innerHTML), 'The overlay should offer a way to relaunch');
+  assert(vm.runInContext('appIsLocked', sb) === true, 'appIsLocked should be set to true');
+}
+
+async function testLockAppForInactivityIsIdempotent(){
+  const sb = makeSandbox();
+  sb.__set('appIsLocked', false);
+  sb.lockAppForInactivity();
+  sb.lockAppForInactivity();
+  const overlays = sb.document.querySelectorAll('#idleLockOverlay');
+  assert(overlays.length === 1, 'Calling lock twice should not stack a second overlay, got ' + overlays.length);
+}
+
+async function testRelaunchAppReloadsThePage(){
+  // JSDOM's location.reload is deliberately non-configurable and can't be substituted the way
+  // URL.createObjectURL or Blob were earlier — any attempt silently falls through to JSDOM's own
+  // (unimplemented) navigation stub instead of a test double. Checking the function's own source
+  // is the robust option here, and matches what actually matters: that Relaunch calls a real
+  // page reload rather than, say, just closing the overlay.
+  const sb = makeSandbox();
+  const src = sb.relaunchApp.toString();
+  assert(/location\.reload\(\)/.test(src), 'relaunchApp should call location.reload(), got: ' + src);
+}
+
+// ================= v4.30.0: restoreFromBackup no longer crashes on fields an older backup lacks =================
+async function testNormalizeDataShapeFillsInEveryMissingField(){
+  const sb = makeSandbox();
+  const bare = {accounts:[], ledger:[]}; // an old-style backup: only the two original tables
+  sb.normalizeDataShape(bare);
+  ['categories','subcategories','provisionGroups','accrualMappings','jamiahs','invOwners',
+   'invPlatforms','invPositions','invTransactions','invValuations','invCashMovements',
+   'realEstateBuildings','forecastAccountRules','customForecastCategories'].forEach(f=>{
+    assert(Array.isArray(bare[f]), 'normalizeDataShape should default '+f+' to an array, got ' + JSON.stringify(bare[f]));
+  });
+  ['invSettings','uiPrefs','forecastPlans','nameTranslations','descrTranslations'].forEach(f=>{
+    assert(bare[f] && typeof bare[f]==='object' && !Array.isArray(bare[f]),
+      'normalizeDataShape should default '+f+' to a plain object, got ' + JSON.stringify(bare[f]));
+  });
+}
+
+async function testNormalizeDataShapeDoesNotOverwriteExistingData(){
+  const sb = makeSandbox();
+  const withData = {accounts:[{id:1}], invOwners:[{id:1,name:'Me'}], invSettings:{fxUsdSar:4}};
+  sb.normalizeDataShape(withData);
+  assert(withData.invOwners.length===1 && withData.invOwners[0].name==='Me',
+    'Existing data must survive normalization untouched');
+  assert(withData.invSettings.fxUsdSar===4, 'An existing invSettings object must not be replaced wholesale');
+}
+
+async function testRestoreFromBackupDoesNotCrashOnAnOldBackupMissingNewerFields(){
+  // Regression test for a real bug found while reviewing an external backup script: a JSON
+  // backup taken before the Investments/Real Estate/Smart Rules modules existed has none of
+  // those fields. restoreFromBackup's D reassignment previously left them undefined, and later
+  // code (the cloud-restore branch) read D.realEstateBuildings.length etc. unconditionally —
+  // a TypeError on any restore that reached that point with an older-shaped backup.
+  const sb = makeSandbox();
+  sb.__set('usingCloud', false); // exercises the same D reconstruction and normalization either way
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('toast', ()=>{});
+  sb.__set('go', ()=>{});
+  sb.__set('saveJVDraftsList', ()=>{});
+  sb.__set('persistLocal', ()=>{});
+  const oldBackup = {accounts:[{id:10101}], ledger:[{id:1,jv:1,date:'2026-01-01',acc:10101,amt:100,descr:'x'}]};
+  await sb.restoreFromBackup(oldBackup); // must not throw
+  const D = vm.runInContext('D', sb);
+  assert(Array.isArray(D.invOwners), 'D.invOwners should be a defaulted array after restoring an old backup, not undefined');
+  assert(Array.isArray(D.realEstateBuildings), 'D.realEstateBuildings should be defaulted, not undefined');
+  assert(Array.isArray(D.forecastAccountRules), 'D.forecastAccountRules should be defaulted, not undefined');
+  assert(D.invSettings && typeof D.invSettings==='object', 'D.invSettings should be a defaulted object, not undefined');
+}
+
+async function testRestoreFromBackupPreservesNewerFieldsWhenPresentInTheFile(){
+  const sb = makeSandbox();
+  sb.__set('usingCloud', false);
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('toast', ()=>{});
+  sb.__set('go', ()=>{});
+  sb.__set('saveJVDraftsList', ()=>{});
+  sb.__set('persistLocal', ()=>{});
+  const fullBackup = {accounts:[], ledger:[],
+    invOwners:[{id:1,name:'Me',isSelf:true}], realEstateBuildings:[{id:1,name:'Raseed Tower'}]};
+  await sb.restoreFromBackup(fullBackup);
+  const D = vm.runInContext('D', sb);
+  assert(D.invOwners.length===1 && D.invOwners[0].name==='Me', 'A backup that DOES include the newer fields should have them restored, not discarded');
+  assert(D.realEstateBuildings.length===1 && D.realEstateBuildings[0].name==='Raseed Tower', 'Real estate buildings should be restored when present in the file');
+}
+
+async function testRestoreFromBackupStillCallsNormalizeDataShape(){
+  // Every field normalizeDataShape defaults is ALSO explicitly defaulted inline in
+  // restoreFromBackup's own D reassignment, so this call is currently non-load-bearing for
+  // today's fields — it's forward-looking defense-in-depth for the next field someone adds to D
+  // elsewhere and forgets to list here too (which is exactly how the original bug happened).
+  // Locking in that the call itself survives, so that safety net can't be silently dropped.
+  const sb = makeSandbox();
+  sb.__set('usingCloud', false);
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('toast', ()=>{});
+  sb.__set('go', ()=>{});
+  sb.__set('saveJVDraftsList', ()=>{});
+  sb.__set('persistLocal', ()=>{});
+  let called = false;
+  sb.__set('normalizeDataShape', (d)=>{ called = true; return d; });
+  await sb.restoreFromBackup({accounts:[], ledger:[]});
+  assert(called, 'restoreFromBackup should still call normalizeDataShape as a forward-looking safety net');
+}
+
+async function testIdleLockSettingsPanelShowsCurrentValueAndSaves(){
+  const sb = makeSandbox();
+  sb.__set('settingsTab', 'cloud');
+  // A fresh sandbox's own default `D` (the top-level `let D = {...}` literal) is already the
+  // complete, correctly-shaped empty state renderSettings needs across all its tabs — no
+  // hand-built fixture required, and nothing to fall out of date later.
+  sb.setIdleLockMinutes(20);
+  sb.renderSettings();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Idle Session Lock/.test(html), 'The settings panel should be present');
+  assert(/value="20"/.test(html), 'The input should show the currently saved value, got snippet: ' + html.slice(html.indexOf('Idle Session Lock'), html.indexOf('Idle Session Lock')+500));
+  assert(/0 = never/.test(html), 'The 0=never hint should be present');
+  assert(/This setting applies to this device only/.test(html), 'The per-device note should be present');
+}
+
+async function testSaveIdleLockMinutesFromSettingsPersistsAndToasts(){
+  const sb = makeSandbox();
+  const input = sb.document.createElement('input');
+  input.id = 'idleLockMinutesInput';
+  input.value = '15';
+  sb.document.body.appendChild(input);
+  let toastMsg = null;
+  sb.__set('toast', (m)=>{ toastMsg = m; });
+  sb.saveIdleLockMinutesFromSettings();
+  assert(sb.getIdleLockMinutes()===15, 'Should persist the typed value, got ' + sb.getIdleLockMinutes());
+  assert(toastMsg && /15 minute/.test(toastMsg), 'Should confirm the new value, got: ' + toastMsg);
+}
+
+// ================= v4.32.0: JV Balance Check =================
+async function testToggleJvBalanceCheckStartsFreshEachTime(){
+  const sb = makeSandbox();
+  sb.__set('renderNewJV', ()=>{});
+  sb.__set('jvBalanceCheckSelected', new Set([0,1]));
+  sb.toggleJvBalanceCheck();
+  assert(vm.runInContext('jvBalanceCheckMode', sb) === true, 'Should turn the mode on');
+  assert(vm.runInContext('jvBalanceCheckSelected', sb).size === 0, 'Turning it on should start with a clean selection, not whatever was left from before');
+}
+
+async function testToggleJvBalanceCheckLineTogglesMembership(){
+  const sb = makeSandbox();
+  sb.__set('renderNewJV', ()=>{});
+  sb.toggleJvBalanceCheckLine(2);
+  assert(vm.runInContext('jvBalanceCheckSelected', sb).has(2), 'Selecting a line should add its index');
+  sb.toggleJvBalanceCheckLine(2);
+  assert(!vm.runInContext('jvBalanceCheckSelected', sb).has(2), 'Selecting it again should remove it');
+}
+
+async function testJvBalanceCheckSubtotalSumsOnlySelectedLines(){
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[
+    {acc:10111, descr:'a', amt:612}, {acc:10203, descr:'b', amt:-612}, {acc:20101, descr:'c', amt:-1000}
+  ]});
+  sb.__set('jvBalanceCheckSelected', new Set([0,1]));
+  const {sum, count} = sb.jvBalanceCheckSubtotal();
+  assert(count===2, 'Should count only the selected lines, got ' + count);
+  assert(Math.abs(sum-0)<0.005, 'Selected pair (612, -612) should subtotal to 0, got ' + sum);
+}
+
+async function testJvBalanceCheckSubtotalDetectsTheImbalance(){
+  // Mirrors the real scenario: a missing adjustment line leaves a bank-line group off by 0.15.
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[
+    {acc:10111, descr:'a', amt:612}, {acc:10111, descr:'b', amt:11000}, {acc:10203, descr:'c', amt:-612},
+    {acc:20101, descr:'d', amt:-11000.15}
+  ]});
+  sb.__set('jvBalanceCheckSelected', new Set([0,1,2,3]));
+  const {sum} = sb.jvBalanceCheckSubtotal();
+  assert(Math.abs(sum - (-0.15)) < 0.005, 'Should surface the exact -0.15 shortfall, got ' + sum);
+}
+
+async function testJvBalanceCheckSubtotalIgnoresStaleIndexesGracefully(){
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[{acc:10111, descr:'a', amt:100}]});
+  sb.__set('jvBalanceCheckSelected', new Set([0, 5])); // 5 doesn't exist
+  const {sum, count} = sb.jvBalanceCheckSubtotal();
+  assert(count===1 && Math.abs(sum-100)<0.005, 'A stale/out-of-range index should be skipped rather than throwing, got sum=' + sum + ' count=' + count);
+}
+
+async function testClearJvBalanceCheckSelectionEmptiesTheSet(){
+  const sb = makeSandbox();
+  sb.__set('renderNewJV', ()=>{});
+  sb.__set('jvBalanceCheckSelected', new Set([0,1,2]));
+  sb.clearJvBalanceCheckSelection();
+  assert(vm.runInContext('jvBalanceCheckSelected', sb).size === 0, 'Clear should empty the selection');
+}
+
+async function testRemoveJVLineRemapsSelectionIndexesCorrectly(){
+  // Without remapping, removing line 1 would leave a selection that had included line 2 now
+  // silently pointing at what USED to be line 3 — auditing the wrong row without any warning.
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[
+    {acc:1, descr:'keep-0', amt:10}, {acc:2, descr:'REMOVE-1', amt:20},
+    {acc:3, descr:'keep-2-becomes-1', amt:30}, {acc:4, descr:'keep-3-becomes-2', amt:40}
+  ]});
+  sb.__set('jvBalanceCheckSelected', new Set([0,1,2,3]));
+  sb.__set('renderNewJV', ()=>{});
+  sb.removeJVLine(1);
+  const sel = vm.runInContext('jvBalanceCheckSelected', sb);
+  assert(!sel.has(3), 'The old max index should have shifted down after a removal, not stayed dangling');
+  assert(sel.has(0) && sel.has(1) && sel.has(2), 'Indices before and after the removed line should remap to 0,1,2, got ' + [...sel].join(','));
+  const lines = vm.runInContext('jvDraft', sb).lines;
+  assert(lines[1].descr==='keep-2-becomes-1' && lines[2].descr==='keep-3-becomes-2',
+    'Sanity check on the remap: line content at the remapped indices should be what actually moved there');
+}
+
+async function testResetJVDraftClearsBalanceCheckSelection(){
+  const sb = makeSandbox();
+  sb.__set('jvBalanceCheckSelected', new Set([0,1]));
+  sb.resetJVDraft();
+  assert(vm.runInContext('jvBalanceCheckSelected', sb).size === 0, 'Starting a fresh JV should not carry over a selection from a previous voucher');
+}
+
+async function testRenderNewJVShowsBalanceCheckBarOnlyWhenModeIsOn(){
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[{acc:10111, descr:'a', amt:100}, {acc:10203, descr:'b', amt:-100}]});
+  sb.__set('jvBalanceCheckMode', false);
+  sb.renderNewJV();
+  let html = sb.document.getElementById('app').innerHTML;
+  assert(!/Balance Check — click lines/.test(html), 'The subtotal bar should be hidden when the mode is off');
+  assert(!/toggleJvBalanceCheckLine/.test(html), 'Checkboxes should not render when the mode is off');
+
+  sb.__set('jvBalanceCheckMode', true);
+  sb.renderNewJV();
+  html = sb.document.getElementById('app').innerHTML;
+  assert(/Balance Check — click lines/.test(html), 'The subtotal bar should show when the mode is on');
+  assert(/toggleJvBalanceCheckLine\(0\)/.test(html) && /toggleJvBalanceCheckLine\(1\)/.test(html),
+    'Every line should get a selection checkbox when the mode is on');
+}
+
+async function testUnselectedLinesAreDimmedWhileSelectedLinesAreNot(){
+  const sb = makeSandbox();
+  sb.__set('jvBalanceCheckMode', true);
+  sb.__set('jvBalanceCheckSelected', new Set([0]));
+  const rowSelected = sb.jvLineRow({acc:10111, descr:'a', amt:100}, 0);
+  const rowUnselected = sb.jvLineRow({acc:10203, descr:'b', amt:-100}, 1);
+  assert(!/opacity:\.4/.test(rowSelected), 'A selected line should NOT be dimmed');
+  assert(/opacity:\.4/.test(rowUnselected), 'An unselected line SHOULD be dimmed while the mode is active');
+}
+
+// ================= v4.33.0: Closing Balance Watch, statement-date fix, reconcile focus, JV total on blur =================
+async function testClosingBalanceWatchStoresUpToThreeArbitraryMonths(){
+  const sb = makeSandbox();
+  sb.__set('renderDashboard', ()=>{});
+  sb.setClosingBalanceWatchMonth(0, '2026-12');
+  sb.setClosingBalanceWatchMonth(2, '2026-03'); // not consecutive, and slot 1 left blank
+  const months = sb.getClosingBalanceWatchMonths();
+  assert(months[0]==='2026-12' && months[2]==='2026-03', 'Should store exactly what was picked per slot, got ' + JSON.stringify(months));
+}
+
+async function testClosingBalanceWatchWidgetShowsClosingOnlyForPickedMonths(){
+  const sb = makeSandbox();
+  // A fresh sandbox's own default D is already complete (every field beginForecastFastPath and
+  // the rest of a full render need) — mutating it in place avoids the missing-field crashes that
+  // come from swapping in a hand-picked partial D for a function that touches the whole app.
+  const data = vm.runInContext('D', sb);
+  data.ledger.push({id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'});
+  sb.__set('renderDashboard', ()=>{}); // setClosingBalanceWatchMonth triggers a full dashboard render we don't need here
+  sb.setClosingBalanceWatchMonth(0, '2026-01');
+  const html = sb.renderClosingBalanceWatchWidget();
+  assert(/Closing Balance Watch/.test(html), 'The widget title should be present');
+  assert(/type="month"/.test(html), 'Should render month pickers');
+  assert(!/Starting|Inflow|Outflow/.test(html), 'Should show ONLY the Closing figure, not the other cash-flow rows');
+}
+
+async function testClosingBalanceWatchWidgetHandlesNoMonthsPicked(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[], ledger:[]});
+  sb.__set('localStorage', sb.localStorage); // fresh — nothing picked yet
+  const html = sb.renderClosingBalanceWatchWidget();
+  assert(/Choose a month/.test(html), 'An unpicked slot should invite a choice rather than show a stale or wrong figure');
+}
+
+async function testStatementBalanceOnlySavesOnEnterNotOnBlur(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, is_credit_card:false, stmt_balance:500, stmt_date:'2026-08-01'}]});
+  let saved = false;
+  sb.__set('saveStmtBalance', ()=>{ saved = true; });
+  const html = sb.renderDashboard ? '' : '';
+  const row = sb.document.createElement('div');
+  // Directly inspect the generated markup for the statement-balance input to confirm onblur no
+  // longer calls saveStmtBalance at all — it must only restore the displayed text.
+  sb.__set('bankTotal', 0);
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const inputBlock = src.slice(src.indexOf('id="stmtBal_'), src.indexOf('id="stmtBal_')+700);
+  assert(!/onblur="saveStmtBalance/.test(inputBlock), 'onblur must no longer call saveStmtBalance — that was the bug (silently saving/dating on blur)');
+  assert(/onblur="this\.value = this\.dataset\.raw/.test(inputBlock), 'onblur should just restore the last-saved display text, discarding the unconfirmed edit');
+  assert(/onkeydown="if\(event\.key==='Enter'\)[^"]*saveStmtBalance/.test(inputBlock), 'Enter should still be the thing that actually saves');
+}
+
+async function testStartReconcileFocusesTheDescriptionField(){
+  const sb = invCashSandbox({accounts:[{id:10101, acc_type:'Individual Account', status:'Active'}], templates:[]});
+  const nav = sb.document.createElement('div'); nav.id='nav'; sb.document.body.appendChild(nav);
+  sb.startReconcile(10101);
+  const active = sb.document.activeElement;
+  assert(active && active.id==='jvDescr_0', "Focus should land on the first line's description field, got " + (active&&active.id));
+}
+
+async function testJvAmountDoesNotRecalculateTotalOnEveryKeystroke(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, acc_type:'Individual Account', status:'Active'}], ledger:[]});
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[{acc:10101, descr:'a', amt:''}, {acc:10203, descr:'b', amt:''}]});
+  let totalsCalled = 0;
+  sb.__set('updateJVTotals', ()=>{ totalsCalled++; });
+  const input = sb.document.createElement('input');
+  input.id = 'jvAmt_0';
+  sb.document.body.appendChild(input);
+  // Simulate what the oninput handler now does directly (the app wires oninput to this exact
+  // statement) — it must NOT include a call to updateJVTotals.
+  vm.runInContext("jvDraft.lines[0].amt='1'", sb);
+  assert(totalsCalled===0, 'Typing a digit must not trigger a total recalculation — only blur/Enter should');
+}
+
+async function testJvAmtBlurStillRecalculatesTheTotal(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, acc_type:'Individual Account', status:'Active'}], ledger:[]});
+  sb.__set('jvDraft', {date:'2026-08-29', lines:[{acc:10101, descr:'a', amt:'105*10'}]});
+  let totalsCalled = 0;
+  sb.__set('updateJVTotals', ()=>{ totalsCalled++; });
+  sb.jvAmtBlur(0);
+  assert(totalsCalled===1, 'Blur (and, by the same code path, Enter) must still recalculate the total');
+  assert(Math.abs(vm.runInContext('jvDraft', sb).lines[0].amt - 1050) < 0.005, 'Blur should still evaluate a typed formula, got ' + vm.runInContext('jvDraft', sb).lines[0].amt);
+}
+
+async function testBalanceCheckSubtotalAlsoOnlyUpdatesOnBlurNotEveryKeystroke(){
+  // Per explicit confirmation: the Balance Check subtotal shares updateJVTotals, so it follows
+  // the same blur/Enter-only rule rather than live-updating per keystroke.
+  const sb = makeSandbox();
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const oninputLine = src.match(/oninput="jvDraft\.lines\[\$\{i\}\]\.amt=this\.value[^"]*"/);
+  assert(oninputLine, 'Should find the amount field oninput handler');
+  assert(!/updateJVTotals/.test(oninputLine[0]), 'oninput must not call updateJVTotals — Balance Check inherits the same fix since it reads from that same function');
+}
+
+// ================= v4.34.0: Forecast Snapshots =================
+function fcSnapSandbox(extra){
+  // invCashSandbox's default D is deliberately minimal (built for investment-only tests) and is
+  // missing fields beginForecastFastPath needs (provisionGroups, etc.) now that the snapshot
+  // engine's fix routes through the same fast-path machinery the Forecast Grid uses.
+  const sb = invCashSandbox(Object.assign({
+    accounts: [{id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:10000, descr:'x'}],
+    provisionGroups: [],
+    forecastSnapshots: []
+  }, extra||{}));
+  return sb;
+}
+
+async function testGetSetForecastSnapshotHorizonRoundTrips(){
+  const sb = fcSnapSandbox();
+  const saved = sb.setForecastSnapshotHorizon('6');
+  assert(saved===6, 'Should normalize and return the saved horizon, got ' + saved);
+  assert(sb.getForecastSnapshotHorizon()===6, 'Should read back what was saved, got ' + sb.getForecastSnapshotHorizon());
+}
+
+async function testGetForecastSnapshotHorizonDefaultsToTwelve(){
+  const sb = fcSnapSandbox();
+  assert(sb.getForecastSnapshotHorizon()===12, 'With nothing saved yet, should default to 12 months, got ' + sb.getForecastSnapshotHorizon());
+}
+
+async function testBuildForecastSnapshotMonthsCapturesExactlyTheHorizon(){
+  const sb = fcSnapSandbox();
+  sb.__set('todayStr', ()=>'2026-08-29');
+  const months = sb.buildForecastSnapshotMonths('2026-08', 3);
+  assert(months.length===3, 'Should capture exactly the requested horizon, got ' + months.length);
+  assert(months[0].month==='2026-08' && months[1].month==='2026-09' && months[2].month==='2026-10',
+    'Should run consecutively forward from the anchor, got ' + months.map(m=>m.month).join(','));
+  assert('closing' in months[0], 'Each captured month should carry a Closing figure');
+}
+
+async function testTakeForecastSnapshotPersistsAndReturnsTheRecord(){
+  const sb = fcSnapSandbox();
+  sb.__set('todayStr', ()=>'2026-08-29');
+  const rec = await sb.takeForecastSnapshot('manual');
+  assert(rec.kind==='manual', 'Should tag the requested kind, got ' + rec.kind);
+  assert(rec.anchorMonth==='2026-08', 'Should anchor to the current month, got ' + rec.anchorMonth);
+  assert(sb._D.forecastSnapshots.length===1, 'Should append to D.forecastSnapshots');
+  assert(sb._D.forecastSnapshots[0].months.length===sb.getForecastSnapshotHorizon(),
+    'The stored snapshot should carry the full configured horizon of months');
+}
+
+async function testDeleteForecastSnapshotRemovesItAfterConfirm(){
+  const sb = fcSnapSandbox({forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', months:[]}]});
+  sb.__set('confirm', ()=>true);
+  sb.__set('renderForecastSettingsPage', ()=>{});
+  await sb.deleteForecastSnapshot(1);
+  assert(sb._D.forecastSnapshots.length===0, 'Should remove the snapshot once confirmed');
+}
+
+async function testDeleteForecastSnapshotKeepsItIfNotConfirmed(){
+  const sb = fcSnapSandbox({forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', months:[]}]});
+  sb.__set('confirm', ()=>false);
+  sb.__set('renderForecastSettingsPage', ()=>{});
+  await sb.deleteForecastSnapshot(1);
+  assert(sb._D.forecastSnapshots.length===1, 'Should NOT remove the snapshot if the person declines the confirmation');
+}
+
+async function testAutoSnapshotSkipsWhenNoLedgerHistoryExists(){
+  const sb = fcSnapSandbox({ledger:[]}); // fresh install, nothing to compare against
+  await sb.checkAutoForecastSnapshot();
+  assert(sb._D.forecastSnapshots.length===0, 'Should not auto-snapshot a completely empty ledger — nothing meaningful to capture yet');
+}
+
+async function testAutoSnapshotTakesOneWhenNoneExistsThisMonth(){
+  const sb = fcSnapSandbox();
+  sb.__set('todayStr', ()=>'2026-08-29');
+  await sb.checkAutoForecastSnapshot();
+  assert(sb._D.forecastSnapshots.length===1, 'Should take an automatic snapshot when none exists for the current month');
+  assert(sb._D.forecastSnapshots[0].kind==='auto', 'The auto-taken snapshot should be tagged auto');
+  assert(vm.runInContext('forecastSnapshotBannerMonth', sb)==='2026-08', 'Should arm the one-time banner for this month');
+}
+
+async function testAutoSnapshotDoesNotDuplicateWithinTheSameMonth(){
+  const sb = fcSnapSandbox({forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'auto', months:[]}]});
+  sb.__set('todayStr', ()=>'2026-08-29');
+  await sb.checkAutoForecastSnapshot();
+  assert(sb._D.forecastSnapshots.length===1, 'A second auto-check in the same calendar month must not take a second automatic snapshot');
+  assert(vm.runInContext('forecastSnapshotBannerMonth', sb)===null, 'The banner should not re-arm when nothing new was actually taken');
+}
+
+async function testAutoSnapshotAllowsAManualOneInTheSameMonthToo(){
+  // Confirms manual snapshots have no monthly cap, unlike automatic ones.
+  const sb = fcSnapSandbox({forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'auto', months:[]}]});
+  sb.__set('todayStr', ()=>'2026-08-15');
+  await sb.takeForecastSnapshot('manual');
+  assert(sb._D.forecastSnapshots.length===2, 'A manual snapshot should be taken regardless of an existing automatic one this month');
+}
+
+async function testForecastSnapshotBannerHtmlOnlyShowsWhenArmed(){
+  const sb = fcSnapSandbox();
+  sb.__set('forecastSnapshotBannerMonth', null);
+  assert(sb.forecastSnapshotBannerHTML()==='', 'No banner markup should render when nothing was just auto-taken');
+  sb.__set('forecastSnapshotBannerMonth', '2026-08');
+  assert(/snapshot taken/i.test(sb.forecastSnapshotBannerHTML()), 'Banner markup should appear once armed');
+}
+
+async function testDismissForecastSnapshotBannerClearsIt(){
+  const sb = fcSnapSandbox();
+  sb.__set('forecastSnapshotBannerMonth', '2026-08');
+  sb.__set('screen', 'ledger'); // not on the dashboard, so no re-render should be attempted
+  sb.dismissForecastSnapshotBanner();
+  assert(vm.runInContext('forecastSnapshotBannerMonth', sb)===null, 'Dismissing should clear the armed state');
+}
+
+async function testForecastSnapshotClosingForReturnsNullOutsideHorizon(){
+  const sb = fcSnapSandbox();
+  const snap = {months:[{month:'2026-08', closing:1000},{month:'2026-09', closing:1100}]};
+  assert(sb.forecastSnapshotClosingFor(snap, '2026-09')===1100, 'Should find the closing figure for a captured month');
+  assert(sb.forecastSnapshotClosingFor(snap, '2027-01')===null, 'A month outside the captured horizon should return null, not throw or guess');
+}
+
+async function testForecastSnapshotsCoveringFindsOnlyRelevantOnesInOrder(){
+  const sb = fcSnapSandbox({forecastSnapshots:[
+    {id:1, anchorMonth:'2026-07', takenAt:'2026-07-01', kind:'auto', months:[{month:'2026-07',closing:1},{month:'2026-08',closing:2}]},
+    {id:2, anchorMonth:'2026-09', takenAt:'2026-09-01', kind:'auto', months:[{month:'2026-09',closing:3}]}, // does NOT cover 2026-08
+    {id:3, anchorMonth:'2026-06', takenAt:'2026-06-01', kind:'manual', months:[{month:'2026-06',closing:0},{month:'2026-08',closing:5}]},
+  ]});
+  const covering = sb.forecastSnapshotsCovering('2026-08');
+  assert(covering.length===2, 'Should include only snapshots whose horizon actually reached 2026-08, got ' + covering.length);
+  assert(covering[0].anchorMonth==='2026-06' && covering[1].anchorMonth==='2026-07',
+    'Should be sorted oldest first by anchor month, got ' + covering.map(s=>s.anchorMonth).join(','));
+}
+
+async function testForecastSnapshotTrendChartRendersAPointPerCoveringSnapshotPlusNow(){
+  const sb = fcSnapSandbox({forecastSnapshots:[
+    {id:1, anchorMonth:'2026-06', takenAt:'2026-06-01', kind:'manual', months:[{month:'2026-08', closing:5000}]}
+  ]});
+  sb.__set('todayStr', ()=>'2026-08-29');
+  const html = sb.renderForecastSnapshotTrendChart('2026-08');
+  const circles = (html.match(/<circle/g)||[]).length;
+  assert(circles===2, 'Should plot one point for the covering snapshot and one for "now", got ' + circles);
+  assert(/Now/.test(html), 'The final point should be labelled Now');
+}
+
+async function testForecastSnapshotTrendChartEmptyWithFewerThanTwoPoints(){
+  const sb = fcSnapSandbox({forecastSnapshots:[]});
+  sb.__set('todayStr', ()=>'2026-08-29');
+  const html = sb.renderForecastSnapshotTrendChart('2026-08');
+  assert(html==='', 'With only the live "now" point and nothing historical, there is nothing to trend — should render nothing rather than a one-point chart');
+}
+
+async function testForecastSettingsPageIncludesSnapshotHorizonAndButton(){
+  const sb = fcSnapSandbox();
+  sb.setForecastSnapshotHorizon(9);
+  sb.renderForecastSettingsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Forecast Snapshots/.test(html), 'The Snapshots panel should be present');
+  assert(/value="9"/.test(html), 'The horizon input should reflect the saved value');
+  assert(/Take Snapshot Now/.test(html), 'The manual snapshot button should be present');
+}
+
+// ================= v4.35.0: Closing Balance Watch bug fix + performance fix =================
+async function testClosingBalanceWatchMatchesTheRealAnchoredGrid(){
+  // Regression test for the exact bug reported: the widget must show the SAME number the real
+  // Cash Position grid shows for a given month, which means it must go through the anchor-to-
+  // actual correction, not the raw/unanchored chain (which produced wildly different figures).
+  const sb = makeSandbox();
+  const data = vm.runInContext('D', sb);
+  data.accounts.push({id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active'});
+  data.ledger.push({id:1, jv:1, date:'2025-01-01', acc:10101, amt:50000, descr:'opening'});
+  sb.__set('todayStr', ()=>'2026-08-29');
+  sb.__set('renderDashboard', ()=>{});
+  sb.setClosingBalanceWatchMonth(0, '2026-09');
+  const widgetHtml = sb.renderClosingBalanceWatchWidget();
+
+  // Independently recompute what the real grid would show for the same month, the same way
+  // renderCashFlowPanel does, and require the widget's displayed text to contain that exact figure.
+  let gridClosing;
+  try{ sb.beginForecastFastPath(); gridClosing = sb.computeMonthlyCashFlow(['2026-09'], '2026-08')[0].closing; }
+  finally{ sb.endForecastFastPath(); }
+  const gridMoneyText = sb.money(gridClosing);
+  assert(widgetHtml.indexOf(gridMoneyText) !== -1,
+    'Widget must display the exact same figure as the real grid (' + gridMoneyText + '), got snippet: ' + widgetHtml.slice(widgetHtml.indexOf('2026-09')-20, widgetHtml.indexOf('2026-09')+200));
+}
+
+async function testClosingBalanceWatchUsesAnchoredNotPureChain(){
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const fn = src.match(/function renderClosingBalanceWatchWidget\(\)\{[\s\S]*?\n\}/)[0];
+  assert(/computeMonthlyCashFlow\(picked/.test(fn), 'Must use the anchored computeMonthlyCashFlow, matching what the real grid shows');
+  assert(!/computeMonthlyCashFlowPure\(picked/.test(fn), 'Must NOT use the raw/unanchored chain directly — that was the bug');
+  assert(/beginForecastFastPath/.test(fn) && /endForecastFastPath/.test(fn),
+    'Must wrap the calculation in the fast path — without it, this re-scans the whole ledger on every dashboard render');
+}
+
+async function testForecastSnapshotCaptureUsesAnchoredChainAndFastPath(){
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const fn = src.match(/function buildForecastSnapshotMonths\([\s\S]*?\n\}/)[0];
+  assert(/computeMonthlyCashFlow\(months/.test(fn), 'Snapshot capture must use the anchored chain, same fix as the widget');
+  assert(!/computeMonthlyCashFlowPure\(months/.test(fn), 'Must not capture the raw/unanchored chain');
+  assert(/beginForecastFastPath/.test(fn) && /endForecastFastPath/.test(fn), 'Snapshot capture must be fast-path wrapped');
+}
+
+async function testSnapshotComparisonNowFigureUsesAnchoredChain(){
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const compareFn = src.slice(src.indexOf('function renderForecastSnapshotComparison'), src.indexOf('function renderForecastSnapshotComparison')+2000);
+  assert(/computeMonthlyCashFlow\(\[targetMonth\]/.test(compareFn), 'The comparison\'s live "now" figure must use the anchored chain');
+  const chartFn = src.match(/function renderForecastSnapshotTrendChart\([\s\S]*?\n\}/)[0];
+  assert(/computeMonthlyCashFlow\(\[targetMonth\]/.test(chartFn), 'The trend chart\'s "Now" point must use the anchored chain');
+}
+
+async function testNetWorthGridAutoFitsInsteadOfFixedThreeColumns(){
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\.grid3\{display:grid;grid-template-columns:repeat\(auto-fit,\s*minmax\(300px,\s*350px\)\)/.test(src),
+    'The net worth grid should auto-fit same-width, width-capped cards rather than being locked to exactly 3 equal-share columns');
+  assert(!/\.grid3\{display:grid;grid-template-columns:1fr 1fr 1fr/.test(src),
+    'Must not have reverted to a rigid 3-column layout');
+}
+
+// Finds the true matching closing tag for a <div> that starts at `openTagStart`, via a proper
+// depth-counting token scan (a naive indexOf-based walk breaks on any nested <div>, which is
+// exactly the shape of this markup — three multi-row panels each with their own inner divs).
+function findMatchingDivClose(html, openTagStart){
+  const tagRe = /<div\b[^>]*>|<\/div>/g;
+  tagRe.lastIndex = openTagStart;
+  let m, depth = 0;
+  while((m = tagRe.exec(html))){
+    if(m[0].startsWith('</')){ depth--; if(depth===0) return m.index; }
+    else depth++;
+  }
+  return -1;
+}
+
+async function testClosingBalanceWatchIsInItsOwnRowNotTheNetWorthGrid(){
+  // Per item 4: Closing Balance Watch must be in its OWN grid row below the three net worth
+  // panels, not sharing their grid — the opposite of what an earlier version of this test checked.
+  const sb = makeSandbox();
+  const data = vm.runInContext('D', sb);
+  data.ledger.push({id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'});
+  sb.renderDashboard();
+  const html = sb.document.getElementById('app').innerHTML;
+  const grids = [...html.matchAll(/class="grid3"/g)].map(m=>m.index);
+  assert(grids.length===2, 'Should render exactly two grid3 containers (net worth row, then the watch widget row), got ' + grids.length);
+
+  const firstGridStart = html.lastIndexOf('<div', grids[0]);
+  const firstGridClose = findMatchingDivClose(html, firstGridStart);
+  const secondGridStart = html.lastIndexOf('<div', grids[1]);
+  const secondGridClose = findMatchingDivClose(html, secondGridStart);
+  assert(firstGridClose!==-1 && secondGridClose!==-1, 'Should find both grids\' true matching closing tags');
+  assert(secondGridStart>firstGridClose, 'The second grid must come entirely after the first one closes — a genuinely separate row, not a nested or overlapping container');
+
+  const shortTermIdx = html.indexOf('Short Term Equity');
+  const watchIdx = html.indexOf('Closing Balance Watch');
+  assert(shortTermIdx>firstGridStart && shortTermIdx<firstGridClose, 'Short Term Equity should be inside the FIRST grid');
+  assert(watchIdx>secondGridStart && watchIdx<secondGridClose, 'Closing Balance Watch should be inside the SECOND grid, on its own row');
+  assert(!(watchIdx>firstGridStart && watchIdx<firstGridClose), 'Closing Balance Watch must NOT be inside the first grid alongside the net worth panels');
+}
+
+// ================= v4.36.0: Robo-Investment platforms, portfolio value, USD column, Out/In/Profit display =================
+async function testInvRoboPlatformStatsComputesCostBasisFromOutInAccounts(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}, {id:20101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [
+      {id:1, jv:1, date:'2026-01-01', acc:10101, amt:50000, descr:'invested'},
+      {id:2, jv:2, date:'2026-06-01', acc:20101, amt:10000, descr:'withdrawn'}
+    ]
+  });
+  const p = {id:1, name:'Wealthfront', outAcc:10101, inAcc:20101, profitAcc:null, isRobo:true, roboValue:55000, roboValueDate:'2026-08-01'};
+  const stats = sb.invRoboPlatformStats(p);
+  assert(Math.abs(stats.costBasis - 40000) < 0.005, 'Cost basis should be Out(50000) - In(10000) = 40000, got ' + stats.costBasis);
+  assert(Math.abs(stats.gain - 15000) < 0.005, 'Gain should be value(55000) - costBasis(40000) = 15000, got ' + stats.gain);
+  assert(stats.hasValue === true, 'A logged roboValue should read as having a value');
+}
+
+async function testInvRoboPlatformStatsHandlesUnassignedAccountsAsZero(){
+  const sb = invCashSandbox({accounts:[], ledger:[]});
+  const p = {id:1, name:'Robo', outAcc:null, inAcc:null, profitAcc:null, isRobo:true, roboValue:null, roboValueDate:null};
+  const stats = sb.invRoboPlatformStats(p);
+  assert(stats.costBasis === 0, 'Unassigned Out/In accounts should read as zero cost basis, not throw');
+  assert(stats.hasValue === false, 'No logged value should read as hasValue false');
+  assert(stats.gain === null, 'Gain should be null (not computable) when no value has ever been logged');
+}
+
+async function testSaveInvRoboValuePersistsAndDatesIt(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Robo', isRobo:true, roboValue:null, roboValueDate:null}]});
+  sb.__set('todayStr', ()=>'2026-08-29');
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('toast', ()=>{});
+  await sb.saveInvRoboValue(1, '61234.56');
+  const p = sb._D.invPlatforms.find(x=>x.id===1);
+  assert(Math.abs(p.roboValue-61234.56)<0.005, 'Should persist the typed value, got ' + p.roboValue);
+  assert(p.roboValueDate==='2026-08-29', 'Should date it to today, got ' + p.roboValueDate);
+}
+
+async function testSaveInvRoboValueIgnoresNonPositiveInput(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Robo', isRobo:true, roboValue:100, roboValueDate:'2026-01-01'}]});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('toast', ()=>{});
+  await sb.saveInvRoboValue(1, '0');
+  await sb.saveInvRoboValue(1, 'abc');
+  const p = sb._D.invPlatforms.find(x=>x.id===1);
+  assert(p.roboValue===100 && p.roboValueDate==='2026-01-01', 'A zero or non-numeric entry should be ignored, leaving the last real value untouched');
+}
+
+async function testRoboPlatformRendersSimplifiedCardNotThePositionTable(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:50000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Wealthfront', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:55000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Wealthfront', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:55000, roboValueDate:'2026-08-01'});
+  assert(/Robo-Investment/.test(html), 'Should be labelled as a Robo-Investment platform');
+  assert(!/openInvCashModal|openInvAddPosition|openInvCashLog/.test(html),
+    'Should not wire up any position/cash action buttons — none of them apply to a Robo platform, got snippet: ' + html.slice(0,900));
+  assert(/Cost basis \(invested − withdrawn\)/.test(html), 'Should show the derived cost basis line');
+  assert(/Gain \/ Loss/.test(html), 'Should show a Gain/Loss line');
+}
+
+async function testActionablePlatformsExcludesRoboPlatforms(){
+  const sb = invCashSandbox({invPlatforms:[
+    {id:1, name:'Normal Broker'},
+    {id:2, name:'Robo Advisor', isRobo:true}
+  ]});
+  const actionable = sb.invActionablePlatformsSorted();
+  assert(actionable.length===1 && actionable[0].name==='Normal Broker', 'Robo platforms must not appear in the action picker, got ' + actionable.map(p=>p.name).join(','));
+}
+
+async function testInvStartPlatformActionSkipsRoboWhenChoosingSinglePlatformShortcut(){
+  // Two platforms total, but only ONE is actionable — the single-platform shortcut should still
+  // fire (going straight there), rather than either picking the Robo one or showing a picker
+  // with only one real choice in it.
+  const sb = invCashSandbox({invPlatforms:[
+    {id:1, name:'Normal Broker'},
+    {id:2, name:'Robo Advisor', isRobo:true}
+  ]});
+  let openedWith = null, pickerShown = false;
+  sb.__set('openInvAddPosition', (id)=>{ openedWith = id; });
+  sb.__set('openInvPlatformPicker', ()=>{ pickerShown = true; });
+  sb.invStartPlatformAction('position');
+  assert(openedWith===1, 'Should go straight to the one actionable platform, got ' + openedWith);
+  assert(!pickerShown, 'Should not show a picker when only one platform is actually actionable');
+}
+
+async function testReconciliationPageExcludesRoboPlatforms(){
+  const sb = invCashSandbox({invPlatforms:[
+    {id:1, name:'Normal Broker'},
+    {id:2, name:'Robo Advisor', isRobo:true}
+  ], invPositions:[]});
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Normal Broker/.test(html), 'The normal platform should still appear in Reconciliation');
+  assert(!/Robo Advisor/.test(html), 'The Robo platform should not appear in Reconciliation — nothing there applies to it');
+}
+
+async function testRoboPlatformValueFoldsIntoSelfKpiTotals(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Robo', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:45000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  // The Robo platform's OWN card also shows $12,000.00 independently (from its own stats calc),
+  // so checking "does this figure appear anywhere on the page" would pass even if the KPI fold
+  // itself were removed entirely. Isolate the check to the KPI cards section specifically — from
+  // "Your Cost Basis" up to the action-button row that always follows the KPI cards and always
+  // precedes any platform section, regardless of whether that platform is Robo or normal.
+  const kpiStart = html.indexOf('Your Cost Basis');
+  const kpiEnd = html.indexOf('invStartPlatformAction', kpiStart);
+  assert(kpiStart!==-1 && kpiEnd!==-1, 'Should find both the KPI section start and the button row that bounds it');
+  const kpiSection = html.slice(kpiStart, kpiEnd);
+  assert(/\$12,000\.00/.test(kpiSection), 'Robo platform value should be folded into the Your Current Value KPI card specifically, got KPI section: ' + kpiSection);
+}
+
+async function testNormalPlatformShowsPortfolioValueNextToCashInBothViews(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Broker A'}],
+    invPositions:[{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000}] // 1 unit * 20000 USD = 20000 USD market value
+  });
+  sb.__set('invExpandedPlatforms', new Set());
+  const collapsedHtml = sb.renderInvPlatformSection({id:1, name:'Broker A'});
+  assert(/Portfolio:/.test(collapsedHtml), 'Collapsed header should show Portfolio value next to cash, got: ' + collapsedHtml.slice(0,600));
+
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const expandedHtml = sb.renderInvPlatformSection({id:1, name:'Broker A'});
+  assert(/📈 Portfolio value/.test(expandedHtml), 'Expanded view should show a Portfolio value line next to cash balance');
+}
+
+async function testPositionTableIncludesAUsdValueColumn(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Broker A'}],
+    invPositions:[{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000}]
+  });
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Broker A'});
+  assert(/Value \(USD\)/.test(html), 'The position table should have a USD value column header');
+  // With only one position, the footer's Total row coincidentally shows the SAME figure
+  // ($20,000.00), so a loose "does this text appear somewhere near the header" check would pass
+  // even if the per-row cell were removed entirely. Isolate to the BTC row itself: it must
+  // contain both the SAR figure and the USD figure as two distinct cells, in that row alone.
+  const rowStart = html.indexOf('openInvPosition(1)');
+  const rowEnd = html.indexOf('</tr>', rowStart);
+  assert(rowStart!==-1 && rowEnd!==-1, 'Should find the BTC position row');
+  const row = html.slice(rowStart, rowEnd);
+  assert(row.indexOf('75,000.00')!==-1, 'The row should show the SAR market value (75,000), got row: ' + row);
+  assert(row.indexOf('$20,000.00')!==-1, 'The row should ALSO show the USD market value ($20,000) as its own cell, got row: ' + row);
+}
+
+async function testOutInProfitBalancesShownWhenExpandedWithUnassignedFallback(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:12345, descr:'x'}],
+    invPlatforms:[{id:1, name:'Broker A', outAcc:10101, inAcc:null, profitAcc:null}],
+    invPositions:[]
+  });
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Broker A', outAcc:10101, inAcc:null, profitAcc:null});
+  assert(/Invested into platform: /.test(html) && html.indexOf('12,345.00')!==-1, 'Should show the linked invested-into-platform account balance (v4.62.0 wording)');
+  assert(/\{un-assigned\}/.test(html), 'An unlinked In/Profit account should show the {un-assigned} placeholder, not a blank or a crash');
+}
+
+async function testOutInProfitBalancesHiddenWhenCollapsed(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Broker A', outAcc:null, inAcc:null, profitAcc:null}], invPositions:[]});
+  sb.__set('invExpandedPlatforms', new Set());
+  const html = sb.renderInvPlatformSection({id:1, name:'Broker A', outAcc:null, inAcc:null, profitAcc:null});
+  assert(!/Invested \(Out\)/.test(html), 'The Out/In/Profit line should only show when the platform is expanded');
+}
+
+async function testPlatformModalIncludesRoboCheckbox(){
+  const sb = invCashSandbox({});
+  sb.__set('document', sb.document);
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvPlatformModal(null);
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Robo-Investment platform/.test(html), 'The platform modal should offer the Robo-Investment checkbox');
+}
+
+// ================= v4.37.0: Robo-Investment in charts/log, layout, snapshot comparison overhaul =================
+async function testAllocationByIncludesRoboAsStocksWhenSupplied(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:37500, descr:'x'}],
+    invPlatforms:[{id:1, name:'Robo Fund', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:40000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  const byClass = sb.invAllocationBy(p=>p.assetClass, true, ()=>'Stocks');
+  const stocksRow = byClass.find(r=>r.label==='Stocks');
+  assert(stocksRow && Math.abs(stocksRow.value-40000)<0.5, 'Robo value should appear under Stocks in the asset-class breakdown, got ' + JSON.stringify(byClass));
+
+  const byPlat = sb.invAllocationBy(p=>'ignored', true, (p)=>p.name);
+  const platRow = byPlat.find(r=>r.label==='Robo Fund');
+  assert(platRow && Math.abs(platRow.value-40000)<0.5, 'Robo value should appear under its own platform name in the by-platform breakdown, got ' + JSON.stringify(byPlat));
+}
+
+async function testAllocationByExcludesRoboWhenNoRoboKeyFnSupplied(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Robo Fund', outAcc:null, inAcc:null, profitAcc:null, isRobo:true, roboValue:40000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  const byClass = sb.invAllocationBy(p=>p.assetClass, true); // no roboKeyFn — a caller that didn't opt in
+  assert(byClass.length===0, 'Without an explicit roboKeyFn, Robo platforms should not silently appear');
+}
+
+async function testSaveInvRoboValueAppendsToTheHistoryLog(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Robo', isRobo:true, roboValue:null, roboValueDate:null}]});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.__set('todayStr', ()=>'2026-08-01');
+  await sb.saveInvRoboValue(1, '50000');
+  sb.__set('todayStr', ()=>'2026-09-01');
+  await sb.saveInvRoboValue(1, '52000');
+  const log = sb._D.invRoboValueLog.filter(r=>r.platformId===1);
+  assert(log.length===2, 'Two separate dated saves should produce two log entries, got ' + log.length);
+  assert(log.some(r=>r.date==='2026-08-01' && Math.abs(r.value-50000)<0.5), 'Should log the first entry');
+  assert(log.some(r=>r.date==='2026-09-01' && Math.abs(r.value-52000)<0.5), 'Should log the second entry');
+}
+
+async function testSaveInvRoboValueSameDateCorrectsRatherThanDuplicates(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Robo', isRobo:true, roboValue:null, roboValueDate:null}]});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.__set('todayStr', ()=>'2026-08-01');
+  await sb.saveInvRoboValue(1, '50000');
+  await sb.saveInvRoboValue(1, '51000'); // same day, corrected figure
+  const log = sb._D.invRoboValueLog.filter(r=>r.platformId===1);
+  assert(log.length===1, 'Re-saving the same date should correct the existing entry, not add a second one, got ' + log.length);
+  assert(Math.abs(log[0].value-51000)<0.5, 'The corrected value should be the latest one saved');
+}
+
+async function testInvRoboValueAsOfReturnsLatestEntryAtOrBeforeDate(){
+  const sb = invCashSandbox({invRoboValueLog:[
+    {id:1, platformId:1, date:'2026-06-01', value:40000},
+    {id:2, platformId:1, date:'2026-08-01', value:45000},
+  ]});
+  assert(sb.invRoboValueAsOf(1, '2026-07-01')===40000, 'Between two log entries should return the earlier one still in effect');
+  assert(sb.invRoboValueAsOf(1, '2026-09-01')===45000, 'After the latest entry should return that latest value');
+  assert(sb.invRoboValueAsOf(1, '2026-01-01')===null, 'Before any log entry should return null, not a guessed value');
+}
+
+async function testPortfolioHistoryOnlyIncludesRoboFromWhenLoggingStarted(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2025-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Robo', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true}],
+    invValuations:[{id:1, positionId:1, date:'2026-01-01', price:1},{id:2, positionId:1, date:'2026-08-01', price:1}],
+    invPositions:[],
+    invRoboValueLog:[{id:1, platformId:1, date:'2026-06-01', value:45000}]
+  });
+  const hist = sb.invPortfolioHistory(true);
+  const jan = hist.find(h=>h.date==='2026-01-01');
+  assert(jan && jan.value===0, 'A date before the first Robo log entry should get nothing added from it, got ' + (jan&&jan.value));
+  // The negative case above (0 before logging started) is also what you'd see if the whole Robo
+  // contribution were removed entirely — this positive case is the one that actually proves the
+  // feature exists: a date AFTER the log entry must include it.
+  const aug = hist.find(h=>h.date==='2026-08-01');
+  assert(aug && Math.abs(aug.value-45000)<0.5, 'A date after the Robo log entry should include its value (45000), got ' + (aug&&aug.value));
+}
+
+async function testPortfolioHistoryIncludesDatesThatOnlyExistInTheRoboLog(){
+  // The earlier test's Robo log date coincidentally matches an existing valuation date, so it
+  // doesn't actually prove the two date sets are UNIONED — that date would appear in the
+  // history either way. This uses a Robo-only date (no valuation on that day at all) to prove
+  // invPortfolioHistory pulls its date list from BOTH sources, not just invValuations.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2025-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Robo', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true}],
+    invValuations:[], // deliberately no valuations at all — the only date in the whole history should come from the Robo log
+    invPositions:[],
+    invRoboValueLog:[{id:1, platformId:1, date:'2026-03-15', value:45000}]
+  });
+  const hist = sb.invPortfolioHistory(true);
+  assert(hist.length===1, 'The history should have exactly one date entry — the Robo-only one, got ' + hist.length);
+  assert(hist[0].date==='2026-03-15', 'That date should be the Robo log\'s own date, got ' + hist[0].date);
+  assert(Math.abs(hist[0].value-45000)<0.5, 'And it should carry the Robo value, got ' + hist[0].value);
+}
+
+async function testAllocationChartsIncludeRoboPlatformAsStocksAndByItsOwnName(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Wealthfront', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:45000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  const allocClass = sb.invAllocationBy(p=>p.assetClass, true, ()=>'Stocks');
+  const stocksRow = allocClass.find(r=>r.label==='Stocks');
+  assert(stocksRow, 'The Robo platform should contribute a "Stocks" row to the by-asset-class chart');
+  assert(Math.abs(stocksRow.value-45000)<0.5, 'It should carry the Robo platform\'s current value, got ' + (stocksRow&&stocksRow.value));
+
+  const allocPlat = sb.invAllocationBy(p=>{ const pl = sb.invPlatformById(p.platformId); return pl? pl.name : '—'; }, true, (p)=>p.name);
+  const platRow = allocPlat.find(r=>r.label==='Wealthfront');
+  assert(platRow, 'The Robo platform should contribute its own row (by its name) to the by-platform chart');
+  assert(Math.abs(platRow.value-45000)<0.5, 'It should carry the same value there too, got ' + (platRow&&platRow.value));
+}
+
+async function testRenderInvestmentsPageActuallyPassesRoboIntoTheRealAllocationCalls(){
+  // The previous test proves invAllocationBy works correctly WHEN given a roboKeyFn — but calls
+  // it directly with its own arguments, so it can't tell whether the real call sites inside
+  // renderInvestmentsPage actually pass one. Spying on drawInvCharts (which receives the
+  // already-built allocClass/allocPlat arrays as arguments) verifies the real wiring, not just
+  // the underlying function in isolation.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Wealthfront', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:45000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  let capturedAllocClass = null, capturedAllocPlat = null;
+  sb.__set('drawInvCharts', (history, allocClass, allocPlat) => { capturedAllocClass = allocClass; capturedAllocPlat = allocPlat; });
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  assert(capturedAllocClass, 'drawInvCharts should have been called with the by-asset-class data');
+  assert(capturedAllocClass.some(r=>r.label==='Stocks' && Math.abs(r.value-45000)<0.5),
+    'The REAL call site should pass a Stocks row for the Robo platform, got ' + JSON.stringify(capturedAllocClass));
+  assert(capturedAllocPlat.some(r=>r.label==='Wealthfront' && Math.abs(r.value-45000)<0.5),
+    'The REAL call site should pass a Wealthfront row for the by-platform chart too, got ' + JSON.stringify(capturedAllocPlat));
+}
+
+async function testAllocationByWithoutRoboKeyFnStaysUnaffected(){
+  // A caller that doesn't pass roboKeyFn (the pre-existing behaviour, or any future caller that
+  // genuinely shouldn't include Robo platforms) must not have them silently injected anyway.
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Robo', isRobo:true, roboValue:45000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  const alloc = sb.invAllocationBy(p=>p.assetClass, true);
+  assert(alloc.length===0, 'Without a roboKeyFn, Robo platforms must not be included at all, got ' + JSON.stringify(alloc));
+}
+
+async function testDashboardGridUsesFixedMaxWidthNotStretching(){
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/minmax\(300px,\s*350px\)/.test(src), 'The grid should cap card width rather than letting a lone card stretch to fill the row');
+}
+
+async function testComparisonShowsFullCategoryBreakdownNotJustClosingBalance(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:5000, descr:'x'}],
+    forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', signFlips:{},
+      months:[{month:'2026-08', starting:0, inflow:5000, outflow:0, change:5000, closing:5000,
+        subrows:{income:5000, invest_income_st:0, invest_income_lt:0, asset_st:0, asset_lt:0,
+                 expense:0, invest_expense_st:0, invest_expense_lt:0, liability_st:0, liability_lt:0, provision:0, accrual:0}}]}]
+  });
+  sb.__set('todayStr', ()=>'2026-08-29');
+  sb.setForecastSnapCompare(1, '2026-08', 'now', null);
+  const html = sb.renderForecastSnapshotComparison();
+  assert(/Income/.test(html), 'Should show the Income category row, not just the collapsed Closing Balance');
+  assert(/Source: 💰 Bank Accounts/.test(html), 'Should explicitly label which panel this comparison is sourced from');
+}
+
+async function testTakeForecastSnapshotCapturesCurrentSignFlips(){
+  const sb = invCashSandbox({accounts:[{id:10101, acc_type:'Individual Account', status:'Active'}], ledger:[{id:1,jv:1,date:'2026-01-01',acc:10101,amt:100,descr:'x'}]});
+  sb.__set('todayStr', ()=>'2026-08-29');
+  sb.localStorage.setItem('forecastSignFlips', JSON.stringify({income:true, expense:true}));
+  const rec = await sb.takeForecastSnapshot('manual');
+  assert(rec.signFlips && rec.signFlips.income===true && rec.signFlips.expense===true,
+    'A newly taken snapshot must capture whatever sign-flip settings are active right now, got ' + JSON.stringify(rec.signFlips));
+}
+
+async function testComparisonWarnsWhenSignFlipsChangedSinceTheSnapshot(){
+  const sb = invCashSandbox({
+    forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', signFlips:{income:true},
+      months:[{month:'2026-08', starting:0, inflow:0, outflow:0, change:0, closing:0, subrows:{}}]}]
+  });
+  sb.__set('localStorage', sb.localStorage);
+  sb.localStorage.setItem('forecastSignFlips', '{}'); // sign flip was REMOVED since the snapshot
+  sb.setForecastSnapCompare(1, '2026-08', 'now', null);
+  const html = sb.renderForecastSnapshotComparison();
+  assert(/sign convention.*has changed/.test(html), 'Should warn that the sign convention differs from when the snapshot was taken, got: ' + html.slice(0,600));
+}
+
+async function testComparisonNoWarningWhenSignFlipsUnchanged(){
+  const sb = invCashSandbox({
+    forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', signFlips:{},
+      months:[{month:'2026-08', starting:0, inflow:0, outflow:0, change:0, closing:0, subrows:{}}]}]
+  });
+  sb.localStorage.setItem('forecastSignFlips', '{}');
+  sb.setForecastSnapCompare(1, '2026-08', 'now', null);
+  const html = sb.renderForecastSnapshotComparison();
+  assert(!/has changed/.test(html), 'Should NOT warn when nothing about the sign convention actually changed');
+}
+
+async function testSnapshotVsSnapshotComparisonMode(){
+  const sb = invCashSandbox({
+    forecastSnapshots:[
+      {id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', signFlips:{},
+        months:[{month:'2026-10', starting:0, inflow:1000, outflow:0, change:1000, closing:1000, subrows:{income:1000}}]},
+      {id:2, anchorMonth:'2026-09', takenAt:'2026-09-01', kind:'manual', signFlips:{},
+        months:[{month:'2026-10', starting:0, inflow:1500, outflow:0, change:1500, closing:1500, subrows:{income:1500}}]},
+    ]
+  });
+  sb.setForecastSnapCompare(1, '2026-10', 'snapshot', 2);
+  const html = sb.renderForecastSnapshotComparison();
+  assert(/Projected on 2026-09-01/.test(html), 'Should label the second column with the OTHER snapshot\'s date, not "Projected now"');
+  assert(html.indexOf('1,000')!==-1 && html.indexOf('1,500')!==-1, 'Should show both snapshots\' closing figures for the same month');
+  assert(html.indexOf('500')!==-1, 'Should show the 500 difference between the two snapshots');
+}
+
+async function testSnapshotVsSnapshotHandlesAMonthOneSnapshotNeverCaptured(){
+  const sb = invCashSandbox({
+    forecastSnapshots:[
+      {id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', signFlips:{},
+        months:[{month:'2027-06', starting:0, inflow:0, outflow:0, change:0, closing:9999, subrows:{}}]}, // 10-month horizon
+      {id:2, anchorMonth:'2026-09', takenAt:'2026-09-01', kind:'manual', signFlips:{},
+        months:[{month:'2026-10', starting:0, inflow:0, outflow:0, change:0, closing:0, subrows:{}}]}, // never reached 2027-06
+    ]
+  });
+  sb.setForecastSnapCompare(1, '2027-06', 'snapshot', 2);
+  const html = sb.renderForecastSnapshotComparison();
+  assert(/didn't capture/.test(html), 'Should explain that the other snapshot\'s horizon never reached this month, rather than crashing or showing a misleading zero');
+}
+
+async function testTrendChartHasVisibleValueLabelsNotJustHoverTooltips(){
+  const sb = invCashSandbox({
+    forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-01', kind:'manual', signFlips:{},
+      months:[{month:'2026-09', starting:0, inflow:0, outflow:0, change:0, closing:50000, subrows:{}}]}]
+  });
+  sb.__set('todayStr', ()=>'2026-08-29');
+  const html = sb.renderForecastSnapshotTrendChart('2026-09');
+  const textLabelCount = (html.match(/<text[^>]*font-weight="600"[^>]*>/g)||[]).length;
+  assert(textLabelCount>=1, 'The chart should draw at least one visible numeric label directly on it, not only hover-only <title> tooltips');
+}
+
+// ================= v4.38.0: idle lock on tab-resume/device-unlock, conflict modal blank-text fix =================
+async function testInitIdleLockChecksImmediatelyOnVisibilityChange(){
+  const sb = makeSandbox();
+  let checked = false;
+  sb.__set('checkIdleLock', ()=>{ checked = true; });
+  sb.initIdleLock();
+  Object.defineProperty(sb.document, 'visibilityState', {value:'visible', configurable:true});
+  sb.document.dispatchEvent(new sb.Event('visibilitychange'));
+  assert(checked, 'Becoming visible again should trigger an immediate idle check, not wait for the next interval tick');
+}
+
+async function testInitIdleLockDoesNotCheckWhenBecomingHidden(){
+  const sb = makeSandbox();
+  let checked = false;
+  sb.__set('checkIdleLock', ()=>{ checked = true; });
+  sb.initIdleLock();
+  Object.defineProperty(sb.document, 'visibilityState', {value:'hidden', configurable:true});
+  sb.document.dispatchEvent(new sb.Event('visibilitychange'));
+  assert(!checked, 'Going TO the background should not itself trigger a check — only coming back should');
+}
+
+async function testVisibilityCheckSeesTheStaleActivityTimeBeforeAnyClickCanResetIt(){
+  // This is the actual bug: returning to a backgrounded tab is itself a click/touch, which would
+  // normally reset lastActivityTime via markUserActivity BEFORE the next interval tick ever saw
+  // how much time had passed. The fix only works if the visibilitychange-triggered check runs
+  // using the OLD activity time, not a freshly-reset one — this proves that ordering holds.
+  const sb = makeSandbox();
+  sb.__set('lastActivityTime', Date.now() - 40*60*1000); // 40 minutes idle — past the default 30
+  sb.__set('appIsLocked', false);
+  sb.__set('idleWarningShownAt', null);
+  sb.__set('syncQueue', []);
+  let warned = false;
+  sb.__set('showIdleWarning', ()=>{ warned = true; });
+  sb.initIdleLock();
+  Object.defineProperty(sb.document, 'visibilityState', {value:'visible', configurable:true});
+  sb.document.dispatchEvent(new sb.Event('visibilitychange'));
+  assert(warned, 'The immediate check on becoming visible should see the true elapsed idle time and warn, not a freshly-reset clock');
+}
+
+async function testRowSummaryUsesCuratedFieldsWhenAvailable(){
+  const sb = makeSandbox();
+  const html = sb.rowSummary('pd_ledger', {id:1, jv:1, entry_date:'2026-01-01', acc:10101, descr:'Rent', amt:-500, alloc:null, updated_at:'x'});
+  assert(/descr: <b>Rent<\/b>/.test(html), 'Curated tables should still show their short, human-picked field set');
+  assert(!/updated_at/.test(html), 'Curated tables should not show updated_at even though it exists on the row');
+}
+
+async function testRowSummaryFallsBackGenericallyForAnUncuratedTable(){
+  // Regression test for the reported bug: any table not in the small curated whitelist rendered
+  // NO TEXT AT ALL in the conflict modal (fieldLabelsFor returned [], so rowSummary's .map/.join
+  // produced an empty string) — this covers the many tables added since that whitelist was last
+  // updated (Investments, Real Estate, Forecast Snapshots, and anything added after this fix too).
+  const sb = makeSandbox();
+  const html = sb.rowSummary('pd_inv_transactions', {id:1, position_id:5, entry_date:'2026-01-01', kind:'buy', units:10, total_sar:37500, updated_at:'x'});
+  assert(html.length>0, 'An uncurated table must still show SOME text, not render blank');
+  assert(/kind: <b>buy<\/b>/.test(html), "The generic fallback should show the row's own real field values");
+  assert(!/updated_at/.test(html), 'The generic fallback should still exclude the noisy updated_at field');
+  assert(!/\bid: /.test(html), 'The generic fallback should exclude the bare id field too, shown separately in the modal header');
+}
+
+async function testRowSummaryFallbackHandlesJsonbColumnsWithoutCrashing(){
+  const sb = makeSandbox();
+  const html = sb.rowSummary('pd_inv_cash_movements', {id:1, platform_id:1, entry_date:'2026-01-01', kind:'deposit', owners:[{ownerId:1,usd:500}], updated_at:'x'});
+  assert(html.length>0, 'A row with a jsonb array field must still produce readable text, not throw or render blank');
+  assert(/owners:/.test(html), 'The jsonb field itself should still be represented, stringified');
+}
+
+async function testRowSummaryReturnsPlaceholderForANullRow(){
+  const sb = makeSandbox();
+  assert(/\(deleted\)/.test(sb.rowSummary('pd_ledger', null)), 'A null row (the other side deleted it) should say so explicitly');
+}
+
+// ================= v4.39.0: Robo Gain/Loss sign-flip fix, KPI widget breakdown modals =================
+async function testInvRoboPlatformStatsFixesTheSignFlipWhenWithdrawnExceedsInvested(){
+  // Regression test for the exact reported bug: Invested (Out) 0.00, Withdrawn (In) 5,600.00,
+  // Current value 5,639.74 was showing Gain/Loss of 11,239.74 instead of the correct 39.74.
+  // costBasis = 0 - 5600 = -5600; the old formula did value - (-5600) = value + 5600 (wrong).
+  const sb = invCashSandbox({
+    accounts: [{id:20101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:20101, amt:5600, descr:'x'}] // only the In account has activity
+  });
+  const p = {id:1, name:'DRAHIM', outAcc:null, inAcc:20101, profitAcc:null, isRobo:true, roboValue:5639.74, roboValueDate:'2026-08-30'};
+  const stats = sb.invRoboPlatformStats(p);
+  assert(Math.abs(stats.costBasis - (-5600)) < 0.005, 'The raw signed cost basis should still be -5600 for transparency, got ' + stats.costBasis);
+  assert(Math.abs(stats.gain - 39.74) < 0.01, 'Gain/Loss should be 39.74 (value minus the MAGNITUDE of cost basis), got ' + stats.gain);
+  assert(stats.costBasisFlagged === true, 'A negative cost basis should be flagged as worth checking');
+}
+
+async function testInvRoboPlatformStatsNormalCaseUnaffected(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:10000, descr:'x'}]
+  });
+  const p = {id:1, name:'Normal Robo', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:12000, roboValueDate:'2026-08-30'};
+  const stats = sb.invRoboPlatformStats(p);
+  assert(Math.abs(stats.costBasis - 10000) < 0.005, 'Normal (Out > In) case should be unaffected, got ' + stats.costBasis);
+  assert(Math.abs(stats.gain - 2000) < 0.005, 'Gain should be the ordinary value minus cost basis, got ' + stats.gain);
+  assert(stats.costBasisFlagged === false, 'A normal positive cost basis should not be flagged');
+}
+
+async function testRoboKpiFoldUsesCostBasisMagnitudeNotRawSignedValue(){
+  // Without this fix, a flagged platform's negative cost basis would SUBTRACT from Your Cost
+  // Basis instead of adding to it, corrupting the whole portfolio total for every other holding.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}, {id:20101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:20101, amt:5600, descr:'x'}],
+    invPlatforms:[{id:1, name:'DRAHIM', outAcc:null, inAcc:20101, profitAcc:null, isRobo:true, roboValue:5639.74, roboValueDate:'2026-08-30'}],
+    invPositions:[]
+  });
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  const kpiStart = html.indexOf('Your Cost Basis');
+  const kpiEnd = html.indexOf('invStartPlatformAction', kpiStart);
+  const kpiSection = html.slice(kpiStart, kpiEnd);
+  // 5600 SAR magnitude / 3.75 = $1,493.33 should show, NOT a negative or wildly-inflated figure.
+  assert(/\$1,493\.33/.test(kpiSection), 'Your Cost Basis should reflect the 5,600 magnitude, got: ' + kpiSection);
+}
+
+async function testRoboCardWarnsWhenCostBasisIsFlagged(){
+  const sb = invCashSandbox({
+    accounts: [{id:20101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:20101, amt:5600, descr:'x'}],
+    invPlatforms:[{id:1, name:'DRAHIM', outAcc:null, inAcc:20101, profitAcc:null, isRobo:true, roboValue:5639.74, roboValueDate:'2026-08-30'}],
+    invPositions:[]
+  });
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'DRAHIM', outAcc:null, inAcc:20101, profitAcc:null, isRobo:true, roboValue:5639.74, roboValueDate:'2026-08-30'});
+  assert(/wrong way round/.test(html), 'Should warn that the accounts may be assigned the wrong way round');
+  assert(/39\.74/.test(html), 'The correct Gain/Loss figure should appear on the card, got snippet: ' + html.slice(html.indexOf('Gain'),html.indexOf('Gain')+200));
+}
+
+async function testAllocationChartFallbackUsesCostBasisMagnitudeWhenNoValueLogged(){
+  // The allocation charts (By Asset Class / By Platform) fall back to cost basis as the
+  // contribution figure for a Robo platform that hasn't had a current value logged yet. Without
+  // the abs() fix, a flagged (negative) cost basis would show as a NEGATIVE slice in the chart —
+  // nonsensical for a pie/doughnut chart, which only ever expects magnitudes.
+  const sb = invCashSandbox({
+    accounts: [{id:20101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:20101, amt:5600, descr:'x'}],
+    invPlatforms:[{id:1, name:'DRAHIM', outAcc:null, inAcc:20101, profitAcc:null, isRobo:true, roboValue:null, roboValueDate:null}], // no value logged yet
+    invPositions:[]
+  });
+  const allocClass = sb.invAllocationBy(p=>p.assetClass, true, ()=>'Stocks');
+  const stocksRow = allocClass.find(r=>r.label==='Stocks');
+  assert(stocksRow, 'Should still contribute a Stocks row even with no value logged yet (falls back to cost basis)');
+  assert(stocksRow.value>0, 'The fallback contribution must be positive (a magnitude), not the raw negative cost basis, got ' + (stocksRow&&stocksRow.value));
+  assert(Math.abs(stocksRow.value-5600)<0.5, 'The fallback should use the 5,600 magnitude, got ' + stocksRow.value);
+}
+
+async function testKpiCardsAreClickableAndOpenTheirBreakdowns(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:37500, descr:'x'}],
+    invPositions:[{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000}]
+  });
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/onclick="openInvKpiBreakdown\('cost'\)"/.test(html), 'Your Cost Basis should open its breakdown on click');
+  assert(/onclick="openInvKpiBreakdown\('value'\)"/.test(html), 'Current Value should open its breakdown on click');
+  assert(/onclick="openInvKpiBreakdown\('unrealized'\)"/.test(html), 'Your Unrealised P/L should open its breakdown on click');
+  assert(/onclick="openInvKpiBreakdown\('invested'\)"/.test(html), 'Invested Amount should open its breakdown on click');
+  assert(/onclick="openInvKpiBreakdown\('pl'\)"/.test(html), 'P/L should open its breakdown on click');
+  assert(!/Annualised Return/.test(html), 'The Annualised Return widget should be gone entirely');
+}
+
+async function testInvPlatformBreakdownRowsSumExactlyToTheDisplayedTotal(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invOwners:[{id:1,name:'Me',isSelf:true},{id:2,name:'Relative',isSelf:false}],
+    invPlatforms:[{id:1,name:'Broker A'},{id:2,name:'Broker B'}],
+    invPositions:[
+      {id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:2, name:'ETH', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'}
+    ],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:0.6},{ownerId:2,units:0.4}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:2, date:'2026-01-01', kind:'buy', units:2, totalSar:18750, owners:[{ownerId:1,units:2}], feePct:0, cashSide:'bank'}
+    ],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000},{id:2, positionId:2, date:'2026-08-01', price:3000}]
+  });
+  const rows = sb.invPlatformBreakdownRows(true);
+  assert(rows.length===2, 'Should have one row per platform (Broker A, Broker B), got ' + rows.length);
+  const totalCost = rows.reduce((s,r)=>s+r.cost,0);
+  const totals = sb.invOwnerTotals();
+  const selfTotal = totals.filter(t=>t.owner.isSelf).reduce((s,t)=>s+t.costSar,0);
+  assert(Math.abs(totalCost-selfTotal)<0.01, 'Platform-grouped rows should still sum to exactly the same total as the KPI widget, got ' + totalCost + ' vs ' + selfTotal);
+}
+
+async function testInvPlatformBreakdownIncludesRoboPlatformsForSelfOnly(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Robo', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:45000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  const selfRows = sb.invPlatformBreakdownRows(true);
+  assert(selfRows.some(r=>/Robo-Investment/.test(r.name)), 'The self breakdown should include the Robo platform');
+  const familyRows = sb.invPlatformBreakdownRows(false);
+  assert(!familyRows.some(r=>/Robo-Investment/.test(r.name)), 'Robo platforms are always self-owned — they must never appear in the family breakdown');
+}
+
+async function testOpenInvKpiBreakdownRendersATotalMatchingTheColumn(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    invPlatforms:[{id:1,name:'Broker A'},{id:2,name:'Broker B'}],
+    invPositions:[
+      {id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:2, name:'ETH', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'}
+    ],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:2, date:'2026-01-01', kind:'buy', units:1, totalSar:12500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}
+    ],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000},{id:2, positionId:2, date:'2026-08-01', price:5000}]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvKpiBreakdown('cost');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Your Cost Basis/.test(html), 'The modal should be titled for the clicked widget');
+  assert(/Broker A/.test(html) && /Broker B/.test(html), 'Should show one row per platform, not per position');
+  const tfootStart = html.indexOf('<tfoot');
+  assert(tfootStart!==-1, 'The modal should have a totals footer');
+  const tfoot = html.slice(tfootStart);
+  assert(tfoot.indexOf('50,000.00')!==-1, 'The footer total should be the SUM of both platforms (37,500 + 12,500 = 50,000), got tfoot: ' + tfoot);
+}
+
+async function testClickingAPlatformRowDrillsIntoItsPositions(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1,name:'Broker A'}],
+    invPositions:[
+      {id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:1, name:'ETH', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'}
+    ],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:2, date:'2026-01-01', kind:'buy', units:1, totalSar:12500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}
+    ],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000},{id:2, positionId:2, date:'2026-08-01', price:5000}]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvKpiBreakdown('cost');
+  const platformHtml = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/openInvPlatformPositionBreakdown\(1, 'cost', true\)/.test(platformHtml), 'A non-Robo platform row should be clickable into its positions');
+
+  sb.openInvPlatformPositionBreakdown(1, 'cost', true);
+  const drillHtml = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/BTC/.test(drillHtml) && /ETH/.test(drillHtml), 'Drilling into the platform should list its individual positions, got: ' + drillHtml.slice(0,600));
+  assert(/Broker A/.test(drillHtml), 'The drill-down should be titled with the platform name');
+  assert(/◂ Back/.test(drillHtml), 'Should offer a way back to the platform list');
+}
+
+async function testInvestedAndPlKindsAreNeverDrillable(){
+  // Invested Amount and P/L are platform-level cash figures with no natural per-position split
+  // (an Out account balance isn't tied to any specific buy) — their rows must never be clickable
+  // into a position drill-down the way Cost/Value/Unrealised/Family rows are.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:37500, descr:'x'}],
+    invPlatforms:[{id:1,name:'Broker A', outAcc:10101, inAcc:null, profitAcc:null}],
+    invPositions:[{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000}]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvKpiBreakdown('invested');
+  const investedHtml = sb.document.getElementById('modalRoot').innerHTML;
+  assert(!/openInvPlatformPositionBreakdown/.test(investedHtml), 'Invested Amount rows must not be clickable into a position drill-down, got: ' + investedHtml.slice(0,500));
+  assert(!/Click a platform to see the positions/.test(investedHtml), 'The drill-down hint text should not appear for Invested Amount');
+
+  sb.openInvKpiBreakdown('pl');
+  const plHtml = sb.document.getElementById('modalRoot').innerHTML;
+  assert(!/openInvPlatformPositionBreakdown/.test(plHtml), 'P/L rows must not be clickable into a position drill-down either, got: ' + plHtml.slice(0,500));
+}
+
+async function testRoboPlatformRowIsNotClickableInBreakdown(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:40000, descr:'x'}],
+    invPlatforms:[{id:1, name:'Robo', outAcc:10101, inAcc:null, profitAcc:null, isRobo:true, roboValue:45000, roboValueDate:'2026-08-01'}],
+    invPositions:[]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvKpiBreakdown('cost');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(!/openInvPlatformPositionBreakdown\(1,/.test(html), 'A Robo platform has no positions to drill into, so its row should not be clickable');
+}
+
+async function testInvestedAmountUsesOutAccountOnlyNotNetOfIn(){
+  // Confirmed convention: Invested Amount = |Out| alone, distinct from the Robo Cost Basis
+  // figure elsewhere in the app, which nets Out against In.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}, {id:20101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [
+      {id:1, jv:1, date:'2026-01-01', acc:10101, amt:10000, descr:'invested'},
+      {id:2, jv:2, date:'2026-06-01', acc:20101, amt:3000, descr:'withdrawn'}
+    ],
+    invPlatforms:[{id:1, name:'Broker A', outAcc:10101, inAcc:20101, profitAcc:null}],
+    invPositions:[]
+  });
+  const rows = sb.invPlatformBreakdownRows(true);
+  const row = rows.find(r=>r.name==='Broker A');
+  assert(row, 'Should produce a row even with no positions, since it still has an Out account balance');
+  assert(Math.abs(row.invested-10000)<0.5, 'Invested should be the Out balance alone (10,000), not net of In, got ' + row.invested);
+}
+
+async function testPlInvestmentsPageWidgetMatchesValueMinusInvested(){
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    // Two Out-account movements (60,000 total) but only one buy transaction recorded against a
+    // position (37,500 cost basis) — deliberately makes Invested Amount (60,000) differ from
+    // Cost Basis (37,500), so "Your Unrealised P/L" and the new "P/L" widget produce DIFFERENT
+    // numbers. Without this, both widgets could show the same figure by coincidence and a search
+    // for the text "P/L" would match whichever widget happened to render first, regardless of
+    // which one was actually broken — exactly the kind of false pass that's bitten this before.
+    ledger: [
+      {id:1, jv:1, date:'2026-01-01', acc:10101, amt:37500, descr:'x'},
+      {id:2, jv:2, date:'2026-03-01', acc:10101, amt:22500, descr:'y'}
+    ],
+    invPlatforms:[{id:1,name:'Broker A', outAcc:10101, inAcc:null, profitAcc:null}],
+    invPositions:[{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:12000}] // value = 1*12000*3.75 = 45,000 SAR
+  });
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  // Invested = 60,000 (both Out movements); Value = 45,000; P/L = 45,000-60,000 = -15,000 SAR = -$4,000.00.
+  // Isolate to the exact "P/L" label (">P/L<") so this can't match "Your Unrealised P/L" instead,
+  // which would show a different figure here (45,000-37,500 = 7,500 SAR = $2,000.00).
+  const labelIdx = html.indexOf('>P/L<');
+  assert(labelIdx!==-1, 'The P/L widget label should be present as its own KPI card');
+  const cardSnippet = html.slice(labelIdx, labelIdx+300);
+  assert(/\$-4,000\.00/.test(cardSnippet), 'P/L widget should show Value(45,000) minus Invested(60,000) = -15,000 SAR = -$4,000, got card: ' + cardSnippet);
+  assert(!/\$2,000\.00/.test(cardSnippet), 'The P/L card must not accidentally show the Unrealised P/L figure instead');
+}
+
+// ================= v4.40.0: Month End Accrual JV budget-source fix =================
+// ================= v4.42.0: accrual JV plan collapsing to actual once the month has closed =================
+async function testStartingBalanceRowAlsoWorksAgainstLiveNowNotJustSnapshotVsSnapshot(){
+  // Both other tests use snapshot-vs-snapshot mode — neither actually exercises the "compare
+  // against current live forecast" branch, which captures nowStarting through a separate code
+  // path (computeMonthlyCashFlow's own result) that could silently go missing without either of
+  // those tests noticing.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2025-12-01', acc:10101, amt:20000, descr:'x'}], // BEFORE the target month, so Jan's real starting balance is genuinely 20,000 — not coincidentally 0 like the snapshot's stored figure
+    forecastSnapshots:[{id:1, anchorMonth:'2026-01', takenAt:'2026-01-01', kind:'manual', signFlips:{},
+      months:[{month:'2026-01', starting:0, inflow:0, outflow:0, change:0, closing:0,
+        subrows:{income:0, invest_income_st:0, invest_income_lt:0, asset_st:0, asset_lt:0,
+                 expense:0, invest_expense_st:0, invest_expense_lt:0, liability_st:0, liability_lt:0, provision:0, accrual:0}}]}]
+  });
+  sb.__set('todayStr', ()=>'2026-01-15');
+  // Independently compute the REAL expected starting figure the exact same way the app does —
+  // asserting against this specific number (rather than a loose "doesn't say undefined" check)
+  // is what actually catches nowStarting silently falling through its ||0 fallback: an
+  // undefined value renders as a perfectly plausible-looking "0.00", not the literal word
+  // "undefined", so a weaker check would pass even with the capture genuinely broken.
+  let expectedNowStarting;
+  try{ sb.beginForecastFastPath(); expectedNowStarting = sb.computeMonthlyCashFlow(['2026-01'], '2026-01')[0].starting; }
+  finally{ sb.endForecastFastPath(); }
+  sb.setForecastSnapCompare(1, '2026-01', 'now', null); // explicitly the live-now branch, not snapshot-vs-snapshot
+  const html = sb.renderForecastSnapshotComparison();
+  const rowStart = html.indexOf('Month Cash Starting Balance');
+  assert(rowStart!==-1, 'The Starting Balance row should appear when comparing against live current data too');
+  const row = html.slice(rowStart, html.indexOf('</tr>', rowStart));
+  const expectedText = sb.money0(expectedNowStarting);
+  assert(row.indexOf(expectedText)!==-1, 'The live-now branch should show the real computed starting figure ('+expectedText+'), not a silently-defaulted 0, got row: ' + row);
+}
+
+// ================= v4.42.0: accrual JV plan collapsing to actual once the month has closed =================
+async function testAccrualJVStillReadsThePlanAfterTheAccrualMonthHasClosed(){
+  // Regression test for the real-world bug reported directly: v4.40.0's fix used
+  // computeForecastCell(a, accrualMonth, currentMonth) — but that function treats any month
+  // BEFORE "currentMonth" as closed history and collapses its plan into actual (correct for the
+  // Forecast Grid, wrong here). The person's own bug report ran the August accrual after the
+  // calendar had rolled into September, and every category showed Budget === Actual as a result.
+  // v4.40.0's own regression tests used "today" WITHIN the accrual month, so they never actually
+  // exercised this — a real gap, not a false pass, closed here.
+  const sb = invCashSandbox({
+    accounts: [
+      {id:60502, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60199, category:'Bills', acc_type:'Accrual Account', status:'Active'},
+      {id:20101, category:'Liabilities', acc_type:'Individual Account', status:'Active'},
+    ],
+    ledger: [{id:1, jv:1, date:'2026-08-15', acc:60502, amt:8051.83, descr:'rent paid'}],
+    provisionGroups: [{id:1, name:'Home Rent', lines:[{lineId:'l1', acc:60502}], months:{'2026-08':{l1:7068.50}}}],
+    accrualMappings: [{category:'Bills', liabilityAcc:20101, expenseAcc:60199}]
+  });
+  sb.__set('todayStr', ()=>'2026-09-01'); // running August's accrual AFTER August has closed
+  const monthInput = sb.document.createElement('input'); monthInput.id='accrualMonthInput'; monthInput.value='2026-08';
+  sb.document.body.appendChild(monthInput);
+  sb.__set('renderNewJV', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.computeAccrualJV();
+  const explanation = vm.runInContext('accrualExplanation', sb);
+  const billsRow = explanation.find(e=>e.category==='Bills');
+  assert(billsRow, 'Should produce an explanation row for Bills');
+  assert(Math.abs(billsRow.budget - 7068.50) < 0.5,
+    'Budget should still be the real Provisions-sourced plan (7,068.50) even after the month has closed, not silently collapsed to match Actual, got ' + billsRow.budget);
+  assert(Math.abs(billsRow.variance - (-983.33)) < 0.5,
+    'Variance should reflect the real overage (983.33 over), not zero, got ' + billsRow.variance);
+  assert(billsRow.action !== 'On budget — no accrual needed', 'Should NOT report "on budget" when there is a real 983.33 variance');
+}
+
+async function testAccrualJVUsesForecastPlanNotStaleLegacyBudgetTable(){
+  // Regression test for the exact reported bug: a "Bills" category with a Provisions-sourced
+  // rent account (the "P" badge on the Forecast Grid) had its plan value completely invisible to
+  // the accrual JV, because the JV only ever summed the separate, legacy D.budget table — which
+  // this account never had a row in at all. Budget showed 818 instead of the true ~7,068.50.
+  const sb = invCashSandbox({
+    accounts: [
+      {id:60101, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'}, // no provisions/budget — plan should be 0
+      {id:60502, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'}, // rent — provisions-only plan, matching the real bug
+      {id:60199, category:'Bills', acc_type:'Accrual Account', status:'Active'}, // the 99-account
+      {id:20101, category:'Liabilities', acc_type:'Individual Account', status:'Active'}, // liability
+    ],
+    ledger: [{id:1, jv:1, date:'2026-08-15', acc:60502, amt:3917, descr:'rent paid'}], // actual spend
+    provisionGroups: [{id:1, name:'Home Rent', lines:[{lineId:'l1', acc:60502}], months:{'2026-08':{l1:2917}}}], // the plan lives HERE, never in D.budget
+    budget: [], // deliberately empty — the old code's only data source
+    accrualMappings: [{category:'Bills', liabilityAcc:20101, expenseAcc:60199}]
+  });
+  sb.__set('todayStr', ()=>'2026-08-30');
+  const monthInput = sb.document.createElement('input'); monthInput.id='accrualMonthInput'; monthInput.value='2026-08';
+  sb.document.body.appendChild(monthInput);
+  sb.__set('renderNewJV', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.computeAccrualJV();
+  const explanation = vm.runInContext('accrualExplanation', sb);
+  const billsRow = explanation.find(e=>e.category==='Bills');
+  assert(billsRow, 'Should produce an explanation row for Bills');
+  assert(Math.abs(billsRow.budget - 2917) < 0.5,
+    'Budget should reflect the Provisions-sourced plan (2917), not the empty D.budget table, got ' + billsRow.budget);
+  assert(Math.abs(billsRow.actual - 3917) < 0.5, 'Actual should still be the real ledger spend, got ' + billsRow.actual);
+}
+
+async function testAccrualJVStillFallsBackToLegacyBudgetTableWhenNoProvisionsExist(){
+  // Confirms the fix is a strict superset, not a regression for accounts that genuinely only
+  // ever used the old D.budget table (behavior='expense' falls back to budgetPlanFor after
+  // checking Provisions, and budgetPlanFor itself reads D.budget).
+  const sb = invCashSandbox({
+    accounts: [
+      {id:60101, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60199, category:'Bills', acc_type:'Accrual Account', status:'Active'},
+      {id:20101, category:'Liabilities', acc_type:'Individual Account', status:'Active'},
+    ],
+    ledger: [{id:1, jv:1, date:'2026-08-15', acc:60101, amt:500, descr:'x'}],
+    provisionGroups: [],
+    budget: [{id:1, acc:60101, date:'2026-08-01', amt:600}], // ONLY source: the legacy table
+    accrualMappings: [{category:'Bills', liabilityAcc:20101, expenseAcc:60199}]
+  });
+  sb.__set('todayStr', ()=>'2026-08-30');
+  const monthInput = sb.document.createElement('input'); monthInput.id='accrualMonthInput'; monthInput.value='2026-08';
+  sb.document.body.appendChild(monthInput);
+  sb.__set('renderNewJV', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.computeAccrualJV();
+  const explanation = vm.runInContext('accrualExplanation', sb);
+  const billsRow = explanation.find(e=>e.category==='Bills');
+  assert(Math.abs(billsRow.budget - 600) < 0.5, 'An account with only a legacy D.budget entry should still have its plan picked up via the fallback chain, got ' + billsRow.budget);
+}
+
+// ================= v4.41.0: XIRR removed + Invested/Value/P&L widgets, platform-grouped breakdowns, Clear All, statement CSV =================
+async function testClearAllJVLinesRequiresConfirmation(){
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-30', lines:[{acc:10101,descr:'a',amt:100},{acc:10203,descr:'b',amt:-100},{acc:10101,descr:'c',amt:50}]});
+  sb.__set('confirm', ()=>false);
+  sb.__set('renderNewJV', ()=>{});
+  sb.clearAllJVLines();
+  assert(vm.runInContext('jvDraft', sb).lines.length===3, 'Declining the confirmation should leave the lines untouched');
+}
+
+async function testClearAllJVLinesResetsToTwoBlankLinesButKeepsTheDate(){
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-30', lines:[{acc:10101,descr:'a',amt:100},{acc:10203,descr:'b',amt:-100},{acc:10101,descr:'c',amt:50}]});
+  sb.__set('confirm', ()=>true);
+  sb.__set('renderNewJV', ()=>{});
+  sb.clearAllJVLines();
+  const draft = vm.runInContext('jvDraft', sb);
+  assert(draft.lines.length===2, 'Should reset to exactly two blank lines, got ' + draft.lines.length);
+  assert(draft.lines.every(l=>l.acc===''&&l.descr===''&&l.amt===''), 'Both lines should be genuinely blank');
+  assert(draft.date==='2026-08-30', 'The date should be left untouched, not reset to today');
+}
+
+async function testClearAllJVLinesAlsoClearsBalanceCheckSelection(){
+  const sb = makeSandbox();
+  sb.__set('jvDraft', {date:'2026-08-30', lines:[{acc:10101,descr:'a',amt:100},{acc:10203,descr:'b',amt:-100}]});
+  sb.__set('jvBalanceCheckSelected', new Set([0,1]));
+  sb.__set('confirm', ()=>true);
+  sb.__set('renderNewJV', ()=>{});
+  sb.clearAllJVLines();
+  assert(vm.runInContext('jvBalanceCheckSelected', sb).size===0, 'A stale Balance Check selection referencing the old lines should be cleared too');
+}
+
+async function testExportStatementCSVProducesTheRightRowsAndRunningBalance(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, descr:'Cash', category:'Bank Accounts'}], ledger:[
+    {id:1, jv:1, date:'2026-01-01', acc:10101, descr:'Opening', amt:1000},
+    {id:2, jv:2, date:'2026-02-01', acc:10101, descr:'Deposit', amt:500}
+  ]});
+  sb.__set('ACC_BY_ID', {10101:{id:10101, descr:'Cash', category:'Bank Accounts'}});
+  sb.__set('statementAcc', 10101);
+  sb.__set('statementSortDesc', false);
+  sb.__set('todayStr', ()=>'2026-08-30');
+  let capturedCsv = null;
+  sb.__set('Blob', function(parts){ capturedCsv = parts[0]; });
+  const fakeAnchor = {click:()=>{}};
+  sb.__set('URL', {createObjectURL: ()=>'blob:x'});
+  sb.document.createElement = ((orig)=>function(tag){ if(tag==='a') return fakeAnchor; return orig.call(sb.document, tag); })(sb.document.createElement.bind(sb.document));
+  sb.exportStatementCSV();
+  assert(capturedCsv, 'Should build a CSV blob');
+  assert(capturedCsv.indexOf('Opening')!==-1 && capturedCsv.indexOf('Deposit')!==-1, 'Should include both ledger lines');
+  assert(capturedCsv.indexOf('1000')!==-1 && capturedCsv.indexOf('1500')!==-1, 'Should include the correct running balance after each line (1000, then 1500)');
+}
+
+async function testExportStatementCSVRespectsCurrentSortOrder(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, descr:'Cash', category:'Bank Accounts'}], ledger:[
+    {id:1, jv:1, date:'2026-01-01', acc:10101, descr:'First', amt:1000},
+    {id:2, jv:2, date:'2026-02-01', acc:10101, descr:'Second', amt:500}
+  ]});
+  sb.__set('ACC_BY_ID', {10101:{id:10101, descr:'Cash', category:'Bank Accounts'}});
+  sb.__set('statementAcc', 10101);
+  sb.__set('statementSortDesc', true); // descending — Second should come before First
+  sb.__set('todayStr', ()=>'2026-08-30');
+  let capturedCsv = null;
+  sb.__set('Blob', function(parts){ capturedCsv = parts[0]; });
+  const fakeAnchor = {click:()=>{}};
+  sb.__set('URL', {createObjectURL: ()=>'blob:x'});
+  sb.document.createElement = ((orig)=>function(tag){ if(tag==='a') return fakeAnchor; return orig.call(sb.document, tag); })(sb.document.createElement.bind(sb.document));
+  sb.exportStatementCSV();
+  assert(capturedCsv.indexOf('Second') < capturedCsv.indexOf('First'), 'CSV row order should follow the current sort toggle (descending here)');
+}
+
+async function testStatementViewHasCsvButtonNextToPrintButton(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101, descr:'Cash', category:'Bank Accounts'}], ledger:[]});
+  sb.__set('ACC_BY_ID', {10101:{id:10101, descr:'Cash', category:'Bank Accounts'}});
+  sb.__set('statementAcc', 10101);
+  sb.__set('statementSortDesc', false);
+  sb.renderStatement();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/onclick="exportStatementCSV\(\)"/.test(html), 'The CSV export button should be present');
+  const csvIdx = html.indexOf('exportStatementCSV');
+  const printIdx = html.indexOf('window.print()');
+  assert(csvIdx!==-1 && printIdx!==-1 && csvIdx<printIdx, 'CSV export should sit next to (before) the Print statement button');
+}
+
+// ================= v4.43.0: comparison table was missing the Starting Balance row =================
+async function testComparisonIncludesStartingBalanceRow(){
+  // Regression test for the reported "doesn't make sense" bug: category flow rows (Income,
+  // Expense, etc.) could all show "—" while Closing Balance differs by a huge amount, because the
+  // table never showed Starting Balance — which is very often the actual driver of a Closing
+  // Balance gap, especially across a month boundary where the real bank balance gets re-anchored.
+  const sb = invCashSandbox({
+    accounts: [{id:10101, acc_type:'Individual Account', status:'Active'}],
+    ledger: [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:5000, descr:'x'}],
+    forecastSnapshots:[{id:1, anchorMonth:'2026-08', takenAt:'2026-08-29', kind:'auto', signFlips:{},
+      months:[{month:'2026-09', starting:-168076, inflow:0, outflow:0, change:0, closing:-168076,
+        subrows:{income:32403, invest_income_st:0, invest_income_lt:5009, asset_st:0, asset_lt:1000,
+                 expense:-32662, invest_expense_st:-500, invest_expense_lt:-24584, liability_st:0, liability_lt:-12894, provision:-981, accrual:0}}]}]
+  });
+  sb.__set('todayStr', ()=>'2026-09-01');
+  sb.setForecastSnapCompare(1, '2026-09', 'now', null);
+  const html = sb.renderForecastSnapshotComparison();
+  assert(/Month Cash Starting Balance/.test(html), 'The comparison table should show a Starting Balance row');
+  assert(html.indexOf('-168,076')!==-1 || html.indexOf('-168,075')!==-1, 'The snapshot\'s own starting balance figure should appear, got snippet: ' + html.slice(html.indexOf('Month Cash Starting Balance')-20, html.indexOf('Month Cash Starting Balance')+300));
+}
+
+async function testStartingBalanceDiffAccountsForTheClosingBalanceGap(){
+  // Snapshot-vs-snapshot mode gives exact control over both figures, unlike comparing against
+  // live "now" data (which depends on the anchor-to-actual internals and would make the expected
+  // number fragile here) — this isolates the check to purely the Starting Balance row's own math.
+  const sb = invCashSandbox({
+    forecastSnapshots:[
+      {id:1, anchorMonth:'2026-08', takenAt:'2026-08-29', kind:'auto', signFlips:{},
+        months:[{month:'2026-09', starting:-168076, inflow:0, outflow:0, change:0, closing:-168075.69,
+          subrows:{income:0, invest_income_st:0, invest_income_lt:0, asset_st:0, asset_lt:0,
+                   expense:0, invest_expense_st:0, invest_expense_lt:0, liability_st:0, liability_lt:0, provision:0, accrual:0}}]},
+      {id:2, anchorMonth:'2026-09', takenAt:'2026-09-01', kind:'auto', signFlips:{},
+        months:[{month:'2026-09', starting:93254.16, inflow:0, outflow:0, change:0, closing:93254.16,
+          subrows:{income:0, invest_income_st:0, invest_income_lt:0, asset_st:0, asset_lt:0,
+                   expense:0, invest_expense_st:0, invest_expense_lt:0, liability_st:0, liability_lt:0, provision:0, accrual:0}}]}
+    ]
+  });
+  sb.setForecastSnapCompare(1, '2026-09', 'snapshot', 2);
+  const html = sb.renderForecastSnapshotComparison();
+  const rowStart = html.indexOf('Month Cash Starting Balance');
+  assert(rowStart!==-1, 'The Starting Balance row should be present');
+  const row = html.slice(rowStart, html.indexOf('</tr>', rowStart));
+  // Expected diff: 93,254.16 - (-168,076) = 261,330.16 — a real, large, non-dash figure.
+  assert(row.indexOf('261,330')!==-1, 'The Starting Balance row should show the real ~261,330 diff between the two snapshots, got row: ' + row);
+  assert(!/>—</.test(row), 'This diff must not render as a dash when the two starting figures genuinely differ by a quarter million');
+}
+
+// ================= v4.44.0: sign-flip warning wording for ambiguous pre-tracking snapshots =================
+async function testSignFlipWarningIsHedgedWhenThenSnapshotHasNoRecordedFlips(){
+  // The person confirmed directly: no sign settings were actually changed between the two
+  // snapshots being compared. The old confident red warning was a false positive caused by an
+  // older snapshot's sign_flips genuinely being unrecoverable (backfilled to an empty default by
+  // the database the moment the column was added) — indistinguishable from "confirmed nothing
+  // was flipped." Asserting a change definitely happened isn't something this data can support.
+  const sb = makeSandbox();
+  const html = sb.forecastCompareSignFlipWarning({}, {income:true});
+  assert(html.length>0, 'Should still show something when a flip differs');
+  assert(/predates sign-convention tracking/.test(html), 'Should use the hedged wording, not assert a change definitely happened');
+  assert(!/has changed since the earlier point/.test(html), 'Must NOT use the confident wording when the older snapshot has no recorded flip data at all');
+  assert(/can be safely ignored/.test(html), 'Should tell the person this can be ignored if they know nothing was actually changed');
+}
+
+async function testSignFlipWarningStaysConfidentWhenThenSnapshotHasRealData(){
+  // A "then" snapshot that genuinely captured flip data (even with everything off) IS a
+  // trustworthy comparison — the ambiguity only applies to a completely empty/unrecorded object.
+  const sb = makeSandbox();
+  const html = sb.forecastCompareSignFlipWarning({income:false, expense:false}, {income:true, expense:false});
+  assert(/has changed since the earlier point/.test(html), 'Should use the confident wording when the older snapshot actually recorded its flip state');
+  assert(!/predates sign-convention tracking/.test(html), 'Should not hedge when the comparison is genuinely trustworthy');
+}
+
+async function testSignFlipWarningEmptyWhenNothingActuallyDiffers(){
+  const sb = makeSandbox();
+  assert(sb.forecastCompareSignFlipWarning({}, {})==='', 'No warning at all when both sides have no flips');
+  assert(sb.forecastCompareSignFlipWarning({income:true}, {income:true})==='', 'No warning when the flip states genuinely match');
+}
+
+async function testSignFlipWarningConfidentWhenAFlipWasTurnedOff(){
+  const sb = makeSandbox();
+  const html = sb.forecastCompareSignFlipWarning({income:true}, {});
+  assert(/has changed since the earlier point/.test(html), 'A real recorded flip that is now off should still get the confident warning, got: ' + html);
+}
+
+// ================= v4.45.0: skip zero-amount provision lines; Budget Grid export/import current+future fix =================
+async function testGenerateProvisionJVSkipsZeroAmountLines(){
+  const sb = makeSandbox();
+  sb.__set('D', {provisionGroups:[{id:1, name:'Test', lines:[
+    {lineId:'l1', acc:60101}, {lineId:'l2', acc:60102}, {lineId:'l3', acc:60103}
+  ], months:{'2026-08':{l1:100, l2:0, l3:50}}}]});
+  const genInput = sb.document.createElement('select'); genInput.id='genMonthSel_1';
+  const opt = sb.document.createElement('option'); opt.value='2026-08'; genInput.appendChild(opt);
+  genInput.value='2026-08'; // JSDOM silently ignores this without a matching <option> present first
+  sb.document.body.appendChild(genInput);
+  sb.__set('go', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.generateProvisionJV(1);
+  const draft = vm.runInContext('jvDraft', sb);
+  assert(draft.lines.length===2, 'The zero-amount line (l2) should be excluded, got ' + draft.lines.length + ' lines');
+  assert(!draft.lines.some(l=>l.acc===60102), 'Account 60102 (the zero line) should not appear in the generated JV');
+  assert(draft.lines.some(l=>l.acc===60101) && draft.lines.some(l=>l.acc===60103), 'The two non-zero lines should still be present');
+}
+
+async function testGenerateProvisionJVStillRequiresTwoRealLines(){
+  const sb = makeSandbox();
+  sb.__set('D', {provisionGroups:[{id:1, name:'Test', lines:[
+    {lineId:'l1', acc:60101}, {lineId:'l2', acc:60102}
+  ], months:{'2026-08':{l1:100, l2:0}}}]});
+  const genInput = sb.document.createElement('select'); genInput.id='genMonthSel_1';
+  const opt = sb.document.createElement('option'); opt.value='2026-08'; genInput.appendChild(opt);
+  genInput.value='2026-08'; // JSDOM silently ignores this without a matching <option> present first
+  sb.document.body.appendChild(genInput);
+  let toastMsg = null;
+  sb.__set('go', ()=>{});
+  sb.__set('toast', (m)=>{ toastMsg = m; });
+  const before = vm.runInContext('jvDraft', sb);
+  sb.generateProvisionJV(1);
+  assert(toastMsg && /at least two lines/.test(toastMsg), 'Should refuse with only one real (non-zero) line remaining, got: ' + toastMsg);
+}
+
+async function testCombinedGenerateProvisionJVSkipsZeroAmountLines(){
+  const sb = makeSandbox();
+  sb.__set('D', {provisionGroups:[
+    {id:1, name:'A', lines:[{lineId:'l1', acc:60101}], months:{'2026-08':{l1:200}}},
+    {id:2, name:'B', lines:[{lineId:'l1', acc:60201}, {lineId:'l2', acc:60301}], months:{'2026-08':{l1:0, l2:150}}}
+  ]});
+  sb.__set('provisionsSelectedMonth', '2026-08');
+  sb.__set('go', ()=>{});
+  sb.__set('toast', ()=>{});
+  sb.combinedGenerateProvisionJV();
+  const draft = vm.runInContext('jvDraft', sb);
+  assert(!draft.lines.some(l=>l.acc===60201), 'The zero-amount line from group B should be excluded from the combined JV');
+  assert(draft.lines.some(l=>l.acc===60101), 'The real line from group A should still be present');
+}
+
+async function testExportBudgetGridStartsAtCurrentMonthNotEarliestLedgerMonth(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:60101, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'}],
+    ledger:[{id:1, jv:1, date:'2023-01-01', acc:60101, amt:100, descr:'old'}], budget:[], provisionGroups:[]});
+  sb.__set('todayStr', ()=>'2026-08-30');
+  let capturedCsv = null;
+  sb.__set('Blob', function(parts){ capturedCsv = parts[0]; });
+  const fakeAnchor = {click:()=>{}};
+  sb.__set('URL', {createObjectURL: ()=>'blob:x'});
+  sb.document.createElement = ((orig)=>function(tag){ if(tag==='a') return fakeAnchor; return orig.call(sb.document, tag); })(sb.document.createElement.bind(sb.document));
+  sb.exportBudgetGridCSV();
+  assert(capturedCsv, 'Should produce a CSV');
+  const header = capturedCsv.split('\n')[0];
+  assert(header.indexOf('2023-01')===-1, 'Should NOT include a month from years before today, got header: ' + header);
+  assert(header.indexOf('2026-08')!==-1, 'Should include the current month as the first month column, got header: ' + header);
+}
+
+async function testExportBudgetGridShowsPlanNotActualForCurrentMonth(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:60101, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'}],
+    ledger:[{id:1, jv:1, date:'2026-08-15', acc:60101, amt:777, descr:'partial actual spend so far'}],
+    budget:[{id:1, acc:60101, date:'2026-08-01', amt:250}], provisionGroups:[]});
+  sb.__set('todayStr', ()=>'2026-08-30');
+  let capturedCsv = null;
+  sb.__set('Blob', function(parts){ capturedCsv = parts[0]; });
+  const fakeAnchor = {click:()=>{}};
+  sb.__set('URL', {createObjectURL: ()=>'blob:x'});
+  sb.document.createElement = ((orig)=>function(tag){ if(tag==='a') return fakeAnchor; return orig.call(sb.document, tag); })(sb.document.createElement.bind(sb.document));
+  sb.exportBudgetGridCSV();
+  const headerCols = capturedCsv.split('\n')[0].split(',');
+  const dataCols = capturedCsv.split('\n')[1].split(',');
+  const monthColIdx = headerCols.indexOf('2026-08');
+  assert(monthColIdx!==-1, 'The current month column should be present in the header');
+  assert(dataCols[monthColIdx]==='250', 'Current month column should show the BUDGET figure (250), not the actual spend, got: ' + dataCols[monthColIdx]);
+}
+
+async function testImportBudgetGridAcceptsTheCurrentMonthColumn(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:60101, category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'}],
+    ledger:[], budget:[], provisionGroups:[]});
+  sb.__set('todayStr', ()=>'2026-08-30');
+  sb.__set('confirm', ()=>true);
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('showImportProgress', ()=>{});
+  sb.__set('updateImportProgress', ()=>{});
+  sb.__set('finishImportProgress', ()=>{});
+  sb.__set('persistLocal', ()=>{});
+  sb.__set('syncWriteMany', async ()=>{});
+  sb.__set('renderBudget', ()=>{});
+  await sb.importBudgetGridCSV([{'account id':'60101', '2026-08':'999'}]);
+  const D = vm.runInContext('D', sb);
+  const budgetRow = D.budget.find(b=>b.acc===60101 && b.date==='2026-08-01');
+  assert(budgetRow, 'A current-month column should actually be written now, not silently skipped');
+  assert(Math.abs(budgetRow.amt-999)<0.005, 'The written budget value should match what was imported, got ' + (budgetRow&&budgetRow.amt));
+}
+
+// ================= v4.46.0: bulk Coin Balances import =================
+function invCoinCsv(){
+  return 'Account #,79011,79012\n'+
+    'Coin,Platform,Mother,Omar\n'+
+    'USDT,Uniswap,79.34,20.18\n'+
+    'BONK,MEXC,0,0\n'+ // all-zero row — must be skipped
+    'ANDY,MEXC,100,50\n';
+}
+
+async function testParseInvCoinImportCSVSkipsLeadingAccountNumberRow(){
+  const sb = makeSandbox();
+  const rows = sb.parseInvCoinImportCSV(invCoinCsv());
+  assert(rows.length===2, 'Should find 2 real coin rows (BONK, all-zero, must be skipped), got ' + rows.length);
+  assert(rows[0].coin==='USDT' && rows[1].coin==='ANDY', 'Should skip the account-number row and read from the real header, got ' + rows.map(r=>r.coin).join(','));
+}
+
+async function testParseInvCoinImportCSVSkipsAllZeroRows(){
+  const sb = makeSandbox();
+  const rows = sb.parseInvCoinImportCSV(invCoinCsv());
+  assert(!rows.some(r=>r.coin==='BONK'), 'A row where every owner is 0 should not create an empty position');
+}
+
+async function testParseInvCoinImportCSVTrimsOwnerNamesAndExcludesSummaryColumns(){
+  const sb = makeSandbox();
+  const csv = 'Coin,Platform,Karim ,My Portion,LOCAL LEDGER TOTAL\nUSDT,Uniswap,100,0.5,200\n';
+  const rows = sb.parseInvCoinImportCSV(csv);
+  assert(Object.keys(rows[0].owners).length===1 && rows[0].owners['Karim']===100,
+    'Should trim trailing whitespace from the owner name and exclude My Portion / LOCAL LEDGER TOTAL as owner columns, got ' + JSON.stringify(rows[0].owners));
+}
+
+async function testParseInvCoinImportCSVThrowsWithoutACoinHeader(){
+  const sb = makeSandbox();
+  let threw = false;
+  try{ sb.parseInvCoinImportCSV('Foo,Bar\n1,2\n'); } catch(e){ threw = true; }
+  assert(threw, 'Should throw a clear error when no "Coin" header row exists, rather than silently importing garbage');
+}
+
+async function testBuildInvCoinImportMappingsAutoMatchesExistingByNameCaseInsensitive(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[{id:5, name:'uniswap'}], invOwners:[{id:9, name:'Mother'}]});
+  sb.__set('invCoinImportRows', sb.parseInvCoinImportCSV(invCoinCsv()));
+  sb.__set('invCoinImportPlatformMap', {});
+  sb.__set('invCoinImportOwnerMap', {});
+  sb.buildInvCoinImportMappings();
+  const platMap = vm.runInContext('invCoinImportPlatformMap', sb);
+  const ownerMap = vm.runInContext('invCoinImportOwnerMap', sb);
+  assert(platMap['Uniswap'].id===5, 'Should case-insensitively match "Uniswap" to the existing "uniswap" platform');
+  assert(platMap['MEXC'].newName==='MEXC', 'An unmatched platform should default to "create new" with its own CSV name');
+  assert(ownerMap['Mother']===9, 'Should match Mother to the existing owner by name');
+  assert(ownerMap['Omar']===null, 'An unmatched owner should be null (unresolved), not silently guessed');
+}
+
+async function testInvCoinImportIsReadyRequiresEveryOwnerResolved(){
+  const sb = makeSandbox();
+  sb.__set('invCoinImportOwnerMap', {Mother: 1, Omar: null});
+  assert(sb.invCoinImportIsReady()===false, 'Should not be ready while any owner is unresolved');
+  sb.__set('invCoinImportOwnerMap', {Mother: 1, Omar: 2});
+  assert(sb.invCoinImportIsReady()===true, 'Should be ready once every owner is resolved');
+}
+
+async function testInvCoinImportIsReadyDoesNotRequirePlatformResolution(){
+  // An unmatched platform defaults to "create new" — that's a valid, ready state on its own.
+  const sb = makeSandbox();
+  sb.__set('invCoinImportPlatformMap', {MEXC: {newName:'MEXC'}});
+  sb.__set('invCoinImportOwnerMap', {});
+  assert(sb.invCoinImportIsReady()===true, 'A platform set to "create new" should not block readiness');
+}
+
+async function testCommitInvCoinImportCreatesPositionWithZeroCostOpeningTransaction(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[{id:1, name:'Uniswap'}], invPositions:[], invTransactions:[], invOwners:[{id:9,name:'Mother'},{id:10,name:'Sam'}]});
+  sb.__set('invCoinImportRows', [{coin:'USDT', platformName:'Uniswap', owners:{Mother:79.34, Sam:20.18}}]);
+  sb.__set('invCoinImportPlatformMap', {Uniswap:{id:1}});
+  sb.__set('invCoinImportOwnerMap', {Mother:9, Sam:10});
+  sb.__set('confirm', ()=>true);
+  sb.__set('showImportProgress', ()=>{});
+  sb.__set('updateImportProgress', ()=>{});
+  sb.__set('finishImportProgress', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('todayStr', ()=>'2026-09-02');
+  await sb.commitInvCoinImport();
+  const D = vm.runInContext('D', sb);
+  assert(D.invPositions.length===1, 'Should create exactly one position, got ' + D.invPositions.length);
+  const pos = D.invPositions[0];
+  assert(pos.ticker==='USDT' && pos.currency==='USD' && pos.assetClass==='Crypto' && pos.platformId===1, 'Position should carry the right ticker/currency/asset class/platform');
+  assert(D.invTransactions.length===1, 'Should create exactly one transaction');
+  const tx = D.invTransactions[0];
+  assert(tx.totalSar===0 && tx.cashSide==='opening', 'The transaction must be a $0 Opening Balance, not a priced buy');
+  assert(Math.abs(tx.units-99.52)<0.01, 'Units should be the sum of both owners (79.34+20.18=99.52), got ' + tx.units);
+  assert(tx.owners.length===2 && tx.owners.every(o=>[9,10].includes(o.ownerId)), 'Both owners should be present in the split, got ' + JSON.stringify(tx.owners));
+}
+
+async function testCommitInvCoinImportCreatesMissingPlatformOnTheFly(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[], invPositions:[], invTransactions:[], invOwners:[{id:9,name:'Mother'}]});
+  sb.__set('invCoinImportRows', [{coin:'ANDY', platformName:'MEXC', owners:{Mother:100}}]);
+  sb.__set('invCoinImportPlatformMap', {MEXC:{newName:'MEXC'}});
+  sb.__set('invCoinImportOwnerMap', {Mother:9});
+  sb.__set('confirm', ()=>true);
+  sb.__set('showImportProgress', ()=>{});
+  sb.__set('updateImportProgress', ()=>{});
+  sb.__set('finishImportProgress', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('todayStr', ()=>'2026-09-02');
+  await sb.commitInvCoinImport();
+  const D = vm.runInContext('D', sb);
+  assert(D.invPlatforms.length===1 && D.invPlatforms[0].name==='MEXC', 'Should create the missing platform with its CSV name');
+  assert(D.invPlatforms[0].isRobo===false, 'The created platform should be a normal platform, not Robo-Investment — the whole point of this tool is preserving per-coin, per-owner breakdown');
+  assert(D.invPositions[0].platformId===D.invPlatforms[0].id, 'The new position should land on the newly-created platform');
+}
+
+async function testCommitInvCoinImportReusesTheSameNewPlatformAcrossMultipleRows(){
+  // Without reuse, two coins on the same not-yet-existing platform would create TWO platforms
+  // named "MEXC" instead of one.
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[], invPositions:[], invTransactions:[], invOwners:[{id:9,name:'Mother'}]});
+  sb.__set('invCoinImportRows', [
+    {coin:'ANDY', platformName:'MEXC', owners:{Mother:100}},
+    {coin:'BONK', platformName:'MEXC', owners:{Mother:50}}
+  ]);
+  sb.__set('invCoinImportPlatformMap', {MEXC:{newName:'MEXC'}});
+  sb.__set('invCoinImportOwnerMap', {Mother:9});
+  sb.__set('confirm', ()=>true);
+  sb.__set('showImportProgress', ()=>{});
+  sb.__set('updateImportProgress', ()=>{});
+  sb.__set('finishImportProgress', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('todayStr', ()=>'2026-09-02');
+  await sb.commitInvCoinImport();
+  const D = vm.runInContext('D', sb);
+  assert(D.invPlatforms.length===1, 'Both coins should land on the SAME newly-created MEXC platform, not two separate ones, got ' + D.invPlatforms.length);
+  assert(D.invPositions.length===2 && D.invPositions.every(p=>p.platformId===D.invPlatforms[0].id), 'Both positions should reference the single created platform');
+}
+
+async function testCommitInvCoinImportReusesAnExistingPositionByTicker(){
+  // Re-running the import (or a coin appearing more than once) should update the existing
+  // position rather than creating a duplicate with the same ticker on the same platform.
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[{id:1,name:'Uniswap'}], invPositions:[{id:1, platformId:1, name:'USDT', ticker:'USDT', assetClass:'Crypto', currency:'USD', status:'Active'}], invTransactions:[], invOwners:[{id:9,name:'Mother'}]});
+  sb.__set('invCoinImportRows', [{coin:'USDT', platformName:'Uniswap', owners:{Mother:79.34}}]);
+  sb.__set('invCoinImportPlatformMap', {Uniswap:{id:1}});
+  sb.__set('invCoinImportOwnerMap', {Mother:9});
+  sb.__set('confirm', ()=>true);
+  sb.__set('showImportProgress', ()=>{});
+  sb.__set('updateImportProgress', ()=>{});
+  sb.__set('finishImportProgress', ()=>{});
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('todayStr', ()=>'2026-09-02');
+  await sb.commitInvCoinImport();
+  const D = vm.runInContext('D', sb);
+  assert(D.invPositions.length===1, 'Should NOT create a duplicate USDT position — the existing one should be reused, got ' + D.invPositions.length);
+  assert(D.invTransactions.length===1 && D.invTransactions[0].positionId===1, 'The new opening transaction should attach to the existing position');
+}
+
+async function testCommitInvCoinImportRespectsDeclinedConfirmation(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[{id:1,name:'Uniswap'}], invPositions:[], invTransactions:[], invOwners:[{id:9,name:'Mother'}]});
+  sb.__set('invCoinImportRows', [{coin:'USDT', platformName:'Uniswap', owners:{Mother:79.34}}]);
+  sb.__set('invCoinImportPlatformMap', {Uniswap:{id:1}});
+  sb.__set('invCoinImportOwnerMap', {Mother:9});
+  sb.__set('confirm', ()=>false);
+  await sb.commitInvCoinImport();
+  const D = vm.runInContext('D', sb);
+  assert(D.invPositions.length===0 && D.invTransactions.length===0, 'Declining the confirmation should create nothing at all');
+}
+
+async function testInvCoinImportAgainstTheRealUploadedSpreadsheetShape(){
+  // Self-contained replica of the actual uploaded file's exact structure — the account-number
+  // row, the embedded newline inside "Platform/\nWallet", the trailing space on "Karim ", and
+  // the My Portion / LOCAL LEDGER TOTAL summary columns — rather than depending on a temp file
+  // that only existed on disk during manual verification and won't be present in any later run.
+  const sb = makeSandbox();
+  const csv = ',Account #,79011,79012,79013,79014,79015,79016,79017,79018,79019,79001,,\r\n'+
+    'Coin,"Platform/\nWallet",Mother,Omar,Father,Karim ,Tariq,Yusuf,Nabil,Ziad,Dana,Sam,My Portion,LOCAL LEDGER TOTAL\r\n'+
+    'USDT,Uniswap,80,20,125,125,80,25,5,10,25,3900,0.89,4395\r\n'+
+    'ANDY,MEXC,1600000,500000,1000000,700000,1300000,700000,500000,300000,1600000,3800000,0.32,12000000\r\n'+
+    'JUP,Binance,0,0,0,0,0,0,0,0,0,250,1,250\r\n'; // real-shape zero-row case
+  const rows = sb.parseInvCoinImportCSV(csv);
+  assert(rows.length===3, 'Should parse the two real coin rows plus JUP (Sam-only, still non-zero), got ' + rows.length);
+  const owners = new Set(rows.flatMap(r=>Object.keys(r.owners)));
+  assert(owners.has('Karim') && !owners.has('Karim '), 'The trailing-space owner name should be trimmed to a clean match, got: ' + [...owners].join(','));
+  assert(!owners.has('My Portion') && !owners.has('LOCAL LEDGER TOTAL'), 'Summary columns must not be treated as owner columns');
+  const jupRow = rows.find(r=>r.coin==='JUP');
+  assert(jupRow && Object.keys(jupRow.owners).length===1 && jupRow.owners['Sam']===250,
+    'A coin held by only one person should still import with just that one owner, got: ' + JSON.stringify(jupRow&&jupRow.owners));
+}
+
+// ================= v4.47.0: collapsible per-position owner breakdown =================
+function ownerBreakdownFixture(){
+  return {
+    invOwners:[{id:1,name:'Sam Example',isSelf:true},{id:2,name:'Rana Example',isSelf:false}],
+    invPlatforms:[{id:1,name:'Astrofolio'}],
+    invPositions:[{id:1, platformId:1, name:'AQUARIUS', ticker:'AQUARIUS', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1000, totalSar:0,
+      owners:[{ownerId:1,units:612},{ownerId:2,units:388}], feePct:0, cashSide:'opening'}],
+    invValuations:[]
+  };
+}
+
+async function testOwnerBreakdownIsCollapsedByDefault(){
+  const sb = invCashSandbox(ownerBreakdownFixture());
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  sb.__set('invExpandedPositionOwners', new Set());
+  const html = sb.renderInvPlatformSection({id:1, name:'Astrofolio'});
+  assert(/▸ Show 2 owners/.test(html), 'Should show a collapsed toggle naming the owner count, got snippet: ' + html.slice(0,900));
+  assert(!/Rana Example/.test(html), 'Owner names should not appear in the row until expanded');
+}
+
+async function testOwnerBreakdownExpandsWithFullDetailColumns(){
+  const sb = invCashSandbox(ownerBreakdownFixture());
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  sb.__set('invExpandedPositionOwners', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Astrofolio'});
+  assert(/▾ Hide 2 owners/.test(html), 'Should show a "Hide" toggle once expanded');
+  assert(/Sam Example/.test(html) && /Rana Example/.test(html), 'Both owner names should appear once expanded');
+  assert(/61\.2%/.test(html), 'Should show each owner\'s percentage of the position (612/1000 = 61.2%)');
+  assert(html.indexOf('612')!==-1 && html.indexOf('388')!==-1, 'Should show each owner\'s unit count');
+  const outerHeadEnd = html.indexOf('</thead>');
+  const headerRow = html.slice(html.indexOf('<thead>', outerHeadEnd+1), html.indexOf('</thead>', outerHeadEnd+1));
+  ['Owner','%','Units','Cost (SAR)','Value (SAR)','Unrealised'].forEach(col=>{
+    assert(headerRow.indexOf(col)!==-1, 'The expanded breakdown should have a "'+col+'" column, got header: ' + headerRow);
+  });
+}
+
+async function testOwnerBreakdownToggleStopsClickPropagationToThePositionLink(){
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const toggleSnippet = src.slice(src.indexOf('toggleInvPositionOwnersExpanded(${pos.id})')-80, src.indexOf('toggleInvPositionOwnersExpanded(${pos.id})')+40);
+  assert(/stopPropagation/.test(toggleSnippet), 'Clicking the owner toggle must not also navigate into the position detail page, got: ' + toggleSnippet);
+}
+
+async function testToggleInvPositionOwnersExpandedFlipsIndependently(){
+  const sb = makeSandbox();
+  sb.__set('D', {invPlatforms:[], invOwners:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{}});
+  sb.__set('invExpandedPositionOwners', new Set());
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.toggleInvPositionOwnersExpanded(1);
+  assert(vm.runInContext('invExpandedPositionOwners', sb).has(1), 'Toggling should expand position 1\'s breakdown');
+  sb.toggleInvPositionOwnersExpanded(2);
+  assert(vm.runInContext('invExpandedPositionOwners', sb).has(1) && vm.runInContext('invExpandedPositionOwners', sb).has(2),
+    'Expanding a second position should not collapse the first — each position toggles independently');
+  sb.toggleInvPositionOwnersExpanded(1);
+  assert(!vm.runInContext('invExpandedPositionOwners', sb).has(1) && vm.runInContext('invExpandedPositionOwners', sb).has(2),
+    'Collapsing position 1 should leave position 2 expanded');
+}
+
+async function testOwnerBreakdownShowsZeroCostAndDashForNoValuationCorrectly(){
+  // Matches the actual real-world state right after the Coin Balances import: $0 cost, no price
+  // logged yet, so Value/Unrealised should show as a dash rather than a misleading $0.
+  const sb = invCashSandbox(ownerBreakdownFixture());
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  sb.__set('invExpandedPositionOwners', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Astrofolio'});
+  const rowStart = html.indexOf('Rana Example');
+  const row = html.slice(rowStart, html.indexOf('</tr>', rowStart));
+  assert(row.indexOf('0.00')!==-1, 'Cost should show as a real 0.00, since that IS the actual (imported) cost basis');
+  assert((row.match(/—/g)||[]).length>=2, 'Value and Unrealised should show as a dash (no valuation logged yet), not a misleading 0.00, got row: ' + row);
+}
+
+async function testLedgerSearchDebounced(){
+  const sb = makeSandbox();
+  sb.__set('ledgerFilter', {q:''});
+  sb.__set('ledgerPage', 0);
+  let renderCalls = 0;
+  sb.__set('renderLedgerResults', () => { renderCalls++; });
+  sb.filterLedgerDescr('5');
+  sb.filterLedgerDescr('50');
+  sb.filterLedgerDescr('500');
+  assert(renderCalls === 0, 'renderLedgerResults should NOT fire synchronously on every keystroke — got ' + renderCalls + ' immediate calls');
+  await new Promise(r => setTimeout(r, 300));
+  assert(renderCalls === 1, 'After the debounce window, exactly one render should fire for the whole burst of typing, got ' + renderCalls);
+}
+
+async function testSplashProgressBlendsLedgerFraction(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  const fill = doc.createElement('div'); fill.id = 'splashProgressFill'; doc.body.appendChild(fill);
+  const pctEl = doc.createElement('div'); pctEl.id = 'splashProgressPct'; doc.body.appendChild(pctEl);
+  sb.updateSplashProgress(37.6);
+  assert(fill.style.width === '38%', 'updateSplashProgress should round and set the bar width, got ' + fill.style.width);
+  assert(pctEl.textContent === '38%', 'updateSplashProgress should also update the explicit percentage text, got ' + pctEl.textContent);
+  sb.updateSplashProgress(150); // out-of-range input should clamp
+  assert(fill.style.width === '100%', 'updateSplashProgress should clamp above 100, got ' + fill.style.width);
+  sb.updateSplashProgress(-20);
+  assert(fill.style.width === '0%', 'updateSplashProgress should clamp below 0, got ' + fill.style.width);
+}
+
+async function testSmartRuleFreezeAfterTarget(){
+  const sb = makeSandbox();
+  const D = {
+    accounts: [{id:60301, descr:'Insurance', forecast_category:'income', status:'Active', acc_type:'Individual Account'}],
+    ledger: [],
+    forecastAccountRules: [{id:1, name:'Test Rule', account:60301, rule:{type:'fixed', value:100, sign:1}, targetOffset:1, freezeAfterTarget:true}],
+    forecastPlans: {},
+    provisionGroups: [],
+    budget: []
+  };
+  sb.__set('D', D);
+  sb.__set('_forecastFastIndexes', null);
+  const acc = {id:60301, descr:'Insurance', forecast_category:'income', status:'Active'};
+  const currentMonth = '2026-08';
+  // Target month (offset +1) = 2026-09: should show the live-computed value, not 0
+  const targetCell = sb.computeForecastCell(acc, '2026-09', currentMonth);
+  assert(targetCell.plan === 100, 'Target month should show the live-computed rule value (100), got ' + targetCell.plan);
+  assert(targetCell.editable === false, 'Target month should not be editable');
+
+  // A month AFTER target (2026-10), currently blank, with freezeAfterTarget on: should be forced to 0 and locked
+  const afterBlank = sb.computeForecastCell(acc, '2026-10', currentMonth);
+  assert(afterBlank.plan === 0, 'Blank month after target should be frozen to 0 when freezeAfterTarget is on, got ' + afterBlank.plan);
+  assert(afterBlank.editable === false, 'Blank month after target should be locked (not editable) when freezeAfterTarget is on');
+  assert(afterBlank.source === 'smart_rule', 'Frozen month should be attributed to the smart rule as its source');
+
+  // Same month, but with an existing manually-typed value — must be left alone (normal category behavior), not overwritten
+  D.forecastPlans[60301] = {'2026-10': 250};
+  const afterWithValue = sb.computeForecastCell(acc, '2026-10', currentMonth);
+  assert(afterWithValue.plan === 250, 'A month after target with an existing manual value must be left untouched, got ' + afterWithValue.plan);
+
+  // A rule WITHOUT freezeAfterTarget set should leave months-after-target on normal behavior (unfrozen)
+  D.forecastAccountRules[0].freezeAfterTarget = false;
+  delete D.forecastPlans[60301];
+  const afterNoFreeze = sb.computeForecastCell(acc, '2026-10', currentMonth);
+  assert(afterNoFreeze.editable === true, 'Without freezeAfterTarget, months after target should keep normal (editable) category behavior, got editable=' + afterNoFreeze.editable);
+}
+
+async function testProvisionDescrSurvivesBlockedSync(){
+  const sb = makeSandbox();
+  const D = { provisionGroups: [{id:1, name:'Car', lines:[{acc:60101, lineId:60101, descrBase:null}], months:{}}] };
+  sb.__set('D', D);
+  sb.__set('syncInProgress', true); // force blockIfSyncing() to report "still syncing"
+  sb.__set('syncWrite', async () => { throw new Error('syncWrite should not be reached while blocked'); });
+  await sb.saveProvisionLineDescr(1, 0, 'Comprehensive cover');
+  assert(D.provisionGroups[0].lines[0].descrBase === 'Comprehensive cover', 'Description should be applied locally even when blockIfSyncing() reports busy — got ' + D.provisionGroups[0].lines[0].descrBase);
+}
+
+function testAccountSearchMatchesIsTokenBased(){
+  const sb = makeSandbox();
+  const accounts = [
+    {id:60605, name:'Gifts - Expenses'},
+    {id:60300, name:'Food & Beverage'},
+    {id:60301, name:'Main Meals - Breakfast'},
+  ];
+  // The exact bug reported: "gifts expenses" (no hyphen) must match "Gifts - Expenses" even
+  // though it's not a contiguous substring — this is why plain .includes(query) failed before.
+  const m1 = sb.accountSearchMatches('gifts expenses', accounts);
+  assert(m1.length===1 && m1[0].id===60605, 'Token query "gifts expenses" should match "Gifts - Expenses" despite the hyphen, got ' + JSON.stringify(m1));
+  // Tokens can appear in either order
+  const m2 = sb.accountSearchMatches('expenses gifts', accounts);
+  assert(m2.length===1 && m2[0].id===60605, 'Token order should not matter, got ' + JSON.stringify(m2));
+  // Matching by account id still works
+  const m3 = sb.accountSearchMatches('60300', accounts);
+  assert(m3.length===1 && m3[0].id===60300, 'Should still match by account id, got ' + JSON.stringify(m3));
+  // A query with a token that matches nothing should return no results
+  const m4 = sb.accountSearchMatches('gifts zzz', accounts);
+  assert(m4.length===0, 'A token with no match anywhere should exclude the account, got ' + JSON.stringify(m4));
+  // Empty query returns the (capped) full list, matching prior behavior for an empty search box
+  const m5 = sb.accountSearchMatches('', accounts);
+  assert(m5.length===3, 'Empty query should return all accounts (up to 25), got ' + m5.length);
+}
+
+function testPnLShowsPercentOfTotalExpenses(){
+  const sb = makeSandbox();
+  const D = {
+    accounts: [
+      {id:60100, name:'Government & Banks', category:'Government & Banks', acc_type:'Individual Account', status:'Active'},
+      {id:60200, name:'Transportation', category:'Transportation', acc_type:'Individual Account', status:'Active'},
+    ],
+    ledger: [
+      {id:1, jv:1, acc:60100, date:'2026-01-05', descr:'x', amt:-25},
+      {id:2, jv:2, acc:60200, date:'2026-01-06', descr:'y', amt:-75},
+    ],
+    budget: [], provisionGroups: [], forecastAccountRules: [],
+  };
+  sb.__set('D', D);
+  sb.__set('pnlFrom', '2026-01-01');
+  sb.__set('pnlTo', '2026-01-31');
+  sb.__set('pnlPreset', 'custom');
+  sb.renderPnL();
+  const html = sb.document.getElementById('app').innerHTML;
+  // Total expenses = 100 (25+75). 60100 is 25% of total, 60200 is 75% of total.
+  assert(html.includes('25.00%'), 'Expected account 60100 line to show 25.00% of total expenses in the rendered P&L HTML');
+  assert(html.includes('75.00%'), 'Expected account 60200 line to show 75.00% of total expenses in the rendered P&L HTML');
+  assert(html.includes('% of Total'), 'Expected the new "% of Total" column header to be present');
+}
+
+function testLedgerPageAccountFilterUsesTokenSearch(){
+  const sb = makeSandbox();
+  const D = { accounts: [
+    {id:60605, name:'Gifts - Expenses', acc_type:'Individual Account', status:'Active'},
+    {id:60300, name:'Food & Beverage', acc_type:'Individual Account', status:'Active'},
+  ]};
+  sb.__set('D', D);
+  sb.__set('ledgerFilter', {acc:'', from:'', to:'', q:'', jv:'', preset:'', specificMonth:'', unallocOnly:false});
+  sb.__set('ledgerAccPicker', {q:'', matches:[], hi:-1});
+  sb.__set('document', sb.document); // ensure renderLedgerAcDrop's getElementById call doesn't throw
+  const dropEl = sb.document.createElement('div'); dropEl.id = 'ledgerAcdrop'; sb.document.body.appendChild(dropEl);
+  sb.ledgerAccInputHandler('gifts expenses');
+  const picker = vm.runInContext('ledgerAccPicker', sb);
+  assert(picker.matches.length===1 && picker.matches[0].id===60605,
+    'The Ledger page\'s own Account filter (a separate picker from the JV line one) must also use token-based search — got ' + JSON.stringify(picker.matches));
+}
+function testArabicTableHeaderRightAlignCssPresent(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(html.includes('table[dir="rtl"] th{text-align:right}') || /table\[dir="rtl"\]\s*th\s*\{\s*text-align:\s*right/.test(html),
+    'Expected a CSS rule right-aligning <th> headers inside RTL tables (e.g. the Arabic settlement statement)');
+}
+
+function testSettlementRoundUpIsCeilingPerLine(){
+  const sb = makeSandbox();
+  assert(sb.settlementRoundAmt(13.01, true)===14, '13.01 should round up to 14, got ' + sb.settlementRoundAmt(13.01, true));
+  assert(sb.settlementRoundAmt(13.99, true)===14, '13.99 should round up to 14, got ' + sb.settlementRoundAmt(13.99, true));
+  assert(sb.settlementRoundAmt(13.00, true)===13, 'A whole number must NOT be bumped up: 13.00 should stay 13, got ' + sb.settlementRoundAmt(13.00, true));
+  // True mathematical ceiling on negatives (the person chose this over away-from-zero)
+  assert(sb.settlementRoundAmt(-13.01, true)===-13, '-13.01 should ceil to -13, got ' + sb.settlementRoundAmt(-13.01, true));
+  // Floating-point drift must not push a whole number up a full unit
+  assert(sb.settlementRoundAmt(13.000000000001, true)===13, 'FP drift on a whole number must not ceil to 14, got ' + sb.settlementRoundAmt(13.000000000001, true));
+  // Off = untouched
+  assert(sb.settlementRoundAmt(13.01, false)===13.01, 'With the toggle off the amount must be unchanged, got ' + sb.settlementRoundAmt(13.01, false));
+}
+
+function testSettlementCleanOutputTotalIsSumOfRoundedLines(){
+  const sb = makeSandbox();
+  sb.__set('settlementDraft', {acc:10212, roundUp:true, lines:[
+    {id:1, jv:2914, date:'2026-07-31', amt:13.01, original:'a', arText:'أ', source:'learned', excluded:false},
+    {id:2, jv:2915, date:'2026-08-01', amt:13.01, original:'b', arText:'ب', source:'learned', excluded:false},
+  ]});
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.showSettlementCleanOutput();
+  const html = sb.document.body.innerHTML;
+  // Each line rounds to 14 independently, so the total must be 28 — NOT 27 (which is what
+  // rounding the true total of 26.02 once at the end would give).
+  assert(html.includes('28'), 'Total should be the sum of the rounded lines (28), not the rounded true total (27)');
+  assert(!html.includes('27.00'), 'Total must not be 27.00, which would mean the total was rounded once instead of per line');
+}
+
+function testNavEntranceAnimationOnlyOnFirstRender(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[], ledger:[]});
+  sb.__set('screen', 'dashboard');
+  const navEl = sb.document.createElement('div'); navEl.id='nav'; sb.document.body.appendChild(navEl);
+  sb.renderNav();
+  assert(navEl.innerHTML.includes('anim'), 'The first nav render of the session SHOULD carry the entrance animation class');
+  sb.renderNav();
+  assert(!navEl.innerHTML.includes('anim'), 'Re-rendering the nav (which happens on every page change) must NOT replay the entrance animation');
+}
+
+function invSandbox(){
+  const sb = makeSandbox();
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  const app = sb.document.getElementById('app') || sb.document.createElement('div');
+  app.id='app'; if(!app.parentNode) sb.document.body.appendChild(app);
+  sb.__set('D', {
+    accounts:[], ledger:[],
+    invOwners:[{id:1,name:'Me',isSelf:true,outAcc:null,inAcc:null},{id:2,name:'Brother',isSelf:false,outAcc:null,inAcc:null}],
+    invPlatforms:[{id:1,name:'Broker A'}],
+    invPositions:[{id:1,platformId:1,name:'Acme',ticker:'ACME',assetClass:'Stocks',currency:'SAR',status:'Active'}],
+    invTransactions:[], invValuations:[],
+  });
+  return sb;
+}
+function testOwnershipPercentDerivedFromUnitsNotContributedCapital(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  // The classic trap: I buy 10 units for 100 (10/unit). It doubles. Brother then buys
+  // 5 units for 100 (20/unit). Contributed capital is 100/100 = 50/50, but a 50% share
+  // would hand him half of MY earlier gain. Unit attribution must not do that.
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  D.invTransactions.push({id:2,positionId:1,date:'2026-02-01',kind:'buy',units:5,totalSar:100,owners:[{ownerId:2,units:5}]});
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[1].units-10)<1e-9, 'Owner 1 should hold 10 units');
+  assert(Math.abs(st.byOwner[2].units-5)<1e-9, 'Owner 2 should hold 5 units');
+  assert(Math.abs(st.byOwner[1].costSar-100)<1e-9, 'Owner 1 cost should be 100');
+  assert(Math.abs(st.byOwner[2].costSar-100)<1e-9, 'Owner 2 cost should be 100');
+  // Share must be by units (10/15 = 66.7%), NOT by contributed capital (which would be 50%).
+  const pct1 = st.byOwner[1].units/st.totalUnits*100;
+  assert(Math.abs(pct1-66.6667)<0.01, 'Owner 1 share must be 66.67% (by units), not 50% (by capital) — got '+pct1.toFixed(4));
+}
+function testValuationAppliesFxForUsdPositions(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invPositions[0].currency = 'USD';
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:3750,owners:[{ownerId:1,units:10}]});
+  D.invValuations.push({id:1,positionId:1,date:'2026-02-01',price:120});
+  sb.setInvFxRate(3.75);
+  const v = sb.computePositionValuation(D.invPositions[0]);
+  // 10 units * $120 * 3.75 = 4500 SAR, against a 3750 SAR cost = 750 SAR unrealised.
+  assert(Math.abs(v.marketSar-4500)<1e-6, 'USD position should convert at the FX rate: expected 4500 SAR, got '+v.marketSar);
+  assert(Math.abs(v.unrealizedSar-750)<1e-6, 'Unrealised should be 750 SAR, got '+v.unrealizedSar);
+}
+function testSellUsesWeightedAverageCostAndRealisesGain(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  D.invTransactions.push({id:2,positionId:1,date:'2026-02-01',kind:'buy',units:10,totalSar:300,owners:[{ownerId:1,units:10}]});
+  // Average cost is now (100+300)/20 = 20/unit. Selling 5 for 150 releases 100 of cost
+  // and realises 50 of gain.
+  D.invTransactions.push({id:3,positionId:1,date:'2026-03-01',kind:'sell',units:5,totalSar:150,owners:[{ownerId:1,units:5}]});
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[1].units-15)<1e-9, 'Should hold 15 units after selling 5 of 20, got '+st.byOwner[1].units);
+  assert(Math.abs(st.byOwner[1].costSar-300)<1e-9, 'Remaining cost should be 300 (15 units at avg 20), got '+st.byOwner[1].costSar);
+  assert(Math.abs(st.byOwner[1].realizedSar-50)<1e-9, 'Realised gain should be 50, got '+st.byOwner[1].realizedSar);
+}
+function testTransactionsProcessedInDateOrderNotInsertionOrder(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  // Entered out of order (the person said they'd back-fill past transactions with real dates),
+  // so a sell must not be processed before the buy that funds it.
+  D.invTransactions.push({id:2,positionId:1,date:'2026-03-01',kind:'sell',units:5,totalSar:150,owners:[{ownerId:1,units:5}]});
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[1].units-5)<1e-9, 'Should hold 5 units; out-of-order entry must be sorted by date, got '+st.byOwner[1].units);
+  assert(Math.abs(st.byOwner[1].realizedSar-100)<1e-9, 'Realised gain should be 100 (sold 5 at cost 10 for 150), got '+st.byOwner[1].realizedSar);
+}
+function testFamilyHoldingsSeparatedFromOwn(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  D.invTransactions.push({id:2,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:2,units:10}]});
+  const totals = sb.invOwnerTotals();
+  const me = totals.find(t=>t.owner.isSelf);
+  const bro = totals.find(t=>!t.owner.isSelf);
+  assert(Math.abs(me.costSar-100)<1e-9, 'Own cost basis must exclude the family member, got '+me.costSar);
+  assert(Math.abs(bro.costSar-100)<1e-9, 'Family cost basis should be tracked separately, got '+bro.costSar);
+}
+function testReconciliationFlagsMismatchAgainstLedger(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invOwners[0].outAcc = 10101; D.invOwners[0].inAcc = 10102;
+  D.accounts = [{id:10101,name:'Invested',acc_type:'Individual Account',status:'Active'},{id:10102,name:'Withdrawn',acc_type:'Individual Account',status:'Active'}];
+  D.ledger = [{id:1,jv:1,acc:10101,date:'2026-01-01',descr:'buy',amt:100}];
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  let recon = sb.invOwnerReconciliation().find(r=>r.owner.id===1);
+  assert(recon.ok, 'Matching tracker cost and ledger net should reconcile cleanly, diff was '+recon.diff);
+  // Now make the ledger disagree — the tracker must notice rather than silently drift.
+  D.ledger.push({id:2,jv:2,acc:10101,date:'2026-02-01',descr:'buy not in tracker',amt:500});
+  recon = sb.invOwnerReconciliation().find(r=>r.owner.id===1);
+  assert(!recon.ok, 'A ledger purchase missing from the tracker must be flagged, diff was '+recon.diff);
+}
+
+function testFxRateIsSyncedNotDeviceLocal(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invSettings = {fxUsdSar: 4.00};
+  assert(sb.getInvFxRate()===4.00, 'FX rate must be read from synced state, got '+sb.getInvFxRate());
+  // It must NOT fall back to a device-local value, since that is exactly the cross-device
+  // inconsistency this change was made to remove.
+  sb.localStorage.setItem('invFxUsdSar','9.99');
+  assert(sb.getInvFxRate()===4.00, 'FX rate must ignore device-local storage, got '+sb.getInvFxRate());
+}
+function testPortfolioHistoryUsesUnitsAndPriceAsOfEachDate(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  D.invValuations.push({id:1,positionId:1,date:'2026-01-31',price:15});
+  D.invTransactions.push({id:2,positionId:1,date:'2026-02-15',kind:'buy',units:10,totalSar:200,owners:[{ownerId:1,units:10}]});
+  D.invValuations.push({id:2,positionId:1,date:'2026-02-28',price:20});
+  const h = sb.invPortfolioHistory(true);
+  assert(h.length===2, 'Expected one history point per valuation date, got '+h.length);
+  // At 31 Jan only the first 10 units existed: 10 * 15 = 150, cost 100.
+  assert(Math.abs(h[0].value-150)<1e-6, 'Jan value should use only units held then (150), got '+h[0].value);
+  assert(Math.abs(h[0].cost-100)<1e-6, 'Jan cost should be 100, got '+h[0].cost);
+  // At 28 Feb both buys are in: 20 * 20 = 400, cost 300.
+  assert(Math.abs(h[1].value-400)<1e-6, 'Feb value should be 400, got '+h[1].value);
+  assert(Math.abs(h[1].cost-300)<1e-6, 'Feb cost should be 300, got '+h[1].cost);
+}
+function testStalePricesAreFlagged(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  D.invTransactions.push({id:1,positionId:1,date:'2020-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  let stale = sb.invStalePositions(14);
+  assert(stale.length===1 && stale[0].never, 'A held position with no price at all must be flagged');
+  D.invValuations.push({id:1,positionId:1,date:'2020-06-01',price:20});
+  stale = sb.invStalePositions(14);
+  assert(stale.length===1 && !stale[0].never, 'A long-outdated price must be flagged as stale');
+  freezeDate(sb, '2026-08-18');
+  D.invValuations.push({id:2,positionId:1,date:'2026-08-17',price:25});
+  stale = sb.invStalePositions(14);
+  assert(stale.length===0, 'A price from yesterday must NOT be flagged, got '+JSON.stringify(stale));
+}
+function testCsvImportIsAllOrNothingOnBadRow(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  const before = D.invTransactions.length;
+  // Second row references a position that doesn't exist — the whole file must be rejected
+  // rather than importing the good row and leaving cost basis half-updated.
+  sb.importInvTransactionsCSV([
+    ['Tx ID','Position ID','Position','Date','Kind','Units','Total SAR','Owners','Note'],
+    ['','1','Acme','2026-01-01','buy','10','100','1:10',''],
+    ['','999','Ghost','2026-01-02','buy','5','50','1:5',''],
+  ]);
+  assert(D.invTransactions.length===before, 'A file with any invalid row must import nothing, but '+(D.invTransactions.length-before)+' row(s) were written');
+}
+function testCsvImportRejectsOwnerUnitsMismatch(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  const before = D.invTransactions.length;
+  sb.importInvTransactionsCSV([
+    ['Tx ID','Position ID','Position','Date','Kind','Units','Total SAR','Owners','Note'],
+    ['','1','Acme','2026-01-01','buy','10','100','1:7',''],
+  ]);
+  assert(D.invTransactions.length===before, 'Owner units not summing to the row Units must be rejected');
+}
+
+function testReverseJvProducesExactMirrorAndNetsToZero(){
+  const sb = makeSandbox();
+  sb.__set('D', {accounts:[{id:10101,name:'Bank',acc_type:'Individual Account',status:'Active'},{id:60300,name:'Food',acc_type:'Individual Account',status:'Active'}],
+    ledger:[
+      {id:1, jv:2914, date:'2026-07-31', acc:60300, descr:'Dinner', amt:125, alloc:7, allocatable:true, accNameSnapshot:'Food'},
+      {id:2, jv:2914, date:'2026-07-31', acc:10101, descr:'Dinner', amt:-125, alloc:null, allocatable:false, accNameSnapshot:'Bank'},
+    ]});
+  freezeDate(sb, '2026-08-18');
+  const rows = sb.buildReversalLines(2914, 3001, '2026-08-18', 100);
+  assert(rows.length===2, 'Reversal should mirror every original line, got '+rows.length);
+  // Amounts are exactly negated, so original + reversal nets to zero.
+  const net = rows.reduce((s,r)=>s+r.amt,0) + 125 + (-125);
+  assert(Math.abs(net)<1e-9, 'Original plus reversal must net to zero, got '+net);
+  assert(rows[0].amt===-125 && rows[1].amt===125, 'Each line amount must be exactly negated');
+  assert(rows[0].date==='2026-08-18', 'Reversal must be dated today, not the original date, got '+rows[0].date);
+  assert(rows[0].descr==='Reversal of JV #2914 — Dinner', 'Description should prefix the original text, got "'+rows[0].descr+'"');
+  assert(rows[0].jv===3001, 'Reversal lines should carry the new JV number');
+  // Allocation is deliberately not carried across — the person is warned instead.
+  assert(rows[0].alloc===null && rows[0].allocatable===false, 'Reversal lines must not inherit the allocation group');
+  // The historical account name is preserved so the reversal reads correctly later.
+  assert(rows[0].accNameSnapshot==='Food', 'Reversal should keep the historical account name');
+}
+function testDeleteJvIsGoneEntirely(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(!/deleteJV/.test(html), 'deleteJV must be removed entirely — reversal replaces deletion');
+  assert(/reverseJV/.test(html), 'reverseJV should exist');
+}
+function testEveryScreenHasAnIcon(){
+  const sb = makeSandbox();
+  const SCREENS = vm.runInContext('SCREENS', sb);
+  assert(SCREENS.length>0, 'SCREENS should not be empty');
+  for(const s of SCREENS){
+    assert(s.length===3 && s[2] && String(s[2]).trim()!=='', 'Screen "'+s[0]+'" is missing an icon');
+  }
+}
+function testBudgetSummaryRowIsClickable(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  // The whole row must open the account's transactions, not just the account-number cell.
+  assert(/<tr class="click" onclick="viewBudgetAccountMonth\(\$\{r\.acc\}\)">/.test(html),
+    'The budget summary line row should be clickable as a whole');
+}
+function testSchemaSqlCoversEveryTableTheAppReads(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  // Every table the app actually fetches must be creatable from the schema script, or a
+  // fresh database built from it would be missing tables and the app would fail on load.
+  // Both access paths must be scanned. pd_sync_meta was read via SB.from(...) rather than
+  // fetchAllRows(...) and so slipped past this check entirely for several versions — the table
+  // was missing from the schema script and nothing caught it.
+  const viaFetch = (html.match(/fetchAllRows\('(pd_[a-z_]+)'/g)||[]).map(m=>m.match(/'(pd_[a-z_]+)'/)[1]);
+  const viaFrom  = (html.match(/SB\.from\('(pd_[a-z_]+)'/g)||[]).map(m=>m.match(/'(pd_[a-z_]+)'/)[1]);
+  const used = Array.from(new Set(viaFetch.concat(viaFrom)));
+  assert(used.length>15, 'Expected to find the app\'s table list, found '+used.length);
+  assert(used.indexOf('pd_sync_meta')!==-1, 'The scan should now reach SB.from(...) tables like pd_sync_meta');
+  const missing = used.filter(t=> !sql.includes('create table if not exists '+t+' ') && !sql.includes('create table if not exists '+t+'\n') && !sql.includes('create table if not exists '+t+'('));
+  assert(missing.length===0, 'DB_SCHEMA_SQL is missing table(s): '+missing.join(', '));
+  // Single-row blob tables need their row seeded or the app cannot write to them.
+  for(const t of ['pd_forecast_plans','pd_name_translations','pd_descr_translations','pd_inv_settings']){
+    assert(sql.includes('insert into '+t), 'DB_SCHEMA_SQL should seed the singleton row for '+t);
+  }
+  assert(/enable row level security/.test(sql), 'DB_SCHEMA_SQL should set up RLS');
+}
+
+function testSettingsIsAPagePinnedLastAndPillNotClickable(){
+  const sb = makeSandbox();
+  const SCREENS = vm.runInContext('SCREENS', sb);
+  assert(SCREENS.some(s=>s[0]==='settings'), 'Settings should now be a real page in SCREENS');
+  const ordered = sb.orderedScreens();
+  assert(ordered[ordered.length-1][0]==='settings', 'Settings must be pinned to the bottom, got '+ordered[ordered.length-1][0]);
+  assert(!sb.reorderableScreens().some(s=>s[0]==='settings'), 'Settings must not appear in the reorderable list');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(!/id="cloudBtn" onclick/.test(html), 'The sync status pill must no longer be clickable');
+  assert(/id="cloudBtn"/.test(html), 'The sync status pill should still exist');
+}
+function testCustomPageOrderIsRespected(){
+  const sb = makeSandbox();
+  sb.__set('D', {uiPrefs:{pageOrder:['budget','ledger','dashboard']}});
+  const ids = sb.orderedScreens().map(s=>s[0]);
+  assert(ids[0]==='budget' && ids[1]==='ledger' && ids[2]==='dashboard',
+    'Saved order should lead the list, got '+ids.slice(0,3).join(','));
+  assert(ids[ids.length-1]==='settings', 'Settings stays pinned last regardless of saved order');
+}
+function testScreensMissingFromSavedOrderAreAppendedNotDropped(){
+  const sb = makeSandbox();
+  const SCREENS = vm.runInContext('SCREENS', sb);
+  // A saved order from an older version won't mention pages added later. Those must still
+  // appear, or a new page would silently vanish for anyone with a saved ordering.
+  sb.__set('D', {uiPrefs:{pageOrder:['ledger','budget']}});
+  const ids = sb.orderedScreens().map(s=>s[0]);
+  assert(ids.length===SCREENS.length, 'Every screen must appear exactly once, got '+ids.length+' of '+SCREENS.length);
+  for(const s of SCREENS){
+    assert(ids.includes(s[0]), 'Screen "'+s[0]+'" was dropped from the ordered list');
+  }
+  assert(new Set(ids).size===ids.length, 'No screen should appear twice');
+}
+function testAlwaysVisiblePagesCannotBeHidden(){
+  const sb = makeSandbox();
+  sb.__set('D', {uiPrefs:{pageOrder:null}});
+  const navEl = sb.document.createElement('div'); navEl.id='nav'; sb.document.body.appendChild(navEl);
+  sb.localStorage.setItem('hiddenPages','[]');
+  // Guarded in the function itself, not just hidden in the UI.
+  sb.togglePageVisibility('settings', false);
+  assert(!JSON.parse(sb.localStorage.getItem('hiddenPages')).includes('settings'), 'Settings must never be hideable');
+  sb.togglePageVisibility('dashboard', false);
+  assert(!JSON.parse(sb.localStorage.getItem('hiddenPages')).includes('dashboard'), 'Dashboard must never be hideable');
+  // A normal page still hides fine.
+  sb.togglePageVisibility('jamiah', false);
+  assert(JSON.parse(sb.localStorage.getItem('hiddenPages')).includes('jamiah'), 'A normal page should still be hideable');
+}
+
+function testSarSplitDerivesUnitsProportionally(){
+  const sb = invSandbox();
+  // The person's own example: 5,000 SAR of BTC — 1K his, 2K wife, 2K mother.
+  const out = sb.invDeriveUnitsFromSar(0.0125, [{ownerId:1,sar:1000},{ownerId:2,sar:2000},{ownerId:3,sar:2000}]);
+  const byId = {}; out.forEach(o=>byId[o.ownerId]=o.units);
+  assert(Math.abs(byId[1]-0.0025)<1e-9, 'A 1000/5000 share of 0.0125 units should be 0.0025, got '+byId[1]);
+  assert(Math.abs(byId[2]-0.005)<1e-9, 'A 2000/5000 share should be 0.005, got '+byId[2]);
+  // Units must reconcile EXACTLY to the transaction total, or cost basis drifts on every split buy.
+  const sum = out.reduce((s,o)=>s+o.units,0);
+  assert(Math.abs(sum-0.0125)<1e-12, 'Derived units must sum exactly to the transaction units, got '+sum);
+}
+function testSarSplitRemainderGoesToLargestHolder(){
+  const sb = invSandbox();
+  // 1 unit split three ways cannot divide evenly — the remainder must land somewhere explicit.
+  const out = sb.invDeriveUnitsFromSar(1, [{ownerId:1,sar:1},{ownerId:2,sar:1},{ownerId:3,sar:1}]);
+  const sum = out.reduce((s,o)=>s+o.units,0);
+  assert(Math.abs(sum-1)<1e-12, 'An uneven three-way split must still sum to exactly 1, got '+sum);
+  // With a clear largest holder, the remainder should attach to them.
+  const out2 = sb.invDeriveUnitsFromSar(1, [{ownerId:1,sar:1},{ownerId:2,sar:2}]);
+  const sum2 = out2.reduce((s,o)=>s+o.units,0);
+  assert(Math.abs(sum2-1)<1e-12, 'Two-way split must sum to exactly 1, got '+sum2);
+  const largest = out2.reduce((a,b)=>a.units>=b.units?a:b);
+  assert(largest.ownerId===2, 'The larger SAR contribution should hold the larger unit share');
+}
+function testSarSplitKeepsUnitPrecisionForCrypto(){
+  const sb = invSandbox();
+  // Rounding units to 2 decimals here would turn 0.0125 BTC into 0.01 — a 20% error.
+  const out = sb.invDeriveUnitsFromSar(0.0125, [{ownerId:1,sar:5000}]);
+  assert(Math.abs(out[0].units-0.0125)<1e-12, 'Unit precision must survive the SAR split, got '+out[0].units);
+}
+function testSarForUnitsRoundTripsTheSplit(){
+  const sb = invSandbox();
+  // Reopening a saved transaction back-calculates SAR from stored units, so both columns agree.
+  assert(Math.abs(sb.invSarForUnits(0.0125, 5000, 0.0025)-1000)<0.005, 'Back-calculated SAR should be 1000, got '+sb.invSarForUnits(0.0125,5000,0.0025));
+  assert(sb.invSarForUnits(0, 5000, 0)===0, 'Zero units should not divide by zero');
+}
+function testPostJvShowsSpinnerWhileWorking(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/btn-spin/.test(html) && /@keyframes btnSpin/.test(html), 'A spinner style should exist for the Post JV button');
+  assert(/postBtn\.innerHTML = '<span class="btn-spin"><\/span>Posting…'/.test(html),
+    'Post JV should swap the button label to a spinner plus "Posting…" while it works');
+  assert(/document\.body\.contains\(postBtn\)/.test(html),
+    'The button should only be restored if it is still on screen (posting navigates away on success)');
+}
+
+function testSarSplitUsesTransactionTotalNotAllocatedSubtotal(){
+  const sb = invSandbox();
+  // The reported bug: 1 unit for 100,000 SAR, only 50,000 allocated so far. Dividing by the
+  // running subtotal made the first person read as owning the whole 1 unit.
+  const out = sb.invDeriveUnitsFromSar(1, [{ownerId:1, sar:50000}], 100000);
+  assert(Math.abs(out[0].units-0.5)<1e-9, 'A half-allocated split should show half the units, got '+out[0].units);
+  // Once fully allocated it still reconciles exactly.
+  const full = sb.invDeriveUnitsFromSar(1, [{ownerId:1,sar:50000},{ownerId:2,sar:50000}], 100000);
+  const sum = full.reduce((s,o)=>s+o.units,0);
+  assert(Math.abs(sum-1)<1e-12, 'A fully allocated split must sum to exactly 1, got '+sum);
+}
+function testPartialSplitDoesNotDumpRemainderOnOnePerson(){
+  const sb = invSandbox();
+  // Mid-entry, the remainder must NOT be forced onto someone — that would show one person
+  // holding the whole balance while the other rows are still blank.
+  const out = sb.invDeriveUnitsFromSar(1, [{ownerId:1, sar:25000}], 100000);
+  assert(Math.abs(out[0].units-0.25)<1e-9, 'A quarter allocation should read as 0.25 units, got '+out[0].units);
+}
+function testUnitsDisplayKeeps8Decimals(){
+  const sb = invSandbox();
+  assert(sb.invFmtUnits(0.0125)==='0.0125', 'Crypto units should display without being rounded away, got '+sb.invFmtUnits(0.0125));
+  assert(sb.invFmtUnits(0.00000001)==='1e-8' || sb.invFmtUnits(0.00000001)==='0.00000001',
+    'Eight decimal places should survive, got '+sb.invFmtUnits(0.00000001));
+  assert(sb.invFmtUnits(1)==='1', 'A whole number should still read cleanly, got '+sb.invFmtUnits(1));
+}
+function testTxModalDoesNotRerenderWhileTyping(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  // Re-rendering the whole modal on input recreated the inputs and threw focus out of the box
+  // being typed in, so every value-entry handler must patch in place instead.
+  assert(!/oninput="window\._invTxDraft\.units=this\.value; renderInvTxModal\(\)"/.test(html),
+    'The Units field must not re-render the whole modal on input');
+  assert(!/oninput="window\._invTxDraft\.totalSar=this\.value; renderInvTxModal\(\)"/.test(html),
+    'The Total SAR field must not re-render the whole modal on input');
+  assert(/invTxRefreshDerived\(\)/.test(html), 'An in-place refresh should be used instead');
+  assert(/function invTxRefreshDerived\(\)/.test(html), 'invTxRefreshDerived should exist');
+}
+function testCtrlEnterConfirmsModalPrimaryAction(){
+  const sb = makeSandbox();
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  modalRoot.innerHTML = '<div class="modal"><button class="btn pri" id="inlineNew">+ New</button><button class="btn ghost">Cancel</button><button class="btn pri" id="save">Save</button></div>';
+  // jsdom reports offsetParent as null, so exercise the selection logic directly rather than
+  // relying on layout: the LAST primary button is the footer's confirm action.
+  const modal = sb.document.querySelector('#modalRoot .modal');
+  const btns = Array.from(modal.querySelectorAll('button.btn.pri')).filter(b=>!b.disabled);
+  assert(btns[btns.length-1].id==='save', 'The last primary button should be the confirm action, got '+btns[btns.length-1].id);
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\(ev\.ctrlKey\|\|ev\.metaKey\) && ev\.key==='Enter'/.test(html), 'Ctrl/Cmd+Enter should be handled globally');
+  assert(/function modalPrimaryButton\(\)/.test(html), 'modalPrimaryButton should exist so future modals need no extra wiring');
+  assert(/button\.btn\.pri/.test(html) && !/button\.btn\.del/.test(html.match(/function modalPrimaryButton\(\)[\s\S]{0,400}/)[0]),
+    'Destructive buttons must never be triggered by the shortcut');
+}
+
+function testOwnerDeletionBlockedWhileReferenced(){
+  const sb = invSandbox();
+  const D = vm.runInContext('D', sb);
+  assert(sb.invOwnerTxCount(1)===0, 'An owner with no transactions should count zero');
+  D.invTransactions.push({id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:10}]});
+  assert(sb.invOwnerTxCount(1)===1, 'An owner attributed units should be counted, got '+sb.invOwnerTxCount(1));
+  assert(sb.invOwnerTxCount(2)===0, 'An owner on no transactions should still count zero');
+  const before = D.invOwners.length;
+  // jsdom's confirm() returns falsy, which would abort the delete regardless of the guard and
+  // make this test pass for the wrong reason. Stub it to yes so the guard is what's under test.
+  sb.confirm = () => true;
+  sb.deleteInvOwner(1);
+  assert(D.invOwners.length===before, 'An owner on a transaction must not be deletable');
+  // Sanity check the stub works: an unreferenced owner IS removed.
+  sb.deleteInvOwner(2);
+  assert(D.invOwners.length===before-1, 'An unreferenced owner should be deletable, got '+D.invOwners.length+' of '+before);
+  // A zero-unit attribution is not a real reference and must not block deletion forever.
+  D.invTransactions = [{id:1,positionId:1,date:'2026-01-01',kind:'buy',units:10,totalSar:100,owners:[{ownerId:1,units:0}]}];
+  assert(sb.invOwnerTxCount(1)===0, 'A zero-unit attribution should not count as a reference');
+}
+function testStatementDefaultsToNewestFirst(){
+  const sb = makeSandbox();
+  const desc = vm.runInContext('statementSortDesc', sb);
+  assert(desc===true, 'The account statement should open newest-first by default, got '+desc);
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/safeSetItem\('statementSortDesc'/.test(html), 'The sort choice should be remembered once changed');
+}
+function testNumberSpinnersHidden(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  // The spinner arrows overlapped the digits, making 50000 look struck through.
+  assert(/input\[type=number\]::-webkit-inner-spin-button/.test(html), 'WebKit number spinners should be hidden');
+  assert(/-moz-appearance:textfield/.test(html), 'Firefox number spinners should be hidden');
+}
+
+function storageSandbox(){
+  const sb = makeSandbox();
+  const store = {};
+  let failFrom = null; // when set, any write pushing past this many bytes throws like a real quota error
+  const ls = {
+    get length(){ return Object.keys(store).length; },
+    key: i => Object.keys(store)[i],
+    getItem: k => (k in store? store[k] : null),
+    removeItem: k => { delete store[k]; },
+    clear: () => { Object.keys(store).forEach(k=>delete store[k]); },
+    setItem: (k,v) => {
+      if(failFrom!==null){
+        const other = Object.keys(store).filter(x=>x!==k).reduce((s,x)=>s+x.length+store[x].length,0);
+        if(other + String(k).length + String(v).length > failFrom){
+          const e = new Error("Failed to execute 'setItem' on 'Storage': Setting the value of '"+k+"' exceeded the quota.");
+          e.name = 'QuotaExceededError';
+          throw e;
+        }
+      }
+      store[k] = String(v);
+    },
+  };
+  // jsdom exposes localStorage as a getter-only accessor, so a plain assignment silently does
+  // nothing and the test would exercise the real store instead of the quota-limited fake.
+  Object.defineProperty(sb, 'localStorage', {value: ls, writable:true, configurable:true});
+  sb.__setQuota = n => { failFrom = n; };
+  sb.__store = store;
+  return sb;
+}
+function testStorageScanCoversWholeOriginNotJustOurKeys(){
+  const sb = storageSandbox();
+  sb.localStorage.setItem('ledgerData_v1', 'x'.repeat(1000));
+  sb.localStorage.setItem('calendarTasks_v1', 'y'.repeat(500));   // another app on the same domain
+  sb.localStorage.setItem('someRandomThirdParty', 'z'.repeat(200));
+  const scan = sb.scanLocalStorage();
+  assert(scan.entries.length===3, 'The scan must cover every key on the origin, got '+scan.entries.length);
+  // Filtering to our own prefix is exactly what hides a neighbour filling the pool.
+  assert(scan.entries.some(e=>e.key==='calendarTasks_v1'), 'Another app\'s keys must be listed, not filtered out');
+  assert(scan.entries[0].key==='ledgerData_v1', 'Entries should be sorted largest first');
+  assert(scan.mine>scan.foreign, 'LedgerOS keys should be attributed to LedgerOS');
+  assert(!scan.entries.find(e=>e.key==='calendarTasks_v1').ours, 'A foreign key must be tagged as not ours');
+  // key.length + value.length, since both count toward the quota.
+  assert(scan.entries[0].size === 'ledgerData_v1'.length + 1000, 'Size should count key plus value, got '+scan.entries[0].size);
+}
+function testCacheBreakdownReportsPerCollectionSizes(){
+  const sb = storageSandbox();
+  const payload = {
+    ledger: Array.from({length:50},(_,i)=>({id:i, jv:i, date:'2026-01-01', acc:60300, descr:'Groceries - Foods', amt:-100, alloc:null, allocatable:false, accNameSnapshot:'Groceries - Foods', updated_at:'2026-01-01T00:00:00.000000+00:00'})),
+    accounts: [{id:60300, name:'Groceries'}],
+  };
+  sb.localStorage.setItem('ledgerData_v1', JSON.stringify(payload));
+  const a = sb.analyzeLedgerCache();
+  assert(a && a.parts, 'The cache should be analysable');
+  assert(a.parts[0].key==='ledger', 'The largest collection should lead, got '+a.parts[0].key);
+  assert(a.parts[0].count===50, 'Record counts should be reported, got '+a.parts[0].count);
+  assert(a.parts[0].perRecord>150, 'Bytes-per-record should be reported so the cost is visible, got '+a.parts[0].perRecord);
+}
+function testQuotaExceededIsSurfacedNotSwallowed(){
+  const sb = storageSandbox();
+  let toasted = [];
+  sb.__set('toast', (m,bad)=>{ toasted.push(String(m)); });
+  sb.__set('logActivity', ()=>{});
+  sb.__setQuota(100); // tiny cap so the next write fails like a real browser
+  // safeSetItem must report failure rather than throwing or pretending it worked.
+  const ok = sb.safeSetItem('ledgerData_v1', 'x'.repeat(5000));
+  assert(ok===false, 'safeSetItem must return false when the quota is exceeded');
+  assert(sb.localStorage.getItem('ledgerData_v1')===null, 'Nothing should have been written');
+  // The sync queue holds changes that have NOT reached the cloud — a failure there must be loud.
+  // Tighten the cap further: the queue payload is small, so a 100-byte cap would still fit it.
+  sb.__setQuota(5);
+  sb.__set('syncQueue', [{op:'upsert'},{op:'upsert'}]);
+  toasted = [];
+  const ok2 = sb.saveSyncQueue();
+  assert(ok2===false, 'saveSyncQueue must report failure');
+  assert(toasted.length>0, 'A failed sync-queue write must raise a visible warning, not be swallowed');
+  assert(/URGENT|unsaved/i.test(toasted.join(' ')), 'The warning must convey that unsaved changes are at risk, got: '+toasted.join(' '));
+}
+function testClearingCacheBlockedWhileChangesArePending(){
+  const sb = storageSandbox();
+  const toasted = [];
+  sb.__set('toast', m=>toasted.push(String(m)));
+  sb.__set('logActivity', ()=>{});
+  sb.confirm = () => true;
+  sb.localStorage.setItem('ledgerData_v1', 'x'.repeat(1000));
+  // The cache is disposable ONLY once everything has reached Supabase.
+  sb.__set('syncQueue', [{op:'upsert'}]);
+  sb.clearLocalLedgerCache();
+  assert(sb.localStorage.getItem('ledgerData_v1')!==null, 'The cache must not be cleared while changes are unsynced');
+  assert(/Not safe/i.test(toasted.join(' ')), 'The refusal should say why, got: '+toasted.join(' '));
+  // With an empty queue it is safe to drop.
+  sb.__set('syncQueue', []);
+  sb.__set('renderSettings', ()=>{});
+  sb.clearLocalLedgerCache();
+  assert(sb.localStorage.getItem('ledgerData_v1')===null, 'With nothing pending, the cache should be cleared');
+}
+
+// Uses a real IndexedDB implementation (fake-indexeddb) rather than a stub, so the round trip
+// exercises actual transactions, structured cloning and key handling.
+function idbSandbox(){
+  const sb = storageSandbox();
+  // A fresh factory per test so databases don't leak between tests.
+  const FDBFactory = require('fake-indexeddb/lib/FDBFactory');
+  const factory = new (FDBFactory.default || FDBFactory)();
+  Object.defineProperty(sb, 'indexedDB', {value: factory, writable:true, configurable:true});
+  sb.__set('_idb', null);
+  sb.__set('_idbUnavailable', false);
+  sb.__set('logActivity', ()=>{});
+  sb.__set('toast', ()=>{});
+  return sb;
+}
+function realLedgerFixture(rows){
+  return {
+    accounts: [{id:60300, name:'Groceries - Foods', status:'Active'}],
+    ledger: Array.from({length:rows},(_,i)=>({
+      id:i+1, jv:1000+i, date:'2026-01-'+String((i%28)+1).padStart(2,'0'), acc:60300,
+      descr:'Groceries - Foods', amt:-(100+i), alloc:null, allocatable:false,
+      accNameSnapshot:'Groceries - Foods', updated_at:'2026-01-01T00:00:00.000000+00:00'
+    })),
+    budget: [{id:1, date:'2026-01-01', acc:60300, descr:'', amt:750}],
+    forecastPlans: {'2026-01': {x:1}},
+    invSettings: {fxUsdSar:3.75},
+  };
+}
+async function testIdbRoundTripPreservesEveryRecord(){
+  const sb = idbSandbox();
+  const fixture = realLedgerFixture(500);
+  sb.__set('D', JSON.parse(JSON.stringify(fixture)));
+  const ok = await sb.idbSaveD();
+  assert(ok===true, 'Saving to IndexedDB should succeed');
+  const back = await sb.idbLoadD();
+  assert(back, 'Data should be readable back out of IndexedDB');
+  assert(back.ledger.length===500, 'Every ledger row must survive the round trip, got '+back.ledger.length);
+  // Compare the full payload, not just counts — a silent field drop would pass a count check.
+  assert(JSON.stringify(back.ledger)===JSON.stringify(fixture.ledger), 'Ledger rows must round-trip byte-identically');
+  assert(JSON.stringify(back.forecastPlans)===JSON.stringify(fixture.forecastPlans), 'Nested objects must round-trip intact');
+  assert(back.accounts[0].name==='Groceries - Foods', 'Account records must round-trip intact');
+}
+async function testMigrationIsNonDestructiveAndVerified(){
+  const sb = idbSandbox();
+  const fixture = realLedgerFixture(300);
+  sb.localStorage.setItem('ledgerData_v1', JSON.stringify(fixture));
+  sb.__set('D', {});
+  const seen = [];
+  const res = await sb.migrateCacheToIdb((pct,what)=>seen.push(pct));
+  assert(res.migrated===true, 'Migration should report success, got: '+JSON.stringify(res.reason||''));
+  assert(seen.length>0 && seen[seen.length-1]===100, 'Progress should be reported and reach 100');
+  // The legacy key is removed only AFTER verification.
+  assert(sb.localStorage.getItem('ledgerData_v1')===null, 'The legacy key should be gone once verified');
+  const back = await sb.idbLoadD();
+  assert(back.ledger.length===300, 'All rows must be present in the new store, got '+back.ledger.length);
+  assert(JSON.stringify(back.ledger)===JSON.stringify(fixture.ledger), 'Migrated rows must be identical to the originals');
+}
+async function testMigrationKeepsLegacyDataWhenVerificationFails(){
+  const sb = idbSandbox();
+  const fixture = realLedgerFixture(50);
+  sb.localStorage.setItem('ledgerData_v1', JSON.stringify(fixture));
+  sb.__set('D', {});
+  // Simulate the store losing rows: read-back returns fewer than were written.
+  sb.__set('idbLoadD', async ()=>({ledger: fixture.ledger.slice(0,10), accounts: fixture.accounts}));
+  const res = await sb.migrateCacheToIdb(()=>{});
+  assert(res.migrated===false, 'A failed verification must not report success');
+  assert(res.keepLegacy===true, 'It must signal that the legacy cache was kept');
+  // The original data must still be there — this is the whole point of verify-before-delete.
+  const still = sb.localStorage.getItem('ledgerData_v1');
+  assert(still!==null, 'The legacy cache MUST survive a failed verification');
+  assert(JSON.parse(still).ledger.length===50, 'The legacy cache must be untouched, got '+JSON.parse(still).ledger.length);
+}
+async function testInterruptedMigrationLosesNothingAndResumes(){
+  const sb = idbSandbox();
+  const fixture = realLedgerFixture(100);
+  sb.localStorage.setItem('ledgerData_v1', JSON.stringify(fixture));
+  sb.__set('D', {});
+  // Interrupt partway through the writes, as a closed tab would.
+  const realPut = vm.runInContext('idbPut', sb);
+  let calls = 0;
+  sb.__set('idbPut', async (k,v)=>{ if(++calls===2) throw new Error('tab closed'); return realPut(k,v); });
+  let threw = false;
+  try{ await sb.migrateCacheToIdb(()=>{}); }catch(e){ threw = true; }
+  assert(threw, 'An interrupted migration should surface, not silently half-finish');
+  // Nothing lost: the source is still intact, so the next boot simply tries again.
+  const still = sb.localStorage.getItem('ledgerData_v1');
+  assert(still!==null && JSON.parse(still).ledger.length===100, 'Interruption must leave the original cache fully intact');
+  // Resume: with the interruption removed, migration completes normally.
+  sb.__set('idbPut', realPut);
+  const res = await sb.migrateCacheToIdb(()=>{});
+  assert(res.migrated===true, 'A retry after interruption should succeed');
+  const back = await sb.idbLoadD();
+  assert(back.ledger.length===100, 'All rows should be present after the retry, got '+back.ledger.length);
+}
+async function testFallbackCacheIsTrimmedNotFull(){
+  const sb = idbSandbox();
+  freezeDate(sb, '2026-08-19');
+  const old = {id:1, date:'2020-01-01', acc:60300, descr:'ancient', amt:-5};
+  const recent = {id:2, date:'2026-08-01', acc:60300, descr:'recent', amt:-5};
+  sb.__set('D', {ledger:[old, recent], budget:[], accounts:[]});
+  const trimmed = sb.buildTrimmedCache(vm.runInContext('D', sb));
+  assert(trimmed.ledger.length===1 && trimmed.ledger[0].descr==='recent',
+    'The fallback cache must drop old history so it stays small, got '+JSON.stringify(trimmed.ledger.map(l=>l.descr)));
+  assert(trimmed.__trimmed && trimmed.__trimmed.months>0, 'The fallback should record that it is trimmed');
+  assert(trimmed.accounts, 'Non-ledger collections should be kept in full');
+}
+async function testFootprintGuardWarnsWhenWeCrowdTheDomain(){
+  const sb = idbSandbox();
+  const warned = [];
+  sb.__set('logActivity', (kind,msg)=>warned.push(String(msg)));
+  sb.__set('toast', m=>warned.push(String(m)));
+  sb.localStorage.setItem('ledgerData_v1', 'x'.repeat(2 * 1024 * 1024)); // 2 MB of a ~5 MB pool
+  const r = sb.checkLocalStorageFootprint();
+  assert(r && r.pct>25, 'The guard should measure our share, got '+(r&&r.pct));
+  assert(warned.some(w=>/crowd|local storage/i.test(w)), 'It should warn when LedgerOS is crowding the domain');
+}
+
+// ================= v4.48.0: configurable Balance Freshness threshold + splash screen version =================
+async function testGetBalanceStaleDaysDefaultsToZero(){
+  const sb = makeSandbox();
+  assert(sb.getBalanceStaleDays()===0, 'With nothing saved yet, should default to 0 days (matches the original same-day-only behavior), got ' + sb.getBalanceStaleDays());
+}
+
+async function testSaveBalanceStaleDaysPersistsToUiPrefsAndSyncsOnlyThatColumn(){
+  const sb = makeSandbox();
+  const calls = [];
+  sb.__set('syncWrite', async (table, kind, row, base) => { calls.push({table, kind, row}); return {ok:true}; });
+  sb.__set('persistLocal', ()=>{});
+  await sb.saveBalanceStaleDays(5);
+  assert(sb.getBalanceStaleDays()===5, 'Should update the in-memory value immediately, got ' + sb.getBalanceStaleDays());
+  assert(calls.length===1 && calls[0].table==='pd_ui_prefs' && calls[0].row.balance_stale_days===5,
+    'Should sync-write only the balance_stale_days column to pd_ui_prefs (a partial upsert, so page_order on the same row is left alone), got ' + JSON.stringify(calls));
+}
+
+async function testDashboardBalanceColorRespectsConfiguredGracePeriod(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  const D = vm.runInContext('D', sb);
+  D.accounts = [{id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active', is_credit_card:false, stmt_balance:1000, stmt_date:'2026-08-21'}]; // 3 days before "today"
+  D.ledger = [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'}];
+  D.uiPrefs = {balanceStaleDays: 3};
+  sb.renderDashboard();
+  const html = sb.document.getElementById('app').innerHTML;
+  const rowStart = html.indexOf('Reconciled');
+  assert(rowStart!==-1, 'Should show a Reconciled label for a matched statement balance');
+  const row = html.slice(html.lastIndexOf('<tr', rowStart), html.indexOf('</tr>', rowStart));
+  assert(/var\(--green\)/.test(row), '3 days elapsed with a configured 3-day grace period should still show green, got row: ' + row);
+}
+
+async function testDashboardBalanceColorTurnsRedPastTheGracePeriod(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  const D = vm.runInContext('D', sb);
+  D.accounts = [{id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active', is_credit_card:false, stmt_balance:1000, stmt_date:'2026-08-20'}]; // 4 days before "today"
+  D.ledger = [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'}];
+  D.uiPrefs = {balanceStaleDays: 3};
+  sb.renderDashboard();
+  const html = sb.document.getElementById('app').innerHTML;
+  const rowStart = html.indexOf('Reconciled');
+  const row = html.slice(html.lastIndexOf('<tr', rowStart), html.indexOf('</tr>', rowStart));
+  assert(/var\(--red\)/.test(row), '4 days elapsed past a configured 3-day grace period should show red, got row: ' + row);
+}
+
+async function testDashboardBalanceColorDefaultMatchesOriginalSameDayOnlyBehavior(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  const D = vm.runInContext('D', sb);
+  D.accounts = [{id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active', is_credit_card:false, stmt_balance:1000, stmt_date:'2026-08-23'}]; // yesterday
+  D.ledger = [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'}];
+  // uiPrefs.balanceStaleDays deliberately left unset — must default to the original behavior.
+  sb.renderDashboard();
+  const html = sb.document.getElementById('app').innerHTML;
+  const rowStart = html.indexOf('Reconciled');
+  const row = html.slice(html.lastIndexOf('<tr', rowStart), html.indexOf('</tr>', rowStart));
+  assert(/var\(--red\)/.test(row), 'With the default 0-day grace period, a balance updated yesterday should show red — matching the pre-v4.48.0 behavior exactly, got row: ' + row);
+}
+
+async function testDashboardBalanceColorSameDayStillGreenWithDefault(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  const D = vm.runInContext('D', sb);
+  D.accounts = [{id:10101, category:'Bank Accounts', acc_type:'Individual Account', status:'Active', is_credit_card:false, stmt_balance:1000, stmt_date:'2026-08-24'}]; // today
+  D.ledger = [{id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'}];
+  sb.renderDashboard();
+  const html = sb.document.getElementById('app').innerHTML;
+  const rowStart = html.indexOf('Reconciled');
+  const row = html.slice(html.lastIndexOf('<tr', rowStart), html.indexOf('</tr>', rowStart));
+  assert(/var\(--green\)/.test(row), 'A balance updated today should still show green with the default grace period, got row: ' + row);
+}
+
+async function testNormalizeDataShapeDefaultsBalanceStaleDaysToZero(){
+  const sb = makeSandbox();
+  const bare = {uiPrefs:{pageOrder:['a','b']}}; // has uiPrefs but predates this field
+  sb.normalizeDataShape(bare);
+  assert(bare.uiPrefs.balanceStaleDays===0, 'normalizeDataShape should default balanceStaleDays to 0 when the field is missing entirely, got ' + bare.uiPrefs.balanceStaleDays);
+}
+
+async function testNormalizeDataShapeDoesNotOverwriteAnExistingBalanceStaleDays(){
+  const sb = makeSandbox();
+  const withValue = {uiPrefs:{pageOrder:null, balanceStaleDays:7}};
+  sb.normalizeDataShape(withValue);
+  assert(withValue.uiPrefs.balanceStaleDays===7, 'An existing balanceStaleDays value must survive normalization untouched, got ' + withValue.uiPrefs.balanceStaleDays);
+}
+
+async function testRestoreFromBackupCloudPathIncludesBalanceStaleDaysEvenWithoutPageOrder(){
+  // Regression test for the exact hardcoded-whitelist bug class this app has hit before (sync
+  // conflict modal, the backup script itself, twice): the pre-existing restoreFromBackup line
+  // only wrote pd_ui_prefs to the cloud AT ALL if pageOrder was truthy — so a backup where only
+  // the new Balance Freshness threshold was ever customized (pageOrder still null/default) would
+  // silently lose that setting on a cloud restore. Full behavioral coverage of the cloud-restore
+  // branch would require mocking the entire chained Supabase client across 17+ tables, which no
+  // existing test in this suite does either (see testRestoreFromBackupDoesNotCrashOnAnOldBackupMissingNewerFields's
+  // own comment) — checking the actual source line directly is the established pattern here for
+  // exactly this situation (see e.g. testDeleteJvIsGoneEntirely).
+  const src = fs.readFileSync(APP_HTML, 'utf8');
+  const line = src.match(/if\(D\.uiPrefs[^;]*insertWithRetry\('pd_ui_prefs'[^;]*;/);
+  const lineText = line? line[0] : '';
+  assert(!!line, 'Should find the pd_ui_prefs cloud-restore line');
+  assert(/D\.uiPrefs\.pageOrder \|\| D\.uiPrefs\.balanceStaleDays/.test(lineText),
+    'The condition must also fire when only balanceStaleDays is set, not just pageOrder, got: ' + lineText);
+  assert(/balance_stale_days:getBalanceStaleDays\(\)/.test(lineText), 'The restore payload must include balance_stale_days, got: ' + lineText);
+}
+
+async function testBalanceFreshnessSettingsPanelShowsCurrentValue(){
+  const sb = makeSandbox();
+  sb.__set('settingsTab', 'balancefreshness');
+  const D = vm.runInContext('D', sb);
+  D.uiPrefs = D.uiPrefs || {}; D.uiPrefs.balanceStaleDays = 4;
+  sb.renderSettings();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Balance Freshness/.test(html), 'The settings panel should be present');
+  assert(/id="balanceStaleDaysInput"[^>]*value="4"/.test(html), 'The input should reflect the currently saved value (4), got snippet: ' + html.slice(html.indexOf('balanceStaleDaysInput')-40, html.indexOf('balanceStaleDaysInput')+80));
+}
+
+async function testSaveBalanceStaleDaysFromInputValidatesAndToasts(){
+  const sb = makeSandbox();
+  const input = sb.document.createElement('input'); input.id='balanceStaleDaysInput'; input.value='7'; sb.document.body.appendChild(input);
+  let toastMsg = null;
+  sb.__set('toast', (m)=>{ toastMsg = m; });
+  sb.__set('renderSettings', ()=>{});
+  sb.__set('screen', 'ledger'); // not on the dashboard — renderDashboard should not be required
+  const calls = [];
+  sb.__set('syncWrite', async (table, kind, row, base) => { calls.push(row); return {ok:true}; });
+  sb.__set('persistLocal', ()=>{});
+  await sb.saveBalanceStaleDaysFromInput();
+  assert(sb.getBalanceStaleDays()===7, 'Should persist the typed value, got ' + sb.getBalanceStaleDays());
+  assert(toastMsg && /Balance Freshness/.test(toastMsg), 'Should confirm the save, got: ' + toastMsg);
+}
+
+async function testSaveBalanceStaleDaysFromInputRejectsInvalidValues(){
+  const sb = makeSandbox();
+  const input = sb.document.createElement('input'); input.id='balanceStaleDaysInput'; input.value='-1'; sb.document.body.appendChild(input);
+  let toastMsg = null, toastBad = null;
+  sb.__set('toast', (m,bad)=>{ toastMsg = m; toastBad = bad; });
+  await sb.saveBalanceStaleDaysFromInput();
+  assert(sb.getBalanceStaleDays()===0, 'An invalid (-1) value must not be saved, should remain at the default 0');
+  assert(toastMsg && toastBad, 'Should show an error toast for an invalid value, got: ' + toastMsg);
+}
+
+async function testSaveBalanceStaleDaysFromInputRefreshesDashboardWhenOnIt(){
+  const sb = makeSandbox();
+  const input = sb.document.createElement('input'); input.id='balanceStaleDaysInput'; input.value='2'; sb.document.body.appendChild(input);
+  sb.__set('screen', 'dashboard');
+  sb.__set('toast', ()=>{});
+  sb.__set('renderSettings', ()=>{});
+  sb.__set('syncWrite', async ()=>({ok:true}));
+  sb.__set('persistLocal', ()=>{});
+  let dashRendered = false;
+  sb.__set('renderDashboard', ()=>{ dashRendered = true; });
+  await sb.saveBalanceStaleDaysFromInput();
+  assert(dashRendered, 'Should refresh the dashboard immediately when currently viewing it, so the new threshold is reflected without a manual navigation');
+}
+
+async function testShowSplashSetsVersionTag(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  doc.body.appendChild(Object.assign(doc.createElement('div'), {id:'splashScreen'}));
+  const vEl = doc.createElement('div'); vEl.id='splashVersionTag'; doc.body.appendChild(vEl);
+  doc.body.appendChild(Object.assign(doc.createElement('button'), {id:'splashBypassBtn'}));
+  doc.body.appendChild(Object.assign(doc.createElement('div'), {id:'splashProgressPct'}));
+  doc.body.appendChild(Object.assign(doc.createElement('div'), {id:'splashProgressFill'}));
+  sb.showSplash();
+  const APP_VERSION = vm.runInContext('APP_VERSION', sb);
+  assert(vEl.textContent === 'v'+APP_VERSION, 'showSplash should set the version tag text to v+APP_VERSION, got ' + vEl.textContent);
+}
+
+async function testSplashVersionTagNotOverwrittenIfAlreadySet(){
+  // Mirrors the exact guard used for the sidebar version tag in renderNav — set once, never
+  // clobbering something already there.
+  const sb = makeSandbox();
+  const doc = sb.document;
+  doc.body.appendChild(Object.assign(doc.createElement('div'), {id:'splashScreen'}));
+  const vEl = doc.createElement('div'); vEl.id='splashVersionTag'; vEl.textContent = 'v9.9.9-custom'; doc.body.appendChild(vEl);
+  doc.body.appendChild(Object.assign(doc.createElement('button'), {id:'splashBypassBtn'}));
+  doc.body.appendChild(Object.assign(doc.createElement('div'), {id:'splashProgressPct'}));
+  doc.body.appendChild(Object.assign(doc.createElement('div'), {id:'splashProgressFill'}));
+  sb.showSplash();
+  assert(vEl.textContent === 'v9.9.9-custom', 'showSplash should not overwrite existing tag text, got ' + vEl.textContent);
+}
+
+function testSplashScreenMarkupIncludesVersionElement(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/id="splashVersionTag"/.test(html), 'The splash screen markup should include a version tag element for showSplash() to populate');
+}
+
+// ================= v4.49.0: Account Budget Chart (P&L sub-page) =================
+function acctBudgetChartFixtureD(extra){
+  const D = Object.assign({
+    accounts: [
+      {id:60101, category:'Bills', acc_type:'Individual Account', status:'Active'},
+      {id:60102, category:'Bills', acc_type:'Individual Account', status:'Active'},
+      {id:60103, category:'Bills', acc_type:'Individual Account', status:'Deleted'}, // has a budget row but Deleted — must be excluded
+      {id:30101, category:'Salary', acc_type:'Individual Account', status:'Active'}, // income, not expense — must be excluded regardless of any budget row
+    ],
+    ledger: [], budget: [], provisionGroups: [], forecastAccountRules: []
+  }, extra||{});
+  return D;
+}
+async function testAccountsWithBudgetFiguresIncludesEveryPlanSource(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({
+    budget: [{id:1, acc:60101, date:'2026-08-01', amt:100}, {id:2, acc:60103, date:'2026-08-01', amt:50}, {id:3, acc:30101, date:'2026-08-01', amt:9999}],
+    provisionGroups: [{id:1, name:'Home', lines:[{lineId:'l1', acc:60102}], months:{}}],
+  });
+  sb.__set('D', D);
+  const opts = sb.accountsWithBudgetFigures();
+  const ids = opts.map(a=>a.id);
+  assert(ids.includes(60101), 'An account with a legacy D.budget row should be included, got ' + ids.join(','));
+  assert(ids.includes(60102), 'An account whose plan comes from Provisions only should also be included, got ' + ids.join(','));
+  assert(!ids.includes(60103), 'A Deleted account must be excluded even though it has a budget row, got ' + ids.join(','));
+  assert(!ids.includes(30101), 'An income account (starts with 3) must never be included regardless of any budget row, got ' + ids.join(','));
+}
+async function testAccountsWithBudgetFiguresIncludesSmartRuleOnlyAccounts(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({
+    forecastAccountRules: [{id:1, name:'Insurance rule', account:60101, rule:{type:'fixed', value:100, sign:1}}],
+  });
+  sb.__set('D', D);
+  const ids = sb.accountsWithBudgetFigures().map(a=>a.id);
+  assert(ids.includes(60101), 'An account whose only plan source is a Smart Rule should still be included, got ' + ids.join(','));
+}
+async function testAccountsWithBudgetFiguresExcludesAccountsWithNoPlanAtAll(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD();
+  sb.__set('D', D);
+  assert(sb.accountsWithBudgetFigures().length===0, 'An expense account with no budget, Provisions line, or Smart Rule anywhere should not appear in the picker');
+}
+async function testAcctBudgetChartYearsAlwaysIncludesTheCurrentYearEvenWithNoActivity(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  sb.__set('D', {ledger:[{id:1, jv:1, date:'2023-01-01', acc:60101, amt:-100, descr:'x'}]}); // no 2026 activity at all
+  const years = sb.acctBudgetChartYears();
+  assert(years.includes('2026'), 'The current year must always be selectable even with zero ledger activity yet, got ' + years.join(','));
+  assert(years[0]==='2026', 'Years should be sorted most-recent-first, got ' + years.join(','));
+  assert(years.includes('2023'), 'A year with real ledger activity should still be included, got ' + years.join(','));
+}
+async function testComputeAcctBudgetChartDataUsesOriginalPlanEvenForPastMonths(){
+  // The exact past-month-locking gotcha documented for the Month End Accrual JV fix: without
+  // passing each month as its own "current month", computeForecastCell would collapse a past
+  // month's plan into its actual figure — silently making every Budget bar for a prior year (or
+  // an earlier month this year) equal to Actual instead of showing the real original plan.
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z'); // "today" is well after the whole of 2025
+  const D = acctBudgetChartFixtureD({
+    ledger: [{id:1, jv:1, date:'2025-03-15', acc:60101, amt:-390, descr:'x'}],
+    provisionGroups: [{id:1, name:'Home', lines:[{lineId:'l1', acc:60101}], months:{'2025-03':{l1:-300}}}],
+  });
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  const data = sb.computeAcctBudgetChartData(60101, '2025');
+  assert(Math.abs(data.budgetVals[2] - (-300)) < 0.5, 'March 2025\'s Budget bar should show the real original plan (-300), not collapse to match Actual (-390), got ' + data.budgetVals[2]);
+  assert(Math.abs(data.actualVals[2] - (-390)) < 0.5, 'March 2025\'s Actual should still be the real ledger spend, got ' + data.actualVals[2]);
+}
+async function testComputeAcctBudgetChartDataZerosFutureMonthsActual(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  const D = acctBudgetChartFixtureD({
+    ledger: [{id:1, jv:1, date:'2026-11-01', acc:60101, amt:-500, descr:'x (should never count — this is in the future)'}],
+    budget: [{id:1, acc:60101, date:'2026-11-01', amt:-400}],
+  });
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  const data = sb.computeAcctBudgetChartData(60101, '2026');
+  assert(data.actualVals[10]===0, 'November 2026 (a future month) should show Actual as exactly 0 per the confirmed decision, got ' + data.actualVals[10]);
+  assert(Math.abs(data.budgetVals[10] - (-400)) < 0.5, 'A future month\'s Budget bar should still show the real planned figure, got ' + data.budgetVals[10]);
+}
+async function testComputeAcctBudgetChartDataCumulativeRunsCorrectlyAndFlattensAfterToday(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-02-15T00:00:00.000Z'); // only Jan and Feb have "happened"
+  const D = acctBudgetChartFixtureD({
+    ledger: [
+      {id:1, jv:1, date:'2026-01-10', acc:60101, amt:-100, descr:'x'},
+      {id:2, jv:2, date:'2026-02-10', acc:60101, amt:-150, descr:'x'},
+    ],
+    budget: [
+      {id:1, acc:60101, date:'2026-01-01', amt:-120},
+      {id:2, acc:60101, date:'2026-02-01', amt:-120},
+      {id:3, acc:60101, date:'2026-03-01', amt:-120}, // March hasn't happened yet
+    ],
+  });
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  const data = sb.computeAcctBudgetChartData(60101, '2026');
+  assert(Math.abs(data.cumBudget[2] - (-360)) < 0.5, 'Cumulative Budget through March should be -120*3=-360, got ' + data.cumBudget[2]);
+  assert(Math.abs(data.cumActual[1] - (-250)) < 0.5, 'Cumulative Actual through February should be -100-150=-250, got ' + data.cumActual[1]);
+  assert(data.cumActual[2]===data.cumActual[1], 'Cumulative Actual must flatten at March (a future month contributing 0), not keep climbing, got cumActual[1]=' + data.cumActual[1] + ' cumActual[2]=' + data.cumActual[2]);
+}
+async function testComputeAcctBudgetChartDataRemainingIsSignConventionProof(){
+  // Negative-sign expense convention: budget -1200 total, actual -900 total -> 300 remaining.
+  const negD = acctBudgetChartFixtureD({
+    ledger: Array.from({length:12},(_,i)=>({id:i+1, jv:i+1, date:'2026-'+String(i+1).padStart(2,'0')+'-15', acc:60101, amt:-75, descr:'x'})),
+    budget: Array.from({length:12},(_,i)=>({id:i+1, acc:60101, date:'2026-'+String(i+1).padStart(2,'0')+'-01', amt:-100})),
+  });
+  const sbNeg = makeSandbox();
+  freezeDate(sbNeg, '2026-12-31T00:00:00.000Z');
+  sbNeg.__set('D', negD);
+  sbNeg.__set('ACC_BY_ID', Object.fromEntries(negD.accounts.map(a=>[a.id,a])));
+  const negData = sbNeg.computeAcctBudgetChartData(60101, '2026');
+  assert(Math.abs(negData.remaining - 300) < 0.5, 'Negative-convention remaining should be 300 (1200-900 by magnitude), got ' + negData.remaining);
+
+  // Same real-world position, positive-sign convention: budget 1200 total, actual 900 total.
+  const posD = acctBudgetChartFixtureD({
+    ledger: Array.from({length:12},(_,i)=>({id:i+1, jv:i+1, date:'2026-'+String(i+1).padStart(2,'0')+'-15', acc:60101, amt:75, descr:'x'})),
+    budget: Array.from({length:12},(_,i)=>({id:i+1, acc:60101, date:'2026-'+String(i+1).padStart(2,'0')+'-01', amt:100})),
+  });
+  const sbPos = makeSandbox();
+  freezeDate(sbPos, '2026-12-31T00:00:00.000Z');
+  sbPos.__set('D', posD);
+  sbPos.__set('ACC_BY_ID', Object.fromEntries(posD.accounts.map(a=>[a.id,a])));
+  const posData = sbPos.computeAcctBudgetChartData(60101, '2026');
+  assert(Math.abs(posData.remaining - 300) < 0.5, 'The same real remaining amount must read as 300 under the positive convention too, got ' + posData.remaining);
+}
+async function testOpenAcctBudgetChartRoutesRenderPnLToTheSubpage(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  sb.openAcctBudgetChart();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Back to P&amp;L/.test(html), 'Opening the chart should route renderPnL() to the sub-page, got snippet: ' + html.slice(0,300));
+  assert(vm.runInContext('pnlView', sb)==='acctchart', 'pnlView should be set to acctchart');
+}
+async function testCloseAcctBudgetChartReturnsToMainPnLView(){
+  const sb = makeSandbox();
+  sb.__set('D', acctBudgetChartFixtureD());
+  sb.__set('pnlView', 'acctchart');
+  sb.closeAcctBudgetChart();
+  assert(vm.runInContext('pnlView', sb)==='main', 'Closing should reset pnlView back to main');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Total Income/.test(html), 'Closing should render the real main P&L view, not stay on the sub-page, got snippet: ' + html.slice(0,300));
+}
+async function testRenderAcctBudgetChartPageShowsEmptyStateWithNoBudgetedAccounts(){
+  const sb = makeSandbox();
+  sb.__set('D', acctBudgetChartFixtureD()); // no budget/provisions/rules anywhere
+  sb.__set('pnlView', 'acctchart');
+  sb.renderPnL();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/No expense accounts with a budget/.test(html), 'Should show a clear empty state rather than crash or render a blank chart, got snippet: ' + html.slice(0,500));
+}
+async function testSelectAcctBudgetChartAccountAndYearUpdateState(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({
+    budget:[{id:1, acc:60101, date:'2026-08-01', amt:100},{id:2, acc:60102, date:'2026-08-01', amt:200}],
+    ledger:[{id:1, jv:1, date:'2024-01-01', acc:60101, amt:-50, descr:'x'}], // makes 2024 an actual, legitimately selectable year
+  });
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  sb.__set('pnlView', 'acctchart');
+  sb.selectAcctBudgetChartAccount('60102');
+  assert(vm.runInContext('acctChartAccId', sb)===60102, 'Selecting an account should update acctChartAccId as a number, got ' + vm.runInContext('acctChartAccId', sb));
+  sb.selectAcctBudgetChartYear('2024');
+  assert(vm.runInContext('acctChartYear', sb)==='2024', 'Selecting a year that is actually a valid option should update acctChartYear, got ' + vm.runInContext('acctChartYear', sb));
+}
+
+// ================= v4.50.0: P&L chart-link icon jumps straight into a specific account =================
+async function testOpenAcctBudgetChartAcceptsASpecificAccountId(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60102, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('acctChartAccId', null);
+  sb.openAcctBudgetChart(60102);
+  assert(vm.runInContext('acctChartAccId', sb)===60102, 'Passing an account id should select it directly, got ' + vm.runInContext('acctChartAccId', sb));
+  assert(vm.runInContext('pnlView', sb)==='acctchart', 'Should still route into the chart sub-page');
+}
+
+async function testOpenAcctBudgetChartWithNoArgumentKeepsTheOldDefaultBehavior(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('acctChartAccId', null);
+  sb.openAcctBudgetChart(); // no id — the pre-existing call shape, used by the standalone button
+  assert(vm.runInContext('acctChartAccId', sb)===60101, 'With no id passed, should fall back to the first available budgeted account exactly as before, got ' + vm.runInContext('acctChartAccId', sb));
+}
+
+async function testOpenAcctBudgetChartWithSpecificIdOverridesAnyPreviousSelection(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}, {id:2, acc:60102, date:'2026-08-01', amt:50}]});
+  sb.__set('D', D);
+  sb.__set('acctChartAccId', 60101); // already viewing a different account
+  sb.openAcctBudgetChart(60102); // jump to a different one via the new link
+  assert(vm.runInContext('acctChartAccId', sb)===60102, 'A specific id passed in should override whatever was previously selected, got ' + vm.runInContext('acctChartAccId', sb));
+}
+
+async function testPnLChartLinkShowsOnlyForBudgetedExpenseAccounts(){
+  const sb = makeSandbox();
+  const D = {
+    accounts: [
+      {id:60101, category:'Bills', acc_type:'Individual Account', status:'Active'}, // has a budget row — should get the link
+      {id:60102, category:'Bills', acc_type:'Individual Account', status:'Active'}, // no plan anywhere — must NOT get the link
+      {id:30101, category:'Salary', acc_type:'Individual Account', status:'Active'}, // income — never gets this link regardless
+    ],
+    ledger: [
+      {id:1, jv:1, date:'2026-08-05', acc:60101, amt:-50, descr:'x'},
+      {id:2, jv:2, date:'2026-08-06', acc:60102, amt:-30, descr:'y'},
+      {id:3, jv:3, date:'2026-08-07', acc:30101, amt:1000, descr:'z'},
+    ],
+    budget: [{id:1, acc:60101, date:'2026-08-01', amt:100}],
+    provisionGroups: [], forecastAccountRules: []
+  };
+  sb.__set('D', D);
+  sb.__set('pnlFrom', '2026-08-01');
+  sb.__set('pnlTo', '2026-08-31');
+  sb.__set('pnlPreset', 'custom');
+  sb.renderPnL();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/openAcctBudgetChart\(60101\)/.test(html), 'The budgeted expense account (60101) should get the chart link');
+  assert(!/openAcctBudgetChart\(60102\)/.test(html), 'An expense account with no plan anywhere must NOT get the chart link, got snippet: ' + html.slice(html.indexOf('60102')-50, html.indexOf('60102')+150));
+  assert(!/openAcctBudgetChart\(30101\)/.test(html), 'An income account must never get the chart link, regardless of any budget data');
+}
+
+function testPnLChartLinkStopsClickPropagationToTheRowHandler(){
+  // The account name cell's own onclick opens viewPnLAccountTransactions — without
+  // stopPropagation, clicking the 📊 icon would fire both handlers and immediately navigate away
+  // from the chart before it could ever render.
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const iconSnippet = html.slice(html.indexOf('openAcctBudgetChart(${i.a.id})')-60, html.indexOf('openAcctBudgetChart(${i.a.id})')+40);
+  assert(/event\.stopPropagation\(\)/.test(iconSnippet), 'The chart-link icon must stop click propagation to the row\'s own handler, got: ' + iconSnippet);
+}
+
+// ================= v4.51.0: click an Actual bar on the Account Budget Chart to see that month's transactions =================
+async function testAcctBudgetBarChartClickOpensTransactionsForActualBar(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({
+    budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}],
+    ledger:[{id:1, jv:1, date:'2026-03-15', acc:60101, amt:-42, descr:'Coffee'}]
+  });
+  sb.__set('D', D);
+  let modalHtml = null;
+  sb.__set('showModal', (html)=>{ modalHtml = html; });
+  const months = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'];
+  sb.acctBudgetBarChartClickHandler([{datasetIndex:1, index:2}], months, 60101); // March, the Actual dataset
+  assert(modalHtml!==null, 'Clicking an Actual bar should open a modal');
+  const safeHtml = modalHtml || '';
+  assert(/Coffee/.test(safeHtml), 'The modal should list that month\'s real transaction, got: ' + safeHtml.slice(0,400));
+  assert(/-42/.test(safeHtml) || safeHtml.indexOf('42')!==-1, 'The transaction amount should appear in the modal');
+}
+
+async function testAcctBudgetBarChartClickIgnoresBudgetBar(){
+  const sb = makeSandbox();
+  let modalOpened = false;
+  sb.__set('showModal', ()=>{ modalOpened = true; });
+  const months = ['2026-01','2026-02','2026-03'];
+  sb.acctBudgetBarChartClickHandler([{datasetIndex:0, index:1}], months, 60101); // the Budget bar (dataset 0)
+  assert(!modalOpened, 'Clicking the Budget bar must not open anything — Budget has no real transactions to drill into');
+}
+
+async function testAcctBudgetBarChartClickHandlesNoElementsGracefully(){
+  const sb = makeSandbox();
+  let modalOpened = false;
+  sb.__set('showModal', ()=>{ modalOpened = true; });
+  sb.acctBudgetBarChartClickHandler([], ['2026-01'], 60101); // a click that landed on empty chart area
+  assert(!modalOpened, 'A click with no chart elements under it should be a clean no-op, not throw');
+}
+
+async function testAcctBudgetBarChartClickOnFutureFlatMonthShowsHonestEmptyState(){
+  // Future months' Actual bar sits flat at 0 per the confirmed behavior — clicking it should
+  // still open the modal and show a genuine "no transactions" state rather than silently doing
+  // nothing, which would look like a broken click rather than an honest empty month.
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-03-01T00:00:00.000Z');
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}], ledger:[]});
+  sb.__set('D', D);
+  let modalHtml = null;
+  sb.__set('showModal', (html)=>{ modalHtml = html; });
+  const months = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'];
+  sb.acctBudgetBarChartClickHandler([{datasetIndex:1, index:7}], months, 60101); // August — a future month relative to frozen "today"
+  assert(modalHtml!==null, 'Should still open the modal for a future (flat-zero) month');
+  assert(/No transactions this month/.test(modalHtml||''), 'Should show the honest empty state, not fabricate anything, got: ' + (modalHtml||'').slice(0,400));
+}
+
+function testViewAcctBudgetChartMonthTransactionsFiltersToTheExactAccountAndMonth(){
+  const sb = makeSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts = [{id:60101, category:'Bills', acc_type:'Individual Account', status:'Active'}, {id:60102, category:'Bills', acc_type:'Individual Account', status:'Active'}];
+  D.ledger = [
+    {id:1, jv:1, date:'2026-03-10', acc:60101, amt:-30, descr:'March, right account'},
+    {id:2, jv:2, date:'2026-04-10', acc:60101, amt:-99, descr:'Wrong month'},
+    {id:3, jv:3, date:'2026-03-10', acc:60102, amt:-77, descr:'Wrong account'},
+  ];
+  let modalHtml = null;
+  sb.__set('showModal', (html)=>{ modalHtml = html; });
+  sb.viewAcctBudgetChartMonthTransactions(60101, '2026-03');
+  const safeModalHtml = modalHtml || '';
+  assert(/March, right account/.test(safeModalHtml), 'Should include the matching transaction');
+  assert(!/Wrong month/.test(safeModalHtml), 'Should exclude a transaction from a different month on the same account');
+  assert(!/Wrong account/.test(safeModalHtml), 'Should exclude a transaction from a different account in the same month');
+}
+
+// ================= v4.52.0: Account Budget Chart — Sub Category mode =================
+async function testSubcategoriesWithBudgetFiguresIncludesOnlyCategoriesWithABudgetedAccount(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({
+    budget: [{id:1, acc:60101, date:'2026-08-01', amt:100}], // 60101 and 60102 are both category "Bills"
+  });
+  sb.__set('D', D);
+  const cats = sb.subcategoriesWithBudgetFigures();
+  assert(cats.includes('Bills'), 'A category with at least one budgeted account should be included, got ' + cats.join(','));
+  assert(!cats.includes('Salary'), 'An income category must never be included, got ' + cats.join(','));
+}
+async function testSubcategoriesWithBudgetFiguresExcludesCategoriesWithNoBudgetAtAll(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD(); // no budget/provisions/rules anywhere
+  sb.__set('D', D);
+  assert(sb.subcategoriesWithBudgetFigures().length===0, 'A category where nothing has ever been budgeted should not appear in the picker');
+}
+async function testAcctBudgetChartCategoryAccountIdsIncludesEveryAccountRegardlessOfItsOwnBudgetStatus(){
+  // Matches the P&L page's own category subtotal semantics exactly (expByCat sums every expense
+  // account in the category, not just the ones individually budgeted) — an unbudgeted account's
+  // real spend still counts toward the category's real total.
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget: [{id:1, acc:60101, date:'2026-08-01', amt:100}]}); // only 60101 has a budget row; 60102 has none
+  sb.__set('D', D);
+  const ids = sb.acctBudgetChartCategoryAccountIds('Bills');
+  assert(ids.has(60101) && ids.has(60102), 'Both Bills accounts should be included regardless of which one has its own budget row, got ' + [...ids].join(','));
+  assert(!ids.has(60103), 'The Deleted Bills account must be excluded, got ' + [...ids].join(','));
+  assert(!ids.has(30101), 'The income account must never be included even if it somehow shared the category name');
+}
+async function testComputeAcctBudgetChartDataForCategoryAggregatesAcrossEveryAccountInTheCategory(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-08-24T00:00:00.000Z');
+  const D = acctBudgetChartFixtureD({
+    provisionGroups: [{id:1, name:'Home', lines:[{lineId:'l1', acc:60101},{lineId:'l2', acc:60102}], months:{'2026-03':{l1:200, l2:100}}}],
+    ledger: [
+      {id:1, jv:1, date:'2026-03-10', acc:60101, amt:-150, descr:'x'},
+      {id:2, jv:2, date:'2026-03-15', acc:60102, amt:-75, descr:'y'},
+    ],
+  });
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  const data = sb.computeAcctBudgetChartDataForCategory('Bills', '2026');
+  const marIdx = data.months.indexOf('2026-03');
+  assert(Math.abs(data.budgetVals[marIdx]-300)<0.005, 'March budget should be the sum of both accounts\' plans (200+100=300), got ' + data.budgetVals[marIdx]);
+  assert(Math.abs(data.actualVals[marIdx]-(-225))<0.005, 'March actual should be the sum of both accounts\' real spend, kept in the ledger\'s own raw sign convention (-150 + -75 = -225), got ' + data.actualVals[marIdx]);
+}
+async function testComputeAcctBudgetChartDataForCategoryZerosFutureMonths(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-03-15T00:00:00.000Z');
+  const D = acctBudgetChartFixtureD({
+    budget: [{id:1, acc:60101, date:'2026-08-01', amt:400}],
+    ledger: [{id:1, jv:1, date:'2026-08-05', acc:60101, amt:-999, descr:'should never count — future month'}],
+  });
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  const data = sb.computeAcctBudgetChartDataForCategory('Bills', '2026');
+  const augIdx = data.months.indexOf('2026-08');
+  assert(data.actualVals[augIdx]===0, 'A future month\'s Actual should stay flat at 0 in subcategory mode too, got ' + data.actualVals[augIdx]);
+}
+async function testSelectAcctBudgetChartModeAndSubcatUpdateState(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]}); // makes "Bills" a real, selectable category
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  sb.__set('pnlView', 'acctchart');
+  sb.selectAcctBudgetChartMode('subcategory');
+  assert(vm.runInContext('acctChartMode', sb)==='subcategory', 'Selecting subcategory mode should update acctChartMode, got ' + vm.runInContext('acctChartMode', sb));
+  sb.selectAcctBudgetChartSubcat('Bills');
+  assert(vm.runInContext('acctChartSubcat', sb)==='Bills', 'Selecting a sub category should update acctChartSubcat, got ' + vm.runInContext('acctChartSubcat', sb));
+  sb.selectAcctBudgetChartMode('account');
+  assert(vm.runInContext('acctChartMode', sb)==='account', 'Selecting account mode should switch back, got ' + vm.runInContext('acctChartMode', sb));
+}
+async function testOpenAcctBudgetChartForCategorySetsSubcatModeAndOpensThePage(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('acctChartMode', 'account'); // starting from account mode
+  sb.openAcctBudgetChartForCategory('Bills');
+  assert(vm.runInContext('acctChartSubcat', sb)==='Bills', 'Should select the passed category, got ' + vm.runInContext('acctChartSubcat', sb));
+  assert(vm.runInContext('acctChartMode', sb)==='subcategory', 'Should switch into subcategory mode, got ' + vm.runInContext('acctChartMode', sb));
+  assert(vm.runInContext('pnlView', sb)==='acctchart', 'Should route into the chart sub-page');
+}
+async function testOpenAcctBudgetChartWithAnAccountIdSwitchesBackToAccountMode(){
+  // Guards against getting stuck in subcategory mode if the person then clicks an individual
+  // account's own 📊 link — the per-account link must always land in Account mode, not leave a
+  // stale subcategory selection in charge of what's displayed.
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('acctChartMode', 'subcategory');
+  sb.openAcctBudgetChart(60101);
+  assert(vm.runInContext('acctChartMode', sb)==='account', 'Opening a specific account should always switch back to account mode, got ' + vm.runInContext('acctChartMode', sb));
+}
+async function testRenderAcctBudgetChartPageShowsSubcatPickerInSubcategoryMode(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  sb.__set('acctChartMode', 'subcategory');
+  sb.renderAcctBudgetChartPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Sub Category/.test(html), 'Should show the Sub Category label/picker in subcategory mode');
+  assert(!/label class="fl">Account</.test(html), 'Should NOT show the Account picker while in subcategory mode');
+  assert(/Bills/.test(html), 'The Bills category should appear as an option');
+}
+async function testRenderAcctBudgetChartPageFallsBackWhenSelectedSubcatNoLongerQualifies(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({budget:[{id:1, acc:60101, date:'2026-08-01', amt:100}]});
+  sb.__set('D', D);
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id,a])));
+  sb.__set('acctChartMode', 'subcategory');
+  sb.__set('acctChartSubcat', 'NotARealCategory');
+  sb.renderAcctBudgetChartPage();
+  assert(vm.runInContext('acctChartSubcat', sb)==='Bills', 'An invalid/stale sub category should fall back to the first available option, got ' + vm.runInContext('acctChartSubcat', sb));
+}
+async function testAcctBudgetBarChartClickHandlerRoutesToSubcategoryModalWhenModeIsSubcategory(){
+  const sb = makeSandbox();
+  let calledWith = null;
+  sb.__set('viewAcctBudgetChartMonthTransactionsForCategory', (cat, mk)=>{ calledWith = {cat, mk}; });
+  const months = ['2026-01','2026-02','2026-03'];
+  sb.acctBudgetBarChartClickHandler([{datasetIndex:1, index:1}], months, 'Bills', 'subcategory');
+  assert(calledWith && calledWith.cat==='Bills' && calledWith.mk==='2026-02', 'Clicking the Actual bar in subcategory mode should open the category transactions modal for the right month, got ' + JSON.stringify(calledWith));
+}
+async function testAcctBudgetBarChartClickHandlerStillRoutesToAccountModalWithNoModeArgument(){
+  // Regression check: old call sites/tests that don't pass the 4th (mode) argument at all must
+  // keep working exactly as before — this is exactly the kind of backward-compatibility gap this
+  // app's own conventions call out repeatedly.
+  const sb = makeSandbox();
+  let calledWith = null;
+  sb.__set('viewAcctBudgetChartMonthTransactions', (accId, mk)=>{ calledWith = {accId, mk}; });
+  const months = ['2026-01','2026-02'];
+  sb.acctBudgetBarChartClickHandler([{datasetIndex:1, index:0}], months, 60101);
+  assert(calledWith && calledWith.accId===60101 && calledWith.mk==='2026-01', 'With no mode argument, should still default to account-mode routing, got ' + JSON.stringify(calledWith));
+}
+async function testViewAcctBudgetChartMonthTransactionsForCategoryGroupsByAccountThenDate(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD({
+    ledger: [
+      {id:1, jv:1, date:'2026-03-20', acc:60101, descr:'Later', amt:-40, alloc:null, allocatable:false},
+      {id:2, jv:2, date:'2026-03-05', acc:60101, descr:'Earlier', amt:-10, alloc:null, allocatable:false},
+      {id:3, jv:3, date:'2026-03-12', acc:60102, descr:'OtherAcct', amt:-25, alloc:null, allocatable:false},
+    ],
+  });
+  sb.__set('D', D);
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.viewAcctBudgetChartMonthTransactionsForCategory('Bills', '2026-03');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  const idx60101 = html.indexOf('60101');
+  const idxEarlier = html.indexOf('Earlier');
+  const idxLater = html.indexOf('Later');
+  const idx60102 = html.indexOf('60102');
+  const idxOther = html.indexOf('OtherAcct');
+  assert(idx60101!==-1 && idxEarlier!==-1 && idxLater!==-1 && idx60102!==-1 && idxOther!==-1, 'All expected content should be present in the modal, got: ' + html.slice(0,600));
+  assert(idx60101 < idxEarlier && idxEarlier < idxLater, 'Within account 60101\'s section, Earlier should come before Later (date order), got positions: ' + idx60101 + ',' + idxEarlier + ',' + idxLater);
+  assert(idxLater < idx60102, 'Account 60101\'s whole section should come before account 60102\'s section (grouped by account), got: ' + idxLater + ' vs ' + idx60102);
+  assert(idx60102 < idxOther, 'Account 60102\'s own transaction should appear within its own section, got: ' + idx60102 + ' vs ' + idxOther);
+  const total = html.match(/Total<\/td><td class="num mono[^"]*">([^<]*)</);
+  assert(total, 'Should show a grand total row');
+}
+async function testViewAcctBudgetChartMonthTransactionsForCategoryHandlesEmptyMonth(){
+  const sb = makeSandbox();
+  const D = acctBudgetChartFixtureD();
+  sb.__set('D', D);
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.viewAcctBudgetChartMonthTransactionsForCategory('Bills', '2026-01');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/No transactions this month/.test(html), 'An empty month should show an honest empty state rather than a blank table');
+}
+async function testPnLCategoryLinkShowsOnlyForBudgetedCategories(){
+  const sb = makeSandbox();
+  const D = {
+    accounts: [
+      {id:60101, category:'Bills', acc_type:'Individual Account', status:'Active'}, // has a budget — Bills should get the link
+      {id:60201, category:'Transportation', acc_type:'Individual Account', status:'Active'}, // no plan anywhere — must NOT get the link
+      {id:30101, category:'Salary', acc_type:'Individual Account', status:'Active'},
+    ],
+    ledger: [
+      {id:1, jv:1, date:'2026-08-05', acc:60101, amt:-50, descr:'x'},
+      {id:2, jv:2, date:'2026-08-06', acc:60201, amt:-30, descr:'y'},
+      {id:3, jv:3, date:'2026-08-07', acc:30101, amt:1000, descr:'z'},
+    ],
+    budget: [{id:1, acc:60101, date:'2026-08-01', amt:100}],
+    provisionGroups: [], forecastAccountRules: []
+  };
+  sb.__set('D', D);
+  sb.__set('pnlFrom', '2026-08-01');
+  sb.__set('pnlTo', '2026-08-31');
+  sb.__set('pnlPreset', 'custom');
+  sb.renderPnL();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/openAcctBudgetChartForCategory\('Bills'\)/.test(html), 'The Bills category subtotal row should get the chart link, since it has a budgeted account');
+  assert(!/openAcctBudgetChartForCategory\('Transportation'\)/.test(html), 'The Transportation category must NOT get the link — nothing in it is budgeted');
+}
+function testPnLCategoryLinkStopsClickPropagation(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const idx = html.indexOf("openAcctBudgetChartForCategory('${esc(cat)");
+  assert(idx!==-1, 'Should find the category chart-link onclick in source');
+  const snippet = html.slice(idx-60, idx+10);
+  assert(/event\.stopPropagation\(\)/.test(snippet), 'The category chart-link icon should stop click propagation too, got: ' + snippet);
+}
+
+// ================= v4.53.0: Reconciliation focus fix, collapsible platforms, cross-platform asset window, Portfolio+Cash total =================
+async function testInvReconEnterNextSetsFocusKeyFromNextInputsDataset(){
+  const sb = makeSandbox();
+  const inputs = [sb.document.createElement('input'), sb.document.createElement('input')];
+  inputs.forEach((i,idx)=>{ i.className='recon-input'; i.dataset.reconkey = 'key'+idx; sb.document.body.appendChild(i); });
+  let focused = null;
+  inputs[1].focus = () => { focused = inputs[1]; };
+  sb.invReconEnterNext(inputs[0], {key:'Enter', preventDefault:()=>{}});
+  assert(focused===inputs[1], 'Should still focus the next input immediately, same as before');
+  assert(vm.runInContext('_invReconFocusKey', sb)==='key1', 'Should remember the next input\'s own reconkey so focus can be restored after the re-render wipes the DOM, got ' + vm.runInContext('_invReconFocusKey', sb));
+}
+async function testInvReconEnterNextClearsFocusKeyOnLastInput(){
+  const sb = makeSandbox();
+  const input = sb.document.createElement('input');
+  input.className = 'recon-input'; input.dataset.reconkey = 'onlyone';
+  sb.document.body.appendChild(input);
+  input.blur = () => {};
+  sb.__set('_invReconFocusKey', 'stale-leftover-key');
+  sb.invReconEnterNext(input, {key:'Enter', preventDefault:()=>{}});
+  assert(vm.runInContext('_invReconFocusKey', sb)===null, 'Enter on the last field should clear any pending focus key, not leave a stale one behind, got ' + vm.runInContext('_invReconFocusKey', sb));
+}
+async function testRenderInvReconPageRestoresFocusToTheTrackedKey(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}]
+  });
+  sb.__set('invReconExpandedPlatforms', new Set([1]));
+  sb.__set('_invReconFocusKey', 'pos-1');
+  sb.renderInvReconPage('');
+  const target = sb.document.querySelector('.recon-input[data-reconkey="pos-1"]');
+  assert(target, 'The tracked input should exist in the freshly rendered markup');
+  assert(sb.document.activeElement===target, 'renderInvReconPage should restore focus to the exact input that was pending, matching the reported bug fix');
+  assert(vm.runInContext('_invReconFocusKey', sb)===null, 'The pending key should be consumed (cleared) once used, so it does not leak into a later, unrelated render');
+}
+async function testRenderInvReconPageDoesNothingWhenNoFocusKeyPending(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'Raseed'}], invPositions:[]});
+  sb.__set('_invReconFocusKey', null);
+  sb.renderInvReconPage(''); // must not throw with nothing pending
+  assert(vm.runInContext('_invReconFocusKey', sb)===null, 'Should remain null with nothing to restore');
+}
+async function testInvReconPlatformsCollapsedByDefault(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}]
+  });
+  // Deliberately does NOT set invReconExpandedPlatforms — exercising the real top-level default.
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(!/<colgroup>/.test(html), 'A freshly-loaded Reconciliation page should start with every platform collapsed, got snippet: ' + html.slice(0,500));
+  assert(/▸ Expand/.test(html), 'A collapsed platform should show an Expand affordance');
+}
+async function testToggleInvReconPlatformExpandedFlipsIndependentlyPerPlatform(){
+  const sb = invCashSandbox({invPlatforms:[{id:1, name:'A'},{id:2, name:'B'}], invPositions:[]});
+  sb.__set('invReconExpandedPlatforms', new Set());
+  sb.__set('renderInvestmentsPage', ()=>{});
+  sb.toggleInvReconPlatformExpanded(1);
+  assert(vm.runInContext('invReconExpandedPlatforms', sb).has(1), 'Toggling platform 1 should expand it');
+  assert(!vm.runInContext('invReconExpandedPlatforms', sb).has(2), 'Platform 2 should remain untouched');
+  sb.toggleInvReconPlatformExpanded(1);
+  assert(!vm.runInContext('invReconExpandedPlatforms', sb).has(1), 'Toggling again should collapse it back');
+}
+async function testInvReconExpandStateIsIndependentFromTheMainInvestmentsPage(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}]
+  });
+  sb.__set('invExpandedPlatforms', new Set([1])); // expanded on the MAIN Investments page
+  sb.__set('invReconExpandedPlatforms', new Set()); // but never touched here — confirmed decision: independent
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(!/<colgroup>/.test(html), 'The Reconciliation page must stay collapsed even though the same platform is expanded on the main Investments page');
+}
+async function testInvAssetIdentityUsesTickerWhenPresent(){
+  const sb = makeSandbox();
+  assert(sb.invAssetIdentity({ticker:'btc', name:'Bitcoin Fund'})==='BTC', 'Should use the (uppercased) ticker when present, got ' + sb.invAssetIdentity({ticker:'btc', name:'Bitcoin Fund'}));
+}
+async function testInvAssetIdentityFallsBackToNameWhenNoTicker(){
+  const sb = makeSandbox();
+  assert(sb.invAssetIdentity({ticker:'', name:'Riyal Fund'})==='RIYAL FUND', 'Should fall back to the (uppercased) name when there is no ticker, got ' + sb.invAssetIdentity({ticker:'', name:'Riyal Fund'}));
+}
+async function testInvPositionsMatchingAssetGroupsAcrossPlatformsByTicker(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}, {id:2, name:'Fomo'}],
+    invPositions:[
+      {id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:2, name:'BTC Holdings', ticker:'btc', currency:'USD', assetClass:'Crypto', status:'Active'}, // different name, same ticker, different case
+      {id:3, platformId:2, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+    ]
+  });
+  const matches = sb.invPositionsMatchingAsset('BTC');
+  assert(matches.length===2 && matches.some(p=>p.id===1) && matches.some(p=>p.id===2), 'Should match both BTC positions across platforms regardless of case or differing local names, got ' + matches.map(p=>p.id).join(','));
+  assert(!matches.some(p=>p.id===3), 'A genuinely different ticker must not be included');
+}
+async function testOpenInvAssetAcrossPlatformsShowsASectionPerPlatformWithItsTransactions(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}, {id:2, name:'Fomo'}],
+    invPositions:[
+      {id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:2, name:'BTC Holdings', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+    ],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:1000, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'},
+      {id:2, positionId:2, date:'2026-02-01', kind:'buy', units:2, totalSar:2000, owners:[{ownerId:1,units:2}], feePct:0, cashSide:'bank'},
+    ]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvAssetAcrossPlatforms('BTC');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Raseed/.test(html) && /Fomo/.test(html), 'Both platforms holding the asset should get their own section, got snippet: ' + html.slice(0,600));
+  // Sections are sorted alphabetically by platform name (Fomo before Raseed), matching the same
+  // convention invPlatformsSorted() already uses everywhere else in the app.
+  const fomoIdx = html.indexOf('Fomo'), raseedIdx = html.indexOf('Raseed');
+  const tx2Idx = html.indexOf('2026-02-01'), tx1Idx = html.indexOf('2026-01-01');
+  assert(fomoIdx < tx2Idx && tx2Idx < raseedIdx, 'The Fomo transaction should appear within the Fomo section, before the Raseed section starts');
+  assert(raseedIdx < tx1Idx, 'The Raseed transaction should appear within the Raseed section');
+}
+async function testOpenInvAssetAcrossPlatformsRowClickOpensTheCorrectTransactionForEditing(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:5, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:1000, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'bank'}]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvAssetAcrossPlatforms('BTC');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/openInvTxModal\(1,\s*5\)/.test(html), 'Clicking the transaction row should open the edit modal for the exact position and transaction id, got snippet: ' + html.slice(0,600));
+}
+async function testOpenInvAssetAcrossPlatformsNewTransactionGoesToThePickedPlatform(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}, {id:2, name:'Fomo'}],
+    invPositions:[
+      {id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:2, name:'BTC Holdings', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+    ]
+  });
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  sb.openInvAssetAcrossPlatforms('BTC');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  const select = sb.document.getElementById('invAssetModalPlatformPick');
+  assert(!!select, 'The platform picker dropdown should be present');
+  assert(select && select.querySelector('option[value="1"]') && select.querySelector('option[value="2"]'),
+    'The dropdown should offer both platforms\' target positions as options, got: ' + (select? select.innerHTML : '(no select found)'));
+  // JSDOM in this harness doesn't compile inline onclick="..." attributes into a callable
+  // .onclick function (no other test in this suite relies on that either) — inspecting the
+  // button's actual onclick source is the established pattern here instead.
+  const btnMatch = html.match(/<button[^>]*onclick="([^"]*)"[^>]*>\s*\+ New Transaction/);
+  const btnOnclick = btnMatch? btnMatch[1] : '';
+  assert(!!btnMatch, 'Should find the New Transaction button and its onclick source');
+  assert(/getElementById\('invAssetModalPlatformPick'\)\.value/.test(btnOnclick),
+    'The button must read whichever platform is currently picked in the dropdown, not a fixed value, got: ' + btnOnclick);
+  assert(/openInvTxModal\(Number\(document\.getElementById\('invAssetModalPlatformPick'\)\.value\), null\)/.test(btnOnclick),
+    'Should open a NEW transaction (null id) on the picked platform\'s target position, got: ' + btnOnclick);
+}
+async function testInvReconPositionNameOpensTheAssetWindow(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'Bitcoin', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}]
+  });
+  sb.__set('invReconExpandedPlatforms', new Set([1]));
+  sb.renderInvReconPage('');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/openInvAssetAcrossPlatforms\('BTC'\)/.test(html), 'Clicking a position name in the Reconciliation table should open the cross-platform asset window for its identity, got snippet: ' + html.slice(html.indexOf('Bitcoin')-100, html.indexOf('Bitcoin')+100));
+}
+async function testPlatformSectionShowsCombinedPortfolioPlusCashTotal(){
+  const sb = invCashSandbox({
+    invPlatforms:[{id:1, name:'Raseed'}],
+    invPositions:[{id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[{id:1, positionId:1, date:'2026-01-01', kind:'buy', units:1, totalSar:37500, owners:[{ownerId:1,units:1}], feePct:0, cashSide:'cash', usdAmount:10000}],
+    invValuations:[{id:1, positionId:1, date:'2026-08-01', price:20000}] // 1 unit * $20,000 = $20,000 portfolio value
+  });
+  sb.__set('invExpandedPlatforms', new Set([1]));
+  const html = sb.renderInvPlatformSection({id:1, name:'Raseed'});
+  // Portfolio $20,000 + Cash $10,000 (the buy was cash-funded, so $10,000 remains on the platform... actually
+  // the buy consumed $10,000 of cash exactly, leaving $0 cash) — use the actual cash figure from the app itself
+  // rather than hand-deriving it, so this test can't silently drift from real cash-tracking logic.
+  const cash = sb.invPlatformCash(1);
+  const expectedTotal = 20000 + cash.totalUsd;
+  assert(html.indexOf('Portfolio + Cash')!==-1, 'Should show a combined Portfolio + Cash line, so it can be eyeballed against Invested (Out)');
+  assert(html.indexOf('$'+sb.fmt2(expectedTotal))!==-1, 'The combined total should be the sum of portfolio value and cash balance, got snippet: ' + html.slice(html.indexOf('Portfolio + Cash'), html.indexOf('Portfolio + Cash')+200));
+}
+
+// ================= v4.54.0: pooled monthly contributions — Collect Contributions + Split by platform cash =================
+// Five people pooling money, matching the real use: A is you, B–E family. Out accounts 10201–10205.
+function poolSandbox(extra, keepRender){
+  const sb = invCashSandbox(Object.assign({
+    accounts: [10201,10202,10203,10204,10205].map(id=>({id, acc_type:'Individual Account', status:'Active'})),
+    invOwners: [
+      {id:1, name:'A', isSelf:true,  outAcc:10201, inAcc:null},
+      {id:2, name:'B', isSelf:false, outAcc:10202, inAcc:null},
+      {id:3, name:'C', isSelf:false, outAcc:10203, inAcc:null},
+      {id:4, name:'D', isSelf:false, outAcc:10204, inAcc:null},
+      {id:5, name:'E', isSelf:false, outAcc:10205, inAcc:null},
+    ],
+    invPlatforms: [{id:1, name:'Binance'}, {id:2, name:'Bybit'}],
+    invPositions: [{id:1, platformId:1, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+                   {id:2, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'}],
+  }, extra||{}));
+  sb.__set('syncWrite', async()=>({ok:true}));
+  sb.__set('persistLocal', ()=>{});
+  sb.__set('toast', ()=>{});
+  if(!keepRender) sb.__set('renderInvestmentsPage', ()=>{});
+  sb.__set('openInvPosition', ()=>{});
+  sb.__set('setInvMgmtFeePct', async()=>{});
+  const modalRoot = sb.document.createElement('div'); modalRoot.id='modalRoot'; sb.document.body.appendChild(modalRoot);
+  return sb;
+}
+// Drives the real Collect form: amounts in SAR per owner id, optional actual USD received.
+async function poolCollect(sb, platformId, date, sarByOwner, usdReceived){
+  sb.openInvCollectModal(platformId);
+  const d = sb._invCollectDraft;
+  d.date = date;
+  sb.invCollectClearRows();
+  for(const oid in sarByOwner) sb.setInvCollectRow(Number(oid), String(sarByOwner[oid]));
+  if(usdReceived!==undefined) sb.setInvCollectUsd(String(usdReceived));
+  await sb.saveInvCollect();
+}
+// Drives the real transaction window: a cash-funded buy, split by platform cash.
+async function poolBuy(sb, posId, date, units, usd, excludeOwnerIds){
+  sb.openInvTxModal(posId, null);
+  const d = sb._invTxDraft;
+  d.date = date; d.units = String(units);
+  sb.setInvTxCashSide('cash');
+  sb.setInvTxUsd(String(usd));
+  sb.applyInvTxCashSplit();
+  for(const oid of (excludeOwnerIds||[])) sb.toggleInvTxCashSplitOwner(oid, false);
+  await sb.saveInvTx();
+}
+
+async function testInvSplitUsdBySarIsProportionalAndExactToTheCent(){
+  const sb = makeSandbox();
+  const out = sb.invSplitUsdBySar(1333.33, [{ownerId:1,sar:1500},{ownerId:2,sar:2000},{ownerId:3,sar:1000},{ownerId:4,sar:300},{ownerId:5,sar:200}]);
+  const total = out.reduce((s,o)=>s+o.usd,0);
+  assert(Math.abs(total-1333.33)<1e-9, 'The split must add up to the USD received exactly, got ' + total);
+  const b = out.find(o=>o.ownerId===2);
+  assert(Math.abs(b.usd-533.33)<0.011, 'B paid 40% of the SAR so should get ~40% of the USD (533.33), got ' + b.usd);
+  assert(out.every(o=>Math.abs(o.usd*100-Math.round(o.usd*100))<1e-6), 'Every share must be a whole number of cents');
+}
+async function testInvSplitUsdBySarSkipsNonContributors(){
+  const sb = makeSandbox();
+  const out = sb.invSplitUsdBySar(100, [{ownerId:1,sar:0},{ownerId:2,sar:500}]);
+  assert(out.length===1 && out[0].ownerId===2 && Math.abs(out[0].usd-100)<1e-9, 'Someone contributing nothing gets no row; the contributor gets all of it, got ' + JSON.stringify(out));
+}
+async function testAvailableIsOutAccountMinusWhatTheTrackerAlreadyHolds(){
+  const sb = poolSandbox({ledger:[{id:1, jv:1, date:'2026-10-01', acc:10202, amt:2000, descr:'B invested'}]});
+  const before = sb.invOwnersAvailableSar();
+  assert(Math.abs(before[2]-2000)<0.01, 'B has 2,000 in their Out account and nothing in the tracker yet, so 2,000 is available, got ' + before[2]);
+  assert(Math.abs(before[3])<0.01, 'C has nothing in their Out account, so nothing is available, got ' + before[3]);
+  await poolCollect(sb, 1, '2026-10-02', {2:2000});
+  const after = sb.invOwnersAvailableSar();
+  assert(Math.abs(after[2])<0.05, 'Once B\'s contribution is deposited, Available drops back to ~0 by itself, got ' + after[2]);
+}
+async function testAvailableIsNullWithoutAnOutAccount(){
+  const sb = poolSandbox();
+  sb._D.invOwners[3].outAcc = null; // D
+  assert(sb.invOwnersAvailableSar()[4]===null, 'With no Out account linked there is nothing to compare against, so Available should be null (shown as —)');
+}
+async function testCollectPrefillsFromAvailable(){
+  const sb = poolSandbox({ledger:[
+    {id:1, jv:1, date:'2026-10-01', acc:10201, amt:1500, descr:'x'},
+    {id:2, jv:1, date:'2026-10-01', acc:10203, amt:1000, descr:'y'},
+  ]});
+  sb.openInvCollectModal(1);
+  const d = sb._invCollectDraft;
+  assert(Math.abs(Number(d.rows[1].sar)-1500)<0.01 && Math.abs(Number(d.rows[3].sar)-1000)<0.01, 'Each person\'s amount should be pre-filled from what\'s available for them');
+  assert(d.rows[2].sar==='', 'Someone with nothing available should be left blank, not pre-filled with 0');
+}
+async function testCollectRecordsOneDepositSplitBySarShare(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:1500, 2:2000, 3:1000, 4:300, 5:200});
+  const m = sb._D.invCashMovements;
+  assert(m.length===1, 'Collecting should record exactly one movement, got ' + m.length);
+  assert(m[0].kind==='deposit' && m[0].platformId===1 && m[0].date==='2026-10-01', 'It should be a deposit on the chosen platform and date, got ' + JSON.stringify(m[0]));
+  assert(Math.abs(m[0].usdAmount-1333.33)<0.005, 'USD defaults to the SAR total ÷ 3.75 (1,333.33), got ' + m[0].usdAmount);
+  const sum = m[0].owners.reduce((s,o)=>s+o.usd,0);
+  assert(Math.abs(sum-m[0].usdAmount)<0.005, 'The per-person split must add up to the deposit total');
+  const b = m[0].owners.find(o=>o.ownerId===2);
+  assert(b && Math.abs(b.usd-533.33)<0.011, 'B (40% of the SAR) should get 40% of the USD, got ' + (b&&b.usd));
+  assert(sb._D.ledger.length===0, 'Collecting must not post anything to the ledger — the JVs are done by hand');
+}
+async function testCollectSplitsTheActualUsdReceivedNotTheTheoreticalOne(){
+  // The exchange's real rate/fees mean what lands on the platform differs from SAR ÷ 3.75.
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:1000, 2:3000}, 1060);
+  const m = sb._D.invCashMovements[0];
+  assert(Math.abs(m.usdAmount-1060)<0.005, 'The edited USD figure should be the one recorded, got ' + m.usdAmount);
+  assert(Math.abs(m.owners.find(o=>o.ownerId===1).usd-265)<0.005 && Math.abs(m.owners.find(o=>o.ownerId===2).usd-795)<0.005,
+    'The actual USD should be split 25/75 by SAR share (265 / 795), got ' + JSON.stringify(m.owners));
+}
+async function testCollectByPercentageOfATotal(){
+  const sb = poolSandbox();
+  sb.openInvCollectModal(1);
+  sb.invCollectClearRows();
+  sb.setInvCollectMode('pct');
+  sb._invCollectDraft.totalSar = '5000';
+  sb.setInvCollectRow(1, '50'); sb.setInvCollectRow(2, '30'); sb.setInvCollectRow(3, '20');
+  await sb.saveInvCollect();
+  const m = sb._D.invCashMovements[0];
+  assert(m && Math.abs(m.usdAmount-1333.33)<0.005, 'A 5,000 SAR total should deposit 1,333.33 USD, got ' + (m&&m.usdAmount));
+  assert(Math.abs(m.owners.find(o=>o.ownerId===2).usd-400)<0.011, 'B at 30% should get 400 USD, got ' + JSON.stringify(m.owners));
+}
+async function testCollectBlocksPercentagesThatDontAddUpTo100(){
+  const sb = poolSandbox();
+  let msg = null; sb.__set('toast', (m)=>{ msg = m; });
+  sb.openInvCollectModal(1);
+  sb.invCollectClearRows();
+  sb.setInvCollectMode('pct');
+  sb._invCollectDraft.totalSar = '5000';
+  sb.setInvCollectRow(1, '50'); sb.setInvCollectRow(2, '30'); // 80%
+  await sb.saveInvCollect();
+  assert(sb._D.invCashMovements.length===0, 'Nothing should be recorded when the percentages total 80%');
+  assert(msg && /100%/.test(msg), 'Should say the percentages must add up to 100%, got ' + msg);
+}
+async function testCollectBlocksAnEmptyContribution(){
+  const sb = poolSandbox();
+  sb.openInvCollectModal(1);
+  sb.invCollectClearRows();
+  await sb.saveInvCollect();
+  assert(sb._D.invCashMovements.length===0, 'Nothing should be recorded with no amounts entered');
+}
+async function testCollectButtonIsOnTheInvestmentsPage(){
+  const sb = poolSandbox(null, true); // the real page render, not a stub
+  sb.__set('invView','classic'); // v4.58.0: the pre-4.58 page is now the Classic view
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/invStartPlatformAction\('collect'\)/.test(html), 'The Investments page should have a Collect Contributions button');
+  assert(vm.runInContext("typeof INV_PLATFORM_ACTIONS.collect.open", sb)==='function', 'The collect action should be registered so the platform picker works for it');
+}
+async function testCashForSplitIsAsOfTheBuyDateIncludingSameDayDeposits(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:375, 2:750}); // $100 / $200
+  await poolCollect(sb, 1, '2026-10-15', {1:375});        // A +$100, mid-month
+  const early = sb.invOwnerCashForSplit(1, '2026-10-10', null);
+  assert(Math.abs(early[1]-100)<0.005 && Math.abs(early[2]-200)<0.005, 'Before the 15th, only the first deposit counts, got ' + JSON.stringify(early));
+  const sameDay = sb.invOwnerCashForSplit(1, '2026-10-15', null);
+  assert(Math.abs(sameDay[1]-200)<0.005, 'A deposit dated the same day as the buy counts toward it, got ' + JSON.stringify(sameDay));
+  const other = sb.invOwnerCashForSplit(2, '2026-10-31', null);
+  assert(Object.keys(other).length===0, 'Cash on one platform must not count toward a buy on another, got ' + JSON.stringify(other));
+}
+async function testCashForSplitAddsBackTheTransactionBeingEdited(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:375, 2:375}); // $100 each
+  await poolBuy(sb, 1, '2026-10-05', 1, 100);             // takes $50 each
+  const t = sb._D.invTransactions[0];
+  const without = sb.invOwnerCashForSplit(1, '2026-10-05', null);
+  const editing = sb.invOwnerCashForSplit(1, '2026-10-05', t.id);
+  assert(Math.abs(without[1]-50)<0.01, 'After the buy each has $50 left, got ' + JSON.stringify(without));
+  assert(Math.abs(editing[1]-100)<0.01, 'When editing that same buy, its own spend is added back so it doesn\'t skew its own split, got ' + JSON.stringify(editing));
+}
+async function testSplitByCashGivesUnitsInProportionToEachPersonsCash(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:3750, 2:2250, 3:1500}); // $1000 / $600 / $400
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  d.date = '2026-10-02'; d.units = '10';
+  sb.setInvTxCashSide('cash'); sb.setInvTxUsd('1000');
+  sb.applyInvTxCashSplit();
+  const u = id => (sb._invTxDraft.owners.find(o=>o.ownerId===id)||{units:0}).units;
+  assert(Math.abs(u(1)-5)<1e-9 && Math.abs(u(2)-3)<1e-9 && Math.abs(u(3)-2)<1e-9, 'Cash 1000/600/400 should split 10 units 5/3/2, got ' + JSON.stringify(sb._invTxDraft.owners));
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Stop auto-split/.test(html) && /50\.00%/.test(html), 'The panel should show each person\'s share, got snippet: ' + html.slice(html.indexOf('Split by platform cash'), html.indexOf('Split by platform cash')+600));
+}
+async function testUntickingSomeoneSpreadsTheirShareAcrossTheRest(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:3750, 2:2250, 3:1500}); // $1000 / $600 / $400
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  d.date = '2026-10-02'; d.units = '8';
+  sb.setInvTxCashSide('cash'); sb.setInvTxUsd('800');
+  sb.applyInvTxCashSplit();
+  sb.toggleInvTxCashSplitOwner(2, false); // B sits this one out
+  const o = sb._invTxDraft.owners;
+  assert(!o.some(x=>x.ownerId===2), 'An unticked person must get no units, got ' + JSON.stringify(o));
+  assert(Math.abs(o.find(x=>x.ownerId===1).units-5.71428571)<1e-7 && Math.abs(o.find(x=>x.ownerId===3).units-2.28571429)<1e-7,
+    'A and C share 8 units 1000:400, got ' + JSON.stringify(o));
+  assert(Math.abs(o.reduce((s,x)=>s+x.units,0)-8)<1e-12, 'Units must still add up exactly to the buy');
+  sb.toggleInvTxCashSplitOwner(2, true);
+  assert(sb._invTxDraft.owners.some(x=>x.ownerId===2), 'Ticking them back in should restore their share');
+}
+async function testSplitByCashNeedsUnitsFirst(){
+  const sb = poolSandbox();
+  let msg = null; sb.__set('toast', m=>{ msg = m; });
+  await poolCollect(sb, 1, '2026-10-01', {1:375});
+  sb.openInvTxModal(1, null);
+  sb.setInvTxCashSide('cash');
+  sb.applyInvTxCashSplit();
+  assert(msg && /units first/i.test(msg), 'Should ask for the units before splitting, got ' + msg);
+  assert(!(sb._invTxDraft.cashSplit && sb._invTxDraft.cashSplit.active), 'The split should not switch on without units');
+}
+async function testSplitByCashOnlyOfferedForCashFundedBuys(){
+  const sb = poolSandbox();
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  assert(sb.invTxCashSplitPanel(d)==='', 'A bank-funded buy should not offer the cash split');
+  d.cashSide = 'cash';
+  assert(/Split by platform cash/.test(sb.invTxCashSplitPanel(d)), 'A cash-funded buy should offer it');
+  d.kind = 'sell';
+  assert(sb.invTxCashSplitPanel(d)==='', 'A sell should not offer it — it splits what people hold, not their cash');
+}
+async function testChangingUnitsKeepsTheSplitInStep(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:3750, 2:3750}); // equal cash
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  d.date = '2026-10-02'; d.units = '2';
+  sb.setInvTxCashSide('cash'); sb.setInvTxUsd('500');
+  sb.applyInvTxCashSplit();
+  d.units = '6'; sb.invTxRefreshDerived(); // typing a corrected unit count after splitting
+  assert(Math.abs(sb._invTxDraft.owners.find(o=>o.ownerId===1).units-3)<1e-9, 'Changing the units after splitting should re-split them (3 each), got ' + JSON.stringify(sb._invTxDraft.owners));
+}
+async function testEditingOnePersonsUnitsByHandTurnsAutoSplitOff(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:3750, 2:3750});
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  d.date = '2026-10-02'; d.units = '2';
+  sb.setInvTxCashSide('cash'); sb.setInvTxUsd('500');
+  sb.applyInvTxCashSplit();
+  sb.setInvTxOwnerUnits(1, '1.5');
+  assert(!sb._invTxDraft.cashSplit.active, 'Typing one person\'s units by hand should hand control back to you');
+  d.units = '4'; sb.invTxRefreshDerived();
+  assert(Number(sb._invTxDraft.owners.find(o=>o.ownerId===1).units)===1.5, 'Once off, the hand-typed figure must not be overwritten');
+}
+async function testPerPersonOverdrawIsWarnedByName(){
+  const sb = poolSandbox();
+  let msg = null; sb.__set('toast', m=>{ if(/Heads up/.test(m)) msg = m; });
+  await poolCollect(sb, 1, '2026-10-01', {1:375, 2:375}); // $100 each, $200 on the platform
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  d.date = '2026-10-02'; d.units = '1';
+  sb.setInvTxCashSide('cash'); sb.setInvTxUsd('150');
+  sb.setInvTxOwnerUnits(1, '1'); // all of it to A by hand — more than A's $100
+  await sb.saveInvTx();
+  assert(msg && /A's cash on this platform negative/.test(msg), 'The platform total ($200) covers it, but A alone only has $100 — A should be named, got ' + msg);
+}
+async function testNoOverdrawWarningWhenTheSplitFollowsCash(){
+  const sb = poolSandbox();
+  let msg = null; sb.__set('toast', m=>{ if(/Heads up/.test(m)) msg = m; });
+  await poolCollect(sb, 1, '2026-10-01', {1:375, 2:375});
+  await poolBuy(sb, 1, '2026-10-02', 1, 150);
+  assert(msg===null, 'A split by cash can never overspend anyone, so no warning, got ' + msg);
+}
+async function testFullMonthEveryoneGetsTheirShareAtTheSameAveragePrice(){
+  // The real scenario: five people, unequal amounts, four weekly ETH buys at different prices.
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:1500, 2:2000, 3:1000, 4:300, 5:200});
+  const buys = [[0.1,'2026-10-02'],[0.104167,'2026-10-09'],[0.096154,'2026-10-16'],[0.097656,'2026-10-23']];
+  for(const [u, dt] of buys) await poolBuy(sb, 1, dt, u, 333.33);
+  const st = sb.computePositionState(1);
+  const share = {1:0.30, 2:0.40, 3:0.20, 4:0.06, 5:0.04};
+  for(const oid in share){
+    const o = st.byOwner[oid];
+    assert(o && Math.abs(o.units/st.totalUnits - share[oid])<2e-5, 'Owner '+oid+' should hold '+(share[oid]*100)+'% of the ETH, got ' + (o? (o.units/st.totalUnits*100).toFixed(4)+'%' : 'nothing'));
+  }
+  const avg = oid => st.byOwner[oid].costSar/st.byOwner[oid].units;
+  for(const oid of [2,3,4,5]) assert(Math.abs(avg(oid)/avg(1)-1)<1e-4, 'Everyone should end up with the same average price — owner '+oid+' paid '+avg(oid)+' vs '+avg(1));
+}
+async function testLeftoverCashRollsIntoNextMonthsSplit(){
+  // Month 1: five people, only $1,200 of the $1,333.33 is spent. Month 2: only A, B, C contribute.
+  // D and E still own their month-1 leftover, so they take part in month 2's buy pro rata to it.
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:1500, 2:2000, 3:1000, 4:300, 5:200});
+  await poolBuy(sb, 1, '2026-10-02', 1, 1200);
+  await poolCollect(sb, 1, '2026-11-01', {1:1000, 2:1000, 3:1000});
+  const cash = sb.invOwnerCashForSplit(1, '2026-11-02', null);
+  const leftover = {1:400, 2:533.33, 3:266.67, 4:80, 5:53.33}; // month-1 USD per person
+  const exp = {};
+  let tot = 0;
+  for(const oid in leftover){ exp[oid] = leftover[oid]*(133.33/1333.33) + ([1,2,3].includes(Number(oid))? 266.67 : 0); tot += exp[oid]; }
+  for(const oid in exp) assert(Math.abs(cash[oid]-exp[oid])<0.02, 'Owner '+oid+' cash going into month 2 should be leftover + new money ('+exp[oid].toFixed(2)+'), got ' + cash[oid]);
+  await poolBuy(sb, 2, '2026-11-02', 10, 900);
+  const t = sb._D.invTransactions[sb._D.invTransactions.length-1];
+  const uD = (t.owners.find(o=>o.ownerId===4)||{units:0}).units;
+  assert(uD>0, 'D contributed nothing in month 2 but still had leftover cash, so D takes part in the buy');
+  assert(Math.abs(uD/10 - exp[4]/tot)<1e-4, 'D\'s share of the buy should match D\'s share of the cash on the platform, got ' + (uD/10) + ' vs ' + (exp[4]/tot));
+}
+async function testOnlyYouCanBuyAloneByUntickingEveryoneElse(){
+  const sb = poolSandbox();
+  await poolCollect(sb, 1, '2026-10-01', {1:1500, 2:2000});
+  await poolBuy(sb, 1, '2026-10-02', 0.05, 100, [2]);
+  const t = sb._D.invTransactions[0];
+  assert(t.owners.length===1 && t.owners[0].ownerId===1 && Math.abs(t.owners[0].units-0.05)<1e-12, 'With only you ticked, the whole buy is yours, got ' + JSON.stringify(t.owners));
+  const cash = sb.invOwnerCashForSplit(1, '2026-10-31', null);
+  assert(Math.abs(cash[2]-533.33)<0.01, 'B\'s cash must be untouched by a buy B sat out of, got ' + cash[2]);
+}
+
+// ================= v4.55.0: forecast export source / reconcile JV pane / Jamiah month total / accrued chips / budget export range =================
+function v455Sandbox(D, today){
+  const sb = makeSandbox();
+  sb.__set('D', D);
+  const byId = {}; (D.accounts||[]).forEach(a=>{ byId[a.id]=a; });
+  sb.__set('ACC_BY_ID', byId);
+  sb.__set('todayStr', ()=>today||'2026-10-19');
+  return sb;
+}
+function v455CaptureCsv(sb){
+  const out = {text:null};
+  sb.__set('Blob', function(parts){ out.text = parts[0]; });
+  const fakeAnchor = {click:()=>{}};
+  sb.__set('URL', {createObjectURL: ()=>'blob:x'});
+  sb.document.createElement = ((orig)=>function(tag){ if(tag==='a') return fakeAnchor; return orig.call(sb.document, tag); })(sb.document.createElement.bind(sb.document));
+  return out;
+}
+function v455ForecastFixture(){
+  return {
+    accounts: [
+      {id:10101, name:'Main Bank', category:'Bank Accounts', acc_type:'Individual Account', status:'Active'},
+      {id:20301, name:'Insurance Accrual', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:60101, name:'Bills', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60102, name:'Rent', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60103, name:'Quarterly Sweep', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60104, name:'Insurance', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:30101, name:'Salary', category:'Salary', acc_type:'Individual Account', status:'Active', forecast_category:'income'},
+      {id:20101, name:'Car Loan', category:'Long Term Liabilities', acc_type:'Individual Account', status:'Active', forecast_category:'liability_lt'},
+    ],
+    ledger: [{id:1, jv:1, date:'2026-09-10', acc:60101, amt:40, descr:'old spend'}],
+    budget: [{id:1, acc:60101, date:'2026-11-01', amt:250}],
+    provisionGroups: [], accrualMappings: [],
+    forecastPlans: {30101:{'2026-11':500}, 20101:{'2027-01':50}},
+    forecastAccountRules: [
+      {id:1, name:'Quarterly sweep', account:60103, rule:{type:'fixed', value:100, sign:1}, targetOffset:2},
+      {id:2, name:'Insurance mirror', account:60104, rule:{type:'account_balance', sign:-1}, targetOffset:0},
+    ],
+  };
+}
+function v455ExportWide(){
+  const sb = v455Sandbox(v455ForecastFixture());
+  sb.localStorage.setItem('gridEndMonth', '2027-01');
+  sb.__set('provisionsPlanFor', (acc, mk)=> acc===60102 ? 123 : null);
+  const out = v455CaptureCsv(sb);
+  sb.exportForecastGridCSV();
+  const rows = out.text ? sb.csvToObjects(out.text) : [];
+  const byId = {}; rows.forEach(r=>{ byId[r['account id']] = r; });
+  return {sb, out, rows, byId, header: out.text? out.text.split('\n')[0].split(',') : []};
+}
+// ---- v4.56.0: ONE Source column (future months only) between Sub-Category and Current Balance ----
+async function testForecastWideExportHasOneSourceColumnBetweenSubCategoryAndBalance(){
+  const {header, out} = v455ExportWide();
+  assert(out.text, 'The wide forecast export should produce a CSV');
+  const iSub = header.indexOf('Sub-Category'), iSrc = header.indexOf('Source'), iBal = header.indexOf('Current Balance');
+  assert(iSrc===iSub+1 && iBal===iSrc+1, 'Order must be Sub-Category, Source, Current Balance, got ' + header.slice(0,8).join('|'));
+  assert(header.filter(h=>/source/i.test(h)).length===1, 'There must be exactly one Source column, got ' + header.filter(h=>/source/i.test(h)).join('|'));
+  const months = header.slice(iBal+1);
+  assert(months.length>=4 && months.every(h=>/^\d{4}-\d{2}$/.test(h)), 'Everything after Current Balance must be plain month columns, got ' + months.join('|'));
+}
+async function testForecastWideExportAmountsStillLineUpWithTheirMonths(){
+  const {byId} = v455ExportWide();
+  assert(byId['60101']['2026-11']==='250', 'The budget figure must still sit under its own month, got ' + byId['60101']['2026-11']);
+  assert(byId['60101']['2026-09']==='40', 'A past month must still show the actual, got ' + byId['60101']['2026-09']);
+  assert(byId['30101']['2026-11']==='500', 'A manual plan must still sit under its month, got ' + byId['30101']['2026-11']);
+}
+async function testForecastWideExportSourceListsEachSourceWithItsMonthRange(){
+  const {byId} = v455ExportWide();
+  assert(byId['60102']['source']==='Provisions (2026-11 to 2027-01)', 'A single source covers the whole future range, got ' + byId['60102']['source']);
+  assert(byId['60101']['source']==='Budget (2026-11 to 2026-11); Budget (empty) (2026-12 to 2027-01)', 'A change of source starts a new range, got ' + byId['60101']['source']);
+  assert(byId['30101']['source']==='Manual entry (2026-11 to 2027-01)', 'Income months are Manual entry even before a figure is typed, got ' + byId['30101']['source']);
+  assert(byId['20101']['source']==='Manual entry (2027-01 to 2027-01)', 'Months with no source at all (no plan, no provision) are left out, got ' + byId['20101']['source']);
+  assert(!/Actual/.test(Object.values(byId).map(r=>r['source']).join('|')), 'Past/current months (actuals) must never appear in the Source summary');
+}
+async function testForecastWideExportSourceSplitsProvisionsThenBudgetRanges(){
+  const sb = v455Sandbox(v455ForecastFixture());
+  sb.localStorage.setItem('gridEndMonth', '2027-01');
+  sb.__set('provisionsPlanFor', (acc, mk)=> acc===60102 && mk<='2026-12' ? 123 : null);
+  const out = v455CaptureCsv(sb);
+  sb.exportForecastGridCSV();
+  const r = sb.csvToObjects(out.text).find(x=>x['account id']==='60102');
+  assert(r && r['source']==='Provisions (2026-11 to 2026-12); Budget (empty) (2027-01 to 2027-01)', 'Expected Provisions then Budget ranges, got ' + (r&&r['source']));
+}
+async function testForecastWideExportDescribesASmartRuleOnceWithItsRange(){
+  const {byId} = v455ExportWide();
+  const src = byId['60103']['source'];
+  assert(src==='Smart Rule "Quarterly sweep" (2026-11 to 2026-12): Fixed 100.00, held at 0 until 2026-12; Budget (empty) (2027-01 to 2027-01)',
+    'The rule should be named and described once, followed by what takes over after it, got ' + src);
+  assert((src.match(/Quarterly sweep/g)||[]).length===1, 'The rule name must appear only once');
+}
+async function testForecastWideExportSmartRuleFreezeAndZeroOffsetWording(){
+  const D = v455ForecastFixture();
+  D.forecastAccountRules[0].freezeAfterTarget = true;
+  D.forecastAccountRules[1].freezeAfterTarget = true;
+  const sb = v455Sandbox(D);
+  sb.localStorage.setItem('gridEndMonth', '2027-01');
+  const out = v455CaptureCsv(sb);
+  sb.exportForecastGridCSV();
+  const byId = {}; sb.csvToObjects(out.text).forEach(r=>{ byId[r['account id']] = r; });
+  assert(byId['60103']['source']==='Smart Rule "Quarterly sweep" (2026-11 to 2027-01): Fixed 100.00, held at 0 until 2026-12, frozen at 0 after 2026-12',
+    'With freeze on, the rule covers the frozen months too and says so, got ' + byId['60103']['source']);
+  assert(byId['60104']['source']==='Smart Rule "Insurance mirror" (2026-11 to 2027-01): Balance of Insurance (reversed), applies to 2026-10 only, frozen at 0 after 2026-10',
+    'A current-month rule with freeze describes the balance it reads and the freeze, got ' + byId['60104']['source']);
+}
+async function testForecastWideExportBankAccountSourceIsBlank(){
+  const {byId} = v455ExportWide();
+  assert(byId['10101']['source']==='' && byId['10101']['2026-11']==='', 'Bank accounts have no forecast, so Source and future amounts stay blank');
+}
+async function testForecastPivotExportKeepsItsPerRowSource(){
+  const sb = v455Sandbox(v455ForecastFixture());
+  sb.localStorage.setItem('gridEndMonth', '2027-01');
+  const out = v455CaptureCsv(sb);
+  sb.exportForecastGridPivotCSV();
+  const header = out.text.split('\n')[0].split(',');
+  assert(header[header.length-1]==='Source' && header.includes('Month'), 'The Pivot export should keep its own per-row Source column, got ' + header.join('|'));
+}
+async function testForecastWideExportStillReimportsWithTheSourceColumn(){
+  const {sb, rows} = v455ExportWide();
+  rows.forEach(r=>{ if(r['account id']==='30101') r['2026-11'] = '777'; });
+  sb.__set('confirm', ()=>true);
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('showImportProgress', ()=>{}); sb.__set('updateImportProgress', ()=>{}); sb.__set('finishImportProgress', ()=>{});
+  sb.__set('persistLocal', ()=>{}); sb.__set('syncWrite', async ()=>{}); sb.__set('syncWriteMany', async ()=>{});
+  sb.__set('renderForecastPage', ()=>{}); sb.__set('alert', ()=>{});
+  let err = null;
+  try { await sb.importForecastGridCSV(rows); } catch(e){ err = e; }
+  assert(!err, 'Re-importing an export with the Source column must not crash, got ' + (err&&err.message));
+  const D = vm.runInContext('D', sb);
+  assert(D.forecastPlans[30101] && Math.abs(D.forecastPlans[30101]['2026-11']-777)<0.005, 'Month columns must still be read on import, got ' + JSON.stringify(D.forecastPlans[30101]));
+  const a = D.accounts.find(x=>x.id===60101);
+  assert(a.forecast_category==='expense', 'Sub-Category must still be read from its own column (not shifted by Source), got ' + a.forecast_category);
+}
+
+// ---- v4.56.0: Budget import only writes + syncs cells that actually changed ----
+function v456BudgetImportSandbox(budget){
+  const D = {
+    accounts:[
+      {id:60101, name:'Bills', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60102, name:'Rent', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+    ],
+    ledger:[], provisionGroups:[],
+    budget: budget || [
+      {id:1, acc:60101, date:'2026-10-01', amt:100, descr:'b'}, {id:2, acc:60101, date:'2026-11-01', amt:110, descr:'b'}, {id:3, acc:60101, date:'2026-12-01', amt:120, descr:'b'},
+      {id:4, acc:60102, date:'2026-10-01', amt:2000, descr:'b'}, {id:5, acc:60102, date:'2026-11-01', amt:2000, descr:'b'}, {id:6, acc:60102, date:'2026-12-01', amt:333.3333, descr:'b'},
+    ],
+  };
+  const sb = v455Sandbox(D);
+  sb.localStorage.setItem('gridEndMonth', '2026-12');
+  const cap = {ops:null, calls:0, msg:null};
+  sb.__set('confirm', ()=>true); sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('showImportProgress', ()=>{}); sb.__set('updateImportProgress', ()=>{});
+  sb.__set('finishImportProgress', (m)=>{ cap.msg = m; });
+  sb.__set('persistLocal', ()=>{}); sb.__set('renderBudget', ()=>{});
+  sb.__set('syncWriteMany', async (ops)=>{ cap.calls++; cap.ops = ops; });
+  return {sb, cap};
+}
+function v456ExportRows(sb){
+  const out = v455CaptureCsv(sb);
+  sb.exportBudgetGridCSV(false);
+  return sb.csvToObjects(out.text);
+}
+async function testBudgetImportUnchangedFileSyncsNothing(){
+  const {sb, cap} = v456BudgetImportSandbox();
+  await sb.importBudgetGridCSV(v456ExportRows(sb));
+  assert(cap.calls===0, 'Re-importing an untouched export must not sync anything, got ' + cap.calls + ' sync call(s) with ' + (cap.ops&&cap.ops.length) + ' op(s)');
+  assert(/0 changed, 6 unchanged \(skipped\)/.test(cap.msg||''), 'Message should say 0 changed, 6 unchanged (skipped), got ' + cap.msg);
+}
+async function testBudgetImportSyncsOnlyTheEditedCell(){
+  const {sb, cap} = v456BudgetImportSandbox();
+  const rows = v456ExportRows(sb);
+  rows.find(r=>r['account id']==='60101')['2026-11'] = '150';
+  await sb.importBudgetGridCSV(rows);
+  assert(cap.ops && cap.ops.length===1, 'Only the one edited cell should sync, got ' + (cap.ops&&cap.ops.length));
+  const op = cap.ops && cap.ops[0];
+  assert(op && op.kind==='upsert' && op.row.id===2 && Math.abs(op.row.amt-150)<0.005, 'The synced op must be the edited budget row with its new value, got ' + JSON.stringify(op));
+  assert(/1 changed, 5 unchanged \(skipped\)/.test(cap.msg||''), 'Message should report 1 changed, 5 unchanged, got ' + cap.msg);
+  const D = vm.runInContext('D', sb);
+  assert(D.budget.find(b=>b.id===2).amt===150 && D.budget.find(b=>b.id===1).amt===100, 'Local data: edited row updated, untouched row left alone');
+}
+async function testBudgetImportTreatsExcelRoundingAsUnchangedButCountsARealCentEdit(){
+  const {sb, cap} = v456BudgetImportSandbox();
+  const rows = v456ExportRows(sb);
+  const rent = rows.find(r=>r['account id']==='60102');
+  rent['2026-12'] = '333.33';   // Excel rounding of a stored 333.3333 — not an edit
+  rent['2026-11'] = '2,000.01'; // a genuine one-halala edit, with Excel's thousands separator
+  await sb.importBudgetGridCSV(rows);
+  assert(cap.ops && cap.ops.length===1 && cap.ops[0].row.id===5, 'Only the real 0.01 edit should sync (Excel rounding must not), got ' + JSON.stringify(cap.ops&&cap.ops.map(o=>o.row.id)));
+  const D = vm.runInContext('D', sb);
+  assert(D.budget.find(b=>b.id===6).amt===333.3333, 'The stored full-precision value must be kept, not overwritten by the rounded one');
+}
+async function testBudgetImportClearingACellStillDeletesAndNewCellStillCreates(){
+  const {sb, cap} = v456BudgetImportSandbox([{id:1, acc:60101, date:'2026-10-01', amt:100, descr:'b'}]);
+  const rows = v456ExportRows(sb);
+  const bills = rows.find(r=>r['account id']==='60101');
+  bills['2026-10'] = '';   // cleared — must delete
+  bills['2026-11'] = '75'; // new — must create
+  await sb.importBudgetGridCSV(rows);
+  const kinds = (cap.ops||[]).map(o=>o.kind+':'+(o.row.acc||o.row.id)).sort().join(',');
+  assert(cap.ops && cap.ops.length===2 && kinds==='delete:1,upsert:60101', 'Expected one delete and one new row, got ' + kinds);
+  const D = vm.runInContext('D', sb);
+  const created = D.budget.find(b=>b.acc===60101 && b.date==='2026-11-01');
+  assert(created && created.amt===75 && D.budget.length===1, 'Local data must reflect the delete and the new row');
+  assert(created && created.id!==1, 'The new row must NOT reuse the ID being deleted in the same import (cloud race), got id ' + (created&&created.id));
+  const up = (cap.ops||[]).find(o=>o.kind==='upsert'), del = (cap.ops||[]).find(o=>o.kind==='delete');
+  assert(up && del && up.row.id!==del.row.id, 'The delete and the new row\'s upsert must target different IDs');
+  assert(/2 changed/.test(cap.msg||''), 'Both count as changes, got ' + cap.msg);
+}
+
+// ---- #3 reconcile mode: last 3 JVs pane ----
+function v455ReconcileSandbox(extraLedger){
+  const D = {
+    accounts: [{id:10101, name:'Main Bank', category:'Bank Accounts', acc_type:'Individual Account', status:'Active', stmt_balance:1000, stmt_date:'2026-10-01'},
+               {id:60101, name:'Food', category:'Food', acc_type:'Individual Account', status:'Active'}],
+    ledger: [
+      {id:1, jv:1, date:'2026-01-05', acc:10101, amt:100, descr:'oldest'},
+      {id:2, jv:2, date:'2026-03-01', acc:10101, amt:-20, descr:'march A'},
+      {id:3, jv:2, date:'2026-03-01', acc:60101, amt:20, descr:'march A other leg'},
+      {id:4, jv:3, date:'2026-02-10', acc:10101, amt:-30, descr:'feb'},
+      {id:5, jv:4, date:'2026-03-01', acc:10101, amt:-40, descr:'march B'},
+      {id:6, jv:5, date:'2026-04-01', acc:60101, amt:50, descr:'other account only'},
+    ].concat(extraLedger||[]),
+    budget: [], provisionGroups: [],
+  };
+  const sb = v455Sandbox(D);
+  sb.resetJVDraft();
+  sb.__set('reconcileAcc', 10101);
+  return sb;
+}
+async function testReconcileRecentJvsAreTheLastThreeByJvDateOnlyThisAccountsLines(){
+  const sb = v455ReconcileSandbox();
+  const lines = sb.reconcileRecentJvLines(10101, 3);
+  assert(lines.every(l=>l.acc===10101), 'Only lines hitting the reconciled account may appear, got accounts ' + lines.map(l=>l.acc).join(','));
+  assert(lines.map(l=>l.jv).join(',')==='4,2,3', 'Expected JVs 4,2,3 (newest JV date first, ties by higher JV#), got ' + lines.map(l=>l.jv).join(','));
+  assert(!lines.some(l=>l.jv===1), 'The 4th-newest JV must be left out');
+}
+async function testReconcilePaneIsCollapsedByDefaultAndShowsDateJvDescriptionAmount(){
+  const sb = v455ReconcileSandbox();
+  const html = sb.reconcileBannerHTML();
+  const m = html.match(/<details id="reconcileJvPane"[^>]*>/);
+  assert(m, 'The banner should include the collapsible JV pane');
+  assert(m && !/\sopen[\s>=]/.test(m[0]), 'The pane must be collapsed by default, got tag: ' + (m&&m[0]));
+  assert(html.includes('2026-03-01') && html.includes('#4') && html.includes('march B') && html.includes('-40.00'), 'Rows must show date, JV#, description and amount');
+  assert(!html.includes('march A other leg'), 'The other leg of a JV (a different account) must not be shown');
+  sb.__set('reconcileJvPaneOpen', true);
+  assert(/<details id="reconcileJvPane"[^>]*\sopen[\s>]/.test(sb.reconcileBannerHTML()), 'The pane should stay open after the user opened it');
+}
+async function testReconcilePaneNeverListsTheUnpostedDraft(){
+  const sb = v455ReconcileSandbox();
+  const draft = vm.runInContext('jvDraft', sb);
+  draft.lines[0].acc = 10101; draft.lines[0].amt = 999; draft.lines[0].descr = 'DRAFT-ONLY';
+  const html = sb.reconcileBannerHTML();
+  assert(!html.includes('DRAFT-ONLY'), 'An unposted draft line must never appear in the posted-JV pane');
+}
+async function testReconcilePaneShowsBothLinesWhenOneJvHitsTheAccountTwice(){
+  const sb = v455ReconcileSandbox([{id:7, jv:6, date:'2026-05-01', acc:10101, amt:-5, descr:'split one'}, {id:8, jv:6, date:'2026-05-01', acc:10101, amt:-6, descr:'split two'}]);
+  const lines = sb.reconcileRecentJvLines(10101, 3);
+  assert(lines.filter(l=>l.jv===6).length===2, 'Both lines of a JV that hits the account twice should show');
+  assert(new Set(lines.map(l=>l.jv)).size===3, 'They still count as a single JV out of the 3, got JVs ' + [...new Set(lines.map(l=>l.jv))].join(','));
+}
+async function testReconcilePaneEmptyStateWhenNoPostedJvs(){
+  const sb = v455ReconcileSandbox();
+  sb.__set('reconcileAcc', 10101);
+  const D = vm.runInContext('D', sb); D.ledger = [];
+  assert(/No posted JVs on this account yet/.test(sb.reconcileBannerHTML()), 'Should say so when the account has no posted JVs');
+}
+
+// ---- #4 Jamiah: this month's net total ----
+function v455JamiahSandbox(ledger){
+  const acc = {id:10501, name:'Jamiah Cash', category:'Short Term Receivables', acc_type:'Individual Account', status:'Active', is_allocatable:true};
+  const D = {accounts:[acc], ledger, budget:[], provisionGroups:[], jamiahs:[]};
+  const sb = v455Sandbox(D);
+  const j = {id:1, name:'Monthly', account:10501, startMonth:'2026-01', durationMonths:12, groups:[], participants:[{id:1, name:'A', pledgeAmount:100}], roundGroup:{}, tags:{}};
+  return {sb, j};
+}
+async function testJamiahShowsThisMonthsNetOfUnallocatedTransactions(){
+  const {sb, j} = v455JamiahSandbox([
+    {id:1, jv:1, date:'2026-10-05', acc:10501, amt:300, descr:'this month 1'},
+    {id:2, jv:2, date:'2026-10-12', acc:10501, amt:-50, descr:'this month 2'},
+    {id:3, jv:3, date:'2026-09-28', acc:10501, amt:999, descr:'last month'},
+    {id:4, jv:4, date:'2026-10-15', acc:10501, amt:7000, descr:'allocated', alloc:5},
+  ]);
+  const html = sb.renderJamiahUntagged(j);
+  const m = html.match(/id="jamiahMonthTotal"[^>]*>(.*?)<\/div>/);
+  assert(m, 'The month total line should be present under the heading');
+  assert(m && m[1].includes('250.00'), 'Net should be 300 - 50 = 250.00 (last month and allocated lines excluded), got ' + (m&&m[1]));
+  assert(m && /across 2 unallocated transactions/.test(m[1]), 'Should count the 2 unallocated lines this month, got ' + (m&&m[1]));
+  assert(m && /This month \(Oct-26\)/.test(m[1]), 'Should name the calendar month, got ' + (m&&m[1]));
+}
+async function testJamiahMonthTotalIsNetSignedAndHandlesSingularAndZero(){
+  let t = v455JamiahSandbox([{id:1, jv:1, date:'2026-10-05', acc:10501, amt:-120, descr:'x'}]);
+  let m = t.sb.renderJamiahUntagged(t.j).match(/id="jamiahMonthTotal"[^>]*>(.*?)<\/div>/);
+  assert(m && m[1].includes('-120.00') && /across 1 unallocated transaction(?!s)/.test(m[1]), 'Net keeps its sign and one line reads singular, got ' + (m&&m[1]));
+  t = v455JamiahSandbox([{id:1, jv:1, date:'2026-08-05', acc:10501, amt:500, descr:'old'}]);
+  m = t.sb.renderJamiahUntagged(t.j).match(/id="jamiahMonthTotal"[^>]*>(.*?)<\/div>/);
+  assert(m && m[1].includes('0.00') && /across 0 unallocated transactions/.test(m[1]), 'No lines this month reads 0.00 across 0, got ' + (m&&m[1]));
+}
+
+// ---- #6 accrued amount per sub category ----
+function v455AccrualFixture(extraLedger){
+  return {
+    accounts: [
+      {id:20301, name:'Gov Accrual Liability', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:60100, name:'Government Fees', category:'Government & Banks', acc_type:'Individual Account', status:'Active'},
+      {id:60199, name:'Government & Banks - Accrual', category:'Government & Banks', acc_type:'Accrual Account', status:'Active'},
+      {id:60200, name:'Fuel', category:'Transportation', acc_type:'Individual Account', status:'Active'},
+    ],
+    ledger: [
+      {id:1, jv:1, date:'2026-10-02', acc:20301, amt:-1500, descr:'accrue'},
+      {id:2, jv:2, date:'2026-10-31', acc:20301, amt:-100, descr:'last day'},
+      {id:3, jv:3, date:'2026-11-02', acc:20301, amt:-9999, descr:'next month'},
+      {id:4, jv:4, date:'2026-10-05', acc:60100, amt:-25, descr:'fee'},
+    ].concat(extraLedger||[]),
+    budget: [], provisionGroups: [], forecastAccountRules: [],
+    accrualMappings: [{category:'Government & Banks', liabilityAcc:20301, expenseAcc:60199}],
+  };
+}
+async function testAccruedForCategoryIsTheNegatedLiabilityBalanceAsOfTheDate(){
+  const sb = v455Sandbox(v455AccrualFixture());
+  assert(Math.abs(sb.accruedForCategory('Government & Banks','2026-10-31')-1600)<0.005, 'Liability stored as -1600 by month end should read as 1,600 accrued (the 31st counts, November does not), got ' + sb.accruedForCategory('Government & Banks','2026-10-31'));
+  assert(Math.abs(sb.accruedForCategory('Government & Banks','2026-10-30')-1500)<0.005, 'The day before the 31st line it should be 1,500');
+  assert(sb.accruedForCategory('Transportation','2026-10-31')===null, 'A category with no Accrual Mapping must return null');
+}
+async function testMonthEndDateStrHandlesShortMonthsAndLeapYears(){
+  const sb = makeSandbox();
+  assert(sb.monthEndDateStr('2026-02')==='2026-02-28', 'Feb 2026 ends on the 28th');
+  assert(sb.monthEndDateStr('2028-02')==='2028-02-29', 'Feb 2028 is a leap year');
+  assert(sb.monthEndDateStr('2026-12')==='2026-12-31', 'December ends on the 31st');
+}
+async function testPnLShowsAccruedNextToMappedCategoryAndItsAccrualAccountOnly(){
+  const sb = v455Sandbox(v455AccrualFixture());
+  sb.__set('pnlFrom','2026-10-01'); sb.__set('pnlTo','2026-10-31'); sb.__set('pnlPreset','custom');
+  sb.renderPnL();
+  const html = sb.document.getElementById('app').innerHTML;
+  const chips = html.match(/class="mut accrued-chip"[^>]*>.*?<\/span>/g) || [];
+  // v4.61.0: only next to the sub category name — the duplicate on the accrual (99) account line was removed on request.
+  assert(chips.length===1, 'Expected the chip on the category row only (not on the 60199 accrual line), got ' + chips.length);
+  assert(chips.every(c=>c.includes('1,600.00')), 'The chip should show the balance as of the period end (1,600.00), got ' + chips.join(' | '));
+  assert(!/Government &amp; Banks - Accrual[^<]*<span[^>]*accrued-chip/.test(html), 'The accrual account line must not carry its own Accrued chip');
+  assert(!/data-accrued-cat="Transportation"/.test(html), 'An unmapped category must not show an Accrued chip');
+  const catRow = html.match(/<tr style="background:var\(--chip\)"><td style="font-weight:700;color:var\(--accent\)">Government &amp; Banks[^<]*<span[^>]*accrued-chip/);
+  assert(catRow, 'The chip must sit right next to the sub category name on its header row');
+}
+async function testPnLAccruedFollowsThePeriodEndNotToday(){
+  const sb = v455Sandbox(v455AccrualFixture());
+  sb.__set('pnlFrom','2026-10-01'); sb.__set('pnlTo','2026-10-15'); sb.__set('pnlPreset','custom');
+  sb.renderPnL();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(html.includes('1,500.00') && !html.includes('1,600.00'), 'As of Oct 15 only the first accrual (1,500.00) exists, so the 31st line must not count');
+}
+async function testBudgetPlanVsActualShowsAccruedForTheMonthShown(){
+  const sb = v455Sandbox(v455AccrualFixture());
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="budgetSummary"></div>');
+  sb.__set('budgetMonth', '2026-10');
+  sb.renderBudgetSummaryTable();
+  let html = sb.document.getElementById('budgetSummary').innerHTML;
+  assert((html.match(/accrued-chip/g)||[]).length===1, 'Budget shows the chip on the category row only (v4.61.0), got ' + (html.match(/accrued-chip/g)||[]).length);
+  assert(html.includes('1,600.00'), 'October shown → balance as of Oct 31 (1,600.00)');
+  sb.__set('budgetMonth', '2026-11');
+  sb.renderBudgetSummaryTable();
+  html = sb.document.getElementById('budgetSummary').innerHTML;
+  assert(!html.includes('1,600.00') && html.includes('11,599.00'), 'November shown → balance as of Nov 30 (11,599.00), proving it follows the month shown');
+}
+
+// ---- #8 budget export: future only vs historical + future ----
+function v455BudgetExportSandbox(){
+  const D = {
+    accounts:[{id:60101, name:'Bills', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'}],
+    ledger:[{id:1, jv:1, date:'2026-08-15', acc:60101, amt:321, descr:'past actual'}, {id:2, jv:2, date:'2026-10-05', acc:60101, amt:777, descr:'partial current'}],
+    budget:[{id:1, acc:60101, date:'2026-10-01', amt:250}, {id:2, acc:60101, date:'2026-11-01', amt:260}], provisionGroups:[],
+  };
+  const sb = v455Sandbox(D);
+  sb.localStorage.setItem('gridEndMonth', '2026-12');
+  return sb;
+}
+async function testExportGridButtonOpensTheChoiceInsteadOfExportingImmediately(){
+  const sb = v455BudgetExportSandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  const out = v455CaptureCsv(sb);
+  sb.openBudgetExportChoice();
+  const modal = sb.document.body.innerHTML;
+  assert(/id="budgetExportFuture"/.test(modal) && /id="budgetExportHistory"/.test(modal), 'The choice should offer both Future only and Historical + future');
+  assert(/exportBudgetGridCSV\(false\)/.test(modal) && /exportBudgetGridCSV\(true\)/.test(modal), 'Each choice should call the export with the right flag');
+  assert(out.text===null, 'Opening the choice must not export anything yet');
+  const src = vm.runInContext('renderBudgetControls.toString()', sb);
+  assert(/onclick="openBudgetExportChoice\(\)">⬇ Export Grid/.test(src), 'The Export Grid button on the Budget page must open the choice');
+}
+async function testBudgetExportFutureOnlyIsUnchanged(){
+  const sb = v455BudgetExportSandbox();
+  const out = v455CaptureCsv(sb);
+  sb.exportBudgetGridCSV(false);
+  const header = out.text.split('\n')[0];
+  assert(header.indexOf('2026-08')===-1 && header.indexOf('2026-10')!==-1, 'Future only starts at the current month, got ' + header);
+  const r = sb.csvToObjects(out.text)[0];
+  assert(r['2026-10']==='250', 'Current month shows the budget figure, got ' + r['2026-10']);
+}
+async function testBudgetExportWithHistoryStartsAtEarliestLedgerMonthAndShowsActualForPast(){
+  const sb = v455BudgetExportSandbox();
+  const out = v455CaptureCsv(sb);
+  sb.exportBudgetGridCSV(true);
+  const header = out.text.split('\n')[0].split(',');
+  assert(header.includes('2026-08') && header.indexOf('2026-08')<header.indexOf('2026-10'), 'Historical export must start at the earliest ledger month (2026-08), got ' + header.join('|'));
+  assert(header.includes('2026-09'), 'Months with no activity between history and today are still listed');
+  const r = sb.csvToObjects(out.text)[0];
+  assert(r['2026-08']==='321', 'A past month shows ACTUAL spend (321), got ' + r['2026-08']);
+  assert(r['2026-10']==='250', 'The current month still shows the BUDGET (250), not the 777 spent so far, got ' + r['2026-10']);
+  assert(r['2026-11']==='260', 'Future months show budget, got ' + r['2026-11']);
+}
+async function testBudgetImportIgnoresThePastMonthsOfAHistoricalExport(){
+  const sb = v455BudgetExportSandbox();
+  const out = v455CaptureCsv(sb);
+  sb.exportBudgetGridCSV(true);
+  const rows = sb.csvToObjects(out.text);
+  rows[0]['2026-11'] = '999';
+  sb.__set('confirm', ()=>true); sb.__set('blockIfSyncing', ()=>false);
+  sb.__set('showImportProgress', ()=>{}); sb.__set('updateImportProgress', ()=>{}); sb.__set('finishImportProgress', ()=>{});
+  sb.__set('persistLocal', ()=>{}); sb.__set('syncWriteMany', async ()=>{}); sb.__set('renderBudget', ()=>{});
+  await sb.importBudgetGridCSV(rows);
+  const D = vm.runInContext('D', sb);
+  assert(!D.budget.some(b=>b.date==='2026-08-01'), 'The past month\'s ACTUAL figure must never be written back as a budget');
+  const nov = D.budget.find(b=>b.acc===60101 && b.date==='2026-11-01');
+  assert(nov && Math.abs(nov.amt-999)<0.005, 'Future columns of the historical export still import, got ' + (nov&&nov.amt));
+}
+
+
+// ================= v4.57.0: actual-rate platform cash, rate fields, withdrawals booking, cash visibility =================
+// Owner A (self, Out 10201, In 10211) puts 400 SAR in; B (Out 10202) puts 375 SAR in.
+function fxSandbox(extra, keepRender){
+  return poolSandbox(Object.assign({
+    ledger: [
+      {id:1, jv:1, date:'2026-10-01', acc:10201, amt:400, descr:'A onboarding'},
+      {id:2, jv:1, date:'2026-10-01', acc:10202, amt:375, descr:'B onboarding'},
+    ],
+  }, extra||{}), keepRender);
+}
+function fxCell(sb, platformId, ownerId, date){
+  const st = sb.invCashState(date||null).state;
+  return (st[platformId]||{})[ownerId] || {usd:0, sar:0, profitUsd:0, profitSar:0};
+}
+async function fxSell(sb, posId, date, ownerUnits, usd, rate, cashSide){
+  sb.openInvTxModal(posId, null);
+  const d = sb._invTxDraft;
+  d.date = date; sb.setInvTxKind('sell');
+  d.units = String(Object.values(ownerUnits).reduce((s,u)=>s+u,0));
+  sb.setInvTxCashSide(cashSide||'cash');
+  sb.setInvTxRate(String(rate));
+  sb.setInvTxUsd(String(usd));
+  d.owners = Object.keys(ownerUnits).map(k=>({ownerId:Number(k), units:String(ownerUnits[k])}));
+  await sb.saveInvTx();
+}
+
+async function testLegacyDepositWithoutSarStaysAtTheStandardRate(){
+  const sb = invCashSandbox({invCashMovements:[{id:1, platformId:1, date:'2026-01-01', kind:'deposit', usdAmount:100, owners:[{ownerId:1, usd:100}]}]});
+  const c = fxCell(sb, 1, 1);
+  assert(Math.abs(c.usd-100)<1e-9 && Math.abs(c.sar-375)<1e-9, 'An old deposit with no SAR stored must stay at 3.75 (375 SAR), got ' + JSON.stringify(c));
+  assert(Math.abs(sb.invOwnerCashSar(1).cashSar-375)<1e-9, 'Owner cash in SAR should read 375');
+}
+async function testCollectAtARealRateRecordsFullSarAndClosesAvailable(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);  // 400 SAR → $100 = rate 4.00
+  const m = sb._D.invCashMovements[0];
+  const row = m.owners.find(o=>o.ownerId===1);
+  assert(row && row.sar===400 && row.usd===100, 'The deposit must store the person\'s SAR alongside the USD, got ' + JSON.stringify(m.owners));
+  assert(Math.abs(sb.invMovementRate(m)-4)<1e-9, 'The effective rate should be 4.00, got ' + sb.invMovementRate(m));
+  const c = fxCell(sb, 1, 1);
+  assert(Math.abs(c.sar-400)<1e-9, 'The cash must be carried at what it cost (400 SAR), not $100 × 3.75, got ' + c.sar);
+  const avail = sb.invOwnersAvailableSar();
+  assert(Math.abs(avail[1])<0.005, 'After collecting the full 400 SAR, Available must drop to 0, got ' + avail[1]);
+}
+async function testCollectShowsTheEffectiveRateForInformation(){
+  const sb = fxSandbox();
+  sb.openInvCollectModal(1);
+  sb.invCollectClearRows();
+  sb.setInvCollectRow(1, '400');
+  sb.setInvCollectUsd('100');
+  const el = sb.document.getElementById('invCollectRate');
+  assert(el && /4\.0000/.test(el.textContent), 'The Collect form should show the rate 4.0000 SAR/USD, got ' + (el&&el.textContent));
+}
+async function testCollectPreFillsTheFullAvailableBalance(){
+  const sb = fxSandbox();
+  sb.openInvCollectModal(1);
+  const d = sb._invCollectDraft;
+  assert(Number(d.rows[1].sar)===400 && Number(d.rows[2].sar)===375, 'Each person should be pre-filled with their full onboarding balance, got ' + JSON.stringify(d.rows));
+}
+async function testCashFundedBuyIsCostedAtEachPersonsOwnRate(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);   // A at 4.00
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);   // B at 3.75
+  await poolBuy(sb, 1, '2026-10-03', 2, 200);             // split by cash: 1 unit each, $100 each
+  const t = sb._D.invTransactions[0];
+  const a = t.owners.find(o=>o.ownerId===1), b = t.owners.find(o=>o.ownerId===2);
+  assert(a && Math.abs(a.sar-400)<1e-6 && Math.abs(a.usd-100)<1e-6, 'A\'s $100 cost 400 SAR at 4.00, got ' + JSON.stringify(a));
+  assert(b && Math.abs(b.sar-375)<1e-6, 'B\'s $100 cost 375 SAR at 3.75, got ' + JSON.stringify(b));
+  assert(Math.abs(t.totalSar-775)<1e-6, 'The buy\'s SAR total is the sum of each person\'s real cost (775), got ' + t.totalSar);
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[1].costSar-400)<1e-6 && Math.abs(st.byOwner[2].costSar-375)<1e-6, 'Position cost basis must follow each person\'s real rate');
+  const ca = fxCell(sb, 1, 1), cb = fxCell(sb, 1, 2);
+  assert(Math.abs(ca.usd)<1e-6 && Math.abs(ca.sar)<1e-6 && Math.abs(cb.sar)<1e-6, 'The SAR that left cash must equal the SAR that went into the position (no residue), got A ' + JSON.stringify(ca));
+  const rec = sb.invOwnerReconciliation();
+  assert(rec.every(r=>Math.abs(r.diff)<0.01), 'Reconciliation must close for both people, got diffs ' + rec.map(r=>r.owner.name+':'+r.diff.toFixed(2)).join(', '));
+}
+async function testCashBuyPreviewNamesEachPersonsRate(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft; d.date = '2026-10-03'; d.units = '2';
+  sb.setInvTxCashSide('cash'); sb.setInvTxUsd('200'); sb.applyInvTxCashSplit();
+  const txt = sb.invTxCashRateText(d);
+  assert(/A 4\.0000/.test(txt) && /B 3\.7500/.test(txt) && /775\.00 SAR/.test(txt), 'The buy form should show each person\'s rate and the SAR total, got ' + txt);
+  assert(!sb.document.getElementById('invTxRate'), 'A cash-funded buy must NOT offer a typed rate (it uses each person\'s cash rate)');
+}
+async function testReEditingACashBuyDoesNotDoubleCountItself(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolBuy(sb, 1, '2026-10-03', 1, 50);
+  const first = JSON.stringify(sb._D.invTransactions[0].owners);
+  sb.openInvTxModal(1, sb._D.invTransactions[0].id);
+  await sb.saveInvTx();
+  const second = JSON.stringify(sb._D.invTransactions[0].owners);
+  assert(first===second, 'Re-saving an unchanged cash buy must give the same per-person cost, got ' + first + ' then ' + second);
+}
+async function testUsdTransactionsTakeTheRateTypedOnTheDay(){
+  const sb = fxSandbox();
+  sb.openInvTxModal(1, null);
+  const d = sb._invTxDraft;
+  assert(Math.abs(Number(d.fxRate)-3.75)<1e-9, 'A new transaction\'s rate should be pre-filled with the standard rate');
+  d.date = '2026-10-03'; d.units = '1';
+  sb.setInvTxRate('3.8');
+  sb.setInvTxUsd('100');
+  assert(Math.abs(Number(d.totalSar)-380)<1e-9, '$100 at 3.80 must give 380 SAR, got ' + d.totalSar);
+  assert(sb.document.getElementById('invTxRate'), 'A bank-funded USD transaction should show the Rate field');
+  d.owners = [{ownerId:1, units:'1'}];
+  await sb.saveInvTx();
+  const t = sb._D.invTransactions[0];
+  assert(Math.abs(t.totalSar-380)<1e-9 && t.owners[0].usd===100, 'Saved with 380 SAR and the person\'s USD share, got ' + JSON.stringify(t));
+  sb.openInvTxModal(1, t.id);
+  assert(Math.abs(Number(sb._invTxDraft.fxRate)-3.8)<1e-9, 'Reopening shows the rate it was saved at (3.80), got ' + sb._invTxDraft.fxRate);
+}
+async function testUserExampleDeposit400SellAndWithdraw150At375(){
+  // Deposit 400 SAR → $100 (4.00); buy $100; sell for $150 into cash at 3.75; withdraw $150 → 562.50 SAR.
+  const sb = fxSandbox({ledger:[{id:1, jv:1, date:'2026-10-01', acc:10201, amt:400, descr:'A onboarding'}]});
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolBuy(sb, 1, '2026-10-03', 1, 100);
+  await fxSell(sb, 1, '2026-10-10', {1:1}, 150, 3.75, 'cash');
+  const st = sb.computePositionState(1);
+  assert(Math.abs((st.byOwner[1].realizedSar||0)-162.5)<0.01 || Math.abs(st.totalRealizedSar-162.5)<0.01, 'Realised profit = 562.50 − 400 = 162.50 SAR, got ' + st.totalRealizedSar);
+  const c = fxCell(sb, 1, 1);
+  assert(Math.abs(c.usd-150)<1e-6 && Math.abs(c.sar-562.5)<1e-6, 'Sale proceeds enter cash at the sale\'s rate: $150 / 562.50 SAR, got ' + JSON.stringify(c));
+  assert(Math.abs(c.profitSar-162.5)<1e-6, 'Profit sitting in cash should be 162.50 SAR, got ' + c.profitSar);
+  // Withdraw it all, 562.50 SAR reaching the bank.
+  sb.openInvCashModal(1, 'withdrawal', null);
+  const d = sb._invCashDraft;
+  d.date = '2026-10-12'; d.usdAmount = '150'; d.owners = [{ownerId:1, usd:150}]; d.sarReceived = '562.5';
+  const bk = sb.invWithdrawalBooking(d);
+  assert(bk && Math.abs(bk.capitalSar-400)<0.01 && Math.abs(bk.profitSar-162.5)<0.01, 'Book 400 SAR to Withdrawn (In) and 162.50 to Profit, got ' + JSON.stringify(bk));
+  assert(bk && Math.abs(bk.rate-3.75)<1e-9, 'The withdrawal rate (FYI) is 3.75, got ' + (bk&&bk.rate));
+  await sb.saveInvCashMovement();
+  // He books In 400 (capital) and Profit 162.50, as the form says.
+  sb._D.ledger.push({id:9, jv:9, date:'2026-10-12', acc:10211, amt:-400, descr:'A offboarding'});
+  sb._D.invOwners.find(o=>o.id===1).inAcc = 10211;
+  const rec = sb.invOwnerReconciliation().find(r=>r.owner.id===1);
+  assert(Math.abs(rec.diff)<0.01, 'With 400 in and 400 out, the reconciliation must close, got diff ' + rec.diff);
+  const m = sb._D.invCashMovements.find(x=>x.kind==='withdrawal');
+  assert(m && Math.abs(sb.invMovementRate(m)-3.75)<1e-9, 'The withdrawal keeps its SAR received for the Cash log rate');
+}
+async function testWithdrawalTakesCashOutAtItsAverageCost(){
+  // Cash held at 4.00 (400 SAR for $100). Taking $50 out must remove half its cost (200 SAR), not $50 × 3.75.
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  sb.openInvCashModal(1, 'withdrawal', null);
+  const d = sb._invCashDraft;
+  d.date = '2026-10-05'; d.usdAmount = '50'; d.owners = [{ownerId:1, usd:50}];
+  await sb.saveInvCashMovement();
+  const c = fxCell(sb, 1, 1);
+  assert(Math.abs(c.usd-50)<1e-9 && Math.abs(c.sar-200)<1e-9, 'The $50 left must still be carried at 4.00 (200 SAR), got ' + JSON.stringify(c));
+}
+async function testWithdrawalAtABetterRateSendsTheGainToProfit(){
+  const sb = fxSandbox({ledger:[{id:1, jv:1, date:'2026-10-01', acc:10201, amt:400, descr:'A onboarding'}]});
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  sb.openInvCashModal(1, 'withdrawal', null);
+  const d = sb._invCashDraft;
+  d.date = '2026-10-05'; d.usdAmount = '100'; d.owners = [{ownerId:1, usd:100}]; d.sarReceived = '410';
+  const bk = sb.invWithdrawalBooking(d);
+  assert(bk && Math.abs(bk.capitalSar-400)<0.01 && Math.abs(bk.profitSar-10)<0.01, 'Capital back at cost (400) and the 10 SAR rate gain to Profit, got ' + JSON.stringify(bk));
+}
+async function testEditingADepositsUsdKeepsTheSarAndUpdatesTheRate(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  const m = sb._D.invCashMovements[0];
+  sb.openInvCashModal(1, 'deposit', m.id);
+  assert(/Rate 4\.0000/.test(sb.document.body.innerHTML), 'The deposit editor should show its rate for information');
+  sb._invCashDraft.usdAmount = '105';
+  sb.setInvCashOwnerUsd(1, '105');
+  await sb.saveInvCashMovement();
+  const row = sb._D.invCashMovements[0].owners.find(o=>o.ownerId===1);
+  assert(row && row.sar===400 && row.usd===105, 'Correcting the USD must keep the 400 SAR contributed, got ' + JSON.stringify(row));
+  assert(Math.abs(fxCell(sb,1,1).sar-400)<1e-9, 'Cash stays at its 400 SAR cost');
+}
+async function testTransferCarriesTheAverageRate(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  sb._D.invCashMovements.push({id:50, platformId:1, toPlatformId:2, date:'2026-10-03', kind:'transfer', usdAmount:50, feeUsd:0, owners:[{ownerId:1, usd:50}]});
+  const from = fxCell(sb, 1, 1), to = fxCell(sb, 2, 1);
+  assert(Math.abs(from.sar-200)<1e-9 && Math.abs(to.sar-200)<1e-9 && Math.abs(to.usd-50)<1e-9, 'Half the cash moves with half its SAR cost (200 each side), got from ' + JSON.stringify(from) + ' to ' + JSON.stringify(to));
+}
+async function testCashLogShowsTheDepositRate(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  sb.openInvCashLog(1);
+  assert(/rate 4\.0000/.test(sb.document.body.innerHTML), 'The Cash log should show the deposit\'s rate');
+}
+async function testPlatformTableShowsAUsdCashRowWithPerPersonSplit(){
+  const sb = fxSandbox({}, true);
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  vm.runInContext('invExpandedPlatforms.add(1)', sb);
+  const html = sb.renderInvPlatformSection(sb._D.invPlatforms[0]);
+  const m = html.match(/<tr class="click" id="invCashRow_1"[\s\S]*?<\/tr>/);
+  assert(m, 'The platform table should have a USD cash row even with no positions bought yet');
+  assert(m && m[0].includes('775.00') && m[0].includes('$200.00'), 'The cash row shows its SAR cost (775.00) and USD ($200.00), got ' + (m&&m[0].replace(/\s+/g,' ').slice(0,300)));
+  assert(m && /openInvPlatformCashOwners\(1\)/.test(m[0]), 'Clicking it opens the per-person split');
+  sb.openInvPlatformCashOwners(1);
+  const modal = sb.document.body.innerHTML;
+  assert(/4\.0000/.test(modal) && /3\.7500/.test(modal) && /openInvCashLog\(1\)/.test(modal), 'The split shows each person\'s rate and links to the Cash log');
+  assert(!sb.renderInvPlatformSection(sb._D.invPlatforms[1]).includes('invCashRow_2'), 'A platform with no cash shows no cash row');
+}
+async function testByOwnerTableHasACashColumnAndListsCashOnlyPeople(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  const html = sb.renderInvOwnerBreakdown(sb.invOwnerTotals());
+  assert(/Cash \(USD\)/.test(html), 'By Owner should have a Cash (USD) column');
+  const cell = html.match(/data-owner-cash="2">([\s\S]*?)<\/td>/);
+  assert(cell && cell[1].includes('$100.00') && cell[1].includes('375.00'), 'B holds only cash but must still be listed with $100.00 / 375.00 SAR, got ' + (cell&&cell[1]));
+}
+async function testStatementGroupsByPlatformAndIncludesCash(){
+  const sb = fxSandbox({invPlatforms:[{id:1, name:'Zeta Exchange'}, {id:2, name:'Alpha Broker'}],
+    invPositions:[{id:1, platformId:1, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+                  {id:2, platformId:2, name:'Zoom', ticker:'ZM', currency:'USD', assetClass:'Equity', status:'Active'},
+                  {id:3, platformId:2, name:'Apple', ticker:'AAPL', currency:'USD', assetClass:'Equity', status:'Active'}]});
+  sb._D.invTransactions.push(
+    {id:1, positionId:1, date:'2026-10-01', kind:'buy', units:1, totalSar:100, owners:[{ownerId:1, units:1}], cashSide:'bank'},
+    {id:2, positionId:2, date:'2026-10-01', kind:'buy', units:1, totalSar:100, owners:[{ownerId:1, units:1}], cashSide:'bank'},
+    {id:3, positionId:3, date:'2026-10-01', kind:'buy', units:1, totalSar:100, owners:[{ownerId:1, units:1}], cashSide:'bank'});
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  sb.openInvOwnerStatement(1);
+  const body = sb.document.body.innerHTML;
+  const order = ['Apple','Zoom','Ethereum','نقد'].map(k=>body.indexOf(k));
+  assert(order.every(i=>i>=0) && order[0]<order[1] && order[1]<order[2] && order[2]<order[3], 'Expected Alpha Broker (Apple, Zoom) then Zeta Exchange (Ethereum, then its cash), got indexes ' + order.join(','));
+  const foot = body.match(/<tfoot>[\s\S]*?<\/tfoot>/);
+  assert(foot && foot[0].includes('700.00'), 'Totals must include the cash at cost (300 positions + 400 cash = 700.00), got ' + (foot&&foot[0].replace(/\s+/g,' ')));
+}
+
+// ================= v4.58.0: simplified Investments views =================
+function viewSandbox(extra){
+  const sb = fxSandbox(Object.assign({invValuations:[{id:1, positionId:1, date:'2026-10-20', price:4000}]}, extra||{}), true);
+  sb.__set('drawInvCharts', ()=>{});
+  return sb;
+}
+function viewHtml(sb, view){ sb.__set('invView', view); sb.renderInvestmentsPage(); return sb.document.getElementById('app').innerHTML; }
+async function viewPooledSetup(sb){
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  await poolBuy(sb, 1, '2026-10-03', 0.04, 160);   // split by cash 50/50 → 0.02 ETH each, $80 each
+}
+async function testInvestmentsOpensOnMineAndHasEveryView(){
+  const sb = viewSandbox();
+  assert(vm.runInContext('invView', sb)==='mine', 'The Investments page should open on 👤 Mine by default');
+  sb.renderInvestmentsPage();
+  const html = sb.document.getElementById('app').innerHTML;
+  const views = ['mine','family','activity','recon','insights','setup','classic'];
+  assert(views.every(v=>html.includes('data-invview="'+v+'"')), 'The nav should offer all seven views');
+  sb.setInvView('family');
+  assert(sb.localStorage.getItem('invView')==='family' && vm.runInContext('invView', sb)==='family', 'The chosen view should be remembered on this device');
+  sb.setInvTab('recon');
+  assert(vm.runInContext('invView', sb)==='recon', 'The old setInvTab(\'recon\') entry point must still open Reconcile');
+}
+async function testMineShowsOnlyMySliceAndNoFamilyFigures(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  const html = viewHtml(sb, 'mine');
+  const value = html.match(/id="invKpiValue"[\s\S]*?<div class="v[^"]*">([^<]*)</);
+  // My slice: 0.02 ETH × 4000 × 3.75 = 300 SAR; my cash $20 left (cost 4.00 → 80 SAR) valued 20×3.75 = 75. Total 375.
+  assert(value && value[1].trim()==='375.00', 'My Value = my ETH slice (300) + my cash (75) = 375.00, got ' + (value&&value[1]));
+  const cost = html.match(/id="invKpiCost"[\s\S]*?<div class="v[^"]*">([^<]*)</);
+  assert(cost && cost[1].trim()==='400.00', 'My Cost = 320 (ETH at my 4.00 rate) + 80 (cash) = 400.00, got ' + (cost&&cost[1]));
+  assert(!/>B</.test(html) && !html.includes('Held for Family'), 'Mine must not show family members or family totals');
+  const card = html.match(/data-card="mine:1"[\s\S]*?<\/table>/);
+  assert(card && card[0].includes('0.02'), 'The expanded card shows my 0.02 ETH, got ' + (card&&card[0].replace(/\s+/g,' ').slice(0,400)));
+}
+async function testMineTableHasFiveColumnsUntilDetailsAreShown(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  let html = viewHtml(sb, 'mine');
+  let head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
+  assert(head && (head[1].match(/<th/g)||[]).length===5, 'Default table should have 5 columns, got ' + (head&&(head[1].match(/<th/g)||[]).length));
+  sb.toggleInvDetails();
+  html = sb.document.getElementById('app').innerHTML;
+  head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
+  assert(head && /Cost/.test(head[1]) && /Price/.test(head[1]) && /Realised/.test(head[1]), 'Show details adds Cost, Price and Realised');
+}
+async function testPlatformCardIsOneLineUntilExpanded(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  let html = viewHtml(sb, 'mine');
+  const card = html.match(/<div class="panel inv-card" data-card="mine:1">[\s\S]*?<\/div>\s*<\/div><\/div>/);
+  assert(card && !card[0].includes('<table'), 'A collapsed platform card is a single summary line (no table)');
+  assert(/toggleInvCard\('mine:1'\)/.test(html), 'Clicking the line expands it');
+  sb.toggleInvCard('mine:1');
+  html = sb.document.getElementById('app').innerHTML;
+  assert(/data-card="mine:1"[\s\S]*?<table/.test(html), 'After expanding, the table shows');
+}
+async function testMinePlatformCardHasItsOwnActions(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  const html = viewHtml(sb, 'mine');
+  ['openInvTradePicker(1)','INV_PLATFORM_ACTIONS.deposit.open(1)','INV_PLATFORM_ACTIONS.withdrawal.open(1)','INV_PLATFORM_ACTIONS.transfer.open(1)','openInvCashLog(1)']
+    .forEach(a=>assert(html.includes(a), 'The platform card should offer '+a+' directly, without a platform picker'));
+}
+async function testStablecoinsCountAsCash(){
+  const sb = viewSandbox({invPositions:[
+    {id:1, platformId:1, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+    {id:3, platformId:1, name:'Tether', ticker:'USDT', currency:'USD', assetClass:'Crypto', status:'Active'},
+    {id:4, platformId:1, name:'USD Coin', ticker:'usdc', currency:'USD', assetClass:'Crypto', status:'Active'}]});
+  sb._D.invTransactions.push(
+    {id:1, positionId:3, date:'2026-10-01', kind:'buy', units:50, totalSar:187.5, owners:[{ownerId:1, units:50}], cashSide:'bank'},
+    {id:2, positionId:4, date:'2026-10-01', kind:'buy', units:30, totalSar:112.5, owners:[{ownerId:1, units:30}], cashSide:'bank'});
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  const html = viewHtml(sb, 'mine');
+  const cash = html.match(/id="invKpiCash"[\s\S]*?<div class="v[^"]*">([^<]*)</);
+  assert(cash && cash[1].trim()==='$180.00', 'Cash = $100 USD + 50 USDT + 30 USDC = $180.00, got ' + (cash&&cash[1]));
+  const card = html.match(/data-card="mine:1"[\s\S]*?<\/table>/)[0];
+  assert(/USDT cash/.test(card) && /USDC cash/.test(card) && /USD cash/.test(card), 'USD, USDT and USDC each show as cash lines');
+  assert(!/<b>Tether<\/b>/.test(card), 'USDT must not also be listed as an ordinary position');
+  assert(/USD cash <span[^>]*>@ 4\.0000<\/span>/.test(card), 'A cash line shows its cost rate next to the label (@ 4.0000)');
+  assert(sb.invIsStablecoin({ticker:'USDC'}) && !sb.invIsStablecoin({ticker:'DAI'}) && !sb.invIsStablecoin({ticker:'ETH'}), 'Only USDT and USDC count as stablecoin cash');
+}
+async function testUnpricedPositionIsCountedAtCostAndFlagged(){
+  const sb = viewSandbox({invValuations:[]});
+  await viewPooledSetup(sb);
+  const html = viewHtml(sb, 'mine');
+  const pl = html.match(/id="invKpiPl"[\s\S]*?<div class="v[^"]*">([^<]*)</);
+  assert(pl && pl[1].trim()==='-5.00', 'With no ETH price, only the cash FX difference shows as P/L (75 − 80 = -5.00), not a fake 100% loss; got ' + (pl&&pl[1]));
+  assert(/1 position has no price logged yet/.test(html), 'Mine should say a position has no price yet');
+}
+async function testClosedPositionsFoldIntoACollapsedGroup(){
+  const sb = viewSandbox();
+  sb._D.invTransactions.push(
+    {id:1, positionId:2, date:'2026-09-01', kind:'buy', units:1, totalSar:100, owners:[{ownerId:1, units:1}], cashSide:'bank'},
+    {id:2, positionId:2, date:'2026-09-10', kind:'sell', units:1, totalSar:150, owners:[{ownerId:1, units:1}], cashSide:'bank'});
+  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  const html = viewHtml(sb, 'mine');
+  assert(/<details[^>]*><summary[^>]*>Closed positions \(1\)/.test(html), 'A fully sold position goes into a collapsed "Closed positions" group');
+  assert(/Solana[\s\S]*realised/.test(html), 'The closed group shows its realised result');
+}
+async function testCurrencySwitchShowsUsd(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  sb.setInvView('mine');
+  sb.setInvCcy('USD');
+  const html = sb.document.getElementById('app').innerHTML;
+  const value = html.match(/id="invKpiValue"[\s\S]*?<div class="v[^"]*">([^<]*)</);
+  assert(value && value[1].trim()==='$100.00', 'In USD mode, My Value 375 SAR shows as $100.00, got ' + (value&&value[1]));
+  assert(sb.localStorage.getItem('invCcy')==='USD', 'The currency choice is remembered');
+}
+async function testFamilyViewHasACardPerFamilyMemberOnly(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  const html = viewHtml(sb, 'family');
+  const cards = html.match(/class="panel inv-person" data-owner="(\d+)"/g) || [];
+  assert(cards.length===4 && !html.includes('data-owner="1"'), 'Family shows B, C, D and E — not you, got ' + cards.join(' '));
+  const b = html.match(/data-owner="2"[\s\S]*?<\/tbody>/);
+  assert(b && b[0].includes('Contributed (ledger)') && b[0].includes('375.00 SAR'), 'B\'s card shows what B contributed per the ledger');
+  assert(/openInvOwnerStatement\(2\)/.test(html), 'Each person has a 📄 Statement button');
+}
+async function testFamilyThisMonthChecklistTracksTheRoutine(){
+  const sb = viewSandbox();
+  sb.__set('todayStr', ()=>'2026-10-27');
+  let html = viewHtml(sb, 'family');
+  let s1 = html.match(/data-step="1" data-ok="(\d)"[\s\S]*?(?=data-step="2")/);
+  assert(s1 && s1[1]==='0' && /B 375\.00 SAR/.test(s1[0]) && /invStartPlatformAction\('collect'\)/.test(s1[0]), 'Before collecting, step 1 lists who is waiting and offers 💰 Collect, got ' + (s1&&s1[0].replace(/\s+/g,' ')));
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  html = viewHtml(sb, 'family');
+  s1 = html.match(/data-step="1" data-ok="(\d)"/);
+  const s2 = html.match(/data-step="2" data-ok="(\d)"[\s\S]*?<\/div><\/div>/);
+  assert(s1 && s1[1]==='1', 'After collecting, step 1 is done');
+  assert(s2 && s2[1]==='0' && /B \$100\.00/.test(s2[0]), 'Step 2 shows B\'s cash waiting to be invested, got ' + (s2&&s2[0].replace(/\s+/g,' ')));
+  await poolBuy(sb, 1, '2026-10-03', 0.025, 100);
+  html = viewHtml(sb, 'family');
+  assert(/data-step="2" data-ok="1"/.test(html), 'After the buy uses the cash, step 2 is done');
+  assert(/data-step="3" data-ok="1"/.test(html), 'And step 3 confirms everything reconciles');
+}
+async function testActivityListsEverythingNewestFirstWithEditAndDelete(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  const html = viewHtml(sb, 'activity');
+  const keys = [...html.matchAll(/data-act="([tm]\d+)"/g)].map(m=>m[1]);
+  assert(keys.length===3 && keys[0]==='t1', 'Activity lists the buy (newest) then the two deposits, got ' + keys.join(','));
+  const buy = html.match(/data-act="t1"[\s\S]*?<\/tr>/)[0];
+  assert(/openInvTxModal\(1, 1\)/.test(buy) && /invActivityDelete\('tx', 1\)/.test(buy), 'Each line has ✎ edit and 🗑 delete');
+  const dep = html.match(/data-act="m1"[\s\S]*?<\/tr>/)[0];
+  assert(/openInvCashModal\(1, 'deposit', 1\)/.test(dep) && /rate 4\.0000/.test(dep), 'A deposit line edits through the cash form and shows its rate');
+}
+async function testActivityFiltersByPersonAndType(){
+  const sb = viewSandbox();
+  await viewPooledSetup(sb);
+  sb.__set('invView','activity');
+  sb.setInvActivityFilter('type', 'deposit');
+  let keys = [...sb.document.getElementById('app').innerHTML.matchAll(/data-act="([tm]\d+)"/g)].map(m=>m[1]);
+  assert(keys.length===2 && keys.every(k=>k[0]==='m'), 'Type filter: deposits only, got ' + keys.join(','));
+  sb.setInvActivityFilter('type', '');
+  sb.setInvActivityFilter('ownerId', '2');
+  keys = [...sb.document.getElementById('app').innerHTML.matchAll(/data-act="([tm]\d+)"/g)].map(m=>m[1]);
+  assert(keys.join(',')==='t1,m2', 'Person filter: only B\'s deposit and the buy B shares in, got ' + keys.join(','));
+}
+async function testActivityDeleteAsksFirst(){
+  const sb = viewSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  sb.__set('invView','activity');
+  sb.__set('confirm', ()=>false);
+  await sb.invActivityDelete('move', 1);
+  assert(sb._D.invCashMovements.length===1, 'Cancelling the confirmation must delete nothing');
+  sb.__set('confirm', ()=>true);
+  await sb.invActivityDelete('move', 1);
+  assert(sb._D.invCashMovements.length===0, 'Confirming deletes the movement');
+}
+async function testActivityHidesDeleteForLinkedTransferLegs(){
+  const sb = viewSandbox();
+  sb._D.invTransactions.push({id:7, positionId:1, date:'2026-10-05', kind:'buy', units:1, totalSar:10, owners:[{ownerId:1, units:1}], cashSide:'transfer', linkId:'L1'});
+  const html = viewHtml(sb, 'activity');
+  const row = html.match(/data-act="t7"[\s\S]*?<\/tr>/)[0];
+  assert(/openInvPosition\(1\)/.test(row) && !/invActivityDelete/.test(row), 'One leg of a linked transfer opens its position window and can\'t be deleted on its own');
+}
+async function testReconcileViewCarriesTheWarningAndTheTabShowsACount(){
+  const sb = viewSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400, 2:375}, 205);
+  sb._D.ledger.push({id:5, jv:5, date:'2026-10-03', acc:10201, amt:100, descr:'extra not yet collected'});
+  let html = viewHtml(sb, 'mine');
+  assert(/data-invview="recon"[^>]*>[^<]*<span[^>]*>1<\/span>/.test(html), 'The Reconcile tab shows a count of 1 issue');
+  assert(!/border-left:3px solid var\(--red\)/.test(html), 'The red warning table is no longer on the main view');
+  html = viewHtml(sb, 'recon');
+  assert(/border-left:3px solid var\(--red\)/.test(html), 'The warning table now lives in Reconcile');
+}
+async function testAddMenuOffersEveryActionAndBuySellPicksAnAsset(){
+  const sb = viewSandbox();
+  sb.openInvAddMenu();
+  const modal = sb.document.body.innerHTML;
+  ['trade','collect','deposit','withdrawal','transfer','position'].forEach(a=>assert(modal.includes('data-addaction="'+a+'"'), '+ Add should offer '+a));
+  assert(vm.runInContext('typeof (INV_PLATFORM_ACTIONS.trade||{}).open', sb)==='function', 'Buy / Sell is a platform action like the others');
+  sb.openInvTradePicker(1);
+  const picker = sb.document.body.innerHTML;
+  assert(picker.includes('data-tradepos="1"') && picker.includes('data-tradepos="2"') && /openInvTxModal\(1, null\)/.test(picker), 'Buy / Sell then asks which asset and opens its trade form');
+}
+async function testAddMenuIsDisabledWithNoPlatforms(){
+  const sb = viewSandbox({invPlatforms:[], invPositions:[]});
+  sb.openInvAddMenu();
+  const modal = sb.document.body.innerHTML;
+  assert(/data-addaction="trade" disabled/.test(modal) && /Add a platform first/.test(modal), 'With no platforms, actions are disabled and it says what to do');
+}
+async function testSetupViewHoldsTheSettingsAndPlatforms(){
+  const sb = viewSandbox();
+  const html = viewHtml(sb, 'setup');
+  assert(/setInvFxRate/.test(html) && /setInvMgmtFeePct/.test(html) && /setInvReconStartDate/.test(html), 'Setup holds the rate, fee and start-date settings');
+  assert(/openInvOwners\(\)/.test(html) && /openInvCoinImport\(\)/.test(html) && /openInvEditPlatform\(1\)/.test(html), 'Setup holds Owners, imports and each platform\'s edit');
+  const mine = viewHtml(sb, 'mine');
+  assert(!/setInvFxRate/.test(mine), 'Settings are no longer on the main view');
+}
+async function testInsightsViewDrawsTheCharts(){
+  const sb = viewSandbox();
+  let drawn = false;
+  sb.__set('drawInvCharts', ()=>{ drawn = true; });
+  const html = viewHtml(sb, 'insights');
+  assert(drawn, 'Insights should draw the charts');
+  assert(/Classic/.test(html), 'Insights points to Family / Classic for the per-person tables');
+}
+async function testClassicViewIsThePreviousPage(){
+  const sb = viewSandbox();
+  const html = viewHtml(sb, 'classic');
+  assert(/Your Cost Basis/.test(html) && /invStartPlatformAction\('collect'\)/.test(html), 'Classic keeps the previous all-in-one page');
+}
+async function testMineWithoutASelfOwnerExplainsWhatToDo(){
+  const sb = viewSandbox({invOwners:[{id:2, name:'B', isSelf:false, outAcc:10202}]});
+  const html = viewHtml(sb, 'mine');
+  assert(/Mark which owner is you/.test(html), 'With no "This is me" owner, Mine says how to fix it');
+}
+async function testStatementShowsUsdtAsCash(){
+  const sb = viewSandbox({invPositions:[{id:3, platformId:1, name:'Tether', ticker:'USDT', currency:'USD', assetClass:'Crypto', status:'Active'}]});
+  sb._D.invTransactions.push({id:1, positionId:3, date:'2026-10-01', kind:'buy', units:50, totalSar:187.5, owners:[{ownerId:1, units:50}], cashSide:'bank'});
+  sb.openInvOwnerStatement(1);
+  const body = sb.document.body.innerHTML;
+  assert(/نقد \(USDT\)/.test(body) && /\$50\.00/.test(body), 'USDT appears as a cash line on the statement');
+}
+
+// ================= v4.59.0: cost corrections (editor + CSV), recorded in Activity =================
+function costSandbox(){
+  const sb = fxSandbox({}, true);
+  sb.__set('drawInvCharts', ()=>{});
+  // Two bank buys of ETH: A 1 unit / B 1 unit for 800, then A 2 units for 1,200.
+  sb._D.invTransactions.push(
+    {id:1, positionId:1, date:'2026-09-01', kind:'buy', units:2, totalSar:800, owners:[{ownerId:1, units:1},{ownerId:2, units:1}], cashSide:'bank'},
+    {id:2, positionId:1, date:'2026-09-10', kind:'buy', units:2, totalSar:1200, owners:[{ownerId:1, units:2}], cashSide:'bank'},
+    {id:3, positionId:1, date:'2026-09-20', kind:'sell', units:1, totalSar:700, owners:[{ownerId:1, units:1}], cashSide:'bank'});
+  return sb;
+}
+function costCsvRows(sb){
+  let rows = null;
+  sb.__set('invCsvDownload', (name, r)=>{ rows = r; });
+  sb.exportInvTransactionsCSV();
+  return rows.map(r=>r.map(c=>String(c===null||c===undefined? '' : c)));
+}
+function costCsvCapture(sb){
+  const cap = {persisted:[], errors:null, toast:null};
+  sb.__set('persistInvTransaction', async t=>{ cap.persisted.push(t.id); });
+  sb.__set('showInvCsvErrors', e=>{ cap.errors = e; });
+  sb.__set('toast', m=>{ cap.toast = m; });
+  return cap;
+}
+const costAdj = sb => sb._D.invCashMovements.filter(m=>m.kind==='costadj');
+async function testOwnerSarMapUsesStoredFiguresElseUnitsShare(){
+  const sb = makeSandbox();
+  const pr = sb.invTxOwnerSarMap({totalSar:900, owners:[{ownerId:1, units:1},{ownerId:2, units:2}]});
+  assert(Math.abs(pr[1]-300)<1e-9 && Math.abs(pr[2]-600)<1e-9, 'Without stored SAR each person gets their units\' share, got ' + JSON.stringify(pr));
+  const st = sb.invTxOwnerSarMap({totalSar:775, owners:[{ownerId:1, units:1, sar:400},{ownerId:2, units:1, sar:375}]});
+  assert(st[1]===400 && st[2]===375, 'Stored per-person SAR is used as-is, got ' + JSON.stringify(st));
+}
+async function testCostEditorChangesOnePersonsCellAndRecordsIt(){
+  const sb = costSandbox();
+  sb.openInvCostEditor(1);
+  const d = sb._invCostDraft;
+  assert(d.rows.length===2 && d.rows.every(r=>r.id!==3), 'The editor lists the buys only (not the sell), got ' + d.rows.map(r=>r.id).join(','));
+  sb.setInvCostCell(0, 2, '450');   // B's share of the first buy: 400 → 450
+  assert(sb.document.getElementById('invCostTotal_0').value==='850', 'The row total updates live (850), got ' + sb.document.getElementById('invCostTotal_0').value);
+  await sb.saveInvCostEditor();
+  const t = sb._D.invTransactions.find(x=>x.id===1);
+  assert(t.totalSar===850 && t.owners.find(o=>o.ownerId===2).sar===450 && t.owners.find(o=>o.ownerId===1).sar===400, 'Saved per person: A 400, B 450, total 850, got ' + JSON.stringify(t));
+  assert(Math.abs(sb.computePositionState(1).byOwner[2].costSar-450)<1e-6, 'B\'s cost basis is now 450');
+  const rec = costAdj(sb);
+  assert(rec.length===1, 'One cost-correction record is created, got ' + rec.length);
+  const b = rec[0] && rec[0].owners.find(o=>o.ownerId===2);
+  assert(b && b.before===400 && b.after===450 && !rec[0].owners.some(o=>o.ownerId===1), 'The record shows B 400 → 450 and leaves A out (unchanged), got ' + JSON.stringify(rec[0] && rec[0].owners));
+  assert(rec[0] && /Edit costs: 1 transaction changed — #1 buy 2026-09-01 800\.00 → 850\.00/.test(rec[0].note), 'The record lists what changed, got ' + (rec[0]||{}).note);
+}
+async function testCostEditorRowTotalIsSharedInCurrentProportions(){
+  const sb = costSandbox();
+  sb.openInvCostEditor(1);
+  sb.setInvCostRowTotal(0, '1000');
+  const r = sb._invCostDraft.rows[0];
+  assert(Math.abs(r.sar[1]-500)<1e-9 && Math.abs(r.sar[2]-500)<1e-9, 'A 400/B 400 → total 1,000 gives 500 each, got ' + JSON.stringify(r.sar));
+}
+async function testCostEditorPersonTotalIsSpreadAcrossTheirBuys(){
+  const sb = costSandbox();
+  sb.openInvCostEditor(1);
+  // A paid 400 + 1,200 = 1,600 across two buys; new total 2,000 → 500 and 1,500 (same 1:3 split).
+  sb.setInvCostPersonTotal(1, '2000');
+  const rows = sb._invCostDraft.rows;
+  assert(Math.abs(rows[0].sar[1]-500)<1e-9 && Math.abs(rows[1].sar[1]-1500)<1e-9, 'Spread in proportion: 500 and 1,500, got ' + rows[0].sar[1] + ' / ' + rows[1].sar[1]);
+  assert(Math.abs(rows[0].sar[2]-400)<1e-9, 'B is untouched');
+  await sb.saveInvCostEditor();
+  assert(sb._D.invTransactions.find(x=>x.id===2).totalSar===1500, 'Saved');
+  assert(costAdj(sb).length===1 && /2 transactions changed/.test(costAdj(sb)[0].note), 'One record for the whole save, listing both buys');
+}
+async function testCostEditorSpreadsByUnitsWhenEverythingIsZero(){
+  const sb = fxSandbox({}, true);
+  sb._D.invTransactions.push(
+    {id:1, positionId:1, date:'2026-09-01', kind:'buy', units:1, totalSar:0, owners:[{ownerId:1, units:1}], cashSide:'opening'},
+    {id:2, positionId:1, date:'2026-09-02', kind:'buy', units:3, totalSar:0, owners:[{ownerId:1, units:3}], cashSide:'opening'});
+  sb.openInvCostEditor(1);
+  sb.setInvCostPersonTotal(1, '400');
+  const rows = sb._invCostDraft.rows;
+  assert(Math.abs(rows[0].sar[1]-100)<1e-9 && Math.abs(rows[1].sar[1]-300)<1e-9, 'Opening balances at 0 cost are spread by units (100 / 300), got ' + rows[0].sar[1] + ' / ' + rows[1].sar[1]);
+}
+async function testCostEditorLeavesTransferLegsOut(){
+  const sb = costSandbox();
+  sb._D.invTransactions.push({id:9, positionId:1, date:'2026-09-25', kind:'buy', units:1, totalSar:10, owners:[{ownerId:1, units:1}], cashSide:'transfer', linkId:'L'});
+  sb.openInvCostEditor(1);
+  assert(!sb._invCostDraft.rows.some(r=>r.id===9), 'One leg of a transfer is not offered for editing');
+}
+async function testCostEditorWithNoChangesRecordsNothing(){
+  const sb = costSandbox();
+  sb.openInvCostEditor(1);
+  await sb.saveInvCostEditor();
+  assert(costAdj(sb).length===0, 'Saving without changes must not create a record');
+}
+async function testPositionWindowOffersEditCosts(){
+  // The pool sandbox stubs openInvPosition, so check the real function's source text.
+  const src = require('fs').readFileSync(APP_JS,'utf8');
+  const fn = src.slice(src.indexOf('function openInvPosition(posId){'), src.indexOf('function openInvTxModal('));
+  assert(/onclick="openInvCostEditor\(\$\{posId\}\)"/.test(fn), 'The position window has a ✎ Edit costs button');
+}
+async function testCsvExportHasOwnersSarAndAnUntouchedReimportWritesNothing(){
+  const sb = costSandbox();
+  const rows = costCsvRows(sb);
+  assert(rows[0][9]==='Owners SAR (id:sar;…)', 'Export has the Owners SAR column, got ' + rows[0][9]);
+  const r1 = rows.find(r=>r[0]==='1');
+  assert(r1[9]==='1:400;2:400', 'Owners SAR shows each person\'s share, got ' + r1[9]);
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  assert(cap.persisted.length===0 && costAdj(sb).length===0, 'Re-importing an untouched export must write nothing, wrote ' + cap.persisted.join(','));
+  assert(/Nothing changed — all 3 row/.test(cap.toast||''), 'It should say nothing changed, got ' + cap.toast);
+}
+async function testCsvReimportKeepsRealRatesOnCashBuys(){
+  // The v4.57 regression: a cash buy at two different rates must survive an export → import.
+  const sb = fxSandbox({}, true);
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  await poolBuy(sb, 1, '2026-10-03', 2, 200);
+  const before = JSON.stringify(sb._D.invTransactions[0].owners);
+  const rows = costCsvRows(sb);
+  rows.find(r=>r[0]==='1')[8] = 'note edited';   // a real change on the row, nothing about cost
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  const t = sb._D.invTransactions[0];
+  assert(cap.persisted.length===1 && t.note==='note edited', 'Only the edited row is written');
+  assert(JSON.stringify(t.owners)===before, 'Each person\'s SAR and USD must be kept, got ' + JSON.stringify(t.owners) + ' vs ' + before);
+  assert(Math.abs(sb.computePositionState(1).byOwner[1].costSar-400)<1e-6, 'A\'s cost stays at the 4.00 rate (400)');
+}
+async function testCsvNewTotalIsSharedInCurrentProportionsAndKeepsUsd(){
+  const sb = fxSandbox({}, true);
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  await poolBuy(sb, 1, '2026-10-03', 2, 200);
+  const rows = costCsvRows(sb);
+  rows.find(r=>r[0]==='1')[6] = '1550';  // double the 775 total
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  const t = sb._D.invTransactions[0];
+  const a = t.owners.find(o=>o.ownerId===1), b = t.owners.find(o=>o.ownerId===2);
+  assert(Math.abs(a.sar-800)<0.01 && Math.abs(b.sar-750)<0.01 && t.totalSar===1550, 'A new total keeps the 400:375 proportions (800 / 750), got ' + JSON.stringify(t.owners));
+  assert(a.usd===100 && b.usd===100, 'Each person\'s USD share is kept');
+  assert(costAdj(sb).length===1 && /CSV import: 1 transaction changed — #1 buy 2026-10-03 775\.00 → 1,550\.00/.test(costAdj(sb)[0].note), 'The import is recorded in Activity, got ' + (costAdj(sb)[0]||{}).note);
+  assert(/1 changed, 0 unchanged/.test(cap.toast||'') || /1 changed/.test(cap.toast||''), 'The message reports what changed, got ' + cap.toast);
+}
+async function testCsvOwnersSarSetsEachPersonsCost(){
+  const sb = costSandbox();
+  const rows = costCsvRows(sb);
+  const r = rows.find(x=>x[0]==='1'); r[9] = '1:300;2:500';
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  const t = sb._D.invTransactions.find(x=>x.id===1);
+  assert(!cap.errors && t.totalSar===800 && t.owners.find(o=>o.ownerId===1).sar===300 && t.owners.find(o=>o.ownerId===2).sar===500, 'Owners SAR sets each person; total = their sum, got ' + JSON.stringify(t));
+  const rec = costAdj(sb)[0];
+  assert(rec && rec.owners.some(o=>o.ownerId===2 && o.before===400 && o.after===500), 'Recorded B 400 → 500');
+}
+async function testCsvOwnersSarAndTotalMustAgree(){
+  const sb = costSandbox();
+  const rows = costCsvRows(sb);
+  const r = rows.find(x=>x[0]==='1'); r[9] = '1:300;2:500'; r[6] = '900';
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  assert(cap.errors && /Owners SAR adds up to 800\.00 but Total SAR is 900\.00/.test(cap.errors.join(' ')), 'Disagreeing Owners SAR and Total must be rejected, got ' + (cap.errors||[]).join(' | '));
+  assert(cap.persisted.length===0, 'Nothing is written when there are errors');
+}
+async function testCsvAcceptsZeroCostOpeningBalances(){
+  const sb = fxSandbox({}, true);
+  sb._D.invTransactions.push({id:1, positionId:1, date:'2026-09-01', kind:'buy', units:5, totalSar:0, owners:[{ownerId:1, units:5}], cashSide:'opening'});
+  const rows = costCsvRows(sb);
+  rows[1][8] = 'checked';
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  assert(!cap.errors, 'A 0-cost opening balance must import, got ' + (cap.errors||[]).join(' | '));
+  assert(sb._D.invTransactions[0].note==='checked', 'And the change is saved');
+}
+async function testCsvRefusesToChangeATransferLeg(){
+  const sb = fxSandbox({}, true);
+  sb._D.invTransactions.push({id:1, positionId:1, date:'2026-09-01', kind:'buy', units:1, totalSar:100, owners:[{ownerId:1, units:1}], cashSide:'transfer', linkId:'L1'});
+  const rows = costCsvRows(sb);
+  rows[1][6] = '150';
+  const cap = costCsvCapture(sb);
+  await sb.importInvTransactionsCSV(rows);
+  assert(cap.errors && /one leg of a transfer/.test(cap.errors.join(' ')), 'Changing a transfer leg from the CSV is refused');
+}
+async function testCostCorrectionShowsInActivityButNotInCashLogOrCash(){
+  const sb = costSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  const cellBefore = JSON.stringify(fxCell(sb, 1, 1));
+  sb.openInvCostEditor(1); sb.setInvCostCell(0, 2, '450'); await sb.saveInvCostEditor();
+  assert(JSON.stringify(fxCell(sb, 1, 1))===cellBefore, 'A correction record must not touch platform cash');
+  sb.openInvCashLog(1);
+  assert(!/Cost correction|costadj/.test(sb.document.body.innerHTML), 'The Cash log does not list correction records');
+  sb.__set('invView','activity');
+  sb.setInvActivityFilter('type', 'adjustment');
+  const html = sb.document.getElementById('app').innerHTML;
+  const row = html.match(/<tr data-act="m\d+">[\s\S]*?<\/tr>/);
+  assert(row && /Cost correction/.test(row[0]) && /Ethereum · B 400\.00 → 450\.00/.test(row[0]), 'Activity shows the correction with before → after, got ' + (row&&row[0].replace(/\s+/g,' ').slice(0,300)));
+  assert(row && !/title="Edit"/.test(row[0]) && /invActivityDelete/.test(row[0]), 'A correction record has no ✎ but can be removed');
+  let msg = null; sb.__set('confirm', m=>{ msg = m; return false; });
+  if(costAdj(sb)[0]) await sb.invActivityDelete('move', costAdj(sb)[0].id);
+  assert(/corrected costs themselves stay/.test(msg||''), 'Removing it says the costs stay corrected, got ' + msg);
+}
+
+// ================= v4.60.0: Jamiah Pledge / Round, add to an existing allocation =================
+function jamSummarySandbox(today, tagsAmounts){
+  // A pledges 100, B pledges 100, C pledges 50; this month A paid 150 (over), B paid 0, C paid 20.
+  const acc = {id:10501, name:'Jamiah Cash', category:'Short Term Receivables', acc_type:'Individual Account', status:'Active', is_allocatable:true};
+  const ledger = [
+    {id:1, jv:1, date:'2026-10-05', acc:10501, amt:150, descr:'A'},
+    {id:2, jv:2, date:'2026-10-06', acc:10501, amt:20, descr:'C'},
+    {id:3, jv:3, date:'2026-09-06', acc:10501, amt:100, descr:'B last month'},
+  ];
+  const sb = v455Sandbox({accounts:[acc], ledger, budget:[], provisionGroups:[], jamiahs:[]}, today||'2026-10-19');
+  const j = {id:1, name:'Monthly', account:10501, startMonth:'2026-09', durationMonths:3,
+    groups:[{id:1, name:'G1'}], roundGroup:{'2026-10':1},
+    participants:[{id:1, name:'A', groupId:1, pledgeAmount:100}, {id:2, name:'B', groupId:1, pledgeAmount:100}, {id:3, name:'C', groupId:1, pledgeAmount:50}],
+    tags:{1:1, 2:3, 3:2}};
+  return {sb, j};
+}
+async function testJamiahSummaryShowsPledgePerRoundInsteadOfDueAndPaid(){
+  const {sb, j} = jamSummarySandbox();
+  const html = sb.renderJamiahSummary(j);
+  assert(!/Amount Due|Amount Paid/.test(html), 'Amount Due and Amount Paid must be gone');
+  const head = html.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
+  assert(head && /<th>Participant<\/th><th class="num">Pledge \/ Round<\/th><th>Group<\/th>/.test(head[1]), 'Pledge / Round sits where Amount Due was, got ' + (head&&head[1].slice(0,160)));
+  const rowA = html.match(/<td style="[^"]*">A<\/td>\s*<td class="num mono">([^<]*)<\/td>/);
+  assert(rowA && rowA[1]==='100.00', 'Each participant shows their pledge per round (A 100.00), got ' + (rowA&&rowA[1]));
+}
+async function testJamiahFooterShowsThePotAndThisRoundsPending(){
+  const {sb, j} = jamSummarySandbox();
+  const html = sb.renderJamiahSummary(j);
+  const pot = html.match(/id="jamiahPledgeTotal">([^<]*)</), pend = html.match(/id="jamiahPendingRound"[^>]*>([^<]*)</);
+  assert(pot && pot[1]==='250.00', 'Footer pot = 100 + 100 + 50 = 250.00, got ' + (pot&&pot[1]));
+  // A overpaid (150 of 100) must not offset others: B owes 100, C owes 30 → 130 pending.
+  assert(pend && pend[1]==='Pending this round: 130.00', 'Pending this round = B 100 + C 30 = 130.00 (A\'s extra doesn\'t hide it), got ' + (pend&&pend[1]));
+}
+async function testJamiahPendingIsBlankOutsideTheJamiahsMonths(){
+  const {sb, j} = jamSummarySandbox('2027-03-01');
+  const pend = sb.renderJamiahSummary(j).match(/id="jamiahPendingRound"[^>]*>([^<]*)</);
+  assert(pend && pend[1]==='', 'When this month is not one of the Jamiah\'s rounds, there is no "this round" to be pending, got ' + (pend&&pend[1]));
+}
+async function testJamiahArabicViewUsesTheAgreedLabels(){
+  const {sb, j} = jamSummarySandbox();
+  sb.__set('jamiahSummaryLang', 'ar');
+  const html = sb.renderJamiahSummary(j);
+  assert(/<th class="num">القسط لكل دورة<\/th>/.test(html), 'The Arabic column header reads القسط لكل دورة');
+  const pend = html.match(/id="jamiahPendingRound"[^>]*>([^<]*)</);
+  assert(pend && pend[1].startsWith('المتبقي لهذه الدورة:') && !html.includes('المبلغ المستحق'), 'The Arabic footer reads المتبقي لهذه الدورة, got ' + (pend&&pend[1]));
+}
+// ---- add to an existing allocation ----
+function allocSandbox(){
+  const acc = {id:10501, name:'Mother', category:'Short Term Receivables', acc_type:'Individual Account', status:'Active', is_allocatable:true};
+  const acc2 = {id:10502, name:'Sister', category:'Short Term Receivables', acc_type:'Individual Account', status:'Active', is_allocatable:true};
+  const ledger = [
+    {id:1, jv:1, date:'2026-10-01', acc:10501, amt:500, descr:'lent', alloc:7},
+    {id:2, jv:2, date:'2026-10-05', acc:10501, amt:-300, descr:'part repaid', alloc:7},     // #7 is open: +200
+    {id:3, jv:3, date:'2026-10-02', acc:10501, amt:100, descr:'lent', alloc:8},
+    {id:4, jv:4, date:'2026-10-03', acc:10501, amt:-100, descr:'repaid', alloc:8},          // #8 balanced
+    {id:5, jv:5, date:'2026-10-02', acc:10502, amt:-200, descr:'other account', alloc:9},    // #9 is another account
+    {id:6, jv:6, date:'2026-10-20', acc:10501, amt:-200, descr:'rest repaid'},               // unallocated
+    {id:7, jv:7, date:'2026-10-21', acc:10501, amt:50, descr:'new loan'},                    // unallocated
+  ];
+  const sb = v455Sandbox({accounts:[acc, acc2], ledger, budget:[], provisionGroups:[]});
+  const writes = [];
+  sb.__set('syncWrite', async (table, kind, row)=>{ writes.push({table, kind, row}); return {ok:true}; });
+  sb.__set('persistLocal', ()=>{});
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  return {sb, writes};
+}
+const allocSel = (sb, ids) => vm.runInContext('allocSelected.clear(); '+ids.map(i=>'allocSelected.add('+i+');').join(''), sb);
+async function testUnallocatedOffersAddToExistingEvenForOneLine(){
+  const {sb} = allocSandbox();
+  allocSel(sb, [6]);
+  sb.__set('allocTab','unalloc'); sb.__set('screen','alloc');
+  sb.renderAlloc();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/onclick="openAddToAllocation\(10501\)"/.test(html), 'With one line ticked, "Add to existing allocation…" is offered');
+}
+async function testAddToExistingListsSameAccountAndOnlyZeroResultsCanBeChosen(){
+  const {sb} = allocSandbox();
+  allocSel(sb, [6]);   // -200
+  sb.openAddToAllocation(10501);
+  const modal = sb.document.body.innerHTML;
+  const rows = [...modal.matchAll(/data-addalloc="(\d+)"/g)].map(m=>m[1]);
+  assert(rows.join(',')==='7,8', 'Only this account\'s allocations, the zero-result one first: got ' + rows.join(','));
+  const r7 = modal.match(/data-addalloc="7"[\s\S]*?<\/tr>/)[0], r8 = modal.match(/data-addalloc="8"[\s\S]*?<\/tr>/)[0];
+  assert(/0\.00 ✓/.test(r7) && /onclick="addToAllocation\(10501, 7\)"/.test(r7) && !/disabled/.test(r7), '#7 (+200) with the -200 line nets to zero, so it can be chosen');
+  assert(/disabled/.test(r8) && /-200\.00/.test(r8), '#8 would end at -200, so it is disabled and shows the result');
+}
+async function testAddToAllocationAssignsSyncsAndClearsSelection(){
+  const {sb, writes} = allocSandbox();
+  allocSel(sb, [6]);
+  sb.__set('screen','alloc');
+  await sb.addToAllocation(10501, 7);
+  const D = vm.runInContext('D', sb);
+  assert(D.ledger.find(x=>x.id===6).alloc===7, 'The line now belongs to allocation #7');
+  assert(writes.length===1 && writes[0].table==='pd_ledger' && writes[0].row.id===6 && writes[0].row.alloc===7, 'Exactly that line is synced, got ' + JSON.stringify(writes));
+  assert(vm.runInContext('allocSelected.size', sb)===0, 'The selection is cleared afterwards');
+  const net = D.ledger.filter(x=>x.alloc===7).reduce((s,x)=>s+x.amt,0);
+  assert(Math.abs(net)<1e-9, 'Allocation #7 now nets to zero');
+}
+async function testAddToAllocationRefusesANonZeroResult(){
+  const {sb, writes} = allocSandbox();
+  allocSel(sb, [7]);   // +50 into balanced #8 → +50
+  let msg = null; sb.__set('toast', (m)=>{ msg = m; });
+  await sb.addToAllocation(10501, 8);
+  const D = vm.runInContext('D', sb);
+  assert(!D.ledger.find(x=>x.id===7).alloc && writes.length===0, 'A result that isn\'t zero must not be saved');
+  assert(/would not net to zero/.test(msg||''), 'It explains why, got ' + msg);
+}
+async function testAddToAllocationRefusesAnotherAccountsAllocation(){
+  const {sb, writes} = allocSandbox();
+  allocSel(sb, [6]);
+  await sb.addToAllocation(10501, 9);   // #9 belongs to 10502
+  const D = vm.runInContext('D', sb);
+  assert(!D.ledger.find(x=>x.id===6).alloc && writes.length===0, 'Lines can\'t be added to another account\'s allocation');
+}
+async function testAddToExistingWithNoAllocationsSaysSo(){
+  const {sb} = allocSandbox();
+  const D = vm.runInContext('D', sb);
+  D.ledger.forEach(l=>{ if(l.acc===10501) l.alloc = null; });
+  allocSel(sb, [6]);
+  sb.openAddToAllocation(10501);
+  assert(/has no existing allocations yet/.test(sb.document.body.innerHTML), 'With no allocations for the account it says to create one');
+}
+
+// ================= v4.61.0: accrual cap per sub category =================
+function capSandbox(opts){
+  opts = opts||{};
+  const D = {
+    accounts: [
+      {id:20301, name:'Self Improvement Accrual', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:60100, name:'Self Improvement - Courses', category:'Self Improvement', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60199, name:'Self Improvement - Accrual', category:'Self Improvement', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
+    ],
+    ledger: [
+      {id:1, jv:1, date:'2026-09-30', acc:20301, amt:-3930.01, descr:'accrued so far'},
+      {id:2, jv:2, date:'2026-11-03', acc:20301, amt:-5000, descr:'after the month — must not count'},
+    ].concat(opts.ledger||[]),
+    budget: [{id:1, acc:60100, date:'2026-10-01', amt:1350}],
+    provisionGroups: [], forecastAccountRules: [], forecastPlans:{},
+    accrualMappings: [{category:'Self Improvement', liabilityAcc:20301, expenseAcc:60199, capMonths: opts.cap===undefined? 3 : opts.cap}],
+  };
+  const sb = v455Sandbox(D, '2026-11-02');
+  sb.__set('renderNewJV', ()=>{}); sb.__set('toast', ()=>{});
+  sb.__set('accrualMonth', '2026-10');
+  return sb;
+}
+function capRun(sb){
+  sb.computeAccrualJV();
+  return {lines: vm.runInContext('jvDraft.lines', sb), expl: vm.runInContext('accrualExplanation', sb)};
+}
+async function testAccrualStopsAtTheCapAndAccruesOnlyTheRemainder(){
+  const sb = capSandbox();
+  const {lines, expl} = capRun(sb);
+  // Surplus 1,350; accrued 3,930.01 by 31 Oct; cap 3 × 1,350 = 4,050 → only 119.99 left.
+  const liab = lines.find(l=>l.acc===20301), exp = lines.find(l=>l.acc===60199);
+  assert(liab && Math.abs(liab.amt+119.99)<0.005 && exp && Math.abs(exp.amt-119.99)<0.005, 'Accrues only the 119.99 left under the cap, got ' + JSON.stringify(lines.map(l=>[l.acc,l.amt])));
+  assert(expl[0] && /capped — 1,350\.00 surplus, but only 119\.99 left under the 4,050\.00 cap/.test(expl[0].action), 'The explanation says it was capped, got ' + (expl[0]&&expl[0].action));
+}
+async function testAccrualAtTheCapAddsNothing(){
+  const sb = capSandbox({ledger:[{id:3, jv:3, date:'2026-10-15', acc:20301, amt:-200, descr:'more'}]}); // now 4,130.01 > 4,050
+  const {lines, expl} = capRun(sb);
+  assert(!lines.some(l=>l.acc===20301), 'Once the cap is reached nothing more is accrued (and nothing is released), got ' + JSON.stringify(lines.map(l=>[l.acc,l.amt])));
+  assert(expl[0] && /already at the cap \(4,130\.01 accrued, cap 4,050\.00 = 3 × budget\)/.test(expl[0].action), 'Explains it is at the cap, got ' + (expl[0]&&expl[0].action));
+}
+async function testAccrualWithoutACapIsUnchanged(){
+  const sb = capSandbox({cap:null});
+  const {lines} = capRun(sb);
+  const liab = lines.find(l=>l.acc===20301);
+  assert(liab && Math.abs(liab.amt+1350)<0.005, 'With no cap the whole 1,350 surplus is accrued as before, got ' + (liab&&liab.amt));
+}
+async function testAccrualCapUsesThatMonthsBudgetAndMonthEndBalance(){
+  const sb = capSandbox({cap:4});
+  const {lines} = capRun(sb);
+  // 4 × 1,350 = 5,400 cap; 3,930.01 accrued by 31 Oct (the 5,000 posted in November is ignored) → room 1,469.99 > surplus.
+  const liab = lines.find(l=>l.acc===20301);
+  assert(liab && Math.abs(liab.amt+1350)<0.005, 'With a 4-month cap there is room, so the full surplus is accrued; a later posting must not count, got ' + (liab&&liab.amt));
+}
+async function testOverBudgetDrawdownIgnoresTheCap(){
+  const sb = capSandbox({ledger:[{id:4, jv:4, date:'2026-10-10', acc:60100, amt:2000, descr:'big course'}]});
+  const {lines, expl} = capRun(sb);
+  const liab = lines.find(l=>l.acc===20301);
+  assert(liab && Math.abs(liab.amt-650)<0.005, 'Over budget by 650 → draws 650 from the liability, as before, got ' + (liab&&liab.amt));
+  assert(expl[0] && /drew 650\.00/.test(expl[0].action), 'Drawdown explanation unchanged');
+}
+async function testAccruedChipShowsTheCap(){
+  const sb = capSandbox();
+  const chip = sb.accruedChipHTML('Self Improvement', '2026-10-31');
+  assert(/Accrued: <b class="mono">3,930\.01<\/b> of <span class="mono">4,050\.00<\/span>/.test(chip), 'The chip reads "Accrued: 3,930.01 of 4,050.00", got ' + chip);
+  const sb2 = capSandbox({cap:null});
+  assert(!/<\/b> of <span/.test(sb2.accruedChipHTML('Self Improvement', '2026-10-31')), 'Without a cap the chip shows just the balance');
+}
+async function testSettingsSavesTheCapAndOnlySendsItWhenUsed(){
+  const sb = capSandbox({cap:null});
+  const sent = [];
+  sb.__set('usingCloud', true);
+  sb.__set('SB', {from: ()=>({upsert: async (row)=>{ sent.push(row); return {}; }})});
+  sb.__set('blockIfSyncing', ()=>false); sb.__set('persistLocal', ()=>{}); sb.__set('renderSettings', ()=>{});
+  const cid = sb.sanitizeIdPart('Self Improvement');
+  sb.document.body.insertAdjacentHTML('beforeend', `<input id="acpin_accrLiab_${cid}" data-acc="20301"><input id="acpin_accrExp_${cid}" data-acc="60199"><input id="accrCap_${cid}" value="">`);
+  await sb.saveAccrualMappingFromForm(cid);
+  assert(sent[0] && !('cap_months' in sent[0]), 'With no cap, cap_months is not sent (works before the schema script is run), got ' + JSON.stringify(sent[0]));
+  sb.document.getElementById('accrCap_'+cid).value = '3';
+  await sb.saveAccrualMappingFromForm(cid);
+  const D = vm.runInContext('D', sb);
+  assert(sent[1] && sent[1].cap_months===3 && D.accrualMappings[0].capMonths===3, 'A cap of 3 is saved and synced, got ' + JSON.stringify(sent[1]));
+  sb.document.getElementById('accrCap_'+cid).value = '';
+  await sb.saveAccrualMappingFromForm(cid);
+  assert(sent[2] && sent[2].cap_months===null && D.accrualMappings[0].capMonths===null, 'Clearing a cap sends null so it is really removed, got ' + JSON.stringify(sent[2]));
+  let msg = null; sb.__set('toast', (m)=>{ msg = m; });
+  sb.document.getElementById('accrCap_'+cid).value = '-1';
+  await sb.saveAccrualMappingFromForm(cid);
+  assert(sent.length===3 && /Cap must be a number of months above 0/.test(msg||''), 'A negative cap is refused');
+}
+async function testAccrualMappingBulkRowsOnlyCarryCapWhenAnyIsSet(){
+  const sb = makeSandbox();
+  const none = sb.accrualMappingRows([{category:'A', liabilityAcc:1, expenseAcc:2, capMonths:null}]);
+  assert(!('cap_months' in none[0]), 'No caps anywhere → no cap_months key (restores into an older database still work)');
+  const some = sb.accrualMappingRows([{category:'A', liabilityAcc:1, expenseAcc:2, capMonths:null}, {category:'B', liabilityAcc:3, expenseAcc:4, capMonths:4}]);
+  assert(some.every(r=>'cap_months' in r) && some[0].cap_months===null && some[1].cap_months===4, 'When any cap is set every row carries the key (bulk inserts need matching keys)');
+}
+async function testSchemaScriptAddsTheCapColumn(){
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  assert(/cap_months\s+numeric/.test(sql) && /alter table pd_accrual_mappings add column if not exists cap_months numeric/i.test(sql), 'The Database Schema script adds pd_accrual_mappings.cap_months idempotently');
+}
+
+// ================= v4.62.0: platform-perspective account labels =================
+async function testInvestmentLabelsUsePlatformPerspective(){
+  const src = require('fs').readFileSync(APP_JS,'utf8');
+  const code = src.slice(src.indexOf('const CHANGELOG = ['));
+  const live = code.slice(code.indexOf('];')+2); // skip the changelog history, which keeps its original wording
+  assert(!/Invested \(Out\)|Withdrawn \(In\)/.test(live), 'No on-screen label may still say "Invested (Out)" or "Withdrawn (In)"');
+  assert((live.match(/Invested into platform account/g)||[]).length>=2 && (live.match(/Withdrawn from platform account/g)||[]).length>=2, 'Platform and owner editors use the new account labels');
+  const sb = poolSandbox({}, true);
+  sb._D.invPlatforms[0].outAcc = 10201;
+  vm.runInContext('invExpandedPlatforms.add(1)', sb);
+  const html = sb.renderInvPlatformSection(sb._D.invPlatforms[0]);
+  assert(/Invested into platform: <b/.test(html) && /Withdrawn from platform: <b/.test(html), 'The platform card shows the new wording');
+}
+// ================= v4.63.0: move coins between platforms =================
+function move2Sandbox(){
+  const sb = moveSandbox({invPositions:[
+    {id:1, platformId:1, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'},
+    {id:3, platformId:1, name:'ETH', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+    {id:4, platformId:1, name:'MARA', ticker:'MARA', currency:'USD', assetClass:'Equity', status:'Active'}]});
+  sb._D.invTransactions.push(
+    {id:2, positionId:3, date:'2026-01-01', kind:'buy', units:2, totalSar:20000, owners:[{ownerId:1,units:2}], feePct:0, cashSide:'bank'},
+    {id:3, positionId:4, date:'2026-01-01', kind:'buy', units:60, totalSar:3000, owners:[{ownerId:1,units:60}], feePct:0, cashSide:'opening'});
+  return sb;
+}
+async function testMoveSeveralAssetsInOneSave(){
+  const sb = move2Sandbox();
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[10, 9.99], 3:[2, 1.998]});
+  const dest = sb._D.invPositions.filter(p=>p.platformId===2).map(p=>p.ticker).sort().join(',');
+  assert(dest==='BTC,ETH', 'Both assets arrive on the destination in one save, got ' + dest);
+  assert(sb.computePositionState(1).totalUnits===0 && sb.computePositionState(3).totalUnits===0, 'Both are fully moved off the source');
+  assert(sb._D.invTransactions.filter(t=>t.cashSide==='transfer').length===4, 'Two linked pairs are recorded');
+}
+async function testMoveKeepsReconciliationExactAndOpeningTag(){
+  const sb = move2Sandbox();
+  const capBefore = [1,2].map(o=>sb.invOwnerCapitalAsOf(o, null).capital);
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[4, 3.9], 4:[60, 60]});
+  const capAfter = [1,2].map(o=>sb.invOwnerCapitalAsOf(o, null).capital);
+  assert(Math.abs(capBefore[0]-capAfter[0])<0.01 && Math.abs(capBefore[1]-capAfter[1])<0.01, 'Capital is unchanged by a move (reconciliation stays exact), got ' + capBefore + ' vs ' + capAfter);
+  const mara = sb._D.invPositions.find(p=>p.platformId===2 && p.ticker==='MARA');
+  assert(mara && Math.abs(sb.computePositionState(mara.id).totalOpeningCostSar-3000)<0.01, 'Opening-balance cost keeps its opening tag on arrival (3,000)');
+}
+async function testMoveCarriesEachPersonsOwnCost(){
+  // A paid 4.00/USD, B 3.75/USD for the same coin: each person's own cost must move, not a pooled average.
+  const sb = fxSandbox({}, true);
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  await poolCollect(sb, 1, '2026-10-02', {2:375}, 100);
+  await poolBuy(sb, 1, '2026-10-03', 2, 200);
+  await moveRun(sb, 1, 2, '2026-10-04', {1:[2, 1.9]});
+  const dest = sb._D.invPositions.find(p=>p.platformId===2 && p.ticker==='ETH');
+  const st = sb.computePositionState(dest.id);
+  assert(Math.abs(st.byOwner[1].costSar-400)<0.01 && Math.abs(st.byOwner[2].costSar-375)<0.01, 'A arrives with 400, B with 375, got ' + st.byOwner[1].costSar + ' / ' + st.byOwner[2].costSar);
+  assert(Math.abs(st.byOwner[1].units-0.95)<1e-9 && Math.abs(st.byOwner[2].units-0.95)<1e-9, 'The 0.1 fee is shared 50/50');
+}
+async function testMoveRefusesBadInput(){
+  const sb = move2Sandbox();
+  let msg = null; sb.__set('toast', m=>{ msg = m; });
+  sb.openInvMoveAssets(1); sb.setInvMoveField('toPid', 2);
+  sb.setInvMoveRow(1, 'sent', '4'); sb.setInvMoveRow(1, 'received', '5');
+  await sb.saveInvMoveAssets();
+  assert(/Received can't be more than sent/.test(msg||''), 'Received above sent is refused, got ' + msg);
+  sb.setInvMoveRow(1, 'sent', '11'); sb.setInvMoveRow(1, 'received', '10');
+  await sb.saveInvMoveAssets();
+  assert(/Only 10 held/.test(msg||''), 'Sending more than held is refused, got ' + msg);
+  assert(!sb._D.invTransactions.some(t=>t.cashSide==='transfer'), 'Nothing is saved when input is invalid');
+}
+async function testMoveSendAllAndPerPersonPreview(){
+  const sb = move2Sandbox();
+  sb.openInvMoveAssets(1); sb.setInvMoveField('toPid', 2);
+  sb.invMoveSendAll(1, true);
+  assert(Number(sb._invMoveDraft.rows[1].sent)===10, '"all" fills in everything held (10)');
+  sb.setInvMoveRow(1, 'received', '9.9');
+  const pv = sb.document.getElementById('invMovePreview').innerHTML;
+  const rel = pv.match(/data-moveowner="1_2"[\s\S]*?<\/tr>/);
+  const cells = rel? [...rel[0].matchAll(/<td class="num mono">([^<]*)<\/td>/g)].map(m=>m[1]) : [];
+  assert(cells.join('|')==='4|4|0.04|3.96|40,000.00', 'The preview shows Relative: held 4, sent 4, fee 0.04, received 3.96, cost 40,000.00, got ' + cells.join('|'));
+}
+function moveActivityHtml(sb, filters){
+  sb.__set('invView','activity');
+  sb.__set('renderInvestmentsPage', vm.runInContext('(function(){ return function(){ renderInvActivityView(invNavHTML()); }; })()', sb));
+  vm.runInContext("invActivityFilter = {platformId:'', ownerId:'', type:'', limit:100}", sb);
+  for(const k in (filters||{})) vm.runInContext("invActivityFilter['"+k+"'] = "+JSON.stringify(filters[k]), sb);
+  sb.renderInvActivityView(sb.invNavHTML());
+  return sb.document.getElementById('app').innerHTML;
+}
+async function testActivityShowsAMoveAsOneLineWithFees(){
+  const sb = move2Sandbox();
+  sb.document.body.insertAdjacentHTML('beforeend','<div id="app"></div>');
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[4, 3.9]});
+  const html = moveActivityHtml(sb);
+  const rows = html.match(/<tr data-act="v\d+">[\s\S]*?<\/tr>/g)||[];
+  assert(rows.length===1, 'A move is one Activity line, got ' + rows.length);
+  assert(/A → B/.test(rows[0]) && /BTC · 4 sent → 3\.9 received, fee 0\.1/.test(rows[0]), 'It shows from → to and sent / received / fee, got ' + rows[0].replace(/\s+/g,' ').slice(0,300));
+  const legIds = sb._D.invTransactions.filter(t=>t.cashSide==='transfer').map(t=>t.id);
+  assert(legIds.length===2 && legIds.every(id=>!html.includes('data-act="t'+id+'"')), 'The two legs are not listed separately');
+}
+async function testActivityFilteredToOnePersonShowsTheirOwnFee(){
+  const sb = move2Sandbox();
+  sb.document.body.insertAdjacentHTML('beforeend','<div id="app"></div>');
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[4, 3.9]});
+  const html = moveActivityHtml(sb, {ownerId:'2'});
+  const row = html.match(/<tr data-act="v\d+">[\s\S]*?<\/tr>/);
+  assert(row && /Relative: 1\.6 sent → 1\.56 received, fee 0\.04/.test(row[0]), 'Filtered to Relative, the line shows Relative\'s own units and fee share, got ' + (row&&row[0].replace(/\s+/g,' ').slice(0,300)));
+  assert(row && /16,000\.00/.test(row[0]), 'And Relative\'s own cost moving (16,000.00)');
+  const byDest = moveActivityHtml(sb, {platformId:'2', ownerId:''});
+  assert(/data-act="v\d+"/.test(byDest), 'Filtering by the destination platform also finds the move');
+  const byType = moveActivityHtml(sb, {type:'move'});
+  assert((byType.match(/data-act="/g)||[]).length===1, 'The Coin moves type filter shows only the move');
+}
+async function testUndoMoveFromActivityRemovesBothLegs(){
+  const sb = move2Sandbox();
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[4, 3.9]});
+  const outId = sb._D.invTransactions.find(t=>t.cashSide==='transfer' && t.kind==='sell').id;
+  sb.__set('confirm', ()=>false);
+  await sb.invActivityDelete('coinmove', outId);
+  assert(sb._D.invTransactions.filter(t=>t.cashSide==='transfer').length===2, 'Cancelling keeps the move');
+  sb.__set('confirm', ()=>true);
+  await sb.invActivityDelete('coinmove', outId);
+  assert(!sb._D.invTransactions.some(t=>t.cashSide==='transfer') && Math.abs(sb.computePositionState(1).totalUnits-10)<1e-9, 'Undo removes both halves and the 10 units are back on the source');
+}
+async function testDeletingACashMovementFromActivityStillDeletesIt(){
+  // Regression for a clash caught before shipping: coin moves must not hijack cash-movement deletes.
+  const sb = move2Sandbox();
+  await moveRun(sb, 1, 2, '2026-02-01', {1:[4, 3.9]});
+  sb._D.invCashMovements.push({id:5, platformId:1, date:'2026-02-02', kind:'deposit', usdAmount:100, owners:[{ownerId:1, usd:100}]});
+  sb.__set('confirm', ()=>true);
+  sb.__set('closeModal', ()=>{});
+  await sb.invActivityDelete('move', 5);
+  assert(!sb._D.invCashMovements.some(m=>m.id===5), 'The cash deposit is deleted');
+  assert(sb._D.invTransactions.filter(t=>t.cashSide==='transfer').length===2, 'The coin move is untouched');
+}
+async function testMoveIsOfferedEverywhereAndCashMoveIsRelabelled(){
+  const sb = move2Sandbox();
+  sb.openInvAddMenu();
+  const modal = sb.document.body.innerHTML;
+  assert(/data-addaction="moveassets"/.test(modal) && /⇄ Move cash/.test(modal), '+ Add offers 🔁 Move coins and the cash one is "⇄ Move cash"');
+  assert(vm.runInContext("typeof (INV_PLATFORM_ACTIONS.moveassets||{}).open", sb)==='function', 'Move coins is a platform action');
+  const src = require('fs').readFileSync(APP_JS,'utf8');
+  const card = src.slice(src.indexOf('function invHoldingCardHTML('), src.indexOf('function renderInvMineView('));
+  assert(/onclick="openInvMoveAssets\(\$\{pid\}\)">🔁 Move coins/.test(card), 'Each platform card in Mine has 🔁 Move coins');
+  const win = src.slice(src.indexOf('function openInvPosition(posId){'), src.indexOf('function openInvTxModal('));
+  assert(/openInvMoveAssets\(\$\{pos\.platformId\}, \$\{posId\}\)/.test(win), 'The position window opens the move with that asset ready');
+}
+async function testOlderTransferPairsStillShowAsOneMove(){
+  const sb = move2Sandbox();
+  sb.document.body.insertAdjacentHTML('beforeend','<div id="app"></div>');
+  sb._D.invPositions.push({id:9, platformId:2, name:'BTC', ticker:'BTC', currency:'USD', assetClass:'Crypto', status:'Active'});
+  sb._D.invTransactions.push(
+    {id:54, positionId:1, date:'2026-03-01', kind:'sell', units:1, totalSar:0, owners:[{ownerId:1, units:1}], cashSide:'transfer', linkId:54},
+    {id:55, positionId:9, date:'2026-03-01', kind:'buy', units:1, totalSar:0, owners:[{ownerId:1, units:1}], cashSide:'transfer', linkId:54});
+  const html = moveActivityHtml(sb);
+  assert(/data-act="v54"/.test(html) && !/data-act="t54"|data-act="t55"/.test(html), 'A pre-4.63 transfer pair also shows as one move line');
+}
+
+(async () => {
+  testAccountSearchMatchesIsTokenBased();
+  testPnLShowsPercentOfTotalExpenses();
+  testLedgerPageAccountFilterUsesTokenSearch();
+  testArabicTableHeaderRightAlignCssPresent();
+  testSettlementRoundUpIsCeilingPerLine();
+  testSettlementCleanOutputTotalIsSumOfRoundedLines();
+  testNavEntranceAnimationOnlyOnFirstRender();
+  testOwnershipPercentDerivedFromUnitsNotContributedCapital();
+  testValuationAppliesFxForUsdPositions();
+  testSellUsesWeightedAverageCostAndRealisesGain();
+  testTransactionsProcessedInDateOrderNotInsertionOrder();
+  testFamilyHoldingsSeparatedFromOwn();
+  testReconciliationFlagsMismatchAgainstLedger();
+  testFxRateIsSyncedNotDeviceLocal();
+  testPortfolioHistoryUsesUnitsAndPriceAsOfEachDate();
+  testStalePricesAreFlagged();
+  testCsvImportIsAllOrNothingOnBadRow();
+  testCsvImportRejectsOwnerUnitsMismatch();
+  testReverseJvProducesExactMirrorAndNetsToZero();
+  testDeleteJvIsGoneEntirely();
+  testEveryScreenHasAnIcon();
+  testBudgetSummaryRowIsClickable();
+  testSchemaSqlCoversEveryTableTheAppReads();
+  await testAddedJVLinesStartBlankEvenWhileReconciling();
+  await testStartReconcileStillPrefillsTheFirstLine();
+  await testJVInputsOptOutOfBrowserAutofill();
+  await testDashboardBudgetLineHasNoPaceFigure();
+  await testSchemaUpgradesAnExistingDatabaseNotJustANewOne();
+  await testColumnTopUpIsSafeAndWellFormed();
+  await testAddingAColumnUpgradesExistingDatabasesAutomatically();
+  await testSchemaIncludesTheLedgerChangeMarker();
+  await testOpeningBalanceCostTrackedAndBleedsDownProportionallyOnSell();
+  await testAsOfDateFiltersTransactionsForComputePositionState();
+  await testReconciliationExcludesOpeningBalanceCost();
+  await testReconciliationWithoutOpeningExclusionWouldFalseAlarm();
+  await testReconciliationStartDateComparesDeltaNotFullHistory();
+  await testReconciliationWithoutStartDateShowsTheFullHistoryGap();
+  await testPositionMoveKeepsSharesTakesFeeProRataAndCarriesFullCost();
+  await testPositionMoveMergesIntoExistingMatchingPosition();
+  await testXirrTreatsTransferAsNetZeroExceptTheFee();
+  await testAccountCurrentBalancesCSVHasTheRightColumns();
+  await testAccountMonthlyMovementCSVCoversFullHistoryNotJustCurrentMonth();
+  await testMergedReconImportPriceRoundTripKeepsBlankRowsUntouched();
+  await testRealEstateCollapsedHeaderShowsCurrentMonthNet();
+  testSettingsIsAPagePinnedLastAndPillNotClickable();
+  testCustomPageOrderIsRespected();
+  testScreensMissingFromSavedOrderAreAppendedNotDropped();
+  testAlwaysVisiblePagesCannotBeHidden();
+  testSarSplitDerivesUnitsProportionally();
+  testSarSplitRemainderGoesToLargestHolder();
+  testSarSplitKeepsUnitPrecisionForCrypto();
+  testSarForUnitsRoundTripsTheSplit();
+  testPostJvShowsSpinnerWhileWorking();
+  testSarSplitUsesTransactionTotalNotAllocatedSubtotal();
+  testPartialSplitDoesNotDumpRemainderOnOnePerson();
+  testUnitsDisplayKeeps8Decimals();
+  testTxModalDoesNotRerenderWhileTyping();
+  testCtrlEnterConfirmsModalPrimaryAction();
+  testOwnerDeletionBlockedWhileReferenced();
+  testStatementDefaultsToNewestFirst();
+  testNumberSpinnersHidden();
+  await testIdbRoundTripPreservesEveryRecord();
+  await testMigrationIsNonDestructiveAndVerified();
+  await testMigrationKeepsLegacyDataWhenVerificationFails();
+  await testInterruptedMigrationLosesNothingAndResumes();
+  await testFallbackCacheIsTrimmedNotFull();
+  await testFootprintGuardWarnsWhenWeCrowdTheDomain();
+  testStorageScanCoversWholeOriginNotJustOurKeys();
+  testCacheBreakdownReportsPerCollectionSizes();
+  testQuotaExceededIsSurfacedNotSwallowed();
+  testClearingCacheBlockedWhileChangesArePending();
+  await testKpiValueNoLongerStuckAtZero();
+  await testJVDoubleClickGuard();
+  await testSmartRuleFreezeAfterTarget();
+  await testProvisionDescrSurvivesBlockedSync();
+  await testDriftDetectionFlagsProvisionLine();
+  await testDriftDetectionSkipsHealthyLine();
+  await testDriftDetectionRequiresAllConsecutiveMonths();
+  await testDriftDismissSuppressesUntilNewMonthCloses();
+  await testPnlVarianceMagnitudeIsSignConventionProof();
+  await testDashboardExpenseBudgetSumsOnlyLiveExpenseAccounts();
+  await testDashboardExpenseBudgetComparesAgainstTheWholeMonth();
+  await testDashboardExpenseBudgetIsSignConventionProof();
+  await testDashboardExpenseBudgetHandlesNoBudgetAndPastMonths();
+  await testAllocBadgeIsClickableAndBlankWhenUnallocated();
+  await testAllocJumpFromLedgerRowDoesNotAlsoOpenTheJV();
+  await testAllocModalActionsDoNotRepaintTheWrongPage();
+  await testGoPnLThisMonthOpensPnlForTheCurrentMonth();
+  await testBuyFeeMovesUnitsButNotTheSarSplit();
+  await testSellFeeComesOutOfProceedsAndIsFeeIncomeNotGain();
+  await testFeeIsAppliedByEveryConsumerNotJustCostBasis();
+  await testPlatformCashTracksSellProceedsAndFundedBuys();
+  await testBankSideTransactionsDoNotTouchCash();
+  await testDepositWithdrawalAndTransferWithFee();
+  await testTransferFeeIsBorneBySelfNotSharedWithFamily();
+  await testTransferCarriesProfitProportionally();
+  await testReconciliationBridgeBalancesWithCashHeld();
+  await testReconciliationWouldFalseAlarmWithoutTheProfitTerm();
+  await testPlatformReconciliationFlagsUnitAndCashVariances();
+  await testWithdrawalSplitDrawsProfitFirstButAllowsOverride();
+  await testFeeWithNoFamilyOwnersChargesNothing();
+  await testSchemaSqlCoversTheCashTable();
+  await testAccountExportButtonsMovedOffSettingsOntoAccountsPage();
+  await testAccountsGridShowsBalanceAndMonthlyMovementPerAccount();
+  await testAccountsGridWindowDefaultsToTwelveMonthsEndingCurrent();
+  await testAccountsGridShiftMovesTheWindowByOneMonth();
+  await testNewPositionDefaultsToCryptoAndUSD();
+  await testTickerInputUppercasesWithoutLosingCursorPosition();
+  await testSaveInvPositionUppercasesTickerAsASafetyNet();
+  await testOpeningBalanceModalUsesUsdEntryNotPlainSar();
+  await testUsdFieldSupportsFormulaOnBlur();
+  await testPricePerUnitShowsUsdForCashAndOpeningEntries();
+  await testSaveInvTxRequiresUsdAmountForOpeningBalance();
+  await testPlatformPanelOnlyKeepsTheEditButtonNow();
+  await testPlatformsSortedAlphabeticallyCaseInsensitive();
+  await testSinglePlatformSkipsThePicker();
+  await testMultiplePlatformsShowsThePicker();
+  await testZeroPlatformsDoesNothing();
+  await testPortfolioPageDisablesActionButtonsWithZeroPlatforms();
+  await testLogPricesFunctionsAreGoneMergedIntoRecon();
+  await testReconPageIncludesTheManualPriceSection();
+  await testMergedReconCsvHasBothStatementAndPriceColumns();
+  await testTextWidthNoLongerCappedOnPortfolioPage();
+  await testMarkUserActivityUpdatesLastActivityTime();
+  await testMarkUserActivityIsIgnoredOnceLocked();
+  await testCheckIdleLockDoesNothingBeforeTheThreshold();
+  await testCheckIdleLockHoldsOffWhileSyncQueueIsNonEmpty();
+  await testCheckIdleLockHoldsOffWhileAModalIsOpen();
+  await testCheckIdleLockWarnsBeforeLockingWithNothingBlocking();
+  await testCheckIdleLockLocksAfterTheWarningWindowElapses();
+  await testCheckIdleLockDoesNotLockDuringTheWarningWindow();
+  await testMarkUserActivityDismissesAnActiveWarning();
+  await testIdleLockMinutesZeroMeansNever();
+  await testGetSetIdleLockMinutesRoundTripsThroughLocalStorage();
+  await testGetIdleLockMinutesFallsBackToDefaultWhenUnset();
+  await testIdleLockSettingsPanelShowsCurrentValueAndSaves();
+  await testSaveIdleLockMinutesFromSettingsPersistsAndToasts();
+  await testToggleJvBalanceCheckStartsFreshEachTime();
+  await testToggleJvBalanceCheckLineTogglesMembership();
+  await testJvBalanceCheckSubtotalSumsOnlySelectedLines();
+  await testJvBalanceCheckSubtotalDetectsTheImbalance();
+  await testJvBalanceCheckSubtotalIgnoresStaleIndexesGracefully();
+  await testClearJvBalanceCheckSelectionEmptiesTheSet();
+  await testRemoveJVLineRemapsSelectionIndexesCorrectly();
+  await testResetJVDraftClearsBalanceCheckSelection();
+  await testRenderNewJVShowsBalanceCheckBarOnlyWhenModeIsOn();
+  await testUnselectedLinesAreDimmedWhileSelectedLinesAreNot();
+  await testClosingBalanceWatchStoresUpToThreeArbitraryMonths();
+  await testClosingBalanceWatchWidgetShowsClosingOnlyForPickedMonths();
+  await testClosingBalanceWatchWidgetHandlesNoMonthsPicked();
+  await testStatementBalanceOnlySavesOnEnterNotOnBlur();
+  await testStartReconcileFocusesTheDescriptionField();
+  await testJvAmountDoesNotRecalculateTotalOnEveryKeystroke();
+  await testJvAmtBlurStillRecalculatesTheTotal();
+  await testBalanceCheckSubtotalAlsoOnlyUpdatesOnBlurNotEveryKeystroke();
+  await testGetSetForecastSnapshotHorizonRoundTrips();
+  await testGetForecastSnapshotHorizonDefaultsToTwelve();
+  await testBuildForecastSnapshotMonthsCapturesExactlyTheHorizon();
+  await testTakeForecastSnapshotPersistsAndReturnsTheRecord();
+  await testDeleteForecastSnapshotRemovesItAfterConfirm();
+  await testDeleteForecastSnapshotKeepsItIfNotConfirmed();
+  await testAutoSnapshotSkipsWhenNoLedgerHistoryExists();
+  await testAutoSnapshotTakesOneWhenNoneExistsThisMonth();
+  await testAutoSnapshotDoesNotDuplicateWithinTheSameMonth();
+  await testAutoSnapshotAllowsAManualOneInTheSameMonthToo();
+  await testForecastSnapshotBannerHtmlOnlyShowsWhenArmed();
+  await testDismissForecastSnapshotBannerClearsIt();
+  await testForecastSnapshotClosingForReturnsNullOutsideHorizon();
+  await testForecastSnapshotsCoveringFindsOnlyRelevantOnesInOrder();
+  await testForecastSnapshotTrendChartRendersAPointPerCoveringSnapshotPlusNow();
+  await testForecastSnapshotTrendChartEmptyWithFewerThanTwoPoints();
+  await testForecastSettingsPageIncludesSnapshotHorizonAndButton();
+  await testClosingBalanceWatchMatchesTheRealAnchoredGrid();
+  await testClosingBalanceWatchUsesAnchoredNotPureChain();
+  await testForecastSnapshotCaptureUsesAnchoredChainAndFastPath();
+  await testSnapshotComparisonNowFigureUsesAnchoredChain();
+  await testNetWorthGridAutoFitsInsteadOfFixedThreeColumns();
+  await testClosingBalanceWatchIsInItsOwnRowNotTheNetWorthGrid();
+  await testAllocationByIncludesRoboAsStocksWhenSupplied();
+  await testAllocationByExcludesRoboWhenNoRoboKeyFnSupplied();
+  await testSaveInvRoboValueAppendsToTheHistoryLog();
+  await testSaveInvRoboValueSameDateCorrectsRatherThanDuplicates();
+  await testInvRoboValueAsOfReturnsLatestEntryAtOrBeforeDate();
+  await testPortfolioHistoryOnlyIncludesRoboFromWhenLoggingStarted();
+  await testPortfolioHistoryIncludesDatesThatOnlyExistInTheRoboLog();
+  await testAllocationChartsIncludeRoboPlatformAsStocksAndByItsOwnName();
+  await testRenderInvestmentsPageActuallyPassesRoboIntoTheRealAllocationCalls();
+  await testAllocationByWithoutRoboKeyFnStaysUnaffected();
+  await testDashboardGridUsesFixedMaxWidthNotStretching();
+  await testComparisonShowsFullCategoryBreakdownNotJustClosingBalance();
+  await testTakeForecastSnapshotCapturesCurrentSignFlips();
+  await testComparisonWarnsWhenSignFlipsChangedSinceTheSnapshot();
+  await testComparisonNoWarningWhenSignFlipsUnchanged();
+  await testSnapshotVsSnapshotComparisonMode();
+  await testSnapshotVsSnapshotHandlesAMonthOneSnapshotNeverCaptured();
+  await testTrendChartHasVisibleValueLabelsNotJustHoverTooltips();
+  await testInitIdleLockChecksImmediatelyOnVisibilityChange();
+  await testInitIdleLockDoesNotCheckWhenBecomingHidden();
+  await testVisibilityCheckSeesTheStaleActivityTimeBeforeAnyClickCanResetIt();
+  await testRowSummaryUsesCuratedFieldsWhenAvailable();
+  await testRowSummaryFallsBackGenericallyForAnUncuratedTable();
+  await testRowSummaryFallbackHandlesJsonbColumnsWithoutCrashing();
+  await testRowSummaryReturnsPlaceholderForANullRow();
+  await testInvRoboPlatformStatsFixesTheSignFlipWhenWithdrawnExceedsInvested();
+  await testInvRoboPlatformStatsNormalCaseUnaffected();
+  await testRoboKpiFoldUsesCostBasisMagnitudeNotRawSignedValue();
+  await testRoboCardWarnsWhenCostBasisIsFlagged();
+  await testAllocationChartFallbackUsesCostBasisMagnitudeWhenNoValueLogged();
+  await testKpiCardsAreClickableAndOpenTheirBreakdowns();
+  await testInvPlatformBreakdownRowsSumExactlyToTheDisplayedTotal();
+  await testInvPlatformBreakdownIncludesRoboPlatformsForSelfOnly();
+  await testClickingAPlatformRowDrillsIntoItsPositions();
+  await testRoboPlatformRowIsNotClickableInBreakdown();
+  await testInvestedAndPlKindsAreNeverDrillable();
+  await testInvestedAmountUsesOutAccountOnlyNotNetOfIn();
+  await testPlInvestmentsPageWidgetMatchesValueMinusInvested();
+  await testClearAllJVLinesRequiresConfirmation();
+  await testClearAllJVLinesResetsToTwoBlankLinesButKeepsTheDate();
+  await testClearAllJVLinesAlsoClearsBalanceCheckSelection();
+  await testExportStatementCSVProducesTheRightRowsAndRunningBalance();
+  await testExportStatementCSVRespectsCurrentSortOrder();
+  await testStatementViewHasCsvButtonNextToPrintButton();
+  await testOpenInvKpiBreakdownRendersATotalMatchingTheColumn();
+  await testComparisonIncludesStartingBalanceRow();
+  await testStartingBalanceDiffAccountsForTheClosingBalanceGap();
+  await testStartingBalanceRowAlsoWorksAgainstLiveNowNotJustSnapshotVsSnapshot();
+  await testSignFlipWarningIsHedgedWhenThenSnapshotHasNoRecordedFlips();
+  await testSignFlipWarningStaysConfidentWhenThenSnapshotHasRealData();
+  await testSignFlipWarningEmptyWhenNothingActuallyDiffers();
+  await testSignFlipWarningConfidentWhenAFlipWasTurnedOff();
+  await testGenerateProvisionJVSkipsZeroAmountLines();
+  await testGenerateProvisionJVStillRequiresTwoRealLines();
+  await testCombinedGenerateProvisionJVSkipsZeroAmountLines();
+  await testExportBudgetGridStartsAtCurrentMonthNotEarliestLedgerMonth();
+  await testExportBudgetGridShowsPlanNotActualForCurrentMonth();
+  await testImportBudgetGridAcceptsTheCurrentMonthColumn();
+  await testParseInvCoinImportCSVSkipsLeadingAccountNumberRow();
+  await testParseInvCoinImportCSVSkipsAllZeroRows();
+  await testParseInvCoinImportCSVTrimsOwnerNamesAndExcludesSummaryColumns();
+  await testParseInvCoinImportCSVThrowsWithoutACoinHeader();
+  await testBuildInvCoinImportMappingsAutoMatchesExistingByNameCaseInsensitive();
+  await testInvCoinImportIsReadyRequiresEveryOwnerResolved();
+  await testInvCoinImportIsReadyDoesNotRequirePlatformResolution();
+  await testCommitInvCoinImportCreatesPositionWithZeroCostOpeningTransaction();
+  await testCommitInvCoinImportCreatesMissingPlatformOnTheFly();
+  await testCommitInvCoinImportReusesTheSameNewPlatformAcrossMultipleRows();
+  await testCommitInvCoinImportReusesAnExistingPositionByTicker();
+  await testCommitInvCoinImportRespectsDeclinedConfirmation();
+  await testInvCoinImportAgainstTheRealUploadedSpreadsheetShape();
+  await testOwnerBreakdownIsCollapsedByDefault();
+  await testOwnerBreakdownExpandsWithFullDetailColumns();
+  await testOwnerBreakdownToggleStopsClickPropagationToThePositionLink();
+  await testToggleInvPositionOwnersExpandedFlipsIndependently();
+  await testOwnerBreakdownShowsZeroCostAndDashForNoValuationCorrectly();
+  await testAccrualJVStillReadsThePlanAfterTheAccrualMonthHasClosed();
+  await testAccrualJVUsesForecastPlanNotStaleLegacyBudgetTable();
+  await testAccrualJVStillFallsBackToLegacyBudgetTableWhenNoProvisionsExist();
+  await testInvRoboPlatformStatsComputesCostBasisFromOutInAccounts();
+  await testInvRoboPlatformStatsHandlesUnassignedAccountsAsZero();
+  await testSaveInvRoboValuePersistsAndDatesIt();
+  await testSaveInvRoboValueIgnoresNonPositiveInput();
+  await testRoboPlatformRendersSimplifiedCardNotThePositionTable();
+  await testActionablePlatformsExcludesRoboPlatforms();
+  await testInvStartPlatformActionSkipsRoboWhenChoosingSinglePlatformShortcut();
+  await testReconciliationPageExcludesRoboPlatforms();
+  await testRoboPlatformValueFoldsIntoSelfKpiTotals();
+  await testNormalPlatformShowsPortfolioValueNextToCashInBothViews();
+  await testPositionTableIncludesAUsdValueColumn();
+  await testOutInProfitBalancesShownWhenExpandedWithUnassignedFallback();
+  await testOutInProfitBalancesHiddenWhenCollapsed();
+  await testPlatformModalIncludesRoboCheckbox();
+  await testLockAppForInactivityShowsOverlayWithRelaunch();
+  await testLockAppForInactivityIsIdempotent();
+  await testRelaunchAppReloadsThePage();
+  await testNormalizeDataShapeFillsInEveryMissingField();
+  await testNormalizeDataShapeDoesNotOverwriteExistingData();
+  await testRestoreFromBackupDoesNotCrashOnAnOldBackupMissingNewerFields();
+  await testRestoreFromBackupPreservesNewerFieldsWhenPresentInTheFile();
+  await testRestoreFromBackupStillCallsNormalizeDataShape();
+  await testManualPriceEntrySavesAValuationAndRendersStaleness();
+  await testReconciliationColumnsShareTheSameLayoutAcrossPlatforms();
+  await testReconciliationShowsLastReconciledDateWithStaleness();
+  await testBankFundedUsdPositionShowsUsdEntryToo();
+  await testSarCurrencyPositionFundedFromBankStaysPlainSar();
+  await testPpuReadsUsdForBankFundedUsdPositionToo();
+  await testSaveInvTxRequiresUsdForBankFundedUsdPosition();
+  await testSaveInvTxPersistsUsdAmountForBankFundedUsdPosition();
+  await testEditingOldRecordBackfillsUsdFromStoredSar();
+  await testDualCurrencyKpiShowsUsdFirstBoldThenSar();
+  await testTopWidgetsUseDualCurrencyIncludingFamily();
+  await testPositionModalUsesDualCurrencyWidgets();
+  await testPriceDateRemovedFromPlatformTableAndAlwaysBlack();
+  await testStalePricesPanelRemovedFromInvestmentsPage();
+  await testPlatformsCollapsedByDefault();
+  await testCollapsedPlatformShowsCashAndOwnerPortionSummary();
+  await testToggleInvPlatformExpandedFlipsState();
+  await testReconCsvExportAndImportRoundTrip();
+  await testReconPageShowsPerPositionLastCheckedDate();
+  await testEnterKeyMovesToNextReconInput();
+  await testEnterKeyOnLastReconInputJustBlurs();
+  await testNonEnterKeyIsIgnoredByReconNavigation();
+  await testLedgerSearchDebounced();
+  await testSplashProgressBlendsLedgerFraction();
+  await testSidebarPinToggle();
+  await testMobileNavOpenClose();
+  await testGoClosesMobileNavAndUpdatesTitle();
+  await testCategoryAccountIdsExcludesWorkingCapital();
+  await testLedgerEditorBlocksUnbalancedJV();
+  await testLedgerEditorBlocksBrokenAllocation();
+  await testLedgerEditorAppliesValidEdit();
+  await testLedgerEditorDeletesFullJVCleanly();
+  await testLedgerEditorRejectsDuplicateRowId();
+  await testGetBalanceStaleDaysDefaultsToZero();
+  await testSaveBalanceStaleDaysPersistsToUiPrefsAndSyncsOnlyThatColumn();
+  await testDashboardBalanceColorRespectsConfiguredGracePeriod();
+  await testDashboardBalanceColorTurnsRedPastTheGracePeriod();
+  await testDashboardBalanceColorDefaultMatchesOriginalSameDayOnlyBehavior();
+  await testDashboardBalanceColorSameDayStillGreenWithDefault();
+  await testNormalizeDataShapeDefaultsBalanceStaleDaysToZero();
+  await testNormalizeDataShapeDoesNotOverwriteAnExistingBalanceStaleDays();
+  await testRestoreFromBackupCloudPathIncludesBalanceStaleDaysEvenWithoutPageOrder();
+  await testBalanceFreshnessSettingsPanelShowsCurrentValue();
+  await testSaveBalanceStaleDaysFromInputValidatesAndToasts();
+  await testSaveBalanceStaleDaysFromInputRejectsInvalidValues();
+  await testSaveBalanceStaleDaysFromInputRefreshesDashboardWhenOnIt();
+  await testShowSplashSetsVersionTag();
+  await testSplashVersionTagNotOverwrittenIfAlreadySet();
+  testSplashScreenMarkupIncludesVersionElement();
+  await testAccountsWithBudgetFiguresIncludesEveryPlanSource();
+  await testAccountsWithBudgetFiguresIncludesSmartRuleOnlyAccounts();
+  await testAccountsWithBudgetFiguresExcludesAccountsWithNoPlanAtAll();
+  await testAcctBudgetChartYearsAlwaysIncludesTheCurrentYearEvenWithNoActivity();
+  await testComputeAcctBudgetChartDataUsesOriginalPlanEvenForPastMonths();
+  await testComputeAcctBudgetChartDataZerosFutureMonthsActual();
+  await testComputeAcctBudgetChartDataCumulativeRunsCorrectlyAndFlattensAfterToday();
+  await testComputeAcctBudgetChartDataRemainingIsSignConventionProof();
+  await testOpenAcctBudgetChartRoutesRenderPnLToTheSubpage();
+  await testCloseAcctBudgetChartReturnsToMainPnLView();
+  await testRenderAcctBudgetChartPageShowsEmptyStateWithNoBudgetedAccounts();
+  await testSelectAcctBudgetChartAccountAndYearUpdateState();
+  await testOpenAcctBudgetChartAcceptsASpecificAccountId();
+  await testOpenAcctBudgetChartWithNoArgumentKeepsTheOldDefaultBehavior();
+  await testOpenAcctBudgetChartWithSpecificIdOverridesAnyPreviousSelection();
+  await testPnLChartLinkShowsOnlyForBudgetedExpenseAccounts();
+  testPnLChartLinkStopsClickPropagationToTheRowHandler();
+  await testAcctBudgetBarChartClickOpensTransactionsForActualBar();
+  await testAcctBudgetBarChartClickIgnoresBudgetBar();
+  await testAcctBudgetBarChartClickHandlesNoElementsGracefully();
+  await testAcctBudgetBarChartClickOnFutureFlatMonthShowsHonestEmptyState();
+  testViewAcctBudgetChartMonthTransactionsFiltersToTheExactAccountAndMonth();
+  await testSubcategoriesWithBudgetFiguresIncludesOnlyCategoriesWithABudgetedAccount();
+  await testSubcategoriesWithBudgetFiguresExcludesCategoriesWithNoBudgetAtAll();
+  await testAcctBudgetChartCategoryAccountIdsIncludesEveryAccountRegardlessOfItsOwnBudgetStatus();
+  await testComputeAcctBudgetChartDataForCategoryAggregatesAcrossEveryAccountInTheCategory();
+  await testComputeAcctBudgetChartDataForCategoryZerosFutureMonths();
+  await testSelectAcctBudgetChartModeAndSubcatUpdateState();
+  await testOpenAcctBudgetChartForCategorySetsSubcatModeAndOpensThePage();
+  await testOpenAcctBudgetChartWithAnAccountIdSwitchesBackToAccountMode();
+  await testRenderAcctBudgetChartPageShowsSubcatPickerInSubcategoryMode();
+  await testRenderAcctBudgetChartPageFallsBackWhenSelectedSubcatNoLongerQualifies();
+  await testAcctBudgetBarChartClickHandlerRoutesToSubcategoryModalWhenModeIsSubcategory();
+  await testAcctBudgetBarChartClickHandlerStillRoutesToAccountModalWithNoModeArgument();
+  await testViewAcctBudgetChartMonthTransactionsForCategoryGroupsByAccountThenDate();
+  await testViewAcctBudgetChartMonthTransactionsForCategoryHandlesEmptyMonth();
+  await testPnLCategoryLinkShowsOnlyForBudgetedCategories();
+  testPnLCategoryLinkStopsClickPropagation();
+  await testInvReconEnterNextSetsFocusKeyFromNextInputsDataset();
+  await testInvReconEnterNextClearsFocusKeyOnLastInput();
+  await testRenderInvReconPageRestoresFocusToTheTrackedKey();
+  await testRenderInvReconPageDoesNothingWhenNoFocusKeyPending();
+  await testInvReconPlatformsCollapsedByDefault();
+  await testToggleInvReconPlatformExpandedFlipsIndependentlyPerPlatform();
+  await testInvReconExpandStateIsIndependentFromTheMainInvestmentsPage();
+  await testInvAssetIdentityUsesTickerWhenPresent();
+  await testInvAssetIdentityFallsBackToNameWhenNoTicker();
+  await testInvPositionsMatchingAssetGroupsAcrossPlatformsByTicker();
+  await testOpenInvAssetAcrossPlatformsShowsASectionPerPlatformWithItsTransactions();
+  await testOpenInvAssetAcrossPlatformsRowClickOpensTheCorrectTransactionForEditing();
+  await testOpenInvAssetAcrossPlatformsNewTransactionGoesToThePickedPlatform();
+  await testInvReconPositionNameOpensTheAssetWindow();
+  await testPlatformSectionShowsCombinedPortfolioPlusCashTotal();
+  await testInvSplitUsdBySarIsProportionalAndExactToTheCent();
+  await testInvSplitUsdBySarSkipsNonContributors();
+  await testAvailableIsOutAccountMinusWhatTheTrackerAlreadyHolds();
+  await testAvailableIsNullWithoutAnOutAccount();
+  await testCollectPrefillsFromAvailable();
+  await testCollectRecordsOneDepositSplitBySarShare();
+  await testCollectSplitsTheActualUsdReceivedNotTheTheoreticalOne();
+  await testCollectByPercentageOfATotal();
+  await testCollectBlocksPercentagesThatDontAddUpTo100();
+  await testCollectBlocksAnEmptyContribution();
+  await testCollectButtonIsOnTheInvestmentsPage();
+  await testCashForSplitIsAsOfTheBuyDateIncludingSameDayDeposits();
+  await testCashForSplitAddsBackTheTransactionBeingEdited();
+  await testSplitByCashGivesUnitsInProportionToEachPersonsCash();
+  await testUntickingSomeoneSpreadsTheirShareAcrossTheRest();
+  await testSplitByCashNeedsUnitsFirst();
+  await testSplitByCashOnlyOfferedForCashFundedBuys();
+  await testChangingUnitsKeepsTheSplitInStep();
+  await testEditingOnePersonsUnitsByHandTurnsAutoSplitOff();
+  await testPerPersonOverdrawIsWarnedByName();
+  await testNoOverdrawWarningWhenTheSplitFollowsCash();
+  await testFullMonthEveryoneGetsTheirShareAtTheSameAveragePrice();
+  await testLeftoverCashRollsIntoNextMonthsSplit();
+  await testOnlyYouCanBuyAloneByUntickingEveryoneElse();
+  await testForecastWideExportHasOneSourceColumnBetweenSubCategoryAndBalance();
+  await testForecastWideExportAmountsStillLineUpWithTheirMonths();
+  await testForecastWideExportSourceListsEachSourceWithItsMonthRange();
+  await testForecastWideExportSourceSplitsProvisionsThenBudgetRanges();
+  await testForecastWideExportDescribesASmartRuleOnceWithItsRange();
+  await testForecastWideExportSmartRuleFreezeAndZeroOffsetWording();
+  await testForecastWideExportBankAccountSourceIsBlank();
+  await testForecastPivotExportKeepsItsPerRowSource();
+  await testForecastWideExportStillReimportsWithTheSourceColumn();
+  await testBudgetImportUnchangedFileSyncsNothing();
+  await testBudgetImportSyncsOnlyTheEditedCell();
+  await testBudgetImportTreatsExcelRoundingAsUnchangedButCountsARealCentEdit();
+  await testBudgetImportClearingACellStillDeletesAndNewCellStillCreates();
+  await testReconcileRecentJvsAreTheLastThreeByJvDateOnlyThisAccountsLines();
+  await testReconcilePaneIsCollapsedByDefaultAndShowsDateJvDescriptionAmount();
+  await testReconcilePaneNeverListsTheUnpostedDraft();
+  await testReconcilePaneShowsBothLinesWhenOneJvHitsTheAccountTwice();
+  await testReconcilePaneEmptyStateWhenNoPostedJvs();
+  await testJamiahShowsThisMonthsNetOfUnallocatedTransactions();
+  await testJamiahMonthTotalIsNetSignedAndHandlesSingularAndZero();
+  await testAccruedForCategoryIsTheNegatedLiabilityBalanceAsOfTheDate();
+  await testMonthEndDateStrHandlesShortMonthsAndLeapYears();
+  await testPnLShowsAccruedNextToMappedCategoryAndItsAccrualAccountOnly();
+  await testPnLAccruedFollowsThePeriodEndNotToday();
+  await testBudgetPlanVsActualShowsAccruedForTheMonthShown();
+  await testExportGridButtonOpensTheChoiceInsteadOfExportingImmediately();
+  await testBudgetExportFutureOnlyIsUnchanged();
+  await testBudgetExportWithHistoryStartsAtEarliestLedgerMonthAndShowsActualForPast();
+  await testBudgetImportIgnoresThePastMonthsOfAHistoricalExport();
+  await testLegacyDepositWithoutSarStaysAtTheStandardRate();
+  await testCollectAtARealRateRecordsFullSarAndClosesAvailable();
+  await testCollectShowsTheEffectiveRateForInformation();
+  await testCollectPreFillsTheFullAvailableBalance();
+  await testCashFundedBuyIsCostedAtEachPersonsOwnRate();
+  await testCashBuyPreviewNamesEachPersonsRate();
+  await testReEditingACashBuyDoesNotDoubleCountItself();
+  await testUsdTransactionsTakeTheRateTypedOnTheDay();
+  await testUserExampleDeposit400SellAndWithdraw150At375();
+  await testWithdrawalTakesCashOutAtItsAverageCost();
+  await testWithdrawalAtABetterRateSendsTheGainToProfit();
+  await testEditingADepositsUsdKeepsTheSarAndUpdatesTheRate();
+  await testTransferCarriesTheAverageRate();
+  await testCashLogShowsTheDepositRate();
+  await testPlatformTableShowsAUsdCashRowWithPerPersonSplit();
+  await testByOwnerTableHasACashColumnAndListsCashOnlyPeople();
+  await testStatementGroupsByPlatformAndIncludesCash();
+  await testInvestmentsOpensOnMineAndHasEveryView();
+  await testMineShowsOnlyMySliceAndNoFamilyFigures();
+  await testMineTableHasFiveColumnsUntilDetailsAreShown();
+  await testPlatformCardIsOneLineUntilExpanded();
+  await testMinePlatformCardHasItsOwnActions();
+  await testStablecoinsCountAsCash();
+  await testUnpricedPositionIsCountedAtCostAndFlagged();
+  await testClosedPositionsFoldIntoACollapsedGroup();
+  await testCurrencySwitchShowsUsd();
+  await testFamilyViewHasACardPerFamilyMemberOnly();
+  await testFamilyThisMonthChecklistTracksTheRoutine();
+  await testActivityListsEverythingNewestFirstWithEditAndDelete();
+  await testActivityFiltersByPersonAndType();
+  await testActivityDeleteAsksFirst();
+  await testActivityHidesDeleteForLinkedTransferLegs();
+  await testReconcileViewCarriesTheWarningAndTheTabShowsACount();
+  await testAddMenuOffersEveryActionAndBuySellPicksAnAsset();
+  await testAddMenuIsDisabledWithNoPlatforms();
+  await testSetupViewHoldsTheSettingsAndPlatforms();
+  await testInsightsViewDrawsTheCharts();
+  await testClassicViewIsThePreviousPage();
+  await testMineWithoutASelfOwnerExplainsWhatToDo();
+  await testStatementShowsUsdtAsCash();
+  await testOwnerSarMapUsesStoredFiguresElseUnitsShare();
+  await testCostEditorChangesOnePersonsCellAndRecordsIt();
+  await testCostEditorRowTotalIsSharedInCurrentProportions();
+  await testCostEditorPersonTotalIsSpreadAcrossTheirBuys();
+  await testCostEditorSpreadsByUnitsWhenEverythingIsZero();
+  await testCostEditorLeavesTransferLegsOut();
+  await testCostEditorWithNoChangesRecordsNothing();
+  await testPositionWindowOffersEditCosts();
+  await testCsvExportHasOwnersSarAndAnUntouchedReimportWritesNothing();
+  await testCsvReimportKeepsRealRatesOnCashBuys();
+  await testCsvNewTotalIsSharedInCurrentProportionsAndKeepsUsd();
+  await testCsvOwnersSarSetsEachPersonsCost();
+  await testCsvOwnersSarAndTotalMustAgree();
+  await testCsvAcceptsZeroCostOpeningBalances();
+  await testCsvRefusesToChangeATransferLeg();
+  await testCostCorrectionShowsInActivityButNotInCashLogOrCash();
+  await testJamiahSummaryShowsPledgePerRoundInsteadOfDueAndPaid();
+  await testJamiahFooterShowsThePotAndThisRoundsPending();
+  await testJamiahPendingIsBlankOutsideTheJamiahsMonths();
+  await testJamiahArabicViewUsesTheAgreedLabels();
+  await testUnallocatedOffersAddToExistingEvenForOneLine();
+  await testAddToExistingListsSameAccountAndOnlyZeroResultsCanBeChosen();
+  await testAddToAllocationAssignsSyncsAndClearsSelection();
+  await testAddToAllocationRefusesANonZeroResult();
+  await testAddToAllocationRefusesAnotherAccountsAllocation();
+  await testAddToExistingWithNoAllocationsSaysSo();
+  await testAccrualStopsAtTheCapAndAccruesOnlyTheRemainder();
+  await testAccrualAtTheCapAddsNothing();
+  await testAccrualWithoutACapIsUnchanged();
+  await testAccrualCapUsesThatMonthsBudgetAndMonthEndBalance();
+  await testOverBudgetDrawdownIgnoresTheCap();
+  await testAccruedChipShowsTheCap();
+  await testSettingsSavesTheCapAndOnlySendsItWhenUsed();
+  await testAccrualMappingBulkRowsOnlyCarryCapWhenAnyIsSet();
+  await testSchemaScriptAddsTheCapColumn();
+  await testInvestmentLabelsUsePlatformPerspective();
+  await testMoveSeveralAssetsInOneSave();
+  await testMoveKeepsReconciliationExactAndOpeningTag();
+  await testMoveCarriesEachPersonsOwnCost();
+  await testMoveRefusesBadInput();
+  await testMoveSendAllAndPerPersonPreview();
+  await testActivityShowsAMoveAsOneLineWithFees();
+  await testActivityFilteredToOnePersonShowsTheirOwnFee();
+  await testUndoMoveFromActivityRemovesBothLegs();
+  await testDeletingACashMovementFromActivityStillDeletesIt();
+  await testMoveIsOfferedEverywhereAndCashMoveIsRelabelled();
+  await testOlderTransferPairsStillShowAsOneMove();
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();

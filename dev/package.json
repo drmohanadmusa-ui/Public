@@ -1,0 +1,12 @@
+{
+  "name": "ledgeros-dev",
+  "private": true,
+  "description": "Regression test harness for LedgerOS.html (Node + jsdom). Not part of the app.",
+  "scripts": {
+    "test": "bash run_tests.sh"
+  },
+  "dependencies": {
+    "fake-indexeddb": "6.2.6",
+    "jsdom": "29.1.1"
+  }
+}
