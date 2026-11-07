@@ -7970,6 +7970,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testThingsThatNeedYouList();
   await testDashboardSchemaAndLoadingOfTheNewPrefs();
   await testEditLayoutModeShowsHandles();
+  await testPositionBoxLineCanFollowAWholeCategory();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8181,6 +8182,7 @@ async function testPositionBoxEditorValidatesAndSaves(){
   sb.openPosBoxEditor('ste');
   const d = vm.runInContext('posBoxEdit', sb);
   assert(d && d.id==='ste', 'Edit opens the box editor');
+  sb.posBoxEditSet(0, 'cat', ''); // presets follow a category; switch to typed numbers
   sb.posBoxEditSet(0, 'accs', '10101, 99999');
   await sb.savePosBoxEdit();
   assert(!sb.__prefs() && vm.runInContext('posBoxEdit', sb), 'An unknown account number is refused and nothing is saved');
@@ -8253,4 +8255,33 @@ async function testEditLayoutModeShowsHandles(){
   assert(sb.document.querySelectorAll('.dash-cell [onclick^="removeDashPositionBox"]').length===3, 'Only position boxes can be removed');
   sb.toggleDashEditing();
   assert(!sb.document.querySelector('.dash-cell[draggable]'), 'Done leaves edit mode');
+}
+
+async function testPositionBoxLineCanFollowAWholeCategory(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  const box = {id:'c', title:'C', rows:[{type:'line', label:'Banks (live)', sign:1, cat:'Bank Accounts', accs:''}, {type:'line', label:'Banks (typed)', sign:1, accs:'10101, 10102'}, {type:'total', label:'T'}]};
+  D.accounts.push({id:10107, name:'Brand new bank', category:'Bank Accounts', status:'Active', acc_type:'Individual Account'});
+  D.ledger.push({id:70, jv:70, date:'2026-10-02', acc:10107, amt:1000, descr:'x'});
+  sb.rebuildIndex();
+  const c = sb.computePositionBox(box);
+  assert(Math.abs(c.rows[0].value - (48250.5+126400+1000)) < 0.005, 'A category line picks up a new account in that category automatically');
+  assert(Math.abs(c.rows[1].value - (48250.5+126400)) < 0.005, 'A typed line keeps only the accounts typed');
+  assert(sb.getPositionBoxes().every(b=>b.rows.filter(r=>r.type==='line').every(r=>r.cat)), 'The three presets follow their categories live');
+  const ste = sb.computePositionBox(sb.getPositionBoxes()[0]);
+  assert(ste.rows[0].ids.includes(10107), 'So the presets include the new bank account too');
+  sb.openPosBoxEditor('ste');
+  sb.posBoxEditSet(0, 'cat', '');
+  assert(!('cat' in vm.runInContext('posBoxEdit', sb).draft.rows[0]), 'Choosing typed numbers turns the toggle off');
+  sb.posBoxEditSet(0, 'cat', 'Made up category');
+  await sb.savePosBoxEdit();
+  assert(!sb.__prefs() && vm.runInContext('posBoxEdit', sb), 'An unknown category is refused');
+  sb.posBoxEditSet(0, 'cat', 'Bank Accounts');
+  await sb.savePosBoxEdit();
+  const saved = sb.__prefs();
+  assert(saved && saved.row.position_boxes[0].rows[0].cat==='Bank Accounts', 'The toggle is saved with the box');
+  sb.openPosBoxEditor('ste');
+  sb.renderDashboard();
+  const sel = sb.document.querySelector('.posbox-edrow select[aria-label="Which accounts"]');
+  assert(sel && sel.value==='Bank Accounts' && /All in: Savings accounts/.test(sel.innerHTML), 'The editor shows the category toggle for lines');
 }

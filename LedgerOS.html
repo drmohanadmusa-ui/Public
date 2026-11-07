@@ -4364,7 +4364,8 @@ function clampDashSpan(n){ n = Math.round(Number(n)); return Number.isFinite(n)?
 // Used until Muhannad edits a box; from then on the saved boxes are used as saved.
 function positionBoxPresets(){
   const ids = cat => [...categoryAccountIds(cat)].sort((a,b)=>a-b).join(', ');
-  const L = (label, cat, sign) => ({type:'line', label, sign:sign||1, accs:ids(cat)});
+  // Presets follow their category live (cat), so a new account in the category is picked up.
+  const L = (label, cat, sign) => ({type:'line', label, sign:sign||1, cat, accs:ids(cat)});
   const S = label => ({type:'subtotal', label}), T = label => ({type:'total', label});
   return [
     {id:'ste', title:'Short Term Equity', rows:[L('Bank Accounts','Bank Accounts'), L('Short Term Receivables','Short Term Receivables'), L('Temporary Projects Accounts','Temporary Projects Accounts'), S('Current Assets'),
@@ -4379,6 +4380,10 @@ function getPositionBoxes(){
   const saved = (D.uiPrefs||{}).positionBoxes;
   return Array.isArray(saved)? saved : positionBoxPresets();
 }
+// A line either lists account numbers (accs) or, with the category toggle, follows every account in a category (cat).
+function positionRowAccIds(r){ return (r.type==='line' && r.cat)? [...categoryAccountIds(r.cat)].sort((a,b)=>a-b) : parseAccList(r.accs); }
+function positionBoxCategories(){ return [...new Set(D.accounts.map(a=>a.category).filter(Boolean))].sort().concat(['__savings__']); }
+function positionCategoryLabel(c){ return c==='__savings__'? 'Savings accounts (ticked as savings)' : c; }
 function parseAccList(s){ return String(s||'').split(/[^0-9]+/).filter(Boolean).map(Number); }
 // Running totals for one box, balances as of `asOf` (default today; future-dated lines are left out).
 function computePositionBox(box, asOf){
@@ -4389,7 +4394,7 @@ function computePositionBox(box, asOf){
   (box.rows||[]).forEach((r,i)=>{
     if(r.type==='subtotal' || r.type==='total'){ rows.push({...r, i, value:run, from:0, to:run, kind:'total'}); return; }
     const sign = Number(r.sign)===-1? -1 : 1;
-    const ids = parseAccList(r.accs);
+    const ids = positionRowAccIds(r);
     const parts = ids.map(id=>({id, value:(bal[id]||0)*sign}));
     const v = parts.reduce((s,p)=>s+p.value, 0);
     rows.push({...r, sign, i, ids, parts, value:v, from:run, to:run+v, kind: v>=0? 'asset' : 'liab'});
@@ -4440,7 +4445,8 @@ function positionBoxEditorHTML(){
       <select aria-label="Row type" onchange="posBoxEditSet(${i},'type',this.value)">${[['line','Line'],['account','Account'],['subtotal','Subtotal'],['total','Total']].map(([v,l])=>`<option value="${v}"${r.type===v?' selected':''}>${l}</option>`).join('')}</select>
       ${tot? '' : `<button class="btn ghost sm sign${neg?' neg':''}" onclick="posBoxEditFlip(${i})" aria-label="${neg?'Subtracts; click to add':'Adds; click to subtract'}">${neg?'−':'+'}</button>`}
       <input aria-label="Label" placeholder="Label" value="${esc(r.label||'')}" onchange="posBoxEditSet(${i},'label',this.value)" style="flex:1 1 150px">
-      ${tot? '' : `<input class="mono" aria-label="Account numbers" placeholder="10101, 10102" value="${esc(r.accs||'')}" onchange="posBoxEditSet(${i},'accs',this.value)" style="flex:1 1 160px">`}
+      ${tot? '' : (r.type==='line'? `<select aria-label="Which accounts" onchange="posBoxEditSet(${i},'cat',this.value)" style="flex:0 1 210px"><option value="">Typed account numbers</option>${positionBoxCategories().map(c=>`<option value="${esc(c)}"${r.cat===c?' selected':''}>All in: ${esc(positionCategoryLabel(c))}</option>`).join('')}</select>` : '')}
+      ${tot || (r.type==='line' && r.cat)? (r.cat && !tot? `<span class="mut" style="font-size:12px;flex:1 1 160px">New accounts in this category are included automatically</span>` : '') : `<input class="mono" aria-label="Account numbers" placeholder="10101, 10102" value="${esc(r.accs||'')}" onchange="posBoxEditSet(${i},'accs',this.value)" style="flex:1 1 160px">`}
       <button class="btn ghost sm" onclick="posBoxEditMove(${i})" aria-label="Move up" ${i===0?'disabled':''}>↑</button>
       <button class="btn del sm" onclick="posBoxEditRemove(${i})" aria-label="Remove row">✕</button>
     </div>`; }).join('')}
@@ -4458,6 +4464,8 @@ function posBoxEditTitle(v){ if(posBoxEdit) posBoxEdit.draft.title = v; }
 function posBoxEditSet(i, field, v){
   if(!posBoxEdit) return; const r = posBoxEdit.draft.rows[i]; if(!r) return;
   r[field] = v;
+  if(field==='cat'){ if(!v) delete r.cat; renderDashboard(); }
+  if(field==='type' && v!=='line') delete r.cat;
   if(field==='type' && (v==='subtotal'||v==='total')){ delete r.accs; delete r.sign; }
   if(field==='type' && (v==='line'||v==='account') && r.sign===undefined){ r.sign = 1; r.accs = r.accs||''; }
   if(field==='type') renderDashboard();
@@ -4479,6 +4487,7 @@ function validatePositionBox(box){
   if(!box.rows.length) return 'Add at least one row';
   for(const r of box.rows){
     if(r.type!=='line' && r.type!=='account') continue;
+    if(r.type==='line' && r.cat){ if(!positionBoxCategories().includes(r.cat)) return 'No category "'+r.cat+'" in your chart of accounts'; continue; }
     const ids = parseAccList(r.accs);
     if(!ids.length) return '"'+(r.label||'A row')+'" needs at least one account number';
     if(r.type==='account' && ids.length!==1) return '"'+(r.label||'An account row')+'" shows one account; use a line for several';
