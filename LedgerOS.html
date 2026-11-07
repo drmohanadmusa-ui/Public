@@ -450,6 +450,8 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 .prov-bulk{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:12px;padding:10px;border-radius:12px;background:var(--accent-soft)}
 .prov-bulk label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
 .prov-bulk select,.prov-bulk input{width:auto}
+.jam-cell{background:none;border:none;padding:2px;border-radius:8px;cursor:pointer;font:inherit}
+.jam-cell:hover{box-shadow:0 0 0 2px var(--accent-soft)} .jam-cell:focus-visible{outline:2px solid var(--accent)}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -12809,8 +12811,12 @@ function renderJamiahDetail(id){
     ${renderJamiahUntagged(j)}
 
     <div class="panel">
-      <h3>${esc(j.name)}</h3>
-      <div class="grid2">
+      <div class="row click" style="justify-content:space-between" onclick="toggleJamiahSetup()" role="button" tabindex="0" aria-expanded="${jamiahSetupExpanded}" onkeydown="if(event.key==='Enter') toggleJamiahSetup()">
+        <h3 style="margin:0">⚙ Jamiah settings</h3>
+        <span class="mut">${jamiahSetupExpanded? '▾ Collapse' : '▸ Name, account, months, participants, groups and rounds'}</span>
+      </div>
+      ${jamiahSetupExpanded ? `
+      <div class="grid2" style="margin-top:12px">
         <div><label class="fl">Name</label><input value="${esc(j.name)}" onchange="setJamiahField(${j.id},'name',this.value)"></div>
         <div><label class="fl">Ledger Account</label>
           <div style="position:relative">
@@ -12825,14 +12831,6 @@ function renderJamiahDetail(id){
         <div><label class="fl">Starting Month</label><input type="month" value="${j.startMonth||''}" onchange="setJamiahField(${j.id},'startMonth',this.value)"></div>
         <div><label class="fl">Duration (rounds)</label><input type="number" min="1" value="${j.durationMonths||1}" onchange="setJamiahField(${j.id},'durationMonths',Math.max(1,parseInt(this.value,10)||1))"></div>
       </div>
-    </div>
-
-    <div class="panel">
-      <div class="row click" style="justify-content:space-between" onclick="toggleJamiahSetup()">
-        <h3 style="margin:0">⚙ Setup: Groups, Participants &amp; Rounds</h3>
-        <span class="mut">${jamiahSetupExpanded? '▾ Collapse' : '▸ Expand'}</span>
-      </div>
-      ${jamiahSetupExpanded ? `
       <div class="section-h">Groups</div>
       <div class="row noprint" style="justify-content:flex-end;margin-bottom:6px"><button class="btn ghost sm" onclick="addJamiahGroup(${j.id})">+ Add Group</button></div>
       <table><thead><tr><th>Group</th><th class="num">Participants</th><th class="num">Total Pledge / Round</th><th></th></tr></thead>
@@ -12968,7 +12966,8 @@ function renderJamiahUntagged(j){
   // allocating it (via the Allocations page) does, so a mis-tag is always easy to fix here
   const lines = D.ledger.filter(l=>l.acc===j.account && ACC_BY_ID[l.acc]?.is_allocatable && !l.alloc).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const paidByPartRound = jamiahPaidByPartRound(j);
-  const taggedCount = lines.filter(l=>j.tags[l.id]).length;
+  const taggedCount = lines.filter(l=>jamiahTaggedLineIds().has(l.id)).length;
+  const toTag = lines.filter(l=>!jamiahTaggedLineIds().has(l.id));
   const thisMonthKey = todayStr().slice(0,7);
   const monthLines = lines.filter(l=>monthOf(l.date)===thisMonthKey);
   const monthNet = monthLines.reduce((s,l)=>s+Number(l.amt),0);
@@ -12976,9 +12975,9 @@ function renderJamiahUntagged(j){
     <h3>Transactions to Tag <span class="mut" style="font-size:12px;font-weight:400">(${lines.length} unallocated in ${esc(accShort(j.account))} — ${taggedCount} tagged, ${lines.length-taggedCount} left)</span></h3>
     <div class="mut" id="jamiahMonthTotal" style="font-size:12.5px;margin-bottom:8px">This month (${esc(monthLabel(thisMonthKey))}): <b class="mono ${moneyClass(monthNet)}">${money(monthNet)}</b> net across ${monthLines.length} unallocated transaction${monthLines.length===1?'':'s'}</div>
     ${notFlagged? `<div class="mut" style="font-size:12px;margin-bottom:8px;color:var(--red)">This account isn't flagged Allocatable, so nothing will ever show up here — flag it in Accounts → edit.</div>` : ''}
-    <div class="mut" style="font-size:11.5px;margin-bottom:8px">These stay listed until you actually allocate them on the Allocations page, so a mis-tag is always easy to fix here. Once someone's fully paid a round, they drop out of the dropdown for other transactions in that same round.</div>
+    <div class="mut" style="font-size:11.5px;margin-bottom:8px">Tagged transactions leave this list. To fix a mis-tag, click the tick in the summary and choose Untag. Once someone has fully paid a round, they drop out of the dropdown for other transactions in that same round.</div>
     <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th><th style="width:220px">Tag to</th></tr></thead>
-    <tbody>${lines.map(l=>{
+    <tbody>${toTag.map(l=>{
       const currentTag = j.tags[l.id]||null;
       const m = monthOf(l.date);
       const opts = j.participants.filter(p=>{
@@ -12992,6 +12991,42 @@ function renderJamiahUntagged(j){
     </tr>`;
     }).join('') || '<tr><td colspan="5" class="empty">Nothing to tag right now</td></tr>'}</tbody></table>
   </div>`;
+}
+// v5.0: a tick only exists through a tagged transaction. Tags across every Jamiah count, so a
+// transaction tagged anywhere drops out of every list.
+function jamiahTaggedLineIds(){ const s = new Set(); D.jamiahs.forEach(x=>Object.keys(x.tags||{}).forEach(k=>s.add(Number(k)))); return s; }
+function jamiahUntaggedLines(j){
+  const tagged = jamiahTaggedLineIds();
+  return D.ledger.filter(l=>l.acc===j.account && ACC_BY_ID[l.acc]?.is_allocatable && !l.alloc && !tagged.has(l.id)).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+}
+// For an empty cell: untagged transactions in that round's month whose amount matches what is
+// still due (or the full pledge). With none, every untagged transaction that month is offered.
+// Only that month, because a transaction counts toward the round its date falls in.
+function jamiahCellCandidates(j, pid, m){
+  const p = j.participants.find(x=>x.id===pid); if(!p) return {match:false, lines:[]};
+  const pledge = Math.abs(Number(p.pledgeAmount||0));
+  const due = Math.max(0, pledge - (jamiahPaidByPartRound(j)[pid+'_'+m]||0));
+  const inMonth = jamiahUntaggedLines(j).filter(l=>monthOf(l.date)===m);
+  const match = inMonth.filter(l=>{ const a = Math.abs(Number(l.amt)); return Math.abs(a-due)<0.005 || Math.abs(a-pledge)<0.005; });
+  return match.length? {match:true, lines:match, due} : {match:false, lines:inMonth, due};
+}
+function openJamiahCell(jid, pid, m){
+  const j = findJamiah(jid); if(!j) return;
+  const p = j.participants.find(x=>x.id===pid); if(!p) return;
+  if(!j.account){ toast('Pick the Jamiah\'s ledger account in Jamiah settings first', true); return; }
+  const c = jamiahCellCandidates(j, pid, m);
+  showModal(`<h3>${esc(p.name)} · ${esc(monthLabel(m))}</h3>
+    <div class="mut" style="font-size:12.5px;margin-bottom:10px">${c.match? 'Untagged transactions matching '+money(c.due)+' (still due this round):' : (c.lines.length? 'Nothing matches '+money(c.due)+'. These are the other untagged amounts in '+esc(monthLabel(m))+':' : 'There are no untagged transactions in '+esc(monthLabel(m))+' on '+esc(accShort(j.account))+'.')}</div>
+    ${c.lines.length? `<table><tbody>${c.lines.map(l=>`<tr><td class="mono">${esc(l.date)}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td><td><button class="btn pri sm" onclick="tagJamiahTransaction(${j.id},${l.id},${p.id}); closeModal()">Tag</button></td></tr>`).join('')}</tbody></table>` : ''}
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
+}
+function openJamiahTick(jid, pid, m){
+  const j = findJamiah(jid); if(!j) return;
+  const p = j.participants.find(x=>x.id===pid); if(!p) return;
+  const lines = Object.entries(j.tags).filter(([,v])=>v===pid).map(([lid])=>D.ledger.find(l=>l.id===Number(lid))).filter(l=>l && monthOf(l.date)===m);
+  showModal(`<h3>${esc(p.name)} · ${esc(monthLabel(m))}</h3>
+    <table><tbody>${lines.map(l=>`<tr><td class="mono">${esc(l.date)}</td><td class="mono click" onclick="viewJV(${l.jv})">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td><td><button class="btn del sm" onclick="tagJamiahTransaction(${j.id},${l.id},null); closeModal()">Untag</button></td></tr>`).join('') || '<tr><td class="empty">Nothing tagged</td></tr>'}</tbody></table>
+    <div class="row" style="margin-top:14px;justify-content:space-between"><button class="btn ghost" onclick="closeModal(); openJamiahCell(${j.id},${p.id},'${m}')">Tag another</button><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
 }
 function tagJamiahTransaction(id, lineId, participantId){
   if(blockIfSyncing()) return;
@@ -13277,13 +13312,13 @@ function renderJamiahSummary(j){
     </div>
     <div class="mut" style="font-size:11.5px;margin:8px 0">${t.note}</div>
     <table style="min-width:700px" ${ar? 'dir="rtl"':''}>
-      <thead><tr><th>${t.participant}</th><th class="num">${t.pledge}</th><th>${t.group}</th>${rounds.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip);border-bottom:2px solid var(--accent)':''}">${esc(mLabel(m))}${j.roundGroup[m]?`<div class="mut" style="font-size:10px;font-weight:400">${t.arrow} ${esc(groupsById[j.roundGroup[m]]?.name||'')}</div>`:''}</th>`).join('')}</tr></thead>
+      <thead><tr><th>${t.participant}</th><th>${t.group}</th><th class="num">${t.pledge}</th>${rounds.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip);border-bottom:2px solid var(--accent)':''}">${esc(mLabel(m))}${j.roundGroup[m]?`<div class="mut" style="font-size:10px;font-weight:400">${t.arrow} ${esc(groupsById[j.roundGroup[m]]?.name||'')}</div>`:''}</th>`).join('')}</tr></thead>
       <tbody>${rows.map(({p,pledge,isCurrentGroup,curOk})=>{
         const nameColor = isCurrentMonthInRange? (curOk? 'color:var(--green)' : 'color:var(--red)') : '';
         return `<tr ${isCurrentGroup?'style="background:var(--chip)"':''}>
         <td style="${nameColor};font-weight:${isCurrentMonthInRange?'600':'400'}">${esc(p.name)}</td>
-        <td class="num mono">${money(pledge)}</td>
         <td class="mut">${esc(groupsById[p.groupId]?.name||t.none)}</td>
+        <td class="num mono">${money(pledge)}</td>
         ${rounds.map(m=>{
           const paidR = paidByPartRound[p.id+'_'+m]||0;
           const ok = paidR >= Number(p.pledgeAmount||0) - 0.005;
@@ -13294,14 +13329,14 @@ function renderJamiahSummary(j){
           else if(paidR>0) content = `<span class="badge neg">${money(paidR)} ${t.ofWord} ${money(p.pledgeAmount)}</span>`;
           else if(isFuture) content = `<span class="mut">${t.none}</span>`;
           else content = `<span class="badge warn">! ${t.pendingCell}</span>`;
-          return `<td class="num" style="text-align:center;${cellBg}">${content}</td>`;
+          return `<td class="num" style="text-align:center;${cellBg}"><button class="jam-cell noprint-btn" onclick="${paidR>0? `openJamiahTick(${j.id},${p.id},'${m}')` : `openJamiahCell(${j.id},${p.id},'${m}')`}" aria-label="${esc(p.name)}, ${esc(mLabel(m))}: ${paidR>0? 'show tagged transaction' : 'tag a transaction'}">${content}</button></td>`;
         }).join('')}
       </tr>`;
       }).join('')}</tbody>
       <tfoot><tr style="font-weight:700">
         <td>${t.total}</td>
-        <td class="num mono" id="jamiahPledgeTotal">${money(totalPledge)}</td>
         <td></td>
+        <td class="num mono" id="jamiahPledgeTotal">${money(totalPledge)}</td>
         <td class="num mono ${pendingRound>0.005?'r':''}" id="jamiahPendingRound" colspan="${rounds.length}">${isCurrentMonthInRange? t.pendingLabel+': '+money(pendingRound) : ''}</td>
       </tr></tfoot>
     </table>

@@ -7073,8 +7073,9 @@ async function testJamiahSummaryShowsPledgePerRoundInsteadOfDueAndPaid(){
   const html = sb.renderJamiahSummary(j);
   assert(!/Amount Due|Amount Paid/.test(html), 'Amount Due and Amount Paid must be gone');
   const head = html.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
-  assert(head && /<th>Participant<\/th><th class="num">Pledge \/ Round<\/th><th>Group<\/th>/.test(head[1]), 'Pledge / Round sits where Amount Due was, got ' + (head&&head[1].slice(0,160)));
-  const rowA = html.match(/<td style="[^"]*">A<\/td>\s*<td class="num mono">([^<]*)<\/td>/);
+  // v5.0: Pledge moved to after Group (agreed in the redesign).
+  assert(head && /<th>Participant<\/th><th>Group<\/th><th class="num">Pledge \/ Round<\/th>/.test(head[1]), 'Pledge / Round sits after Group, got ' + (head&&head[1].slice(0,160)));
+  const rowA = html.match(/<td style="[^"]*">A<\/td>\s*<td class="mut">[^<]*<\/td>\s*<td class="num mono">([^<]*)<\/td>/);
   assert(rowA && rowA[1]==='100.00', 'Each participant shows their pledge per round (A 100.00), got ' + (rowA&&rowA[1]));
 }
 async function testJamiahFooterShowsThePotAndThisRoundsPending(){
@@ -7983,6 +7984,10 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testProvisionMonthsRunDownwardWithNetCheck();
   await testProvisionBulkFillBalancesOnASecondLine();
   await testProvisionCellTabMovesAcrossAccounts();
+  await testJamiahEmptyCellOffersMatchingUntaggedTransactions();
+  await testJamiahTickShowsItsTransactionWithUntag();
+  await testJamiahTaggedTransactionsLeaveEveryList();
+  await testJamiahSettingsIsOnePanel();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8519,4 +8524,57 @@ async function testProvisionCellTabMovesAcrossAccounts(){
   const c3 = sb.document.activeElement;
   sb.provCellKey({key:'Enter', shiftKey:false, preventDefault(){}, target:c3}, 1, 0, 1, 2, 3);
   assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_0_2', 'Enter moves down a month');
+}
+
+// ---- v5.0 step 4: Jamiah ----
+function jam5Sandbox(){
+  const t = jamSummarySandbox();
+  const D = vm.runInContext('D', t.sb);
+  D.ledger.push({id:10, jv:10, date:'2026-10-08', acc:10501, amt:100, descr:'B pays'}, {id:11, jv:11, date:'2026-10-09', acc:10501, amt:42, descr:'odd'}, {id:12, jv:12, date:'2026-11-02', acc:10501, amt:100, descr:'next month'});
+  D.jamiahs = [t.j];
+  if(!t.sb.document.getElementById('modalRoot')) t.sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div><div id="app"></div>');
+  t.sb.__set('persistJamiah', ()=>{});
+  return t;
+}
+async function testJamiahEmptyCellOffersMatchingUntaggedTransactions(){
+  const {sb, j} = jam5Sandbox();
+  let c = sb.jamiahCellCandidates(j, 2, '2026-10');
+  assert(c.match && c.lines.map(l=>l.id).join()==='10', 'B owes 100 in October: only the untagged 100.00 that month is offered, got '+JSON.stringify(c.lines.map(l=>l.id)));
+  c = sb.jamiahCellCandidates(j, 3, '2026-10');
+  assert(!c.match && c.lines.map(l=>l.id).join()==='10,11' && Math.abs(c.due-30)<0.005, 'C owes 30 and nothing matches: the other untagged amounts that month are listed');
+  sb.openJamiahCell(1, 2, '2026-10');
+  const modal = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/tagJamiahTransaction\(1,10,2\)/.test(modal) && !/tagJamiahTransaction\(1,12,/.test(modal), 'The cell lets you tag the matching transaction, not one from another month');
+  const html = sb.renderJamiahSummary(j);
+  assert(/openJamiahCell\(1,2,'2026-10'\)/.test(html) && /openJamiahTick\(1,1,'2026-10'\)/.test(html), 'Empty cells open matching transactions; ticks open their transaction');
+}
+async function testJamiahTickShowsItsTransactionWithUntag(){
+  const {sb, j} = jam5Sandbox();
+  sb.openJamiahTick(1, 1, '2026-10');
+  const modal = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/A pays|>A</.test(modal) && /tagJamiahTransaction\(1,1,null\)/.test(modal) && />Untag</.test(modal), 'Clicking a tick shows its transaction with Untag');
+  sb.__set('renderJamiahDetail', ()=>{});
+  sb.tagJamiahTransaction(1, 1, null);
+  assert(!(1 in j.tags), 'Untag removes the tag');
+  const html = sb.renderJamiahSummary(j);
+  assert(/openJamiahCell\(1,1,'2026-10'\)/.test(html), 'With the tag gone, the tick is gone too');
+}
+async function testJamiahTaggedTransactionsLeaveEveryList(){
+  const {sb, j} = jam5Sandbox();
+  const D = vm.runInContext('D', sb);
+  const other = {id:2, name:'Other', account:10501, startMonth:'2026-10', durationMonths:1, groups:[], participants:[], roundGroup:{}, tags:{11:9}};
+  D.jamiahs.push(other);
+  const ids = sb.jamiahUntaggedLines(j).map(l=>l.id);
+  assert(ids.join()==='10,12', 'Lines tagged in this Jamiah (1,2,3) or another (11) are not offered, got '+ids.join());
+  const html = sb.renderJamiahUntagged(j);
+  assert(!/B last month/.test(html) && !/>odd</.test(html) && /B pays/.test(html), 'The to-tag list drops tagged transactions');
+}
+async function testJamiahSettingsIsOnePanel(){
+  const {sb} = jam5Sandbox();
+  sb.__set('jamiahSetupExpanded', true);
+  sb.renderJamiahDetail(1);
+  const app = sb.document.getElementById('app').innerHTML;
+  const at = app.indexOf('Jamiah settings');
+  assert(at>-1 && app.indexOf("setJamiahField(1,'name'")>at && app.indexOf("setJamiahField(1,'startMonth'")>at && app.indexOf('addJamiahParticipant(1)')>at && app.indexOf('setJamiahRoundGroup(1,')>at, 'Name, account, months, participants and rounds are all in Jamiah settings');
+  assert((app.match(/Jamiah settings/g)||[]).length===1 && !/Setup: Groups/.test(app), 'One settings panel');
 }
