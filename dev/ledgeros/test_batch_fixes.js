@@ -2486,7 +2486,7 @@ async function testClosingBalanceWatchMatchesTheRealAnchoredGrid(){
   let gridClosing;
   try{ sb.beginForecastFastPath(); gridClosing = sb.computeMonthlyCashFlow(['2026-09'], '2026-08')[0].closing; }
   finally{ sb.endForecastFastPath(); }
-  const gridMoneyText = sb.money(gridClosing);
+  const gridMoneyText = sb.money0(gridClosing); // v5.1: Dashboard boxes show whole numbers
   assert(widgetHtml.indexOf(gridMoneyText) !== -1,
     'Widget must display the exact same figure as the real grid (' + gridMoneyText + '), got snippet: ' + widgetHtml.slice(widgetHtml.indexOf('2026-09')-20, widgetHtml.indexOf('2026-09')+200));
 }
@@ -7995,6 +7995,19 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testForecastChartMatchesTheClosingBalanceRow();
   await testThingsThatNeedYouShowsEightThenShowAll();
   await testDashboardBoxesStackIntoFreeSpace();
+  await testPosBoxPeekIsBandedAndHasNoBars();
+  await testOverBudgetDismissIsSyncedPerCategoryAndMonth();
+  await testDriftDismissalsAreSyncedAndStartFresh();
+  await testDashboardBoxesCanBeHiddenAndShown();
+  await testChartsAndDashboardBoxesUseWholeNumbers();
+  await testProvisionCopyMonthForward();
+  await testJamiahGroupShowsItsFullMonthName();
+  await testForecastNotesAreSyncedCallouts();
+  await testBudgetMonthArrowsAndCollapsedGrid();
+  await testBudgetChartCategoryNameJumpsAndFlashes();
+  await testPnLArrowsSitEachSideOfTheMonth();
+  await testPnLBackFromChartReturnsToTheSamePlace();
+  await testSchemaAddsDismissalsAndForecastNotes();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8373,7 +8386,7 @@ async function testBudgetChartsWriteAmountsOnBars(){
   const ctx = {save(){}, restore(){}, fillText(t,x,y){ texts.push([t,x,y]); }};
   const chart = {ctx, data:{datasets:[{data:[1500, 0]}, {data:[250.5, 99]}]}, getDatasetMeta:(i)=>({hidden: false, data:[{x:10,y:50},{x:20,y:60}]})};
   vm.runInContext('chartValueLabelsPlugin', sb).afterDatasetsDraw(chart);
-  assert(texts.map(t=>t[0]).join('|')===[sb.money(1500), sb.money(250.5), sb.money(99)].join('|'), 'Every non-zero bar gets its amount');
+  assert(texts.map(t=>t[0]).join('|')===[sb.money0(1500), sb.money0(250.5), sb.money0(99)].join('|'), 'Every non-zero bar gets its amount, in whole numbers (v5.1)');
   assert(texts[0] && texts[0][1]===10 && texts[0][2]===47, 'The amount sits just above the bar');
   const src = fs.readFileSync(APP_JS, 'utf8');
   const fn = src.slice(src.indexOf('function renderBudgetCharts('), src.indexOf('function renderBudgetCharts(')+6000);
@@ -8574,7 +8587,13 @@ async function testJamiahTaggedTransactionsLeaveEveryList(){
   const ids = sb.jamiahUntaggedLines(j).map(l=>l.id);
   assert(ids.join()==='10,12', 'Lines tagged in this Jamiah (1,2,3) or another (11) are not offered, got '+ids.join());
   const html = sb.renderJamiahUntagged(j);
-  assert(!/B last month/.test(html) && !/>odd</.test(html) && /B pays/.test(html), 'The to-tag list drops tagged transactions');
+  // v5.1: tagged transactions are listed again, marked with a tick and the person (his choice, feedback #6).
+  const sbDoc = sb.document.createElement('div'); sbDoc.innerHTML = html;
+  const rows = [...sbDoc.querySelectorAll('tbody tr')];
+  const rowOf = t => rows.find(r=>r.textContent.includes(t));
+  assert(rowOf('B last month') && /\u2713 B/.test(rowOf('B last month').textContent) && rowOf('B last month').classList.contains('jam-tagged'), 'A tagged transaction stays listed with a tick and the person');
+  assert(rowOf('B pays') && !/\u2713/.test(rowOf('B pays').textContent), 'An untagged one has no tick');
+  assert(rowOf('B last month') && /tagJamiahTransaction\(1,3,/.test(rowOf('B last month').innerHTML), 'A tagged row can be changed or untagged right there');
 }
 async function testJamiahSettingsIsOnePanel(){
   const {sb} = jam5Sandbox();
@@ -8653,10 +8672,10 @@ async function testForecastChartMatchesTheClosingBalanceRow(){
   const table = [...sb.document.querySelectorAll('#cfp i')].map(e=>e.textContent);
   assert(vals.length===6 && vals.join('|')===table.join('|'), 'Every bar carries the same amount as the Closing Balance row, got '+vals.join('|'));
   const tips = chart? [...chart.querySelectorAll('.fc-col')].map(c=>c.getAttribute('title')) : [];
-  assert(tips[1]==='Dec-26: '+sb.money(-1200.5), 'The tooltip carries the exact amount, got '+tips[1]);
+  assert(tips[1]==='Dec-26: '+sb.money0(-1200.5), 'The tooltip shows the whole amount (v5.1), got '+tips[1]);
   const low = chart && chart.querySelector('.fc-col.low');
   assert(low && /Dec-26/.test(low.textContent) && /lowest/.test(low.textContent), 'The lowest month is marked');
-  assert(/Lowest: -1,200\.50 in Dec-26/.test(sb.document.getElementById('app').textContent), 'And named above the chart');
+  assert(/Lowest: -1,201 in Dec-26/.test(sb.document.getElementById('app').textContent), 'And named above the chart, in whole numbers');
 }
 
 async function testThingsThatNeedYouShowsEightThenShowAll(){
@@ -8682,4 +8701,198 @@ async function testDashboardBoxesStackIntoFreeSpace(){
   cells.forEach((c,i)=>{ c.getBoundingClientRect = () => ({height: 100 + i*10}); });
   sb.layoutDashMasonry();
   assert(cells.length>3 && cells.every((c,i)=>c.style.gridRowEnd==='span '+sb.dashRowSpan(100+i*10)), 'Every box spans rows matching its own height');
+}
+
+// ---- v5.1: feedback batch ----
+async function testPosBoxPeekIsBandedAndHasNoBars(){
+  const sb = dashSandbox();
+  sb.renderDashboard();
+  const html = sb.document.getElementById('app').innerHTML, src = fs.readFileSync(APP_HTML, 'utf8');
+  assert(!/posbox-track|posbox-bar/.test(html) && !/\.posbox-track\{/.test(src), 'Position boxes have no bars any more (#4)');
+  assert(/\.posbox-peek div:nth-child\(odd\)\{background:var\(--panel2\)\}/.test(src) && /\.posbox-peek div:hover\{background:var\(--accent-soft\)/.test(src), 'Opened lines are banded and highlight on hover (#1)');
+  sb.togglePosBoxRow('ste', 0);
+  const peek = sb.document.querySelector('[data-widget="box:ste"] .posbox-peek');
+  assert(peek && peek.querySelectorAll(':scope > div').length===2, 'The opened line lists its accounts as rows');
+}
+async function testOverBudgetDismissIsSyncedPerCategoryAndMonth(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:60201, name:'Fun', category:'Fun', status:'Active', acc_type:'Individual Account'});
+  D.ledger.push({id:60, jv:60, date:'2026-11-03', acc:60101, amt:1300, descr:'x'}, {id:61, jv:61, date:'2026-11-03', acc:60201, amt:500, descr:'y'});
+  sb.rebuildIndex();
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> (acc===60101||acc===60201)? 100 : 0);
+  sb.__set('computeDriftFlags', ()=>[]);
+  let items = sb.dashboardTodoItems().filter(i=>/over budget/.test(i.title));
+  assert(items.length===2 && items.every(i=>/^dismissOverBudget\(\d\)$/.test(i.dismiss||'')), 'Each over-budget category has Dismiss');
+  const living = items.find(i=>/^Living/.test(i.title));
+  vm.runInContext(living.dismiss, sb);
+  const c = sb.__prefs();
+  assert(c && Object.keys(c.row).sort().join()==='dismissals,id' && c.row.dismissals.overBudget['Living|2026-11']===1200, 'Dismiss syncs only the dismissals column, keyed by category and month');
+  items = sb.dashboardTodoItems().filter(i=>/over budget/.test(i.title));
+  assert(items.length===1 && /^Fun/.test(items[0].title), 'Only that category is hidden');
+  D.ledger.push({id:62, jv:62, date:'2026-11-05', acc:60101, amt:50, descr:'more'});
+  assert(sb.dashboardTodoItems().some(i=>/^Living is over budget by 1,250\.00/.test(i.title)), 'It comes back if it goes further over');
+  freezeDate(sb, '2026-12-02T10:00:00.000Z');
+  D.ledger.push({id:63, jv:63, date:'2026-12-01', acc:60101, amt:900, descr:'dec'});
+  assert(sb.dashboardTodoItems().some(i=>/^Living is over budget/.test(i.title)), 'And comes back next month');
+}
+async function testDriftDismissalsAreSyncedAndStartFresh(){
+  const sb = dashSandbox();
+  sb.localStorage.setItem('driftDismissals', JSON.stringify({'smartrule:1':'2026-10'}));
+  assert(!('smartrule:1' in sb.getDriftDismissals()), 'Old per-device dismissals are not carried over (start fresh)');
+  sb.setDriftDismissed('smartrule:2', '2026-10');
+  const c = sb.__prefs();
+  assert(c && c.row.dismissals.drift['smartrule:2']==='2026-10' && sb.getDriftDismissals()['smartrule:2']==='2026-10', 'Drift dismissals are saved to the synced dismissals');
+  const bare = {uiPrefs:{}}; sb.normalizeDataShape(bare);
+  assert(bare.uiPrefs.dismissals && typeof bare.uiPrefs.dismissals==='object' && bare.uiPrefs.forecastNotes && typeof bare.uiPrefs.forecastNotes==='object', 'Old caches get empty dismissals and notes');
+}
+async function testDashboardBoxesCanBeHiddenAndShown(){
+  const sb = dashSandbox();
+  sb.toggleDashEditing();
+  const L = sb.dashboardLayout(), i = L.findIndex(w=>w.id==='cash'), j = L.findIndex(w=>w.id==='box:lte');
+  await sb.toggleDashHidden(i); await sb.toggleDashHidden(j);
+  const c = sb.__prefs();
+  assert(c && c.row.dashboard_layout.find(w=>w.id==='cash').hidden===true && c.row.dashboard_layout.find(w=>w.id==='box:lte').hidden===true, 'Hiding is saved in the synced layout, for built-in and position boxes');
+  let app = sb.document.getElementById('app');
+  assert(!app.querySelector('[data-widget="cash"]') && !app.querySelector('[data-widget="box:lte"]'), 'Hidden boxes are not shown');
+  const strip = app.querySelector('.dash-hidden');
+  assert(strip && /Cash flow/.test(strip.textContent) && /Long Term Equity/.test(strip.textContent) && strip.querySelectorAll('button').length===2, 'Edit layout lists hidden boxes with Show');
+  assert(sb.getPositionBoxes().some(b=>b.id==='lte'), 'Hiding a position box keeps the box');
+  sb.toggleDashEditing();
+  assert(!sb.document.querySelector('#app .dash-hidden') && !sb.document.querySelector('[data-widget="cash"]'), 'Still hidden after leaving Edit layout');
+  sb.toggleDashEditing();
+  await sb.toggleDashHidden(i);
+  assert(sb.document.querySelector('[data-widget="cash"]'), 'Show brings it back');
+}
+async function testChartsAndDashboardBoxesUseWholeNumbers(){
+  const sb = dashSandbox();
+  assert(sb.money0(1234.5)==='1,235' && sb.money0(-0.4)==='0' && sb.money0(-2500.6)==='-2,501', 'money0 rounds to whole numbers');
+  const C = {defaults:{plugins:{tooltip:{callbacks:{}}}, scales:{linear:{ticks:{}}}}};
+  sb.applyWholeNumberChartDefaults(C);
+  assert(C.defaults.scales.linear.ticks.callback(1500.75)==='1,501', 'Chart axes show whole numbers');
+  assert(C.defaults.plugins.tooltip.callbacks.label({parsed:{x:0, y:1234.56}, dataset:{label:'Actual'}, chart:{options:{}}})==='Actual: 1,235', 'Chart tooltips show whole numbers');
+  sb.__set('dashboardNeedsCountUp', false);
+  sb.renderDashboard();
+  const kpis = [...sb.document.querySelectorAll('#app .kpi .v')].map(e=>e.textContent);
+  assert(kpis.length===4 && kpis.every(t=>!/\.\d\d$/.test(t)), 'Month figures have no decimals, got '+kpis.join(' | '));
+  const box = sb.document.querySelector('[data-widget="box:ste"]');
+  assert(box && !/\d\.\d\d/.test(box.textContent), 'Position boxes have no decimals');
+  const bank = sb.document.querySelector('[data-widget="banks"]');
+  assert(bank && /48,250\.50/.test(bank.textContent), 'The bank accounts table keeps its 2 decimals');
+}
+async function testProvisionCopyMonthForward(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  const g = D.provisionGroups[0];
+  g.months['2027-03'] = {1:1, 2:-1};
+  let r = sb.provCopyMonthApply(g, '2026-11');
+  assert(r.months && r.months.join()==='2026-12,2027-01,2027-02,2027-03', 'Copies to every later month up to the last planned month (filling gaps)');
+  assert(g.months['2026-12'][1]===500 && g.months['2026-12'][2]===-500 && g.months['2027-02'][2]===-500, 'Overwrites what was there');
+  assert(sb.provLastPlannedMonth(g)==='2027-03', 'Never goes past the last planned month');
+  g.months['2027-01'] = {1:300, 2:-200};
+  const before = JSON.stringify(g.months);
+  r = sb.provCopyMonthApply(g, '2027-01');
+  assert(r.error && /doesn't net to zero/.test(r.error) && JSON.stringify(g.months)===before, 'Only a month that nets to zero can be copied');
+  assert(sb.provCopyMonthApply(g, '2027-03').error, 'The last month has nothing after it');
+  sb.renderProvisions(); sb.toggleProvisionEdit(1);
+  const btns = [...sb.document.querySelectorAll('#provGroup_1 [onclick^="provCopyMonthForward"]')].map(b=>b.getAttribute('onclick'));
+  assert(btns.includes("provCopyMonthForward(1,'2026-11')") && !btns.includes("provCopyMonthForward(1,'2027-01')"), 'Copy shows on balanced months only');
+}
+async function testJamiahGroupShowsItsFullMonthName(){
+  const {sb, j} = jam5Sandbox();
+  j.roundGroup = {'2026-10':1, '2026-11':1};
+  assert(sb.jamiahGroupMonthsText(j, 1, false)==='October 2026, November 2026', 'Every month the group receives, full name');
+  const html = sb.renderJamiahSummary(j);
+  assert(/<td class="mut">G1 · October 2026, November 2026<\/td>/.test(html), 'Shown next to the group name in the summary');
+  sb.__set('jamiahSummaryLang', 'ar');
+  assert(/G1 · أكتوبر 2026/.test(sb.renderJamiahSummary(j)), 'Arabic view uses Arabic month names');
+}
+async function testForecastNotesAreSyncedCallouts(){
+  const sb = dashSandbox();
+  sb.localStorage.setItem('gridEndMonth', '2027-04');
+  sb.__set('forecastWindowStart', '2026-11');
+  sb.__set('computeMonthlyCashFlow', (months)=> months.map((m,i)=>({month:m, closing:[5000, 100, 300, 9000, 4000, 2500][i]||0})));
+  sb.__set('renderCashFlowPanel', ()=> '');
+  await sb.setForecastNote('2026-12', '  School fees for the year  ');
+  const c = sb.__prefs();
+  assert(c && Object.keys(c.row).sort().join()==='forecast_notes,id' && c.row.forecast_notes['2026-12']==='School fees for the year', 'A note is saved trimmed and synced in forecast_notes only');
+  await sb.setForecastNote('2027-01', 'Car');
+  sb.go('forecast');
+  const cols = [...sb.document.querySelectorAll('.fc-chart .fc-col')];
+  const noteOf = i => cols[i] && cols[i].querySelector('.fc-note');
+  assert(noteOf(1) && noteOf(1).textContent==='School fees for the year' && noteOf(1).classList.contains('t0'), 'The call-out sits on that month\'s bar');
+  assert(noteOf(2) && noteOf(2).classList.contains('t1'), 'Neighbouring call-outs alternate height');
+  assert(!noteOf(0) && cols[0] && cols[0].getAttribute('onclick')==="openForecastNote('2026-11')", 'Clicking any bar opens its note');
+  sb.openForecastNote('2026-12');
+  assert(/Delete note/.test(sb.document.getElementById('modalRoot').innerHTML), 'An existing note can be deleted');
+  await sb.setForecastNote('2026-12', '');
+  assert(!('2026-12' in sb.getForecastNotes()), 'Saving an empty note deletes it');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(!/forecastNotes|forecast_notes/.test(html.slice(html.indexOf('function exportCashPositionCSV('), html.indexOf('function exportCashPositionCSV(')+4000)), 'Notes are not in the export');
+}
+async function testBudgetMonthArrowsAndCollapsedGrid(){
+  const sb = dashSandbox();
+  sb.__set('budgetMonth', '2026-11');
+  sb.go('budget');
+  const ctrl = sb.document.getElementById('budgetControls').innerHTML;
+  assert(/budgetShiftMonth\(-1\)[\s\S]*type="month"[\s\S]*budgetShiftMonth\(1\)/.test(ctrl), 'Arrows sit on each side of the month box');
+  sb.budgetShiftMonth(-1);
+  assert(vm.runInContext('budgetMonth', sb)==='2026-10', '‹ goes back a month');
+  sb.budgetShiftMonth(1); sb.budgetShiftMonth(1);
+  assert(vm.runInContext('budgetMonth', sb)==='2026-12', '› goes forward');
+  let grid = sb.document.getElementById('budgetGrid');
+  assert(/Show budget grid/.test(grid.textContent) && !grid.querySelector('table'), 'The budget grid starts collapsed');
+  sb.toggleBudgetGrid();
+  assert(/Hide budget grid/.test(grid.textContent), 'It expands');
+  sb.go('dashboard'); sb.go('budget');
+  assert(/Show budget grid/.test(sb.document.getElementById('budgetGrid').textContent), 'And is collapsed again on the next visit (not remembered)');
+}
+async function testBudgetChartCategoryNameJumpsAndFlashes(){
+  const sb = dashSandbox();
+  const xs = {top:200, bottom:230, getValueForPixel:(x)=> x/100};
+  assert(sb.chartCategoryLabelAt({scales:{x:xs}}, 110, 210, ['A','B','C'])==='B', 'A click on a name under the bars finds that category');
+  assert(sb.chartCategoryLabelAt({scales:{x:xs}}, 110, 100, ['A','B','C'])===null, 'A click above the axis (on the bars area) is not a name');
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 100 : 0);
+  sb.go('budget');
+  const span = sb.document.querySelector('#budgetSummary [data-bud-cat="Living"]');
+  assert(span, 'Each category name in Plan vs Actual can be found');
+  sb.jumpToBudgetCategory('Living');
+  assert(span && span.classList.contains('flash'), 'Jumping flashes the category name only');
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  assert(/if\(!elements\.length\)\{ const cat = chartCategoryLabelAt\(chart, evt\.x, evt\.y, catLabels\); if\(cat\) jumpToBudgetCategory\(cat\); return; \}/.test(src) && /openBudgetCategoryBreakdown\(cat, budgetMonth\)/.test(src), 'Names jump; bars still open the transactions');
+}
+async function testPnLArrowsSitEachSideOfTheMonth(){
+  const sb = dashSandbox();
+  sb.go('pnl');
+  const panel = sb.document.querySelector('#app .panel');
+  const h = panel? panel.innerHTML : '';
+  const prev = h.indexOf('pnlShiftMonth(-1)'), period = h.indexOf('Period'), next = h.indexOf('pnlShiftMonth(1)');
+  assert(prev>-1 && period>prev && next>period, 'P&L: ‹ before the period, › after it');
+}
+async function testPnLBackFromChartReturnsToTheSamePlace(){
+  const sb = dashSandbox();
+  let scrolledTo = null;
+  sb.scrollTo = (x,y)=>{ scrolledTo = y; };
+  sb.go('pnl');
+  vm.runInContext('window.scrollY = 640', sb);
+  sb.__set('renderAcctBudgetChartPage', ()=>{});
+  sb.openAcctBudgetChartForCategory('Living');
+  assert(vm.runInContext('pnlReturn', sb) && vm.runInContext('pnlReturn.key', sb)==='cat:Living', 'Opening the chart remembers the place and the row');
+  sb.document.getElementById('app').insertAdjacentHTML('beforeend', '<table><tr id="rowL"><td><span data-pnl-key="cat:Living"></span></td></tr></table>');
+  sb.__set('renderPnL', ()=>{ if(!sb.document.getElementById('rowL')) sb.document.getElementById('app').insertAdjacentHTML('beforeend', '<table><tr id="rowL"><td><span data-pnl-key="cat:Living"></span></td></tr></table>'); });
+  sb.closeAcctBudgetChart();
+  await new Promise(r=>setTimeout(r, 20));
+  assert(scrolledTo===640, 'Back returns to the same scroll position');
+  const row = sb.document.getElementById('rowL');
+  assert(row && row.classList.contains('flash'), 'And flashes the row you came from');
+  sb.openAcctBudgetChart(60101);
+  assert(vm.runInContext('pnlReturn.key', sb)==='acc:60101', 'Works for account rows too');
+}
+async function testSchemaAddsDismissalsAndForecastNotes(){
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  assert(/alter table pd_ui_prefs add column if not exists dismissals jsonb/i.test(sql) && /alter table pd_ui_prefs add column if not exists forecast_notes jsonb/i.test(sql), 'Schema adds the two v5.1 columns idempotently');
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  assert(/dismissals: \(u\.dismissals/.test(src) && /forecastNotes: \(u\.forecast_notes/.test(src), 'Cloud load reads both');
+  assert(/dismissals:D\.uiPrefs\.dismissals\|\|\{\}, forecast_notes:D\.uiPrefs\.forecastNotes\|\|\{\}/.test(src), 'Restore writes both back');
 }
