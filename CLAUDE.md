@@ -32,7 +32,7 @@ Muhannad uses it to decide when to move to a fresh session. If the conversation 
 
 ## 4. Deploying (same for both apps)
 
-- Work on the session's branch. When the work is tested, push it, and ask Muhannad to **Create PR → Merge**. GitHub Pages updates about a minute after the merge.
+- Work on the session's branch. When Muhannad says to ship and the work is tested, push it, then **open a PR and merge it yourself** (standing permission, given 2026-11-08). Use the GitHub tools, rebased on `origin/main`, never force. Don't ask him to merge. GitHub Pages updates about a minute after the merge.
 - If he asks for a direct push to `main` and the session allows it, that's fine. **Always rebase on `origin/main` first**, because the other app's commits land on the same branch.
 - **Don't send him the built HTML** or other files. His work PC's antivirus deletes downloads, and he never handles files.
 - After the merge, confirm the version changed:
