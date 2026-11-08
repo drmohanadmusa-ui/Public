@@ -568,12 +568,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.2.0';
+const APP_VERSION = '5.3.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.3.0', date:'2026-11-08', changes:[
+    'Drift Detection (Settings) has three new switches for provisions, all on by default: Compare per account (every provision line on an account is added up for the month, across all groups, and compared with the account), Income and expense accounts only (pass-through accounts like This Month Payable, receivables and liabilities are no longer checked), and Use my exclude list (pick accounts that are never checked; their Drift badge disappears).',
+    'Drift Detection settings, including the threshold and months, now sync across your devices. Smart rules are checked exactly as before.',
+  ]},
   {version:'5.2.0', date:'2026-11-08', changes:[
     'Position boxes: a subtotal or total can now either show the running total so far, or add up rows you choose above it, each with + or \u2212. Example: a subtotal "This month liabilities" = Short Term Liabilities + Accruals, then "Liquid Cash After Liabilities" = Liquid Cash + This month liabilities. Works in every box, existing and new (Edit \u2192 How it is calculated).',
     'Position boxes: an opened line no longer has shaded bands; the row under your mouse is highlighted.',
@@ -3760,12 +3764,35 @@ function budgetPlanFor(accId, monthKey){
 // Flags Provisions lines and fixed-value Smart Rules whose planned amounts have quietly stopped
 // matching what's actually posting — e.g. an insurance premium that renewed at a higher rate but
 // the provision was never updated. Fully local computation, no server involvement.
+// v5.3: drift settings are synced (pd_ui_prefs.dismissals.driftSettings). Until first saved there,
+// this device's old local settings still count, so nothing changes on upgrade.
+//   perAccount: compare the total of every provision line on an account with the account's movement (A)
+//   plOnly: check income and expense accounts only, so pass-through balance-sheet accounts are skipped (B)
+//   excludeOn + excluded: accounts never checked (C). These apply to provisions; smart rules are unchanged.
+const DRIFT_DEFAULTS = {thresholdPct:15, minMonths:2, perAccount:true, plOnly:true, excludeOn:true, excluded:[]};
 function getDriftSettings(){
-  const defaults = {thresholdPct:15, minMonths:2};
-  try{ const v = JSON.parse(localStorage.getItem('driftSettings')||'{}'); return {...defaults, ...v}; }
-  catch(e){ return defaults; }
+  let local = {};
+  try{ local = JSON.parse(localStorage.getItem('driftSettings')||'{}')||{}; }catch(e){}
+  const synced = getUiDismissals().driftSettings;
+  const s = {...DRIFT_DEFAULTS, ...(synced && typeof synced==='object'? synced : local)};
+  s.excluded = Array.isArray(s.excluded)? s.excluded.map(Number).filter(Boolean) : [];
+  return s;
 }
-function setDriftSettings(s){ return safeSetItemWarn('driftSettings', JSON.stringify(s)); }
+function setDriftSettings(s){
+  const d = getUiDismissals();
+  saveUiDismissals(Object.assign({}, d, {driftSettings: Object.assign({}, getDriftSettings(), s)}));
+  return true;
+}
+function setDriftToggle(field, on){ setDriftSettings({[field]: !!on}); renderSettings(); toast('Drift Detection updated \u2713'); }
+function addDriftExclusion(){
+  const v = Number((document.getElementById('driftExcludeSel')||{}).value);
+  if(!v || !ACC_BY_ID[v]){ toast('Pick an account first', true); return; }
+  const ex = getDriftSettings().excluded; if(!ex.includes(v)) ex.push(v);
+  setDriftSettings({excluded: ex}); renderSettings();
+}
+function removeDriftExclusion(acc){ setDriftSettings({excluded: getDriftSettings().excluded.filter(a=>a!==acc)}); renderSettings(); }
+// Accounts used on any provision line: the ones the exclude list can pick from.
+function driftCandidateAccounts(){ const s = new Set(); D.provisionGroups.forEach(g=>(g.lines||[]).forEach(l=>s.add(Number(l.acc)))); return [...s].filter(a=>ACC_BY_ID[a]).sort((a,b)=>a-b); }
 // v5.1: dismissals are synced in pd_ui_prefs.dismissals = {drift:{key:anchorMonth}, overBudget:{'category|YYYY-MM':overAmount}}.
 // Started fresh: the old per-device 'driftDismissals' are not carried over (Muhannad's choice).
 function getUiDismissals(){ const d = (D.uiPrefs||{}).dismissals; return (d && typeof d==='object' && !Array.isArray(d))? d : {}; }
@@ -3812,9 +3839,35 @@ function computeDriftFlags(){
   const anchorMonth = months[months.length-1];
   const flags = [];
 
-  D.provisionGroups.forEach(g=>{
+  const excluded = new Set(settings.excludeOn? settings.excluded : []);
+  const skipAcc = acc => excluded.has(Number(acc)) || (settings.plOnly && ![3,6].includes(firstDigit(Number(acc))));
+  if(settings.perAccount){
+    // A: one check per account. Plan = every provision line on it that month, across all groups.
+    const byAcc = {};
+    D.provisionGroups.forEach(g=>{ ensureLineIds(g); g.lines.forEach(line=>{ if(skipAcc(line.acc)) return; (byAcc[line.acc] = byAcc[line.acc] || []).push({g, line}); }); });
+    Object.entries(byAcc).forEach(([acc, uses])=>{
+      acc = Number(acc);
+      const key = 'provacc:'+acc;
+      if(dismissals[key] && dismissals[key]>=anchorMonth) return;
+      let allDrifted = true, sumPlan=0, sumActual=0, validCount=0;
+      months.forEach(mk=>{
+        let plan = null;
+        uses.forEach(({g, line})=>{ const raw = (g.months[mk]||{})[line.lineId]; if(raw!==undefined && raw!==null && raw!=='') plan = (plan||0) + Number(raw); });
+        if(plan===null || Math.abs(plan)<0.005){ allDrifted=false; return; }
+        const actual = forecastActual(acc, mk);
+        if(Math.abs(actual-plan)/Math.abs(plan)*100 < settings.thresholdPct) allDrifted=false;
+        sumPlan += plan; sumActual += actual; validCount++;
+      });
+      if(allDrifted && validCount===months.length){
+        flags.push({key, kind:'provision', perAccount:true, groupId:uses[0].g.id, lineId:uses[0].line.lineId, lines:uses.map(u=>({groupId:u.g.id, lineId:u.line.lineId})),
+          groupName:[...new Set(uses.map(u=>u.g.name))].join(', '), acc, avgPlan:sumPlan/validCount, avgActual:sumActual/validCount, months});
+      }
+    });
+  }
+  if(!settings.perAccount) D.provisionGroups.forEach(g=>{
     ensureLineIds(g);
     g.lines.forEach(line=>{
+      if(skipAcc(line.acc)) return;
       const key = 'provision:'+g.id+':'+line.lineId;
       if(dismissals[key] && dismissals[key]>=anchorMonth) return;
       let allDrifted = true, sumPlan=0, sumActual=0, validCount=0;
@@ -3869,7 +3922,7 @@ function saveDriftSettings(){
   renderSettings();
 }
 function driftFlagsFor(kind, id){
-  return computeDriftFlags().filter(f=> kind==='provision'? (f.kind==='provision' && f.groupId===id) : (f.kind==='smartrule' && f.ruleId===id));
+  return computeDriftFlags().filter(f=> kind==='provision'? (f.kind==='provision' && (f.lines? f.lines.some(x=>x.groupId===id) : f.groupId===id)) : (f.kind==='smartrule' && f.ruleId===id));
 }
 
 function shiftMonthKey(mk, delta){
@@ -8209,7 +8262,7 @@ function provisionGroupBodyHTML(g, curMonth){
       <button class="btn ghost sm" ${months.length?'':'disabled'} onclick="generateProvisionJV(${g.id})">Generate JV (this group only)</button>
       <button class="x" title="Delete group" aria-label="Delete group" onclick="deleteProvisionGroup(${g.id})">✕</button>
     </div>
-    <div class="prov-cards">${g.lines.map((line,li)=>{ const s = provisionLineSummary(g, line); const ld = drift.find(f=>f.lineId===line.lineId); return `<div class="prov-card" id="provCard_${g.id}_${line.lineId}">
+    <div class="prov-cards">${g.lines.map((line,li)=>{ const s = provisionLineSummary(g, line); const ld = drift.find(f=> f.lines? f.lines.some(x=>x.groupId===g.id && x.lineId===line.lineId) : f.lineId===line.lineId); return `<div class="prov-card" id="provCard_${g.id}_${line.lineId}">
       <div class="row" style="justify-content:space-between;gap:6px;flex-wrap:nowrap"><span class="click" style="color:var(--accent);font-weight:600;min-width:0" onclick="jumpToLedgerForAccount(${line.acc})" title="View in Ledger">${esc(accShort(line.acc))} <span class="mono mut" style="font-size:11px">${line.acc}</span></span><button class="x" aria-label="Remove this line" onclick="removeProvisionLine(${g.id},${li})">✕</button></div>
       <input aria-label="Line description" placeholder="Description" value="${line.descrBase && line.descrBase!==accShort(line.acc)? esc(line.descrBase) : ''}" onchange="setProvisionLineDescr(${g.id},${li},this.value)" style="margin:6px 0;font-size:12px;padding:5px 8px">
       ${ld? `<span class="badge neg" title="Planned ${money(ld.avgPlan)} vs actual ${money(ld.avgActual)} (average)">Drift</span>` : ''}
@@ -15027,7 +15080,15 @@ function renderSettings(){
         <div class="row" style="margin-top:6px">
           <button class="btn pri sm" onclick="saveDriftSettings()">Save</button>
         </div>
-        <div class="mut" style="font-size:11px;margin-top:10px">Currently: flag anything more than <span class="mono">${getDriftSettings().thresholdPct}%</span> off for <span class="mono">${getDriftSettings().minMonths}</span> consecutive month(s). Kept locally on this device only, not synced.</div>
+        <div class="section-h" style="margin-top:16px">Provisions</div>
+        ${(()=>{ const ds = getDriftSettings(); const tg = (f, title, sub) => `<label class="row" style="gap:8px;align-items:flex-start;margin-bottom:10px;cursor:pointer"><input type="checkbox" class="chk" style="width:auto;margin-top:3px" ${ds[f]?'checked':''} onchange="setDriftToggle('${f}', this.checked)"><span><b>${title}</b><div class="mut" style="font-size:12px">${sub}</div></span></label>`;
+          return tg('perAccount', 'Compare per account', 'Adds up every provision line on an account for the month (across all groups) and compares that total with the account\u2019s movement. Without it, each line is compared with the whole account, so two lines on one account can both be flagged wrongly.')
+            + tg('plOnly', 'Income and expense accounts only', 'Leaves out balance-sheet accounts (receivables, payables, liabilities). Money passes through those, e.g. This Month Payable is credited by the provision JV and debited when paid, so it nets to zero and would always look off.')
+            + tg('excludeOn', 'Use my exclude list', 'Never checks the accounts below. Their Drift badge disappears too.')
+            + (ds.excludeOn? `<div style="margin:0 0 6px 26px">${ds.excluded.map(a=>`<span class="chipbtn" style="display:inline-flex;align-items:center;gap:6px;margin:0 6px 6px 0">${a} ${esc(accShort(a))} <button class="x" aria-label="Stop excluding ${esc(accShort(a))}" onclick="removeDriftExclusion(${a})">\u2715</button></span>`).join('') || '<span class="mut" style="font-size:12px">No accounts excluded.</span>'}
+              <div class="row" style="margin-top:6px"><select id="driftExcludeSel" style="max-width:360px"><option value="">Pick an account used in Provisions\u2026</option>${driftCandidateAccounts().filter(a=>!ds.excluded.includes(a)).map(a=>`<option value="${a}">${a} \u2014 ${esc(accShort(a))}</option>`).join('')}</select><button class="btn ghost sm" onclick="addDriftExclusion()">Exclude</button></div></div>` : ''); })()}
+        <div class="mut" style="font-size:11px">Smart rules are checked as before. All of these are synced across your devices.</div>
+        <div class="mut" style="font-size:11px;margin-top:10px">Currently: flag anything more than <span class="mono">${getDriftSettings().thresholdPct}%</span> off for <span class="mono">${getDriftSettings().minMonths}</span> consecutive month(s). Synced across your devices.</div>
       </div>`},
     balancefreshness: {label:'🏦 Balance Freshness', html: `
       <div class="panel">
