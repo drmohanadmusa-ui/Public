@@ -373,6 +373,8 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .dash-cell.drop-target{outline:2px solid var(--accent)!important}
 .dash-editbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;margin-bottom:10px;border-radius:10px;background:var(--accent-soft);color:var(--nav-on-fg);font-size:12px}
 .dash-editbar .btn.sm{padding:3px 8px}
+.dash-hidden{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
+.dash-hidden .chipbtn{display:inline-flex;align-items:center;gap:6px}
 .dash-resize{position:absolute;top:44px;bottom:0;right:-14px;width:14px;cursor:ew-resize;display:flex;align-items:center;justify-content:center;z-index:2}
 .dash-resize span{width:4px;height:48px;border-radius:99px;background:var(--accent)}
 .dash-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px}
@@ -399,12 +401,11 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .posbox-label{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .posbox-row.is-sub .posbox-label,.posbox-row.is-total .posbox-label,.posbox-row.is-sub .posbox-val,.posbox-row.is-total .posbox-val{color:var(--text);font-weight:600}
 .posbox-val{font-size:13px}
-.posbox-track{grid-column:1/-1;position:relative;height:6px;border-radius:3px;background:var(--panel2)}
-.posbox-row.is-sub .posbox-track{height:8px} .posbox-row.is-total .posbox-track{height:10px}
-.posbox-bar{position:absolute;top:0;bottom:0;border-radius:3px}
 .chev{display:inline-block;transition:transform .2s;font-weight:700} .chev.open{transform:rotate(90deg)}
-.posbox-peek{grid-column:1/-1;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 18px}
-.posbox-peek div{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.posbox-peek{grid-column:1/-1;display:flex;flex-direction:column;gap:0;padding:4px 0 2px 12px}
+.posbox-peek div{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:4px 8px;border-radius:6px}
+.posbox-peek div:nth-child(odd){background:var(--panel2)}
+.posbox-peek div:hover{background:var(--accent-soft);color:var(--text)}
 .posbox-edrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;margin-bottom:6px;border-radius:10px;border:1px solid var(--line);background:var(--panel)}
 .posbox-edrow.tot{background:var(--panel2)}
 .posbox-edrow select{width:auto}
@@ -453,7 +454,13 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 .jam-cell{background:none;border:none;padding:2px;border-radius:8px;cursor:pointer;font:inherit}
 .jam-cell:hover{box-shadow:0 0 0 2px var(--accent-soft)} .jam-cell:focus-visible{outline:2px solid var(--accent)}
 .fc-chart{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
-.fc-col{flex:1 0 64px;display:flex;flex-direction:column;align-items:center}
+.fc-col{flex:1 0 64px;display:flex;flex-direction:column;align-items:center;background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;border-radius:8px}
+.fc-col:hover{background:var(--panel2)} .fc-col:focus-visible{outline:2px solid var(--accent)}
+.fc-lane{position:relative;width:100%;height:64px}
+.fc-note{position:absolute;left:50%;transform:translateX(-50%);z-index:2;max-width:170px;width:max-content;padding:4px 8px;border-radius:8px;background:var(--accent);color:var(--on-accent);font-size:11px;line-height:1.3;text-align:left;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;box-shadow:var(--shadow-tile)}
+.fc-note.t0{top:0} .fc-note.t1{top:30px}
+.fc-stem{position:absolute;left:50%;width:2px;margin-left:-1px;bottom:0;background:var(--accent)}
+.fc-stem.t0{top:22px} .fc-stem.t1{top:52px}
 .fc-plot{position:relative;width:100%;height:calc(var(--fc-h) + 34px)}
 .fc-bar{position:absolute;left:22%;right:22%;border-radius:5px;background:var(--accent)}
 .fc-bar.neg{background:color-mix(in srgb,var(--red) 55%,var(--panel))}
@@ -461,6 +468,8 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 .seg button{white-space:nowrap}
 .fc-val{position:absolute;left:0;right:0;text-align:center;font-size:10.5px;white-space:nowrap}
 .fc-m{font-size:11px;color:var(--muted);text-align:center} .fc-low{color:var(--red);font-weight:600}
+@keyframes flashName{0%,100%{background:transparent}20%,60%{background:color-mix(in srgb,var(--accent) 35%,transparent)}}
+.flash,.flash td{animation:flashName 1.6s ease 2}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -534,12 +543,24 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.0.1';
+const APP_VERSION = '5.1.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.1.0', date:'2026-11-08', changes:[
+    'Dashboard: in Edit layout every box has Hide, including your position boxes. Hidden boxes are listed at the top of Edit layout with Show. Saved to your account.',
+    'Dashboard: Dismiss on over-budget items hides that category for the rest of the month (it comes back if it goes further over, and next month). Dismissals, including drift alerts, now sync across your devices. Drift dismissals started fresh.',
+    'Dashboard: position boxes no longer have bars. An opened line lists its accounts in shaded bands, and the row under your mouse is highlighted.',
+    'Whole numbers (no decimals) on every chart, its axes and hover labels, and in the Dashboard boxes. Tables, including the Bank accounts table, keep their 2 decimals.',
+    'Budget: \u2039 and \u203A on each side of the month box. The budget grid at the bottom starts collapsed (Show budget grid). Click a category name under the Budget vs Actual bars to jump to it in Plan vs Actual; its name flashes. The bars still open the transactions.',
+    'P&L: \u2039 and \u203A now sit on each side of the period. Coming back from the \uD83D\uDCCA chart returns you to the same place and flashes the row you came from.',
+    'Provisions: on a month that nets to zero, Copy \u2193 copies it to every later month up to the group\u2019s last planned month (replacing what is there).',
+    'Jamiah: tagged transactions are back in Transactions to Tag, marked \u2713 with the person; change or untag them right there. The summary shows the month each group receives next to its number (e.g. 5 \u00b7 November 2026).',
+    'Forecast: click a month\u2019s bar on the Closing balance chart to add a note. It shows as a call-out on that bar, on every device.',
+    'DATABASE: two new columns on pd_ui_prefs (dismissals, forecast_notes). Run the SQL from Settings \u2192 Database Schema once. No new tables.',
+  ]},
   {version:'5.0.1', date:'2026-11-08', changes:[
     'Dashboard: boxes now stack up into any free space. A box goes straight under a shorter box above it instead of waiting below the tallest box in that row (for example, Things that need you can now sit right under the Forecast snapshot).',
   ]},
@@ -1170,7 +1191,7 @@ const CHANGELOG = [
     'Added an iPhone/iPad home-screen icon, so adding the site to your home screen shows a real icon instead of a blank screenshot.',
   ]},
 ];
-let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null}, forecastSnapshots:[], invRoboValueLog:[]};
+let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[]};
 let jvDrafts = []; // local-only scratchpad of unfinished JVs — not synced to cloud
 function loadJVDrafts(){ try{ return JSON.parse(localStorage.getItem('jvDrafts_v1')||'[]'); }catch(e){ return []; } }
 function saveJVDraftsList(){ try{ safeSetItem('jvDrafts_v1', JSON.stringify(jvDrafts)); }catch(e){} }
@@ -1245,6 +1266,8 @@ function normalizeDataShape(D){
   if(D.uiPrefs.balanceStaleDays===undefined || D.uiPrefs.balanceStaleDays===null) D.uiPrefs.balanceStaleDays = 0;
   if(!Array.isArray(D.uiPrefs.dashboardLayout)) D.uiPrefs.dashboardLayout = null;
   if(!Array.isArray(D.uiPrefs.positionBoxes)) D.uiPrefs.positionBoxes = null;
+  if(!D.uiPrefs.dismissals || typeof D.uiPrefs.dismissals!=='object' || Array.isArray(D.uiPrefs.dismissals)) D.uiPrefs.dismissals = {};
+  if(!D.uiPrefs.forecastNotes || typeof D.uiPrefs.forecastNotes!=='object' || Array.isArray(D.uiPrefs.forecastNotes)) D.uiPrefs.forecastNotes = {};
   if(!Array.isArray(D.realEstateBuildings)) D.realEstateBuildings = [];
   if(!Array.isArray(D.forecastAccountRules)) D.forecastAccountRules = [];
   if(!Array.isArray(D.customForecastCategories)) D.customForecastCategories = [];
@@ -2205,7 +2228,7 @@ async function fetchAllFromCloud(forceFullLedger){
   if(!invVal.error){ D.invValuations = invVal.data.map(v=>({id:v.id, positionId:v.position_id, date:v.entry_date, price:Number(v.price)||0, updated_at:v.updated_at||null})); }
   if(!invCash.error){ D.invCashMovements = invCash.data.map(m=>({id:m.id, platformId:m.platform_id, date:m.entry_date, kind:m.kind||'deposit', usdAmount:Number(m.usd_amount)||0, toPlatformId:m.to_platform_id||null, feeUsd:Number(m.fee_usd)||0, capitalUsd:Number(m.capital_usd)||0, profitUsd:Number(m.profit_usd)||0, owners:m.owners||[], note:m.note||'', updated_at:m.updated_at||null})); }
   if(!invSet.error && invSet.data.length){ D.invSettings = {fxUsdSar: Number(invSet.data[0].fx_usd_sar)||3.75, mgmtFeePct: Number(invSet.data[0].mgmt_fee_pct)||0, reconStartDate: invSet.data[0].recon_start_date||null, updated_at: invSet.data[0].updated_at||null}; }
-  if(!uiPrefs.error && uiPrefs.data.length){ const u = uiPrefs.data[0]; D.uiPrefs = {pageOrder: Array.isArray(u.page_order)? u.page_order : null, balanceStaleDays: Number(u.balance_stale_days)||0, dashboardLayout: Array.isArray(u.dashboard_layout)? u.dashboard_layout : null, positionBoxes: Array.isArray(u.position_boxes)? u.position_boxes : null, updated_at: u.updated_at||null}; }
+  if(!uiPrefs.error && uiPrefs.data.length){ const u = uiPrefs.data[0]; D.uiPrefs = {pageOrder: Array.isArray(u.page_order)? u.page_order : null, balanceStaleDays: Number(u.balance_stale_days)||0, dashboardLayout: Array.isArray(u.dashboard_layout)? u.dashboard_layout : null, positionBoxes: Array.isArray(u.position_boxes)? u.position_boxes : null, dismissals: (u.dismissals && typeof u.dismissals==='object' && !Array.isArray(u.dismissals))? u.dismissals : {}, forecastNotes: (u.forecast_notes && typeof u.forecast_notes==='object' && !Array.isArray(u.forecast_notes))? u.forecast_notes : {}, updated_at: u.updated_at||null}; }
   if(!fcSnaps.error){ D.forecastSnapshots = fcSnaps.data.map(s=>({id:s.id, anchorMonth:s.anchor_month, takenAt:s.taken_at, kind:s.kind||'auto', months:Array.isArray(s.months)?s.months:[], signFlips:(s.sign_flips&&typeof s.sign_flips==='object')?s.sign_flips:{}, updated_at:s.updated_at||null})); }
   if(!roboLog.error){ D.invRoboValueLog = roboLog.data.map(r=>({id:r.id, platformId:r.platform_id, date:r.entry_date, value:Number(r.value)||0, updated_at:r.updated_at||null})); }
   syncCustomForecastCategories();
@@ -2806,12 +2829,16 @@ create table if not exists pd_inv_settings (
 -- Synced (rather than per-device) so the sidebar reads the same everywhere.
 -- dashboard_layout (v5.0): jsonb array of {id, span} for the Dashboard's 12-column grid.
 -- position_boxes (v5.0): jsonb array of the custom position boxes shown on the Dashboard.
+-- dismissals (v5.1): jsonb {drift:{key:month}, overBudget:{'category|YYYY-MM':amount}}, synced Dismiss buttons.
+-- forecast_notes (v5.1): jsonb {'YYYY-MM': 'note'}, one call-out per month on the Forecast chart.
 create table if not exists pd_ui_prefs (
   id                 bigint primary key,
   page_order         jsonb,
   balance_stale_days integer default 0,
   dashboard_layout   jsonb,
   position_boxes     jsonb,
+  dismissals         jsonb,
+  forecast_notes     jsonb,
   updated_at         timestamptz default now()
 );
 
@@ -3708,17 +3735,37 @@ function getDriftSettings(){
   catch(e){ return defaults; }
 }
 function setDriftSettings(s){ return safeSetItemWarn('driftSettings', JSON.stringify(s)); }
-function getDriftDismissals(){
-  try{ const v = JSON.parse(localStorage.getItem('driftDismissals')||'{}'); return (v&&typeof v==='object')? v : {}; }
-  catch(e){ return {}; }
+// v5.1: dismissals are synced in pd_ui_prefs.dismissals = {drift:{key:anchorMonth}, overBudget:{'category|YYYY-MM':overAmount}}.
+// Started fresh: the old per-device 'driftDismissals' are not carried over (Muhannad's choice).
+function getUiDismissals(){ const d = (D.uiPrefs||{}).dismissals; return (d && typeof d==='object' && !Array.isArray(d))? d : {}; }
+async function saveUiDismissals(d){
+  D.uiPrefs = D.uiPrefs || {};
+  const base = D.uiPrefs.updated_at||null;
+  D.uiPrefs.dismissals = d;
+  D.uiPrefs.updated_at = nowISO();
+  persistLocal();
+  await syncWrite('pd_ui_prefs','upsert',{id:1, dismissals:d}, base);
 }
+function getDriftDismissals(){ return Object.assign({}, getUiDismissals().drift||{}); }
 // A dismissal is stamped with the "anchor month" (the most recent fully-past month in the
 // comparison window) at the moment you dismissed it. It stays silenced only until a newer month
 // closes and enters that window — at which point it's stale and the flag is freshly re-evaluated
 // against current numbers, rather than staying permanently muted or nagging every single day.
 function setDriftDismissed(key, anchorMonth){
-  const d = getDriftDismissals(); d[key] = anchorMonth;
-  return safeSetItemWarn('driftDismissals', JSON.stringify(d));
+  const d = getUiDismissals();
+  saveUiDismissals(Object.assign({}, d, {drift: Object.assign({}, d.drift||{}, {[key]: anchorMonth})}));
+  return true;
+}
+// Over budget: hidden for that category for the rest of the month, unless it goes further over.
+let dashOverBudgetKeys = [];
+function dismissOverBudget(i){
+  const k = dashOverBudgetKeys[i]; if(!k) return;
+  const d = getUiDismissals(), ym = todayStr().slice(0,7);
+  const ob = {};
+  Object.entries(d.overBudget||{}).forEach(([key,v])=>{ if(key.endsWith('|'+ym)) ob[key] = v; }); // old months drop off
+  ob[k.key] = k.over;
+  saveUiDismissals(Object.assign({}, d, {overBudget: ob}));
+  renderDashboard();
 }
 function driftLookbackMonths(n){
   const currentMonth = todayStr().slice(0,7);
@@ -4222,7 +4269,7 @@ function renderClosingBalanceWatchWidget(){
         const r = mk? byMonth[mk] : null;
         return `<tr>
           <td style="width:50%"><input type="month" value="${esc(mk)}" onchange="setClosingBalanceWatchMonth(${i}, this.value)"></td>
-          <td class="num mono ${r? moneyClass(r.closing) : 'mut'}" style="font-weight:700">${r? money(r.closing) : (mk? '—' : 'Choose a month')}</td>
+          <td class="num mono ${r? moneyClass(r.closing) : 'mut'}" style="font-weight:700">${r? money0(r.closing) : (mk? '—' : 'Choose a month')}</td>
         </tr>`;
       }).join('')}
     </tbody></table>
@@ -4312,8 +4359,9 @@ function viewCategoryAccounts(catName){
     <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
 }
 
+function kpiFormatter(name){ return name==='absMoney'? absMoney : name==='absMoney0'? (n=>money0(Math.abs(Number(n)||0))) : name==='money0'? money0 : money; }
 function kpiValue(raw, cls, fmtName){
-  const fmtFn = fmtName==='absMoney'?absMoney:money;
+  const fmtFn = kpiFormatter(fmtName);
   // Only start at 0 (to be animated by animateKpiCountUps) when a real count-up is about to play.
   // Otherwise — e.g. a re-render triggered while already on the dashboard, such as saving a
   // statement balance — show the real value immediately so KPIs never get stuck displaying 0.
@@ -4326,7 +4374,7 @@ function animateKpiCountUps(){
   const els = document.querySelectorAll('.kpi .v[data-count-target]');
   els.forEach(el=>{
     const target = Number(el.dataset.countTarget)||0;
-    const fmtFn = el.dataset.countFmt==='absMoney'? absMoney : money;
+    const fmtFn = kpiFormatter(el.dataset.countFmt);
     const duration = 650;
     const start = performance.now();
     function frame(now){
@@ -4465,24 +4513,19 @@ function computePositionBox(box, asOf){
 function positionBoxHTML(box){
   if(posBoxEdit && posBoxEdit.id===box.id) return positionBoxEditorHTML();
   const c = computePositionBox(box);
-  const ends = c.rows.flatMap(r=>[r.from, r.to]);
-  const lo = Math.min(0, ...ends), hi = Math.max(0, ...ends), range = (hi-lo) || 1;
-  const pct = v => ((v-lo)/range*100).toFixed(2)+'%';
   const bid = esc(String(box.id)).replace(/'/g,'');
   return `<div class="panel posbox">
     <div class="dash-head"><h2>${esc(box.title||'Position box')}</h2>
-      <span class="row" style="gap:10px"><span class="mono posbox-final">${money(c.final)}</span>
+      <span class="row" style="gap:10px"><span class="mono posbox-final">${money0(c.final)}</span>
       <button class="btn ghost sm" onclick="openPosBoxEditor('${bid}')" aria-label="Edit ${esc(box.title||'this box')}">Edit</button></span></div>
     <div class="posbox-rows">${c.rows.map((r,k)=>{
       const isTot = r.kind==='total', final = r.type==='total';
       const canOpen = r.type==='line' && (r.ids||[]).length>0;
       const open = canOpen && posBoxOpen[box.id+':'+r.i];
-      const color = isTot? 'var(--accent-text)' : (r.kind==='asset'? 'color-mix(in srgb,var(--accent) 65%,var(--panel))' : 'color-mix(in srgb,var(--red) 65%,var(--panel))');
       return `<div class="posbox-row${isTot?(final?' is-total':' is-sub'):''}${canOpen?' can-open':''}"${canOpen?` role="button" tabindex="0" aria-expanded="${!!open}" onclick="togglePosBoxRow('${bid}',${r.i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePosBoxRow('${bid}',${r.i})}"`:''}>
         <span class="posbox-label">${canOpen?`<span class="chev${open?' open':''}" aria-hidden="true">›</span>`:''}${esc(r.label||'')}${r.type==='account'&&r.ids[0]?` <span class="mono mut" style="font-size:11px">${r.ids[0]}</span>`:''}</span>
-        <span class="mono posbox-val ${!isTot && r.value<0? 'r':''}">${money(r.value)}</span>
-        <div class="posbox-track"><div class="posbox-bar grow-x" style="left:${pct(Math.min(r.from,r.to))};width:${Math.max(0.6,Math.abs(r.to-r.from)/range*100).toFixed(2)}%;background:${color};animation-delay:${k*70}ms"></div></div>
-        ${open? `<div class="posbox-peek rise">${r.parts.map(p=>`<div><span><span class="mono">${p.id}</span> ${esc(accShort(p.id))}</span><span class="mono">${money(p.value)}</span></div>`).join('')}</div>`:''}
+        <span class="mono posbox-val ${!isTot && r.value<0? 'r':''}">${money0(r.value)}</span>
+        ${open? `<div class="posbox-peek rise">${r.parts.map(p=>`<div><span><span class="mono">${p.id}</span> ${esc(accShort(p.id))}</span><span class="mono">${money0(p.value)}</span></div>`).join('')}</div>`:''}
       </div>`;
     }).join('')}</div>
   </div>`;
@@ -4583,8 +4626,8 @@ function dashboardLayout(){
   const valid = id => typeof id==='string' && (!!DASH_WIDGETS[id] || boxIds.has(id));
   const saved = Array.isArray((D.uiPrefs||{}).dashboardLayout)? D.uiPrefs.dashboardLayout : DASH_DEFAULT_LAYOUT.map(([id,span])=>({id,span}));
   const out = [], seen = new Set();
-  const add = (id, span) => { if(seen.has(id) || !valid(id)) return; seen.add(id); out.push({id, span:clampDashSpan(span)}); };
-  saved.forEach(w=>{ if(w) add(w.id, w.span); });
+  const add = (id, span, hidden) => { if(seen.has(id) || !valid(id)) return; seen.add(id); out.push(hidden? {id, span:clampDashSpan(span), hidden:true} : {id, span:clampDashSpan(span)}); };
+  saved.forEach(w=>{ if(w) add(w.id, w.span, w.hidden===true); });
   Object.keys(DASH_WIDGETS).forEach(id=>add(id, DASH_WIDGETS[id].span)); // boxes added by a later version still show up
   boxes.forEach(b=>add('box:'+b.id, 6));
   return out;
@@ -4602,6 +4645,11 @@ async function moveDashWidget(from, to){
   const L = dashboardLayout();
   if(from===to || from<0 || to<0 || from>=L.length || to>=L.length) return;
   const [w] = L.splice(from, 1); L.splice(to, 0, w);
+  await saveDashboardLayout(L); renderDashboard();
+}
+async function toggleDashHidden(i){
+  const L = dashboardLayout(); if(!L[i]) return;
+  if(L[i].hidden) delete L[i].hidden; else L[i].hidden = true;
   await saveDashboardLayout(L); renderDashboard();
 }
 async function resizeDashWidget(i, span){
@@ -4688,9 +4736,14 @@ function dashboardTodoItems(){
     else if(!s.reconciled) items.push({tone:'neg', title:name+' is off by '+money(s.variance), sub:'Statement vs ledger. Opens a New JV to clear it', label:'Work it off', onclick:`startReconcile(${a.id})`});
     else if(!s.reconciledFresh) items.push({tone:'warn', title:name+' last reconciled '+(s.daysSinceStmt===null? 'on an unknown date' : s.daysSinceStmt+' day'+(s.daysSinceStmt===1?'':'s')+' ago'), sub:'Statement from '+(a.stmt_date? fmtDateShort(a.stmt_date) : '?')+'. Check a newer one', label:'Update', onclick:focus});
   });
-  dashboardBudgetRows(todayStr().slice(0,7)).forEach(c=>{
+  const ym = todayStr().slice(0,7), obDismissed = getUiDismissals().overBudget||{};
+  dashOverBudgetKeys = [];
+  dashboardBudgetRows(ym).forEach(c=>{
     if(Math.abs(c.budget)<0.005 || c.variance > -0.005) return;
-    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:'goPnLThisMonth()'});
+    const over = roundCents(-c.variance), key = c.cat+'|'+ym;
+    if(obDismissed[key]!==undefined && over <= Number(obDismissed[key])+0.005) return;
+    dashOverBudgetKeys.push({key, over});
+    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:'goPnLThisMonth()', dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
   });
   computeDriftFlags().forEach(f=>{
     const label = f.kind==='provision'? accShort(f.acc)+' — '+f.groupName : f.ruleName+' ('+accShort(f.acc)+')';
@@ -4718,10 +4771,10 @@ function dashKpisHTML(){
   const expBudget = dashboardExpenseBudget(ym, expenseMTD);
   const anim = dashboardNeedsCountUp ? ' fade-in' : '';
   return `<div class="cards" style="margin:0">
-      <div class="kpi hero${anim}"><div class="l">Bank balance</div>${kpiValue(bankTotal, '', 'absMoney')}<div class="kpi-note">Across ${all.length} account${all.length===1?'':'s'}</div></div>
-      <div class="kpi${anim}"><div class="l">Income this month</div>${kpiValue(incomeMTD, 'g', 'absMoney')}</div>
-      <div class="kpi${anim}"><div class="l">Expense this month</div>${kpiValue(expenseMTD, '', 'absMoney')}<div class="kpi-note click" style="cursor:pointer" title="Open the P&amp;L for this month" onclick="goPnLThisMonth()">${dashboardExpenseBudgetLine(expBudget)}</div></div>
-      <div class="kpi soft${anim}"><div class="l">Net cash flow</div>${kpiValue(netCashflow, moneyClass(netCashflow), 'money')}${Math.abs(incomeMTD)>=0.005 && netCashflow>0? `<div class="kpi-note">Saving ${(netCashflow/Math.abs(incomeMTD)*100).toFixed(1)}% of income</div>`:''}</div>
+      <div class="kpi hero${anim}"><div class="l">Bank balance</div>${kpiValue(bankTotal, '', 'absMoney0')}<div class="kpi-note">Across ${all.length} account${all.length===1?'':'s'}</div></div>
+      <div class="kpi${anim}"><div class="l">Income this month</div>${kpiValue(incomeMTD, 'g', 'absMoney0')}</div>
+      <div class="kpi${anim}"><div class="l">Expense this month</div>${kpiValue(expenseMTD, '', 'absMoney0')}<div class="kpi-note click" style="cursor:pointer" title="Open the P&amp;L for this month" onclick="goPnLThisMonth()">${dashboardExpenseBudgetLine(expBudget)}</div></div>
+      <div class="kpi soft${anim}"><div class="l">Net cash flow</div>${kpiValue(netCashflow, moneyClass(netCashflow), 'money0')}${Math.abs(incomeMTD)>=0.005 && netCashflow>0? `<div class="kpi-note">Saving ${(netCashflow/Math.abs(incomeMTD)*100).toFixed(1)}% of income</div>`:''}</div>
     </div>`;
 }
 let dashTodoShowAll = false;
@@ -4735,7 +4788,7 @@ function dashTodoHTML(){
     ${items.length? `<div class="todo-list">${items.map((x,i)=>`<div class="todo-item ${x.tone} rise" style="animation-delay:${i*70}ms">
       <span class="todo-dot" aria-hidden="true"></span>
       <div style="flex:1;min-width:0"><div class="todo-title">${esc(x.title)}</div><div class="mut todo-sub">${esc(x.sub)}</div></div>
-      ${x.dismiss? `<button class="btn ghost sm" onclick="${x.dismiss}" title="Silence until a new month closes">Dismiss</button>`:''}
+      ${x.dismiss? `<button class="btn ghost sm" onclick="${x.dismiss}" title="${x.dismissTitle||'Silence until a new month closes'}">Dismiss</button>`:''}
       <button class="btn ghost sm" onclick="${x.onclick}">${esc(x.label)}</button>
     </div>`).join('')}</div>${all.length>DASH_TODO_LIMIT? `<div class="row" style="justify-content:center;margin-top:10px"><button class="btn ghost sm" onclick="toggleDashTodoAll()">${dashTodoShowAll? 'Show fewer' : 'Show all '+all.length}</button></div>` : ''}` : `<div class="mut" style="font-size:13px">Every bank account is reconciled, nothing is over budget and there are no drift alerts.</div>`}
   </div>`;
@@ -4773,9 +4826,9 @@ function dashCashHTML(){
   const months = dashboardCashFlowMonths(6);
   const max = Math.max(1, ...months.map(m=>Math.max(m.income, m.expense)));
   return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Cash flow</h2><span class="legend"><span><i style="background:var(--accent)"></i>Income</span><span><i style="background:var(--bar2,color-mix(in srgb,var(--muted) 45%,var(--panel)))"></i>Expense</span></span></div>
-    <div class="cf-chart" role="img" aria-label="Income and expense, last six months">${months.map((m,i)=>`<div class="cf-col${i===months.length-1?' cur':''}" title="${monthLabel(m.month)}: income ${money(m.income)}, expense ${money(m.expense)}">
+    <div class="cf-chart" role="img" aria-label="Income and expense, last six months">${months.map((m,i)=>`<div class="cf-col${i===months.length-1?' cur':''}" title="${monthLabel(m.month)}: income ${money0(m.income)}, expense ${money0(m.expense)}">
       <div class="cf-bars"><div class="cf-bar in grow-y" style="height:${Math.round(m.income/max*120)}px;animation-delay:${i*80}ms"></div><div class="cf-bar ex grow-y" style="height:${Math.round(m.expense/max*120)}px;animation-delay:${i*80+40}ms"></div></div>
-      <div class="mono cf-net ${moneyClass(m.net)}">${m.net>=0?'+':''}${money(m.net)}</div><div class="cf-m">${monthLabel(m.month)}</div>
+      <div class="mono cf-net ${moneyClass(m.net)}">${m.net>=0?'+':''}${money0(m.net)}</div><div class="cf-m">${monthLabel(m.month)}</div>
     </div>`).join('')}</div></div>`;
 }
 function dashBudgetHTML(){
@@ -4783,9 +4836,9 @@ function dashBudgetHTML(){
   return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Budget this month</h2><button class="btn ghost sm" onclick="go('budget')">Open Budget</button></div>
     ${rows.length? rows.map((c,i)=>{ const spent = Math.abs(c.actual), cap = Math.abs(c.budget); const pct = cap? spent/cap*100 : 0; const over = c.variance < -0.005;
       const col = over? 'var(--red)' : (pct>=90? 'var(--yellow)' : 'var(--accent)');
-      return `<div class="bud-row"><div class="bud-top"><span>${esc(c.cat)}</span><span class="mono"><b>${money(spent)}</b> <span class="mut">of ${money(cap)}</span></span></div>
+      return `<div class="bud-row"><div class="bud-top"><span>${esc(c.cat)}</span><span class="mono"><b>${money0(spent)}</b> <span class="mut">of ${money0(cap)}</span></span></div>
         <div class="bud-track"><div class="bud-fill grow-x" style="width:${Math.min(100,pct).toFixed(1)}%;background:${col};animation-delay:${i*80}ms"></div></div>
-        <div class="bud-note" style="color:${over?'var(--red)':(pct>=90?'var(--yellow)':'var(--muted)')}">${over? 'Over by '+money(-c.variance) : (Math.abs(c.variance)<0.005? 'Fully used' : money(c.variance)+' left')}</div></div>`; }).join('')
+        <div class="bud-note" style="color:${over?'var(--red)':(pct>=90?'var(--yellow)':'var(--muted)')}">${over? 'Over by '+money0(-c.variance) : (Math.abs(c.variance)<0.005? 'Fully used' : money0(c.variance)+' left')}</div></div>`; }).join('')
     : '<div class="mut" style="font-size:13px">No budget set for this month.</div>'}</div>`;
 }
 function dashWidgetBody(id){
@@ -4806,14 +4859,18 @@ function renderDashboard(){
   }
   const layout = dashboardLayout();
   const boxTitle = id => id.startsWith('box:')? ((getPositionBoxes().find(b=>'box:'+b.id===id)||{}).title||'Position box') : DASH_WIDGETS[id].title;
+  const shown = layout.map((w,i)=>i).filter(i=>!layout[i].hidden);
   const cells = layout.map((w,i)=>{
+    if(w.hidden) return '';
+    const vi = shown.indexOf(i), prevI = shown[vi-1], nextI = shown[vi+1];
     const body = dashWidgetBody(w.id);
     if(!body && !dashEditing) return '';
     const isBox = w.id.startsWith('box:');
     return `<div class="dash-cell" data-widget="${esc(w.id)}" style="grid-column:span ${w.span}"${dashEditing? ` draggable="true" ondragstart="dashDragStart(${i},event)" ondragover="dashDragOver(${i},event)" ondrop="dashDrop(${i},event)" ondragend="dashDragEnd()"` : ''}>
       ${dashEditing? `<div class="dash-editbar rise"><span aria-hidden="true">⠿</span><b>${esc(boxTitle(w.id))}</b><span class="mut" style="margin-right:auto">drag to move</span><span class="mono dash-span">${w.span}/12</span>
-        <button class="btn ghost sm" onclick="moveDashWidget(${i},${i-1})" ${i===0?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} earlier">↑</button>
-        <button class="btn ghost sm" onclick="moveDashWidget(${i},${i+1})" ${i===layout.length-1?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} later">↓</button>
+        <button class="btn ghost sm" onclick="moveDashWidget(${i},${prevI})" ${prevI===undefined?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} earlier">↑</button>
+        <button class="btn ghost sm" onclick="moveDashWidget(${i},${nextI})" ${nextI===undefined?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} later">↓</button>
+        <button class="btn ghost sm" onclick="toggleDashHidden(${i})" aria-label="Hide ${esc(boxTitle(w.id))}">Hide</button>
         <button class="btn ghost sm" onclick="resizeDashWidget(${i},${w.span-1})" aria-label="Narrower">−</button><button class="btn ghost sm" onclick="resizeDashWidget(${i},${w.span+1})" aria-label="Wider">+</button>
         ${isBox? `<button class="btn del sm" onclick="removeDashPositionBox('${esc(w.id.slice(4)).replace(/'/g,'')}')">Remove</button>`:''}</div>
         <div class="dash-resize" role="separator" aria-label="Resize ${esc(boxTitle(w.id))}" title="Drag to resize" onmousedown="dashResizeStart(${i},event)"><span></span></div>` : ''}
@@ -4827,6 +4884,7 @@ function renderDashboard(){
         <button class="btn ghost sm" onclick="resetDashboardLayout()">Reset layout</button>` : ''}
       <button class="btn ${dashEditing?'pri':'ghost'} sm" aria-pressed="${dashEditing}" onclick="toggleDashEditing()">${dashEditing? 'Done' : 'Edit layout'}</button>
     </div>
+    ${dashEditing && layout.some(w=>w.hidden)? `<div class="panel dash-hidden noprint"><b>Hidden boxes</b>${layout.map((w,i)=>w.hidden? `<span class="chipbtn">${esc(boxTitle(w.id))} <button class="btn ghost sm" onclick="toggleDashHidden(${i})" aria-label="Show ${esc(boxTitle(w.id))}">Show</button></span>` : '').join('')}</div>` : ''}
     <div class="dash-grid${dashEditing?' editing':''}">${cells}</div>`;
   watchDashMasonry();
   animateKpiCountUps();
@@ -6793,7 +6851,25 @@ function renderBudgetCategorySection(cat, accs, months, currentMonth){
     </table>
   </div>`;
 }
+let budgetGridOpen = false; // v5.1: the grid starts collapsed on every visit (not remembered)
+function toggleBudgetGrid(){ budgetGridOpen = !budgetGridOpen; renderBudgetGrid(); }
+function budgetShiftMonth(delta){ budgetMonth = shiftMonthKey(budgetMonth, delta); renderBudgetControls(); renderBudgetSummaryTable(); renderBudgetCharts(); }
+// Clicking a category name under the Budget vs Actual bars scrolls to that category in Plan vs Actual and flashes its name.
+function jumpToBudgetCategory(cat){
+  const el = [...document.querySelectorAll('#budgetSummary [data-bud-cat]')].find(e=>e.getAttribute('data-bud-cat')===cat);
+  if(!el) return;
+  if(el.scrollIntoView) el.scrollIntoView({block:'center', behavior:'smooth'});
+  flashEl(el);
+}
+// Which x-axis label (if any) a click at (x, y) on a category chart landed on.
+function chartCategoryLabelAt(chart, x, y, labels){
+  const xs = chart && chart.scales && chart.scales.x;
+  if(!xs || y < xs.top || y > xs.bottom) return null;
+  const i = Math.round(xs.getValueForPixel(x));
+  return (i>=0 && i<labels.length)? labels[i] : null;
+}
 function renderBudget(){
+  budgetGridOpen = false;
   document.getElementById('app').innerHTML = `<div id="budgetControls"></div><div id="budgetCharts"></div><div id="budgetSummary"></div><div id="budgetGrid"></div>`;
   renderBudgetControls();
   renderBudgetCharts();
@@ -6805,7 +6881,7 @@ function renderBudgetControls(){
   if(!el) return;
   el.innerHTML = `
     <div class="panel noprint row" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
-      <div><label class="fl">Month</label><input type="month" value="${budgetMonth}" style="width:180px" onchange="budgetMonth=this.value; renderBudgetSummaryTable(); renderBudgetCharts()"></div>
+      <div><label class="fl">Month</label><div class="row" style="gap:4px;flex-wrap:nowrap"><button class="btn ghost sm" onclick="budgetShiftMonth(-1)" title="Previous month" aria-label="Previous month">‹</button><input type="month" value="${budgetMonth}" style="width:180px" onchange="budgetMonth=this.value; renderBudgetSummaryTable(); renderBudgetCharts()"><button class="btn ghost sm" onclick="budgetShiftMonth(1)" title="Next month" aria-label="Next month">›</button></div></div>
       <div class="row" style="gap:6px">
         <button class="btn ghost sm" onclick="openBudgetExportChoice()">⬇ Export Grid</button>
         <button class="btn ghost sm" onclick="document.getElementById('budgetGridImportInput').click()">⬆ Import Grid</button>
@@ -6846,11 +6922,22 @@ const chartValueLabelsPlugin = {
     chart.data.datasets.forEach((ds, di)=>{
       const meta = chart.getDatasetMeta(di);
       if(meta.hidden) return;
-      meta.data.forEach((el, i)=>{ const v = Number(ds.data[i]); if(!v) return; ctx.fillText(money(v), el.x, el.y - 3); });
+      meta.data.forEach((el, i)=>{ const v = Number(ds.data[i]); if(!v) return; ctx.fillText(money0(v), el.x, el.y - 3); });
     });
     ctx.restore();
   }
 };
+// v5.1: whole numbers on every Chart.js chart: value axes and hover tooltips.
+function chartTooltipLabel(ctx){
+  const v = typeof ctx.parsed==='number'? ctx.parsed : (ctx.chart && ctx.chart.options && ctx.chart.options.indexAxis==='y'? ctx.parsed.x : ctx.parsed.y);
+  return (ctx.dataset && ctx.dataset.label? ctx.dataset.label+': ' : (ctx.label? ctx.label+': ' : '')) + money0(v);
+}
+function applyWholeNumberChartDefaults(C){
+  if(!C || !C.defaults) return;
+  C.defaults.plugins.tooltip.callbacks.label = chartTooltipLabel;
+  C.defaults.scales.linear.ticks.callback = v => money0(v);
+}
+if(typeof Chart!=='undefined') applyWholeNumberChartDefaults(Chart);
 function renderBudgetCharts(){
   const el = document.getElementById('budgetCharts');
   if(!el) return;
@@ -6886,11 +6973,11 @@ function renderBudgetCharts(){
         { label:'Budget', data: catLabels.map(c=>byCat[c].planned), backgroundColor: lineColor==='transparent'? 'rgba(150,150,150,0.3)' : mutedColor, borderRadius:4 },
         { label:'Actual', data: catLabels.map(c=>byCat[c].actual), backgroundColor: accentColor, borderRadius:4 },
       ]},
-      options: { responsive:true, maintainAspectRatio:false, onClick: (evt, elements)=>{
-          if(!elements.length) return;
+      options: { responsive:true, maintainAspectRatio:false, onClick: (evt, elements, chart)=>{
+          if(!elements.length){ const cat = chartCategoryLabelAt(chart, evt.x, evt.y, catLabels); if(cat) jumpToBudgetCategory(cat); return; }
           const cat = catLabels[elements[0].index];
           openBudgetCategoryBreakdown(cat, budgetMonth);
-        }, onHover: (evt, elements)=>{ evt.native.target.style.cursor = elements.length? 'pointer' : 'default'; },
+        }, onHover: (evt, elements, chart)=>{ evt.native.target.style.cursor = (elements.length || chartCategoryLabelAt(chart, evt.x, evt.y, catLabels))? 'pointer' : 'default'; },
         layout:{ padding:{ top:18 } },
         plugins:{ legend:{position:'top', labels:{color:mutedColor, boxWidth:12} } },
         scales:{ x:{ ticks:{color:mutedColor}, grid:{display:false} }, y:{ ticks:{color:mutedColor}, grid:{color:lineColor} } }
@@ -6951,7 +7038,7 @@ function renderBudgetSummaryTable(){
       <tbody>${rowCats.map(cat=>{
         const items = rowsByCat[cat];
         const cp = items.reduce((s,r)=>s+r.planned,0), ca = items.reduce((s,r)=>s+r.actual,0);
-        return `<tr style="background:var(--chip)"><td colspan="2" style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, monthEndDateStr(budgetMonth))}</td>
+        return `<tr style="background:var(--chip)"><td colspan="2" style="font-weight:700;color:var(--accent)"><span data-bud-cat="${esc(cat)}">${esc(cat)}</span>${accruedChipHTML(cat, monthEndDateStr(budgetMonth))}</td>
             <td class="num mono" style="font-weight:700">${money(cp)}</td><td class="num mono" style="font-weight:700">${money(ca)}</td>
             <td class="num mono ${budgetVarClass(ca-cp)}" style="font-weight:700">${money(ca-cp)}</td></tr>` +
           items.map(r=>`<tr class="click" onclick="viewBudgetAccountMonth(${r.acc})"><td class="mono" style="padding-left:18px">${r.acc}</td><td>${esc(accShort(r.acc))}</td>
@@ -6964,6 +7051,7 @@ function renderBudgetSummaryTable(){
 function renderBudgetGrid(){
   const el = document.getElementById('budgetGrid');
   if(!el) return;
+  if(!budgetGridOpen){ el.innerHTML = `<div class="panel noprint"><button class="btn ghost sm" aria-expanded="false" onclick="toggleBudgetGrid()">▸ Show budget grid</button></div>`; return; }
   beginForecastFastPath();
   try{
     const months = budgetMonthsWindow();
@@ -6975,6 +7063,7 @@ function renderBudgetGrid(){
     el.innerHTML = `
       <div class="panel noprint row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div class="row">
+          <button class="btn ghost sm" aria-expanded="true" onclick="toggleBudgetGrid()">▾ Hide budget grid</button>
           <button class="btn ghost sm" onclick="budgetShiftWindow(-1)">‹ Prev</button>
           <div class="mono" style="padding:0 10px">${esc(monthLabel(months[0]))} → ${esc(monthLabel(months[months.length-1]))}</div>
           <button class="btn ghost sm" onclick="budgetShiftWindow(1)">Next ›</button>
@@ -7224,8 +7313,8 @@ function renderPnL(){
   // since expTotal isn't final until every category has been summed above.
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
-    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
-      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
+    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
+      items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" data-pnl-key="acc:${i.a.id}" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
   // Net Result is always Income minus the magnitude of Expenses — matching standard P&L
@@ -7237,10 +7326,7 @@ function renderPnL(){
   document.getElementById('app').innerHTML = `
     <div class="panel noprint">
       <div class="row">
-        <div class="row" style="gap:2px">
-          <button class="btn ghost sm" onclick="pnlShiftMonth(-1)" title="Previous month">‹</button>
-          <button class="btn ghost sm" onclick="pnlShiftMonth(1)" title="Next month">›</button>
-        </div>
+        <button class="btn ghost sm" style="align-self:flex-end" onclick="pnlShiftMonth(-1)" title="Previous month" aria-label="Previous month">‹</button>
         <div style="width:190px"><label class="fl">Period</label>
           <select onchange="applyPnLPreset(this.value)">
             <option value="month" ${pnlPreset==='month'?'selected':''}>This month</option>
@@ -7254,6 +7340,7 @@ function renderPnL(){
         ${pnlPreset==='specific'? `<div style="width:170px"><label class="fl">Month</label><input type="month" value="${pnlSpecificMonth}" onchange="pnlSpecificMonthChange(this.value)"></div>`:''}
         ${pnlPreset==='year'? `<div style="width:140px"><label class="fl">Year</label><select onchange="pnlYearChange(this.value)">${years.map(y=>`<option value="${y}" ${y===pnlYear?'selected':''}>${y}</option>`).join('')}</select></div>`:''}
         ${pnlPreset==='custom'? `<div style="width:170px"><label class="fl">From</label><input type="date" value="${pnlFrom}" onchange="pnlFrom=this.value; renderPnL()"></div><div style="width:170px"><label class="fl">To</label><input type="date" value="${pnlTo}" onchange="pnlTo=this.value; renderPnL()"></div>`:''}
+        <button class="btn ghost sm" style="align-self:flex-end" onclick="pnlShiftMonth(1)" title="Next month" aria-label="Next month">›</button>
         <div class="mut" style="align-self:center;margin-left:auto">${esc(pnlFrom)} → ${esc(pnlTo)}</div>
       </div>
       <div class="row" style="margin-top:8px">
@@ -7289,7 +7376,12 @@ function viewPnLAccountTransactions(accId){
 }
 
 /* ============================= ACCOUNT BUDGET CHART (P&L sub-page) ============================= */
+// v5.1: coming back from the chart returns to where you were on the P&L and flashes the row you came from.
+let pnlReturn = null;
+function rememberPnLPlace(key){ pnlReturn = {y: window.scrollY||0, key: key||null}; }
+function flashEl(el){ if(!el) return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
 function openAcctBudgetChart(accId){
+  if(pnlView!=='acctchart') rememberPnLPlace(accId? 'acc:'+accId : null);
   if(accId){
     // Jumping in for a specific account (e.g. the 📊 link on a P&L expense row). Validity against
     // accountsWithBudgetFigures() is checked by renderAcctBudgetChartPage() itself, which already
@@ -7308,12 +7400,22 @@ function openAcctBudgetChart(accId){
 // duplicate the validity guard" reasoning as openAcctBudgetChart above: renderAcctBudgetChartPage()
 // re-checks acctChartSubcat against subcategoriesWithBudgetFigures() itself.
 function openAcctBudgetChartForCategory(categoryName){
+  if(pnlView!=='acctchart') rememberPnLPlace(categoryName? 'cat:'+categoryName : null);
   acctChartSubcat = categoryName || null;
   acctChartMode = 'subcategory';
   pnlView = 'acctchart';
   renderPnL();
 }
-function closeAcctBudgetChart(){ pnlView = 'main'; renderPnL(); }
+function closeAcctBudgetChart(){
+  pnlView = 'main'; renderPnL();
+  const back = pnlReturn; pnlReturn = null;
+  if(!back) return;
+  requestAnimationFrame(()=>{
+    window.scrollTo(0, back.y);
+    const mark = back.key && [...document.querySelectorAll('#app [data-pnl-key]')].find(r=>r.getAttribute('data-pnl-key')===back.key);
+    if(mark) flashEl(mark.closest('tr'));
+  });
+}
 // "Accounts with Budget figures": expense accounts (start with 6) that actually have a plan
 // somewhere — the legacy D.budget table, a Provisions line, or a Smart Rule — so the picker isn't
 // cluttered with every expense account regardless of whether it's ever been budgeted.
@@ -7914,6 +8016,41 @@ function applyProvBulkFill(gid){
   if(unbalanced.length) toast('Filled '+res.months.length+' month(s). Heads up: duplicate-account lines in "'+g.name+'" don\'t net to zero yet:\n'+unbalancedDuplicateMessage(unbalanced), true);
   else toast('Filled '+res.months.length+' month(s) ✓');
 }
+// Copies a month that nets to zero onto every later month up to the group's last planned month,
+// overwriting what is there (lines empty in the source month are cleared in the targets).
+function provLastPlannedMonth(g){
+  const valid = new Set(g.lines.map(l=>l.lineId));
+  return sortedMonthKeys(g).filter(k=>Object.entries(g.months[k]||{}).some(([lid,v])=>valid.has(Number(lid)) && v!==''&&v!==null&&v!==undefined)).pop() || null;
+}
+function provCopyMonthApply(g, mk){
+  ensureLineIds(g);
+  const src = {};
+  g.lines.forEach(l=>{ const v = provCellVal(g, mk, l.lineId); if(v!==null) src[l.lineId] = v; });
+  if(!Object.keys(src).length) return {error:'There is nothing in '+monthLabel(mk)+' to copy'};
+  const net = Object.values(src).reduce((s,v)=>s+roundCents(v),0);
+  if(Math.abs(net)>0.01) return {error:monthLabel(mk)+' doesn\'t net to zero ('+money(net)+'). Fix it before copying'};
+  const last = provLastPlannedMonth(g);
+  if(!last || last<=mk) return {error:'There are no planned months after '+monthLabel(mk)};
+  const months = [];
+  for(let k = nextMonthKeyPlain(mk); k<=last; k = nextMonthKeyPlain(k)){
+    g.months[k] = g.months[k] || {};
+    g.lines.forEach(l=>{ if(src[l.lineId]!==undefined) g.months[k][l.lineId] = src[l.lineId]; else delete g.months[k][l.lineId]; });
+    months.push(k);
+  }
+  return {months};
+}
+function provCopyMonthForward(gid, mk){
+  if(blockIfSyncing()) return;
+  const g = findProvisionGroup(gid); if(!g) return;
+  const last = provLastPlannedMonth(g);
+  if(!last || last<=mk){ toast('There are no planned months after '+monthLabel(mk), true); return; }
+  if(!confirm('Copy '+monthLabel(mk)+' to every month from '+monthLabel(nextMonthKeyPlain(mk))+' to '+monthLabel(last)+' in "'+g.name+'"? Amounts already there are replaced.')) return;
+  const res = provCopyMonthApply(g, mk);
+  if(res.error){ toast(res.error, true); return; }
+  persistProvisionGroup(g);
+  renderProvisionGroupsList();
+  toast('Copied to '+res.months.length+' month(s) \u2713');
+}
 function setProvSearch(v){ provSearch = v; renderProvisionGroupsList(); }
 function provShowMe(gid, mk){
   provisionEditingId = gid; provHighlight = mk? {gid, mk} : null;
@@ -8004,7 +8141,7 @@ function provisionGroupBodyHTML(g, curMonth){
         const hl = provHighlight && provHighlight.gid===g.id && provHighlight.mk===k;
         return `<tr id="provRow_${g.id}_${k}" class="${k===curMonth?'cur':''}${hl?' hl':''}${bad?' bad':''}"><td class="mono">${esc(monthLabel(k))}</td>${g.lines.map((l,li)=>{ const v = provCellVal(g,k,l.lineId); return `<td class="num"><input id="provCell_${g.id}_${li}_${mi}" type="text" inputmode="decimal" class="num" aria-label="${esc(accShort(l.acc))}, ${esc(monthLabel(k))}" value="${v!==null?fmt2(v):''}" placeholder="—" data-raw="${v!==null?v:''}"
           onfocus="this.value=this.dataset.raw" onblur="if(this.value!==this.dataset.raw) setProvisionCell(${g.id},'${k}',${l.lineId},this.value); else this.value=this.dataset.raw? fmt2(this.dataset.raw) : ''" onkeydown="provCellKey(event,${g.id},${li},${mi},${nL},${nM})"></td>`; }).join('')}
-          <td class="num mono">${!any? '<span class="mut">—</span>' : (bad? `<span class="r">${money(net)}</span>` : '<span class="g">✓ 0.00</span>')}</td></tr>`; }).join('') || `<tr><td colspan="${nL+2}" class="empty">No months planned from ${esc(monthLabel(curMonth))} onward. Add a month or use Bulk fill.</td></tr>`}</tbody>
+          <td class="num mono">${!any? '<span class="mut">—</span>' : (bad? `<span class="r">${money(net)}</span>` : `<span class="g">✓ 0.00</span>${mi<nM-1? ` <button class="btn ghost sm noprint" onclick="provCopyMonthForward(${g.id},'${k}')" title="Copy this month's amounts to every later month up to the last planned month">Copy ↓</button>` : ''}`)}</td></tr>`; }).join('') || `<tr><td colspan="${nL+2}" class="empty">No months planned from ${esc(monthLabel(curMonth))} onward. Add a month or use Bulk fill.</td></tr>`}</tbody>
     </table></div>` : ''}
     <div class="row noprint" style="margin-top:12px;gap:8px">
       <div class="autoc" style="position:relative;width:260px">
@@ -13015,7 +13152,6 @@ function renderJamiahUntagged(j){
   const lines = D.ledger.filter(l=>l.acc===j.account && ACC_BY_ID[l.acc]?.is_allocatable && !l.alloc).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const paidByPartRound = jamiahPaidByPartRound(j);
   const taggedCount = lines.filter(l=>jamiahTaggedLineIds().has(l.id)).length;
-  const toTag = lines.filter(l=>!jamiahTaggedLineIds().has(l.id));
   const thisMonthKey = todayStr().slice(0,7);
   const monthLines = lines.filter(l=>monthOf(l.date)===thisMonthKey);
   const monthNet = monthLines.reduce((s,l)=>s+Number(l.amt),0);
@@ -13023,9 +13159,9 @@ function renderJamiahUntagged(j){
     <h3>Transactions to Tag <span class="mut" style="font-size:12px;font-weight:400">(${lines.length} unallocated in ${esc(accShort(j.account))} — ${taggedCount} tagged, ${lines.length-taggedCount} left)</span></h3>
     <div class="mut" id="jamiahMonthTotal" style="font-size:12.5px;margin-bottom:8px">This month (${esc(monthLabel(thisMonthKey))}): <b class="mono ${moneyClass(monthNet)}">${money(monthNet)}</b> net across ${monthLines.length} unallocated transaction${monthLines.length===1?'':'s'}</div>
     ${notFlagged? `<div class="mut" style="font-size:12px;margin-bottom:8px;color:var(--red)">This account isn't flagged Allocatable, so nothing will ever show up here — flag it in Accounts → edit.</div>` : ''}
-    <div class="mut" style="font-size:11.5px;margin-bottom:8px">Tagged transactions leave this list. To fix a mis-tag, click the tick in the summary and choose Untag. Once someone has fully paid a round, they drop out of the dropdown for other transactions in that same round.</div>
+    <div class="mut" style="font-size:11.5px;margin-bottom:8px">Tagged transactions show a ✓ with the person. Change the person or Untag here, or click the tick in the summary. Once someone has fully paid a round, they drop out of the dropdown for other transactions in that same round.</div>
     <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th><th style="width:220px">Tag to</th></tr></thead>
-    <tbody>${toTag.map(l=>{
+    <tbody>${lines.map(l=>{
       const currentTag = j.tags[l.id]||null;
       const m = monthOf(l.date);
       const opts = j.participants.filter(p=>{
@@ -13033,8 +13169,9 @@ function renderJamiahUntagged(j){
         const paidSoFar = paidByPartRound[p.id+'_'+m]||0;
         return paidSoFar < Number(p.pledgeAmount||0) - 0.005;
       }).map(p=>`<option value="${p.id}" ${p.id===currentTag?'selected':''}>${esc(p.name)}</option>`).join('');
-      return `<tr${currentTag?' style="background:var(--chip)"':''}>
-      <td class="mono">${esc(l.date)}</td><td class="mono click" onclick="viewJV(${l.jv})">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td>
+      const who = currentTag? (j.participants.find(p=>p.id===currentTag)||{}).name : '';
+      return `<tr${currentTag?' class="jam-tagged" style="background:var(--chip)"':''}>
+      <td class="mono">${esc(l.date)}</td><td class="mono click" onclick="viewJV(${l.jv})">#${l.jv}</td><td>${esc(l.descr)}${currentTag? ` <span class="badge pos">✓ ${esc(who||'tagged')}</span>` : ''}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td>
       <td><select onchange="tagJamiahTransaction(${j.id},${l.id},Number(this.value)||null)"><option value="">${currentTag?'— untag —':'— pick participant —'}</option>${opts}</select></td>
     </tr>`;
     }).join('') || '<tr><td colspan="5" class="empty">Nothing to tag right now</td></tr>'}</tbody></table>
@@ -13042,6 +13179,12 @@ function renderJamiahUntagged(j){
 }
 // v5.0: a tick only exists through a tagged transaction. Tags across every Jamiah count, so a
 // transaction tagged anywhere drops out of every list.
+// The round month(s) a group receives the pot, full month name (v5.1), e.g. "November 2026".
+function jamiahGroupMonthsText(j, groupId, ar){
+  if(!groupId) return '';
+  const fullEn = ym => { const [y,m] = ym.split('-').map(Number); return ['January','February','March','April','May','June','July','August','September','October','November','December'][m-1]+' '+y; };
+  return Object.keys(j.roundGroup||{}).filter(m=>j.roundGroup[m]===groupId).sort().map(m=> ar? monthLabelAr(m) : fullEn(m)).join(', ');
+}
 function jamiahTaggedLineIds(){ const s = new Set(); D.jamiahs.forEach(x=>Object.keys(x.tags||{}).forEach(k=>s.add(Number(k)))); return s; }
 function jamiahUntaggedLines(j){
   const tagged = jamiahTaggedLineIds();
@@ -13365,7 +13508,7 @@ function renderJamiahSummary(j){
         const nameColor = isCurrentMonthInRange? (curOk? 'color:var(--green)' : 'color:var(--red)') : '';
         return `<tr ${isCurrentGroup?'style="background:var(--chip)"':''}>
         <td style="${nameColor};font-weight:${isCurrentMonthInRange?'600':'400'}">${esc(p.name)}</td>
-        <td class="mut">${esc(groupsById[p.groupId]?.name||t.none)}</td>
+        <td class="mut">${esc(groupsById[p.groupId]?.name||t.none)}${jamiahGroupMonthsText(j, p.groupId, ar)? ' · '+esc(jamiahGroupMonthsText(j, p.groupId, ar)) : ''}</td>
         <td class="num mono">${money(pledge)}</td>
         ${rounds.map(m=>{
           const paidR = paidByPartRound[p.id+'_'+m]||0;
@@ -13627,7 +13770,7 @@ function renderForecastSnapshotTrendChart(targetMonth){
     <div class="mut" style="font-size:11.5px;margin-bottom:6px">How the projected Closing Balance for ${esc(monthLabel(targetMonth))} has moved across every snapshot that captured it:</div>
     <svg viewBox="0 0 ${w} ${h}" style="width:100%;max-width:${w}px;height:auto">
       <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2"/>
-      ${series.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p.value)}" r="3.5" fill="var(--accent)"><title>${esc(p.label)}: ${money(p.value)}</title></circle>`).join('')}
+      ${series.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p.value)}" r="3.5" fill="var(--accent)"><title>${esc(p.label)}: ${money0(p.value)}</title></circle>`).join('')}
       ${series.map((p,i)=>`<text x="${x(i)}" y="${y(p.value)-8}" font-size="10" font-weight="600" text-anchor="middle" fill="var(--fg,#333)">${money0(p.value)}</text>`).join('')}
       ${series.map((p,i)=>`<text x="${x(i)}" y="${h-10}" font-size="9" text-anchor="middle" fill="var(--muted)">${esc(p.label.slice(5))}</text>`).join('')}
     </svg>
@@ -13721,10 +13864,39 @@ function forecastClosingChartHTML(rows){
   const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals), range = (hi-lo)||1;
   const low = vals.indexOf(Math.min(...vals));
   const H = 160, zeroY = hi/range*H;
-  return `<div class="panel"><div class="dash-head"><h2>Closing balance</h2><span class="mut" style="font-size:12px">Lowest: <b class="mono ${moneyClass(vals[low])}">${money(vals[low])}</b> in ${esc(monthLabel(rows[low].month))}</span></div>
-    <div class="fc-chart" role="img" aria-label="Closing balance by month; lowest ${money(vals[low])} in ${esc(monthLabel(rows[low].month))}" style="--fc-h:${H}px">${rows.map((r,i)=>{ const v = vals[i]; const h = Math.max(1, Math.abs(v)/range*H); const top = v>=0? zeroY-h : zeroY;
-      // Whole units on the bars, like the table below; the exact amount is in the tooltip.
-      return `<div class="fc-col${i===low?' low':''}" title="${esc(monthLabel(r.month))}: ${money(v)}"><div class="fc-plot"><span class="fc-val mono ${v<0?'r':''}" style="top:${(v>=0? top : top+h+16).toFixed(1)}px">${Math.round(v).toLocaleString()}</span><div class="fc-bar grow-y${v<0?' neg':''}" style="top:${(top+16).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${i*40}ms"></div></div><div class="fc-m">${esc(monthLabel(r.month))}${i===low?'<div class="fc-low">lowest</div>':''}</div></div>`; }).join('')}</div></div>`;
+  const notes = getForecastNotes(), noted = rows.map(r=>r.month).filter(m=>notes[m]);
+  return `<div class="panel"><div class="dash-head"><h2>Closing balance</h2><span class="mut" style="font-size:12px">Lowest: <b class="mono ${moneyClass(vals[low])}">${money0(vals[low])}</b> in ${esc(monthLabel(rows[low].month))}</span></div>
+    <div class="mut" style="font-size:12px;margin:-6px 0 8px">Click a month's bar to add a note explaining it.</div>
+    <div class="fc-chart" role="group" aria-label="Closing balance by month; lowest ${money0(vals[low])} in ${esc(monthLabel(rows[low].month))}" style="--fc-h:${H}px">${rows.map((r,i)=>{ const v = vals[i]; const h = Math.max(1, Math.abs(v)/range*H); const top = v>=0? zeroY-h : zeroY;
+      const note = notes[r.month]; const tier = note? (noted.indexOf(r.month)%2) : 0;
+      // Whole numbers everywhere on the chart (v5.1), like the table below.
+      return `<button type="button" class="fc-col${i===low?' low':''}${note?' has-note':''}" title="${esc(monthLabel(r.month))}: ${money0(v)}${note? ' \u2014 '+esc(note) : ''}" aria-label="${esc(monthLabel(r.month))}: ${money0(v)}. ${note? 'Note: '+esc(note)+'. Click to edit the note.' : 'Click to add a note.'}" onclick="openForecastNote('${r.month}')">
+        ${noted.length? `<div class="fc-lane">${note? `<span class="fc-note t${tier}">${esc(note)}</span><span class="fc-stem t${tier}" aria-hidden="true"></span>` : ''}</div>` : ''}<div class="fc-plot"><span class="fc-val mono ${v<0?'r':''}" style="top:${(v>=0? top : top+h+16).toFixed(1)}px">${Math.round(v).toLocaleString()}</span><div class="fc-bar grow-y${v<0?' neg':''}" style="top:${(top+16).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${i*40}ms"></div></div><div class="fc-m">${esc(monthLabel(r.month))}${i===low?'<div class="fc-low">lowest</div>':''}</div></button>`; }).join('')}</div></div>`;
+}
+// v5.1 call-outs: one note per month, synced in pd_ui_prefs.forecast_notes = {'YYYY-MM': 'text'}.
+function getForecastNotes(){ const n = (D.uiPrefs||{}).forecastNotes; return (n && typeof n==='object' && !Array.isArray(n))? n : {}; }
+async function setForecastNote(mk, text){
+  if(!/^\d{4}-\d{2}$/.test(mk||'')) return;
+  const notes = Object.assign({}, getForecastNotes());
+  const clean = String(text||'').trim().slice(0, 200);
+  if(clean) notes[mk] = clean; else delete notes[mk];
+  D.uiPrefs = D.uiPrefs || {};
+  const base = D.uiPrefs.updated_at||null;
+  D.uiPrefs.forecastNotes = notes;
+  D.uiPrefs.updated_at = nowISO();
+  persistLocal();
+  await syncWrite('pd_ui_prefs','upsert',{id:1, forecast_notes:notes}, base);
+}
+function openForecastNote(mk){
+  const cur = getForecastNotes()[mk]||'';
+  showModal(`<h3>Note for ${esc(monthLabel(mk))}</h3>
+    <div class="mut" style="font-size:12px;margin-bottom:8px">Shown as a call-out on this month's bar, on every device.</div>
+    <textarea id="fcNoteInput" rows="3" maxlength="200" placeholder="e.g. School fees for the year">${esc(cur)}</textarea>
+    <div class="row" style="margin-top:14px;justify-content:space-between">
+      ${cur? `<button class="btn del" onclick="setForecastNote('${mk}',''); closeModal(); renderForecastBody()">Delete note</button>` : '<span></span>'}
+      <span class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn pri" onclick="setForecastNote('${mk}', document.getElementById('fcNoteInput').value); closeModal(); renderForecastBody()">Save</button></span>
+    </div>`);
+  const t = document.getElementById('fcNoteInput'); if(t) t.focus();
 }
 function forecastShiftWindow(delta){
   const candidate = delta>0? nextMonthKeyPlain(forecastWindowStart) : prevMonthKey(forecastWindowStart);
@@ -15059,7 +15231,7 @@ async function restoreFromBackup(parsed){
   if((D.invValuations||[]).length) await insertWithRetry('pd_inv_valuations', D.invValuations.map(v=>({id:v.id, position_id:v.positionId, entry_date:v.date, price:v.price})));
   if((D.invCashMovements||[]).length) await insertWithRetry('pd_inv_cash_movements', D.invCashMovements.map(m=>({id:m.id, platform_id:m.platformId, entry_date:m.date, kind:m.kind, usd_amount:Number(m.usdAmount)||0, to_platform_id:m.toPlatformId||null, fee_usd:Number(m.feeUsd)||0, capital_usd:Number(m.capitalUsd)||0, profit_usd:Number(m.profitUsd)||0, owners:m.owners||[], note:m.note||''})));
   if(D.invSettings && D.invSettings.fxUsdSar) await insertWithRetry('pd_inv_settings', [{id:1, fx_usd_sar:D.invSettings.fxUsdSar, mgmt_fee_pct:getInvMgmtFeePct(), recon_start_date:(D.invSettings||{}).reconStartDate||null}]);
-  if(D.uiPrefs && (D.uiPrefs.pageOrder || D.uiPrefs.balanceStaleDays || D.uiPrefs.dashboardLayout || D.uiPrefs.positionBoxes)) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder||null, balance_stale_days:getBalanceStaleDays(), dashboard_layout:D.uiPrefs.dashboardLayout||null, position_boxes:D.uiPrefs.positionBoxes||null}]);
+  if(D.uiPrefs && (D.uiPrefs.pageOrder || D.uiPrefs.balanceStaleDays || D.uiPrefs.dashboardLayout || D.uiPrefs.positionBoxes || Object.keys(D.uiPrefs.dismissals||{}).length || Object.keys(D.uiPrefs.forecastNotes||{}).length)) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder||null, balance_stale_days:getBalanceStaleDays(), dashboard_layout:D.uiPrefs.dashboardLayout||null, position_boxes:D.uiPrefs.positionBoxes||null, dismissals:D.uiPrefs.dismissals||{}, forecast_notes:D.uiPrefs.forecastNotes||{}}]);
   if((D.forecastSnapshots||[]).length) await insertWithRetry('pd_forecast_snapshots', D.forecastSnapshots.map(s=>({id:s.id, anchor_month:s.anchorMonth, taken_at:s.takenAt, kind:s.kind||'auto', months:s.months||[], sign_flips:s.signFlips||{}})));
   if((D.invRoboValueLog||[]).length) await insertWithRetry('pd_inv_robo_value_log', D.invRoboValueLog.map(r=>({id:r.id, platform_id:r.platformId, entry_date:r.date, value:Number(r.value)||0})));
   bump('Restoring Investments');

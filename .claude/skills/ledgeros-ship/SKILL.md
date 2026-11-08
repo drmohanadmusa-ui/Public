@@ -56,7 +56,7 @@ Only ship work Muhannad has agreed to. If a step fails, stop, say exactly what f
 
 - Commit message: `LedgerOS vX.Y.Z: <one-line summary>`.
 - Run `git fetch origin main`, then `git rebase origin/main`, then run `bash dev/ledgeros/run_tests.sh` once more after the rebase. Then push the session branch.
-- Ask Muhannad to **Create PR → Merge**. If he asked for a direct push to `main` and the session allows it, push `HEAD:main` instead.
+- Open a PR from the session branch to `main` and **merge it yourself** with the GitHub tools (standing permission from Muhannad, see `CLAUDE.md` section 4). Don't ask him to merge.
 
 ## 8. After the merge
 

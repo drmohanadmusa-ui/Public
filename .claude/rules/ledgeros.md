@@ -73,7 +73,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 ## 3. Tests
 
 - **Run:** `bash dev/ledgeros/run_tests.sh`. It extracts the app's JS to `dev/ledgeros/.build/`, installs `jsdom` and `fake-indexeddb` on first run, prints any `FAIL` lines, then `N passed, 0 failed`.
-  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0.
+  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0.
   - Console noise about `QuotaExceededError` or "Not implemented: scrollTo" is expected.
 - **Harness basics:**
   - `makeSandbox()` gives a fresh app context in a vm.
@@ -125,3 +125,4 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 | 4.62 | Platform-perspective wording: "Invested into platform" / "Withdrawn from platform" |
 | 4.63 | Move coins between platforms (multi-asset, sent vs received, fee per owner, full cost carried) |
 | 5.0 | Command Center redesign: rail + top bar, accent-driven theme, editable Dashboard boxes and position boxes (`pd_ui_prefs.dashboard_layout` / `position_boxes`), reworked Provisions, Jamiah, Allocations lookup, Forecast horizon + chart |
+| 5.1 | Feedback batch (see `dev/ledgeros/FEEDBACK.md`): masonry Dashboard, Hide boxes, synced dismissals (`pd_ui_prefs.dismissals`), whole numbers on charts and Dashboard boxes, Budget arrows/collapsed grid/jump, P&L return, Provisions copy forward, Jamiah ticks in list + group month, Forecast call-outs (`pd_ui_prefs.forecast_notes`) |
