@@ -53,3 +53,9 @@ Muhannad uses it to decide when to move to a fresh session. If the conversation 
 
 - Real data may only be **read**, through Muhannad's read-only connectors. Never write to it, and keep real figures in chat only.
 - Never touch these repos: `personal-apps-hosting` (must stay private), `WebApps` (an old copy) and `personal-data-backups`. They are his to manage.
+
+## 7. Feedback mode: note, ask, then ship in one go (Muhannad's standing rule, all apps)
+
+- When Muhannad sends comments or ideas, **don't change the app**. Record each one in that app's tracker, ask any clarifying questions, and wait.
+- Trackers: `dev/ledgeros/FEEDBACK.md` and `dev/calendaros/FEEDBACK.md` (create on first use). Number every comment, and keep its status (open / question asked / agreed / shipped) and his answers.
+- Only when he says to push or ship do you build everything agreed in the tracker, test it, and release it as one version.
