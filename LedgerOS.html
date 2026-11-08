@@ -550,7 +550,6 @@ const APP_VERSION = '5.1.0';
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
   {version:'5.1.0', date:'2026-11-08', changes:[
-    'Dashboard: boxes stack up into any free space, so a box sits straight under a shorter box above it (e.g. Things that need you under the Forecast snapshot).',
     'Dashboard: in Edit layout every box has Hide, including your position boxes. Hidden boxes are listed at the top of Edit layout with Show. Saved to your account.',
     'Dashboard: Dismiss on over-budget items hides that category for the rest of the month (it comes back if it goes further over, and next month). Dismissals, including drift alerts, now sync across your devices. Drift dismissals started fresh.',
     'Dashboard: position boxes no longer have bars. An opened line lists its accounts in shaded bands, and the row under your mouse is highlighted.',
@@ -561,6 +560,9 @@ const CHANGELOG = [
     'Jamiah: tagged transactions are back in Transactions to Tag, marked \u2713 with the person; change or untag them right there. The summary shows the month each group receives next to its number (e.g. 5 \u00b7 November 2026).',
     'Forecast: click a month\u2019s bar on the Closing balance chart to add a note. It shows as a call-out on that bar, on every device.',
     'DATABASE: two new columns on pd_ui_prefs (dismissals, forecast_notes). Run the SQL from Settings \u2192 Database Schema once. No new tables.',
+  ]},
+  {version:'5.0.1', date:'2026-11-08', changes:[
+    'Dashboard: boxes now stack up into any free space. A box goes straight under a shorter box above it instead of waiting below the tallest box in that row (for example, Things that need you can now sit right under the Forecast snapshot).',
   ]},
   {version:'5.0.0', date:'2026-11-08', changes:[
     'NEW LOOK: a slim side rail and a top bar with search (Ctrl+K), sync status, a Light / Dark switch and + New JV. The whole app now follows your accent colour. Geist is the new default font (the old fonts are still in Settings).',

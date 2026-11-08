@@ -22,4 +22,4 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
 
 ## Release notes
-- v5.0.1 (Dashboard boxes stack into free space) was folded into v5.1.0.
+- v5.0.1 (Dashboard boxes stack into free space) went live on its own when Muhannad merged it.
