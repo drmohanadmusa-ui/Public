@@ -8008,6 +8008,10 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testPnLArrowsSitEachSideOfTheMonth();
   await testPnLBackFromChartReturnsToTheSamePlace();
   await testSchemaAddsDismissalsAndForecastNotes();
+  await testPositionSubtotalAddsUpChosenRows();
+  await testPositionSubtotalEditorAndValidation();
+  await testUpdatePlanGoesToTheExactPlace();
+  await testAuroraAndGlassStyle();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8709,7 +8713,8 @@ async function testPosBoxPeekIsBandedAndHasNoBars(){
   sb.renderDashboard();
   const html = sb.document.getElementById('app').innerHTML, src = fs.readFileSync(APP_HTML, 'utf8');
   assert(!/posbox-track|posbox-bar/.test(html) && !/\.posbox-track\{/.test(src), 'Position boxes have no bars any more (#4)');
-  assert(/\.posbox-peek div:nth-child\(odd\)\{background:var\(--panel2\)\}/.test(src) && /\.posbox-peek div:hover\{background:var\(--accent-soft\)/.test(src), 'Opened lines are banded and highlight on hover (#1)');
+  // v5.2 (#15): no bands, only the hover highlight.
+  assert(!/\.posbox-peek div:nth-child/.test(src) && /\.posbox-peek div:hover\{background:var\(--accent-soft\)/.test(src), 'Opened lines highlight on hover, without bands (#15)');
   sb.togglePosBoxRow('ste', 0);
   const peek = sb.document.querySelector('[data-widget="box:ste"] .posbox-peek');
   assert(peek && peek.querySelectorAll(':scope > div').length===2, 'The opened line lists its accounts as rows');
@@ -8895,4 +8900,97 @@ async function testSchemaAddsDismissalsAndForecastNotes(){
   const src = fs.readFileSync(APP_JS, 'utf8');
   assert(/dismissals: \(u\.dismissals/.test(src) && /forecastNotes: \(u\.forecast_notes/.test(src), 'Cloud load reads both');
   assert(/dismissals:D\.uiPrefs\.dismissals\|\|\{\}, forecast_notes:D\.uiPrefs\.forecastNotes\|\|\{\}/.test(src), 'Restore writes both back');
+}
+
+// ---- v5.2 ----
+async function testPositionSubtotalAddsUpChosenRows(){
+  const sb = dashSandbox();
+  // His example: This month liabilities = Short Term Liabilities + Accruals; the total = Liquid Cash + This month liabilities.
+  const box = {id:'c', title:'Cash Bank Account', rows:[
+    {rid:'b', type:'line', label:'Bank Accounts', sign:1, accs:'10101, 10102'},
+    {rid:'s', type:'line', label:'Savings', sign:-1, accs:'10102'},
+    {rid:'r', type:'line', label:'Short Term Receivables', sign:1, accs:'11201'},
+    {rid:'lc', type:'subtotal', label:'Liquid Cash'},
+    {rid:'l', type:'line', label:'Short Term Liabilities', sign:1, accs:'21511'},
+    {rid:'a', type:'line', label:'Accruals', sign:1, accs:'22901'},
+    {rid:'tm', type:'subtotal', label:'This month liabilities', calc:'sum', sum:[{rid:'l', sign:1}, {rid:'a', sign:1}]},
+    {rid:'t', type:'total', label:'Liquid Cash After Liabilities', calc:'sum', sum:[{rid:'lc', sign:1}, {rid:'tm', sign:1}]}]};
+  const c = sb.computePositionBox(box);
+  const v = l => (c.rows.find(r=>r.label===l)||{}).value;
+  assert(Math.abs(v('Liquid Cash') - (48250.5+6500)) < 0.005, 'The running subtotal is unchanged');
+  assert(Math.abs(v('This month liabilities') - (-8900-4150.25)) < 0.005, 'A subtotal can add up chosen rows (Short Term Liabilities + Accruals)');
+  assert(Math.abs(v('Liquid Cash After Liabilities') - (48250.5+6500-8900-4150.25)) < 0.005 && Math.abs(c.final - v('Liquid Cash After Liabilities')) < 0.005, 'The total can add up subtotals (Liquid Cash + This month liabilities)');
+  box.rows[7].sum[1].sign = -1;
+  assert(Math.abs(sb.computePositionBox(box).final - (54750.5+13050.25)) < 0.005, 'A chosen row can also be subtracted');
+  const presets = sb.getPositionBoxes().map(b=>sb.computePositionBox(b).final);
+  assert(presets.length===3 && presets.every(Number.isFinite), 'Boxes without the option still compute as before');
+}
+async function testPositionSubtotalEditorAndValidation(){
+  const sb = dashSandbox();
+  sb.openPosBoxEditor('cash');
+  const d = () => vm.runInContext('posBoxEdit', sb).draft;
+  assert(d().rows.every(r=>typeof r.rid==='string' && r.rid), 'Every row gets a stable id when editing');
+  const total = d().rows.length-1;
+  sb.posBoxEditSet(total, 'calc', 'sum');
+  let el = sb.document.querySelector('.posbox-sum');
+  assert(el && el.querySelectorAll('button').length===total, 'Add up chosen rows lists every row above it');
+  await sb.savePosBoxEdit();
+  assert(!sb.__prefs(), 'Saving with no rows chosen is refused');
+  const lc = d().rows.find(r=>r.label==='Liquid Cash').rid, acc = d().rows.find(r=>r.label==='Accruals').rid;
+  sb.posBoxEditSumCycle(total, lc);
+  sb.posBoxEditSumCycle(total, acc); sb.posBoxEditSumCycle(total, acc);
+  assert(JSON.stringify(d().rows[total].sum.map(x=>x.sign))==='[1,-1]', 'Clicking cycles: add, then subtract');
+  sb.posBoxEditSumCycle(total, acc);
+  assert(d().rows[total].sum.length===1, 'A third click leaves it out');
+  sb.posBoxEditSumCycle(total, acc);
+  sb.posBoxEditRemove(d().rows.findIndex(r=>r.rid===acc));
+  assert(d().rows[d().rows.length-1].sum.every(x=>x.rid!==acc), 'Removing a row drops it from the sums');
+  const sub = d().rows.findIndex(r=>r.label==='Liquid Cash');
+  sb.posBoxEditSet(sub, 'calc', 'sum'); sb.posBoxEditSumCycle(sub, d().rows[0].rid);
+  sb.posBoxEditMove(1);
+  sb.posBoxEditMove(sub); sb.posBoxEditMove(sub-1); sb.posBoxEditMove(sub-2);
+  const err = sb.validatePositionBox(d());
+  assert(/can only add up rows above it/.test(err), 'A subtotal moved above a row it uses is refused, got '+err);
+  sb.posBoxEditCancel();
+  sb.openPosBoxEditor('cash');
+  const t = d().rows.length-1;
+  sb.posBoxEditSet(t, 'calc', 'sum');
+  sb.posBoxEditSumCycle(t, d().rows.find(r=>r.label==='Liquid Cash').rid);
+  sb.posBoxEditSumCycle(t, d().rows.find(r=>r.label==='Accruals').rid);
+  await sb.savePosBoxEdit();
+  const c = sb.__prefs();
+  const saved = c && c.row.position_boxes.find(b=>b.id==='cash');
+  assert(saved && saved.rows[saved.rows.length-1].calc==='sum' && saved.rows[saved.rows.length-1].sum.length===2, 'The calculation is saved with the box');
+  sb.posBoxEditCancel();
+}
+async function testUpdatePlanGoesToTheExactPlace(){
+  const sb = provSandbox();
+  sb.__set('computeDriftFlags', ()=>[{key:'provision:1:2', kind:'provision', groupId:1, groupName:'Car service', lineId:2, acc:23102, avgPlan:-500, avgActual:0},
+    {key:'smartrule:7', kind:'smartrule', ruleId:7, ruleName:'Fuel', acc:60101, avgPlan:900, avgActual:1150}]);
+  const items = sb.dashboardTodoItems().filter(i=>i.drift);
+  assert(items[0] && items[0].onclick==='goToProvisionLine(1,2)' && items[1] && items[1].onclick==='goToSmartRule(7)', 'Update plan points at the exact provision line or smart rule');
+  sb.goToProvisionLine(1, 2);
+  await new Promise(r=>setTimeout(r, 20));
+  assert(vm.runInContext('screen', sb)==='provisions' && sb.document.getElementById('provGroup_1') && /open/.test(sb.document.getElementById('provGroup_1').className), 'Opens the group');
+  const row = sb.document.getElementById('provRow_1_2026-11');
+  assert(row && row.classList.contains('hl'), 'Lands on this month\'s row');
+  const card = sb.document.getElementById('provCard_1_2');
+  assert(card && card.classList.contains('flash'), 'Flashes the line');
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_1_0', 'Puts the cursor in this month\'s amount for that line');
+  let opened = null;
+  vm.runInContext('D', sb).forecastAccountRules = [{id:7, name:'Fuel', account:60101, rule:{type:'fixed', value:900}}];
+  sb.__set('openForecastAccountRuleModal', (id)=>{ opened = id; });
+  sb.goToSmartRule(7);
+  assert(vm.runInContext('screen', sb)==='settings' && vm.runInContext('settingsTab', sb)==='smartrules' && opened===7, 'Smart rule: Settings > Smart Rules with the rule open for editing');
+}
+async function testAuroraAndGlassStyle(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\[\['plain','Plain'\],\['tinted','Tinted'\],\['aurora','Aurora & glass'\]\]/.test(html), 'The background option is called Aurora & glass');
+  const block = (html.match(/@media\(min-width:761px\)\{\s*body\.bg-aurora \.aurora[\s\S]*?\n\}/)||[''])[0];
+  assert(/body\.bg-aurora #sidebar\{position:fixed[^}]*border-radius:26px[^}]*backdrop-filter:blur\(28px\)/.test(block), 'Aurora & glass: floating rounded frosted rail');
+  assert(/body\.bg-aurora #topbar\{[^}]*border-radius:22px[^}]*backdrop-filter:blur\(24px\)/.test(block), 'And a floating rounded frosted top bar');
+  assert(/\[data-theme="dark"\] body\.bg-aurora #sidebar/.test(block), 'With a dark-mode version');
+  const sb = shellSandbox();
+  sb.setUiBackground('aurora');
+  assert(sb.document.body.classList.contains('bg-aurora'), 'Choosing it in Settings turns the glass on');
 }
