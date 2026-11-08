@@ -17,6 +17,8 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 | 10 | 2026-11-08 | Budget page: arrows on the month selector; hide the budget grid at the bottom behind an expand/collapse toggle. | shipped 5.1.0 | Arrows on both sides of the month box (Budget, and move P&L's to both sides too). Budget grid starts collapsed every visit; not remembered. |
 | 11 | 2026-11-08 | Budget vs Actual by Category chart: click a category name to scroll down to that category's budget and its accounts. | shipped 5.1.0 | Only the category name under the bars jumps (bars keep opening the transactions). Flash the category name where it lands. |
 | 12 | 2026-11-08 | P&L: after opening the chart (📊) and going back, return to the same place he left. | shipped 5.1.0 | Back from the chart returns to the same scroll position and flashes the row clicked, for account rows and category subtotal rows. |
+| 13 | 2026-11-08 | "Update plan" on a drift alert only opens the Provisions page; it should take him to the exact place to update. | question asked | See Message #13. |
+| 14 | 2026-11-08 | Glass effect for the left side rail, like the latest iOS. Mock it up first. | mock-up shown | Screenshots from a throwaway copy with invented data (Message #13). Waiting for his pick. |
 
 ## Schema changes
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
