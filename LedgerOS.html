@@ -404,10 +404,11 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .chev{display:inline-block;transition:transform .2s;font-weight:700} .chev.open{transform:rotate(90deg)}
 .posbox-peek{grid-column:1/-1;display:flex;flex-direction:column;gap:0;padding:4px 0 2px 12px}
 .posbox-peek div{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:4px 8px;border-radius:6px}
-.posbox-peek div:nth-child(odd){background:var(--panel2)}
 .posbox-peek div:hover{background:var(--accent-soft);color:var(--text)}
 .posbox-edrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;margin-bottom:6px;border-radius:10px;border:1px solid var(--line);background:var(--panel)}
 .posbox-edrow.tot{background:var(--panel2)}
+.posbox-sum{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px}
+.chipbtn.on{background:var(--accent-soft);border-color:var(--accent);font-weight:600}
 .posbox-edrow select{width:auto}
 .posbox-edrow .sign{min-width:32px;font-weight:700} .posbox-edrow .sign.neg{color:var(--red)}
 .legend{display:flex;gap:12px;font-size:12px;color:var(--muted)} .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
@@ -471,6 +472,30 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
 @keyframes flashName{0%,100%{background:transparent}20%,60%{background:color-mix(in srgb,var(--accent) 35%,transparent)}}
 .flash,.flash td{animation:flashName 1.6s ease 2}
 @media(max-width:900px){.dash-cell{grid-column:1/-1!important}.dash-resize{display:none}}
+/* ---- v5.2 Aurora & glass: floating frosted rail and top bar (desktop) ---- */
+@media(min-width:761px){
+  body.bg-aurora .aurora{position:fixed;height:100vh;-webkit-mask-image:none;mask-image:none;z-index:0}
+  body.bg-aurora #sidebar{position:fixed;top:12px;left:12px;bottom:12px;height:auto;width:84px;border-radius:26px;overflow:hidden;
+    background:color-mix(in srgb,var(--panel) 38%,transparent);-webkit-backdrop-filter:blur(28px) saturate(180%);backdrop-filter:blur(28px) saturate(180%);
+    border:1px solid color-mix(in srgb,#fff 55%,transparent);box-shadow:0 20px 50px -18px rgba(15,20,40,.35),inset 0 1px 0 rgba(255,255,255,.75),inset 0 -1px 0 rgba(255,255,255,.15)}
+  body.bg-aurora #sidebar::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:linear-gradient(160deg,rgba(255,255,255,.55) 0%,rgba(255,255,255,.08) 38%,rgba(255,255,255,0) 60%,rgba(255,255,255,.18) 100%)}
+  body.bg-aurora #sidebar>*{position:relative}
+  body.bg-aurora nav button{color:var(--text);opacity:.8}
+  body.bg-aurora nav button:hover{background:color-mix(in srgb,#fff 35%,transparent);color:var(--text);opacity:1}
+  body.bg-aurora nav button.on{background:color-mix(in srgb,#fff 70%,transparent);color:var(--accent-text);opacity:1;box-shadow:0 4px 14px -4px rgba(15,20,40,.25),inset 0 1px 0 rgba(255,255,255,.9)}
+  body.bg-aurora #sidebar .brand .mark{background:var(--accent);color:var(--on-accent)}
+  body.bg-aurora #sidebar .brand .mut,body.bg-aurora .sidebar-footer a{color:var(--muted)!important}
+  body.bg-aurora .sidebar-footer{border-top-color:color-mix(in srgb,var(--text) 10%,transparent)}
+  body.bg-aurora .sidebar-footer .themeBtn{background:transparent;color:var(--text);border-color:color-mix(in srgb,var(--text) 15%,transparent)}
+  body.bg-aurora .main-col{margin-left:108px;z-index:1}
+  body.bg-aurora #topbar{top:12px;margin:12px 16px 0 0;border-radius:22px;border:1px solid color-mix(in srgb,#fff 55%,transparent);
+    background:color-mix(in srgb,var(--panel) 45%,transparent);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);
+    box-shadow:0 14px 40px -20px rgba(15,20,40,.3),inset 0 1px 0 rgba(255,255,255,.7)}
+  [data-theme="dark"] body.bg-aurora #sidebar,[data-theme="dark"] body.bg-aurora #topbar{background:color-mix(in srgb,var(--panel) 30%,transparent);border-color:color-mix(in srgb,#fff 18%,transparent);box-shadow:0 20px 50px -18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.22)}
+  [data-theme="dark"] body.bg-aurora #sidebar::before{background:linear-gradient(160deg,rgba(255,255,255,.18) 0%,rgba(255,255,255,0) 45%)}
+  [data-theme="dark"] body.bg-aurora nav button.on{background:color-mix(in srgb,#fff 16%,transparent);color:#fff}
+}
 body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 @media(max-width:760px){
@@ -543,12 +568,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.1.0';
+const APP_VERSION = '5.2.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.2.0', date:'2026-11-08', changes:[
+    'Position boxes: a subtotal or total can now either show the running total so far, or add up rows you choose above it, each with + or \u2212. Example: a subtotal "This month liabilities" = Short Term Liabilities + Accruals, then "Liquid Cash After Liabilities" = Liquid Cash + This month liabilities. Works in every box, existing and new (Edit \u2192 How it is calculated).',
+    'Position boxes: an opened line no longer has shaded bands; the row under your mouse is highlighted.',
+    'Drift alerts: Update plan now takes you to the exact place. For a provision it opens the group on this month\u2019s row, flashes the line and puts the cursor in its amount; for a smart rule it opens that rule for editing.',
+    'Settings \u2192 Appearance: the Aurora background is now Aurora & glass. It turns the side rail and the top bar into floating, rounded frosted glass (light and dark).',
+  ]},
   {version:'5.1.0', date:'2026-11-08', changes:[
     'Dashboard: in Edit layout every box has Hide, including your position boxes. Hidden boxes are listed at the top of Edit layout with Show. Saved to your account.',
     'Dashboard: Dismiss on over-budget items hides that category for the rest of the month (it comes back if it goes further over, and next month). Dismissals, including drift alerts, now sync across your devices. Drift dismissals started fresh.',
@@ -4497,14 +4528,19 @@ function computePositionBox(box, asOf){
   asOf = asOf || todayStr();
   const bal = {};
   for(const l of D.ledger){ if(l.date && l.date>asOf) continue; bal[l.acc] = (bal[l.acc]||0) + (Number(l.amt)||0); }
-  let run = 0; const rows = [];
+  let run = 0; const rows = []; const byRid = {};
   (box.rows||[]).forEach((r,i)=>{
-    if(r.type==='subtotal' || r.type==='total'){ rows.push({...r, i, value:run, from:0, to:run, kind:'total'}); return; }
+    if(r.type==='subtotal' || r.type==='total'){
+      // v5.2: a subtotal/total either shows the running total so far, or adds up chosen rows above it (each + or -).
+      const v = (r.calc==='sum' && Array.isArray(r.sum))? r.sum.reduce((s,x)=>s + (byRid[x.rid]!==undefined? byRid[x.rid] : 0)*(Number(x.sign)===-1? -1 : 1), 0) : run;
+      rows.push({...r, i, value:v, from:0, to:v, kind:'total'}); if(r.rid) byRid[r.rid] = v; return;
+    }
     const sign = Number(r.sign)===-1? -1 : 1;
     const ids = positionRowAccIds(r);
     const parts = ids.map(id=>({id, value:(bal[id]||0)*sign}));
     const v = parts.reduce((s,p)=>s+p.value, 0);
     rows.push({...r, sign, i, ids, parts, value:v, from:run, to:run+v, kind: v>=0? 'asset' : 'liab'});
+    if(r.rid) byRid[r.rid] = v;
     run += v;
   });
   const totals = rows.filter(r=>r.kind==='total');
@@ -4535,6 +4571,18 @@ function openPosBoxEditor(boxId){
   const box = getPositionBoxes().find(b=>String(b.id)===String(boxId));
   if(!box) return;
   posBoxEdit = {id:box.id, draft:JSON.parse(JSON.stringify(box))};
+  posBoxEdit.draft.rows.forEach(r=>{ if(!r.rid) r.rid = newPosRowId(); }); // rows need a stable id to be chosen in a subtotal
+  renderDashboard();
+}
+function newPosRowId(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+// Subtotal/total "Add up chosen rows": clicking a row above cycles it: not included \u2192 + \u2192 \u2212 \u2192 not included.
+function posBoxEditSumCycle(i, rid){
+  const r = posBoxEdit && posBoxEdit.draft.rows[i]; if(!r) return;
+  r.sum = Array.isArray(r.sum)? r.sum : [];
+  const cur = r.sum.find(x=>x.rid===rid);
+  if(!cur) r.sum.push({rid, sign:1});
+  else if(cur.sign===1) cur.sign = -1;
+  else r.sum = r.sum.filter(x=>x.rid!==rid);
   renderDashboard();
 }
 function positionBoxEditorHTML(){
@@ -4542,15 +4590,17 @@ function positionBoxEditorHTML(){
   return `<div class="panel posbox editing">
     <div class="dash-head"><h2>Editing: ${esc(d.title||'')}</h2></div>
     <label class="fl" style="margin-top:8px">Box name</label><input value="${esc(d.title||'')}" onchange="posBoxEditTitle(this.value)">
-    <div class="mut" style="font-size:12px;margin:8px 0">A <b>line</b> adds up the account numbers you type and shows only its total (click it on the Dashboard to peek inside). An <b>account</b> line shows one account on its own. A <b>subtotal</b> shows the running total so far; the <b>total</b> closes the box. Balances are as of today.</div>
+    <div class="mut" style="font-size:12px;margin:8px 0">A <b>line</b> adds up the account numbers you type and shows only its total (click it on the Dashboard to peek inside). An <b>account</b> line shows one account on its own. A <b>subtotal</b> or <b>total</b> shows the running total so far, or adds up rows you choose above it (each with + or −). Balances are as of today.</div>
     ${d.rows.map((r,i)=>{ const tot = r.type==='subtotal'||r.type==='total'; const neg = Number(r.sign)===-1; return `<div class="posbox-edrow${tot?' tot':''}">
       <select aria-label="Row type" onchange="posBoxEditSet(${i},'type',this.value)">${[['line','Line'],['account','Account'],['subtotal','Subtotal'],['total','Total']].map(([v,l])=>`<option value="${v}"${r.type===v?' selected':''}>${l}</option>`).join('')}</select>
       ${tot? '' : `<button class="btn ghost sm sign${neg?' neg':''}" onclick="posBoxEditFlip(${i})" aria-label="${neg?'Subtracts; click to add':'Adds; click to subtract'}">${neg?'−':'+'}</button>`}
       <input aria-label="Label" placeholder="Label" value="${esc(r.label||'')}" onchange="posBoxEditSet(${i},'label',this.value)" style="flex:1 1 150px">
       ${tot? '' : (r.type==='line'? `<select aria-label="Which accounts" onchange="posBoxEditSet(${i},'cat',this.value)" style="flex:0 1 210px"><option value="">Typed account numbers</option>${positionBoxCategories().map(c=>`<option value="${esc(c)}"${r.cat===c?' selected':''}>All in: ${esc(positionCategoryLabel(c))}</option>`).join('')}</select>` : '')}
       ${tot || (r.type==='line' && r.cat)? (r.cat && !tot? `<span class="mut" style="font-size:12px;flex:1 1 160px">New accounts in this category are included automatically</span>` : '') : `<input class="mono" aria-label="Account numbers" placeholder="10101, 10102" value="${esc(r.accs||'')}" onchange="posBoxEditSet(${i},'accs',this.value)" style="flex:1 1 160px">`}
+      ${tot? `<select aria-label="How it is calculated" onchange="posBoxEditSet(${i},'calc',this.value)" style="flex:0 1 220px"><option value="">Running total so far</option><option value="sum"${r.calc==='sum'?' selected':''}>Add up chosen rows</option></select>` : ''}
       <button class="btn ghost sm" onclick="posBoxEditMove(${i})" aria-label="Move up" ${i===0?'disabled':''}>↑</button>
       <button class="btn del sm" onclick="posBoxEditRemove(${i})" aria-label="Remove row">✕</button>
+      ${tot && r.calc==='sum'? `<div class="posbox-sum" role="group" aria-label="Rows added up in ${esc(r.label||'this row')}"><span class="mut">Adds up:</span>${d.rows.slice(0,i).map(o=>{ const x = (r.sum||[]).find(s=>s.rid===o.rid); return `<button class="chipbtn${x?' on':''}" aria-pressed="${!!x}" onclick="posBoxEditSumCycle(${i},'${o.rid}')" title="Click: add, subtract, or leave out">${x? (x.sign===-1? '− ' : '+ ') : ''}${esc(o.label||'(no name)')}</button>`; }).join('') || '<span class="mut">Move this row below the rows it should add up.</span>'}</div>` : ''}
     </div>`; }).join('')}
     <div class="row" style="margin-top:10px">
       <button class="btn ghost sm" onclick="posBoxEditAdd('line')">+ Line</button>
@@ -4567,6 +4617,7 @@ function posBoxEditSet(i, field, v){
   if(!posBoxEdit) return; const r = posBoxEdit.draft.rows[i]; if(!r) return;
   r[field] = v;
   if(field==='cat'){ if(!v) delete r.cat; renderDashboard(); }
+  if(field==='calc'){ if(v!=='sum'){ delete r.calc; delete r.sum; } else if(!Array.isArray(r.sum)) r.sum = []; renderDashboard(); }
   if(field==='type' && v!=='line') delete r.cat;
   if(field==='type' && (v==='subtotal'||v==='total')){ delete r.accs; delete r.sign; }
   if(field==='type' && (v==='line'||v==='account') && r.sign===undefined){ r.sign = 1; r.accs = r.accs||''; }
@@ -4574,11 +4625,16 @@ function posBoxEditSet(i, field, v){
 }
 function posBoxEditFlip(i){ const r = posBoxEdit && posBoxEdit.draft.rows[i]; if(!r) return; r.sign = Number(r.sign)===-1? 1 : -1; renderDashboard(); }
 function posBoxEditMove(i){ const R = posBoxEdit && posBoxEdit.draft.rows; if(!R || i<1) return; [R[i-1], R[i]] = [R[i], R[i-1]]; renderDashboard(); }
-function posBoxEditRemove(i){ if(!posBoxEdit) return; posBoxEdit.draft.rows.splice(i,1); renderDashboard(); }
+function posBoxEditRemove(i){
+  if(!posBoxEdit) return;
+  const [gone] = posBoxEdit.draft.rows.splice(i,1);
+  if(gone && gone.rid) posBoxEdit.draft.rows.forEach(r=>{ if(Array.isArray(r.sum)) r.sum = r.sum.filter(x=>x.rid!==gone.rid); }); // drop references to it
+  renderDashboard();
+}
 function posBoxEditAdd(type){
   if(!posBoxEdit) return;
   const R = posBoxEdit.draft.rows;
-  const row = type==='subtotal'? {type, label:'Subtotal'} : {type, label: type==='account'? 'Account' : 'New line', sign:1, accs:''};
+  const row = type==='subtotal'? {type, label:'Subtotal', rid:newPosRowId()} : {type, label: type==='account'? 'Account' : 'New line', sign:1, accs:'', rid:newPosRowId()};
   const ti = R.findIndex(r=>r.type==='total');
   R.splice(ti<0? R.length : ti, 0, row);
   renderDashboard();
@@ -4587,7 +4643,13 @@ function posBoxEditCancel(){ posBoxEdit = null; renderDashboard(); }
 // Returns an error message, or '' when the box can be saved.
 function validatePositionBox(box){
   if(!box.rows.length) return 'Add at least one row';
-  for(const r of box.rows){
+  for(const [i, r] of box.rows.entries()){
+    if((r.type==='subtotal' || r.type==='total') && r.calc==='sum'){
+      const name = '"'+(r.label||'A subtotal')+'"';
+      if(!Array.isArray(r.sum) || !r.sum.length) return name+' adds up chosen rows: pick at least one';
+      const above = new Set(box.rows.slice(0,i).map(o=>o.rid).filter(Boolean));
+      if(r.sum.some(x=>!above.has(x.rid))) return name+' can only add up rows above it';
+    }
     if(r.type!=='line' && r.type!=='account') continue;
     if(r.type==='line' && r.cat){ if(!positionBoxCategories().includes(r.cat)) return 'No category "'+r.cat+'" in your chart of accounts'; continue; }
     const ids = parseAccList(r.accs);
@@ -4748,7 +4810,7 @@ function dashboardTodoItems(){
   computeDriftFlags().forEach(f=>{
     const label = f.kind==='provision'? accShort(f.acc)+' — '+f.groupName : f.ruleName+' ('+accShort(f.acc)+')';
     items.push({tone:'warn', drift:true, title:'Drift: '+label, sub:'Planned '+money(f.avgPlan)+' vs actual '+money(f.avgActual)+' (average)', label:'Update plan',
-      onclick: f.kind==='provision'? "go('provisions')" : 'goSmartRulesSettings()', dismiss:`dismissDriftFlag('${f.key}')`});
+      onclick: f.kind==='provision'? `goToProvisionLine(${f.groupId},${f.lineId})` : `goToSmartRule(${f.ruleId})`, dismiss:`dismissDriftFlag('${f.key}')`});
   });
   return items;
 }
@@ -8051,6 +8113,24 @@ function provCopyMonthForward(gid, mk){
   renderProvisionGroupsList();
   toast('Copied to '+res.months.length+' month(s) \u2713');
 }
+// v5.2 "Update plan" on a drift alert: open the group, land on this month's row, flash the line and put the cursor in its cell.
+function goToProvisionLine(gid, lineId){
+  const g = findProvisionGroup(gid);
+  if(!g){ go('provisions'); return; }
+  const mk = todayStr().slice(0,7);
+  const months = provisionsVisibleMonthKeys(g), mi = months.indexOf(mk), li = g.lines.findIndex(l=>l.lineId===lineId);
+  provisionEditingId = gid; provSearch = ''; provHighlight = mi>=0? {gid, mk} : null;
+  go('provisions');
+  requestAnimationFrame(()=>{
+    const card = document.getElementById('provCard_'+gid+'_'+lineId);
+    const cell = (mi>=0 && li>=0)? document.getElementById('provCell_'+gid+'_'+li+'_'+mi) : null;
+    const target = cell || card;
+    if(target && target.scrollIntoView) target.scrollIntoView({block:'center'});
+    flashEl(card);
+    if(cell){ cell.focus(); cell.select(); }
+  });
+}
+function goToSmartRule(ruleId){ settingsTab = 'smartrules'; go('settings'); if((D.forecastAccountRules||[]).some(r=>r.id===ruleId)) openForecastAccountRuleModal(ruleId); }
 function setProvSearch(v){ provSearch = v; renderProvisionGroupsList(); }
 function provShowMe(gid, mk){
   provisionEditingId = gid; provHighlight = mk? {gid, mk} : null;
@@ -8129,7 +8209,7 @@ function provisionGroupBodyHTML(g, curMonth){
       <button class="btn ghost sm" ${months.length?'':'disabled'} onclick="generateProvisionJV(${g.id})">Generate JV (this group only)</button>
       <button class="x" title="Delete group" aria-label="Delete group" onclick="deleteProvisionGroup(${g.id})">✕</button>
     </div>
-    <div class="prov-cards">${g.lines.map((line,li)=>{ const s = provisionLineSummary(g, line); const ld = drift.find(f=>f.lineId===line.lineId); return `<div class="prov-card">
+    <div class="prov-cards">${g.lines.map((line,li)=>{ const s = provisionLineSummary(g, line); const ld = drift.find(f=>f.lineId===line.lineId); return `<div class="prov-card" id="provCard_${g.id}_${line.lineId}">
       <div class="row" style="justify-content:space-between;gap:6px;flex-wrap:nowrap"><span class="click" style="color:var(--accent);font-weight:600;min-width:0" onclick="jumpToLedgerForAccount(${line.acc})" title="View in Ledger">${esc(accShort(line.acc))} <span class="mono mut" style="font-size:11px">${line.acc}</span></span><button class="x" aria-label="Remove this line" onclick="removeProvisionLine(${g.id},${li})">✕</button></div>
       <input aria-label="Line description" placeholder="Description" value="${line.descrBase && line.descrBase!==accShort(line.acc)? esc(line.descrBase) : ''}" onchange="setProvisionLineDescr(${g.id},${li},this.value)" style="margin:6px 0;font-size:12px;padding:5px 8px">
       ${ld? `<span class="badge neg" title="Planned ${money(ld.avgPlan)} vs actual ${money(ld.avgActual)} (average)">Drift</span>` : ''}
@@ -14894,8 +14974,8 @@ function renderSettings(){
           </label>
         </div>
         <div class="grid2" style="margin-bottom:14px">
-          <div><label class="fl">Background</label><div class="seg" role="group" aria-label="Background">${[['plain','Plain'],['tinted','Tinted'],['aurora','Aurora']].map(([v,l])=>`<button aria-pressed="${getUiBackground()===v}" onclick="setUiBackground('${v}')">${l}</button>`).join('')}</div>
-            <div class="mut" style="font-size:11.5px;margin-top:6px">Tinted washes the page with the accent; Aurora adds a slow glow behind the top of each page.</div></div>
+          <div><label class="fl">Background</label><div class="seg" role="group" aria-label="Background">${[['plain','Plain'],['tinted','Tinted'],['aurora','Aurora & glass']].map(([v,l])=>`<button aria-pressed="${getUiBackground()===v}" onclick="setUiBackground('${v}')">${l}</button>`).join('')}</div>
+            <div class="mut" style="font-size:11.5px;margin-top:6px">Tinted washes the page with the accent. Aurora &amp; glass adds a slow glow behind the page and turns the side rail and top bar into floating glass.</div></div>
           <div><label class="fl">Motion</label><div class="seg" role="group" aria-label="Motion"><button aria-pressed="${getUiMotion()}" onclick="setUiMotion(true)">On</button><button aria-pressed="${!getUiMotion()}" onclick="setUiMotion(false)">Off</button></div>
             <div class="mut" style="font-size:11.5px;margin-top:6px">Off always wins when your computer asks for reduced motion.</div></div>
         </div>

@@ -17,8 +17,10 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 | 10 | 2026-11-08 | Budget page: arrows on the month selector; hide the budget grid at the bottom behind an expand/collapse toggle. | shipped 5.1.0 | Arrows on both sides of the month box (Budget, and move P&L's to both sides too). Budget grid starts collapsed every visit; not remembered. |
 | 11 | 2026-11-08 | Budget vs Actual by Category chart: click a category name to scroll down to that category's budget and its accounts. | shipped 5.1.0 | Only the category name under the bars jumps (bars keep opening the transactions). Flash the category name where it lands. |
 | 12 | 2026-11-08 | P&L: after opening the chart (📊) and going back, return to the same place he left. | shipped 5.1.0 | Back from the chart returns to the same scroll position and flashes the row clicked, for account rows and category subtotal rows. |
-| 13 | 2026-11-08 | "Update plan" on a drift alert only opens the Provisions page; it should take him to the exact place to update. | question asked | See Message #13. |
-| 14 | 2026-11-08 | Glass effect for the left side rail, like the latest iOS. Mock it up first. | mock-up shown | Screenshots from a throwaway copy with invented data (Message #13). Waiting for his pick. |
+| 13 | 2026-11-08 | "Update plan" on a drift alert only opens the Provisions page; it should take him to the exact place to update. | shipped 5.2.0 | Provision: open group on this month's row, flash the line, cursor in its amount. Smart rule: open the rule's edit window. |
+| 14 | 2026-11-08 | Glass effect for the left side rail, like the latest iOS. Mock it up first. | shipped 5.2.0 | Liked the mock-up. Part of the Aurora background, renamed "Aurora & glass" (the Settings toggle). Top bar too, rounded and floating. |
+| 15 | 2026-11-08 | Position box opened lines: no banded rows, hover highlight only (reverses the bands from #1). | shipped 5.2.0 | |
+| 16 | 2026-11-08 | Position boxes: named subtotals with his own calculation (e.g. This month liabilities = STL + Accruals; Liquid Cash After Liabilities = Liquid Cash + This month liabilities), in every box. | shipped 5.2.0 | Subtotal/total: "Running total so far" or "Add up chosen rows" (rows above it, each + or −). Stored in position_boxes, no schema change. |
 
 ## Schema changes
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
