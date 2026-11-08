@@ -2539,28 +2539,20 @@ function findMatchingDivClose(html, openTagStart){
 }
 
 async function testClosingBalanceWatchIsInItsOwnRowNotTheNetWorthGrid(){
-  // Per item 4: Closing Balance Watch must be in its OWN grid row below the three net worth
-  // panels, not sharing their grid — the opposite of what an earlier version of this test checked.
+  // v5.0: the Dashboard is a grid of separate boxes. The Closing Balance Watch and each of the
+  // three position boxes (which replaced the old net worth panels) are their own boxes, so the
+  // watch never shares a box with the equity panels.
   const sb = makeSandbox();
   const data = vm.runInContext('D', sb);
   data.ledger.push({id:1, jv:1, date:'2026-01-01', acc:10101, amt:1000, descr:'x'});
   sb.renderDashboard();
-  const html = sb.document.getElementById('app').innerHTML;
-  const grids = [...html.matchAll(/class="grid3"/g)].map(m=>m.index);
-  assert(grids.length===2, 'Should render exactly two grid3 containers (net worth row, then the watch widget row), got ' + grids.length);
-
-  const firstGridStart = html.lastIndexOf('<div', grids[0]);
-  const firstGridClose = findMatchingDivClose(html, firstGridStart);
-  const secondGridStart = html.lastIndexOf('<div', grids[1]);
-  const secondGridClose = findMatchingDivClose(html, secondGridStart);
-  assert(firstGridClose!==-1 && secondGridClose!==-1, 'Should find both grids\' true matching closing tags');
-  assert(secondGridStart>firstGridClose, 'The second grid must come entirely after the first one closes — a genuinely separate row, not a nested or overlapping container');
-
-  const shortTermIdx = html.indexOf('Short Term Equity');
-  const watchIdx = html.indexOf('Closing Balance Watch');
-  assert(shortTermIdx>firstGridStart && shortTermIdx<firstGridClose, 'Short Term Equity should be inside the FIRST grid');
-  assert(watchIdx>secondGridStart && watchIdx<secondGridClose, 'Closing Balance Watch should be inside the SECOND grid, on its own row');
-  assert(!(watchIdx>firstGridStart && watchIdx<firstGridClose), 'Closing Balance Watch must NOT be inside the first grid alongside the net worth panels');
+  const cells = [...sb.document.querySelectorAll('#app .dash-cell')];
+  const cellOf = text => cells.filter(c=>c.textContent.includes(text));
+  assert(cellOf('Closing Balance Watch').length===1, 'The Closing Balance Watch is exactly one box');
+  assert(cellOf('Short Term Equity').length===1, 'Short Term Equity is exactly one box');
+  const watch = cellOf('Closing Balance Watch')[0], ste = cellOf('Short Term Equity')[0];
+  assert(watch && ste && watch!==ste, 'The watch is not in the same box as the equity panel');
+  assert(watch && !/Long Term Equity|Cash Bank Account/.test(watch.textContent), 'The watch box holds only the watch');
 }
 
 // ================= v4.36.0: Robo-Investment platforms, portfolio value, USD column, Out/In/Profit display =================
@@ -4065,7 +4057,7 @@ async function testProvisionDescrSurvivesBlockedSync(){
   sb.__set('D', D);
   sb.__set('syncInProgress', true); // force blockIfSyncing() to report "still syncing"
   sb.__set('syncWrite', async () => { throw new Error('syncWrite should not be reached while blocked'); });
-  await sb.saveProvisionLineDescr(1, 0, 'Comprehensive cover');
+  await sb.setProvisionLineDescr(1, 0, 'Comprehensive cover'); // v5.0: replaced saveProvisionLineDescr, same rule
   assert(D.provisionGroups[0].lines[0].descrBase === 'Comprehensive cover', 'Description should be applied locally even when blockIfSyncing() reports busy — got ' + D.provisionGroups[0].lines[0].descrBase);
 }
 
@@ -7081,8 +7073,9 @@ async function testJamiahSummaryShowsPledgePerRoundInsteadOfDueAndPaid(){
   const html = sb.renderJamiahSummary(j);
   assert(!/Amount Due|Amount Paid/.test(html), 'Amount Due and Amount Paid must be gone');
   const head = html.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
-  assert(head && /<th>Participant<\/th><th class="num">Pledge \/ Round<\/th><th>Group<\/th>/.test(head[1]), 'Pledge / Round sits where Amount Due was, got ' + (head&&head[1].slice(0,160)));
-  const rowA = html.match(/<td style="[^"]*">A<\/td>\s*<td class="num mono">([^<]*)<\/td>/);
+  // v5.0: Pledge moved to after Group (agreed in the redesign).
+  assert(head && /<th>Participant<\/th><th>Group<\/th><th class="num">Pledge \/ Round<\/th>/.test(head[1]), 'Pledge / Round sits after Group, got ' + (head&&head[1].slice(0,160)));
+  const rowA = html.match(/<td style="[^"]*">A<\/td>\s*<td class="mut">[^<]*<\/td>\s*<td class="num mono">([^<]*)<\/td>/);
   assert(rowA && rowA[1]==='100.00', 'Each participant shows their pledge per round (A 100.00), got ' + (rowA&&rowA[1]));
 }
 async function testJamiahFooterShowsThePotAndThisRoundsPending(){
@@ -7961,6 +7954,718 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testDeletingACashMovementFromActivityStillDeletesIt();
   await testMoveIsOfferedEverywhereAndCashMoveIsRelabelled();
   await testOlderTransferPairsStillShowAsOneMove();
+  await testClassicCopyIsFrozenAndBothPagesLinkEachOther();
+  await testThemeTokensFollowTheAccentAndBackground();
+  await testBackgroundAndMotionPrefsApplyAndPersist();
+  await testRailRendersIconsLabelsAndCurrentPage();
+  await testTopBarShowsPageTitleAndThemeState();
+  await testShellMarkupHasTopBarAndNoOldThemeButton();
+  await testAppearanceSettingsOfferBackgroundMotionAndGeist();
+  await testPositionBoxPresetsEqualTheOldPanels();
+  await testPositionBoxesUseBalancesAsOfToday();
+  await testPositionBoxSignsAccountRowsAndPeek();
+  await testDashboardLayoutIsNormalised();
+  await testDashboardLayoutChangesSyncOnlyTheLayoutColumn();
+  await testPositionBoxEditorValidatesAndSaves();
+  await testNewAndRemovedPositionBoxes();
+  await testThingsThatNeedYouList();
+  await testDashboardSchemaAndLoadingOfTheNewPrefs();
+  await testEditLayoutModeShowsHandles();
+  await testPositionBoxLineCanFollowAWholeCategory();
+  await testNewJvShowsBudgetImpactAndDraftsBelow();
+  await testLedgerGroupsByJvAndFramesTheSelectedOne();
+  await testAccountsCategoryChipsAndSidePanel();
+  await testBudgetChartsWriteAmountsOnBars();
+  await testInvActivityFiltersByAccountAndDates();
+  await testInvActivityCsvHasPerPersonColumns();
+  await testProvisionIssuesListEveryBadMonthAndDuplicate();
+  await testProvisionGenerateAllIsBlockedWithAReason();
+  await testProvisionGroupRowsSearchAndShowMe();
+  await testProvisionMonthsRunDownwardWithNetCheck();
+  await testProvisionBulkFillBalancesOnASecondLine();
+  await testProvisionCellTabMovesAcrossAccounts();
+  await testJamiahEmptyCellOffersMatchingUntaggedTransactions();
+  await testJamiahTickShowsItsTransactionWithUntag();
+  await testJamiahTaggedTransactionsLeaveEveryList();
+  await testJamiahSettingsIsOnePanel();
+  await testAllocationLookupPreviewsLinesAndNet();
+  await testAllocationLookupArabicStatementUsesOnlyThatAllocation();
+  await testUnallocatedBoxesPerAccountWithAllActions();
+  await testForecastHorizonLimitsTheMonths();
+  await testForecastChartMatchesTheClosingBalanceRow();
+  await testThingsThatNeedYouShowsEightThenShowAll();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
+
+// v5.0 step 0: LedgerOS-classic.html is the frozen v4.63.0 app; each page links to the other.
+async function testClassicCopyIsFrozenAndBothPagesLinkEachOther(){
+  const classicPath = path.join(path.dirname(APP_HTML), 'LedgerOS-classic.html');
+  assert(fs.existsSync(classicPath), 'LedgerOS-classic.html exists next to LedgerOS.html');
+  if(!fs.existsSync(classicPath)) return;
+  const classic = fs.readFileSync(classicPath, 'utf8');
+  const app = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/const APP_VERSION = '4\.63\.0';/.test(classic), 'Classic stays at v4.63.0');
+  assert(/<a [^>]*id="lookSwitchLink" href="LedgerOS\.html"[^>]*>Switch to the new look<\/a>/.test(classic), 'Classic links to the new look');
+  assert(/<a [^>]*id="lookSwitchLink" href="LedgerOS-classic\.html"[^>]*>Switch to classic<\/a>/.test(app), 'The new app links to classic');
+  assert((classic.match(/id="lookSwitchLink"/g)||[]).length===1, 'Classic has exactly one switch link');
+}
+
+// ---- v5.0 step 1: look and shell ----
+function shellSandbox(){
+  const sb = makeSandbox();
+  const doc = sb.document;
+  doc.body.insertAdjacentHTML('afterbegin', '<nav id="nav"></nav><span id="topbarTitle"></span><span id="topbarDate"></span><button id="themeLightBtn"></button><button id="themeDarkBtn"></button>');
+  return sb;
+}
+async function testThemeTokensFollowTheAccentAndBackground(){
+  const sb = makeSandbox();
+  assert(sb.mixHex('#000000','#FFFFFF',0.5)==='#808080', 'mixHex blends halfway');
+  assert(sb.mixHex('#abc','#abc',0.3)==='#aabbcc', 'mixHex accepts 3-digit hex');
+  const t = sb.deriveThemeTokens(false, '#3D3AE0', 'tinted', '#047857', '#B42318');
+  assert(t['--rail']==='#242479', 'Light rail is the accent mixed halfway to near-black (got '+t['--rail']+')');
+  assert(t['--bg']===sb.mixHex('#F4F5F7','#3D3AE0',0.07), 'Tinted ground is the base washed 7% with the accent');
+  assert(t['--on-accent']==='#FFFFFF' && t['--bar']==='#FFFFFF', 'Light: white text on accent, solid top bar');
+  const plain = sb.deriveThemeTokens(false, '#3D3AE0', 'plain', '#047857', '#B42318');
+  assert(plain['--bg']==='#F4F5F7', 'Plain ground ignores the accent');
+  const aur = sb.deriveThemeTokens(true, '#2DD4BF', 'aurora', '#4ADE80', '#F87171');
+  assert(/^rgba\(20,24,30,0\.6\)$/.test(aur['--bar']), 'Aurora: the top bar is see-through (got '+aur['--bar']+')');
+  assert(/radial-gradient/.test(aur['--aurora']) && /rgba\(45,212,191,0\.35\)/.test(aur['--aurora']), 'Aurora gradient uses the accent');
+  assert(aur['--on-accent']==='#0B0D10', 'Dark: dark text on the accent');
+  const teal = sb.deriveThemeTokens(false, '#0F766E', 'tinted', '#047857', '#B42318');
+  assert(teal['--rail']!==t['--rail'] && teal['--accent-soft']!==t['--accent-soft'], 'A different accent changes the rail and soft tint');
+}
+async function testBackgroundAndMotionPrefsApplyAndPersist(){
+  const sb = shellSandbox();
+  const root = sb.document.documentElement, body = sb.document.body;
+  sb.applyTheme('light');
+  assert(body.classList.contains('bg-tinted') && !body.classList.contains('still'), 'Default: Tinted background, motion on');
+  assert(root.style.getPropertyValue('--rail')==='#242479', 'applyTheme sets the rail colour from the default indigo accent');
+  sb.setUiBackground('aurora');
+  assert(sb.localStorage.getItem('uiBackground')==='aurora' && body.classList.contains('bg-aurora') && !body.classList.contains('bg-tinted'), 'Aurora is saved and applied');
+  sb.setUiBackground('neon');
+  assert(sb.localStorage.getItem('uiBackground')==='aurora', 'An unknown background is ignored');
+  sb.setUiBackground('plain');
+  assert(root.style.getPropertyValue('--bg')==='#F4F5F7', 'Plain ground applied');
+  sb.setUiMotion(false);
+  assert(sb.localStorage.getItem('uiMotion')==='off' && body.classList.contains('still'), 'Motion off is saved and stills the page');
+  sb.setUiMotion(true);
+  assert(!body.classList.contains('still'), 'Motion back on');
+  sb.setAccentColor('teal');
+  assert(root.style.getPropertyValue('--rail')===sb.mixHex('#0f766e','#0B0D12',0.5), 'Picking teal recolours the rail');
+  const keys = vm.runInContext('LEDGEROS_KEYS', sb);
+  assert(['uiBackground','uiMotion','uiTheme','fontFamily'].every(k=>keys.includes(k)), 'New appearance keys are listed as LedgerOS keys');
+}
+async function testRailRendersIconsLabelsAndCurrentPage(){
+  const sb = shellSandbox();
+  sb.__set('screen', 'ledger');
+  sb.renderNav();
+  const nav = sb.document.getElementById('nav');
+  const btns = [...nav.querySelectorAll('button')];
+  assert(btns.length>=13, 'Every page has a rail button');
+  assert(btns.every(b=>b.querySelector('svg.nav-svg') && b.querySelector('.nav-lbl')), 'Each rail button has a line icon and a label');
+  const cur = nav.querySelector('[aria-current="page"]');
+  assert(cur && cur.classList.contains('on') && /Ledger/.test(cur.textContent), 'The current page is marked');
+  assert(nav.querySelectorAll('[aria-current]').length===1, 'Only one page is current');
+}
+async function testTopBarShowsPageTitleAndThemeState(){
+  const sb = shellSandbox();
+  freezeDate(sb, '2026-11-07T10:00:00');
+  sb.go('budget');
+  assert(sb.document.getElementById('topbarTitle').textContent==='Budget', 'Top bar shows the page name');
+  assert(/7 November/.test(sb.document.getElementById('topbarDate').textContent), 'Top bar shows today\'s date');
+  sb.go('forecastSettings');
+  assert(sb.document.getElementById('topbarTitle').textContent==='Forecast Settings', 'Pages outside the rail still get a title');
+  sb.applyTheme('dark');
+  assert(sb.document.getElementById('themeDarkBtn').getAttribute('aria-pressed')==='true' && sb.document.getElementById('themeLightBtn').getAttribute('aria-pressed')==='false', 'Dark is shown as pressed');
+  assert(sb.document.documentElement.dataset.theme==='dark' && sb.localStorage.getItem('uiTheme')==='dark', 'Dark mode applied and remembered');
+}
+async function testShellMarkupHasTopBarAndNoOldThemeButton(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const top = (html.match(/<header id="topbar"[\s\S]*?<\/header>/)||[''])[0];
+  assert(/onclick="openCmdPalette\(\)"/.test(top) && /Ctrl\+K/.test(top), 'Top bar has the search with Ctrl+K');
+  assert(/id="cloudBtn"/.test(top), 'Sync status lives in the top bar');
+  assert(/id="themeLightBtn"[^>]*onclick="applyTheme\('light'\)"/.test(top) && /id="themeDarkBtn"[^>]*onclick="applyTheme\('dark'\)"/.test(top), 'Light/Dark switch is in the top bar');
+  assert(/onclick="go\('newjv'\)">\+ New JV/.test(top), 'Top bar has + New JV');
+  assert(!/id="themeBtn"/.test(html), 'The old moon/sun theme button is gone');
+  assert(/<div class="aurora[^"]*" aria-hidden="true">/.test(html), 'Aurora layer exists');
+  assert(/prefers-reduced-motion:reduce\)\{\*,\*::before,\*::after\{animation:none!important/.test(html), 'Reduced motion always wins');
+  assert(/family=Geist:/.test(html) && /family=Geist\+Mono/.test(html), 'Geist and Geist Mono are loaded');
+}
+async function testAppearanceSettingsOfferBackgroundMotionAndGeist(){
+  const sb = shellSandbox();
+  sb.__set('settingsTab', 'appearance');
+  sb.renderSettings();
+  const app = sb.document.getElementById('app');
+  const bg = app.querySelector('[aria-label="Background"]'), mo = app.querySelector('[aria-label="Motion"]');
+  assert(bg && bg.querySelectorAll('button').length===3, 'Background offers Plain / Tinted / Aurora');
+  assert(bg && /Tinted/.test((bg.querySelector('[aria-pressed="true"]')||{}).textContent||''), 'Tinted is the default');
+  assert(mo && /On/.test((mo.querySelector('[aria-pressed="true"]')||{}).textContent||''), 'Motion defaults to On');
+  assert(app.querySelectorAll('.swatch').length===8, 'Seven accent swatches plus Custom');
+  const fam = [...app.querySelectorAll('select')].find(s=>/Geist/.test(s.innerHTML));
+  assert(fam && fam.value==='geist', 'Geist is the default font');
+  assert(fam && /Inter/.test(fam.innerHTML) && /Classic Serif/.test(fam.innerHTML), 'The existing font options are kept');
+}
+
+// ---- v5.0 step 2: Dashboard ----
+function dashSandbox(opts){
+  opts = opts||{};
+  const sb = makeSandbox();
+  freezeDate(sb, opts.today||'2026-11-07T10:00:00.000Z');
+  sb.document.body.insertAdjacentHTML('afterbegin', '<nav id="nav"></nav><div id="modalRoot"></div>');
+  const D = vm.runInContext('D', sb);
+  const A = (id, category, extra) => Object.assign({id, name:'Acc '+id, descr:'Acc '+id, category, status:'Active', acc_type:'Individual Account'}, extra||{});
+  D.accounts = [A(10101,'Bank Accounts'), A(10102,'Bank Accounts',{is_savings:true}), A(10199,'Bank Accounts'), A(11201,'Short Term Receivables'), A(12101,'Long Term Receivables'),
+    A(14101,'Temporary Projects Accounts'), A(21511,'Short Term Liabilities'), A(24101,'Long Term Liabilities'), A(22901,'Accruals'), A(23101,'Provisions'), A(30101,'Salary'), A(60101,'Living')];
+  const L = (id, acc, amt, date) => ({id, jv:id, date:date||'2026-10-01', acc, amt, descr:'x'});
+  D.ledger = [L(1,10101,48250.5), L(2,10102,126400), L(3,10199,999), L(4,11201,6500), L(5,12101,15000), L(6,14101,2300), L(7,21511,-8900), L(8,24101,-42000), L(9,22901,-4150.25), L(10,23101,-11600), L(11,30101,-32500), L(12,60101,6000)];
+  sb.rebuildIndex();
+  sb.confirm = () => true;
+  const calls = [];
+  sb.__set('syncWrite', async (table, kind, row) => { calls.push({table, kind, row}); return {ok:true}; });
+  sb.__set('persistLocal', ()=>{});
+  sb.__calls = calls;
+  sb.__set('forecastSnapshotCheckedThisSession', true); // keep the auto snapshot's own write out of these checks
+  sb.__prefs = () => calls.filter(c=>c.table==='pd_ui_prefs').pop();
+  return sb;
+}
+async function testPositionBoxPresetsEqualTheOldPanels(){
+  const sb = dashSandbox();
+  const bank = sb.bankBalance(), cb = c => sb.categoryBalance(c), sav = sb.savingsBalance();
+  const stRec = cb('Short Term Receivables'), ltRec = cb('Long Term Receivables'), temp = cb('Temporary Projects Accounts');
+  const stLiab = cb('Short Term Liabilities'), ltLiab = cb('Long Term Liabilities'), accr = cb('Accruals'), prov = cb('Provisions');
+  // The old netWorthPanels() formulas
+  const expect = {
+    ste: {'Current Assets': bank+stRec+temp, 'Short Term Equity': bank+stRec+temp+stLiab+accr+prov},
+    cash:{'Liquid Cash': bank-sav+stRec, 'Liquid Cash After Liabilities': bank-sav+stRec+stLiab+accr},
+    lte: {'Assets': bank+stRec+ltRec+temp, 'Long Term Equity': bank+stRec+ltRec+temp+stLiab+ltLiab+accr+prov},
+  };
+  const html = sb.netWorthPanels();
+  const boxes = sb.getPositionBoxes();
+  assert(boxes.length===3 && boxes.map(b=>b.id).join()==='ste,cash,lte', 'Three presets: Short Term Equity, Cash Bank Account, Long Term Equity');
+  boxes.forEach(b=>{
+    const c = sb.computePositionBox(b);
+    Object.entries(expect[b.id]).forEach(([label, v])=>{
+      const row = c.rows.find(r=>r.label===label && r.kind==='total');
+      assert(row && Math.abs(row.value - v) < 0.005, b.title+': "'+label+'" equals the old panel ('+v+'), got '+(row&&row.value));
+      assert(html.includes(sb.money(v)) || html.includes(sb.absMoney(v)), b.title+': the old panel really shows '+sb.money(v));
+    });
+  });
+  assert(!/10199/.test(boxes[0].rows[0].accs), 'Working Capital 10199 stays out of Bank Accounts, as before');
+}
+async function testPositionBoxesUseBalancesAsOfToday(){
+  const sb = dashSandbox();
+  vm.runInContext('D', sb).ledger.push({id:99, jv:99, date:'2026-11-20', acc:10101, amt:500, descr:'future'});
+  const box = {id:'t', title:'T', rows:[{type:'line', label:'Bank', sign:1, accs:'10101'}, {type:'total', label:'Total'}]};
+  assert(Math.abs(sb.computePositionBox(box).final - 48250.5) < 0.005, 'A line dated after today is left out');
+  assert(Math.abs(sb.computePositionBox(box, '2026-11-30').final - 48750.5) < 0.005, 'It counts once its date is reached');
+}
+async function testPositionBoxSignsAccountRowsAndPeek(){
+  const sb = dashSandbox();
+  const box = {id:'p', title:'Peek box', rows:[{type:'line', label:'Banks', sign:1, accs:'10101, 10102'}, {type:'account', label:'Savings', sign:-1, accs:'10102'}, {type:'subtotal', label:'Sub'}, {type:'line', label:'Loans', sign:1, accs:'11201'}, {type:'total', label:'All'}]};
+  const c = sb.computePositionBox(box);
+  assert(Math.abs(c.rows[1].value + 126400) < 0.005, 'A minus sign subtracts the account');
+  assert(Math.abs(c.rows[2].value - 48250.5) < 0.005 && Math.abs(c.final - 54750.5) < 0.005, 'Subtotal is the running total; the total closes the box');
+  sb.__set('dashEditing', false);
+  vm.runInContext('D', sb).uiPrefs.positionBoxes = [box];
+  sb.renderDashboard();
+  let cell = sb.document.querySelector('[data-widget="box:p"]');
+  assert(cell && !cell.querySelector('.posbox-peek'), 'A line shows only its total at first');
+  sb.togglePosBoxRow('p', 0);
+  cell = sb.document.querySelector('[data-widget="box:p"]');
+  const peek = cell && cell.querySelector('.posbox-peek');
+  assert(peek && /10101/.test(peek.textContent) && /10102/.test(peek.textContent), 'Clicking a line peeks at its accounts');
+  assert(cell && cell.querySelectorAll('.posbox-row.is-total').length===1 && cell.querySelectorAll('.posbox-row.is-sub').length===1, 'Subtotal and total rows get the thick rule styles');
+}
+async function testDashboardLayoutIsNormalised(){
+  const sb = dashSandbox();
+  const ids = () => sb.dashboardLayout().map(w=>w.id);
+  assert(ids().join()==='snapshot,kpis,todo,box:ste,banks,cash,budget,box:cash,box:lte,watch', 'Default layout follows the mockup');
+  const D = vm.runInContext('D', sb);
+  D.uiPrefs.dashboardLayout = [{id:'banks', span:40}, {id:'nope', span:6}, {id:'banks', span:4}, {id:'box:gone', span:6}, {id:'kpis', span:1}, null];
+  const L = sb.dashboardLayout();
+  assert(L[0].id==='banks' && L[0].span===12 && L[1].id==='kpis' && L[1].span===3, 'Saved order kept, widths clamped to 3..12');
+  assert(!L.some(w=>w.id==='nope' || w.id==='box:gone') && L.filter(w=>w.id==='banks').length===1, 'Unknown, removed and duplicate boxes are dropped');
+  assert(['todo','cash','budget','watch','snapshot','box:ste','box:cash','box:lte'].every(id=>L.some(w=>w.id===id)), 'Boxes missing from the saved layout are added back');
+}
+async function testDashboardLayoutChangesSyncOnlyTheLayoutColumn(){
+  const sb = dashSandbox();
+  await sb.moveDashWidget(0, 2);
+  let c = sb.__prefs();
+  assert(c && c.table==='pd_ui_prefs' && Object.keys(c.row).sort().join()==='dashboard_layout,id', 'Moving a box writes only dashboard_layout');
+  assert(c && (c.row.dashboard_layout||[])[2] && c.row.dashboard_layout[2].id==='snapshot', 'The moved box lands where it was dropped');
+  await sb.resizeDashWidget(1, 4);
+  c = sb.__prefs();
+  assert(c && (c.row.dashboard_layout||[])[1] && c.row.dashboard_layout[1].span===4, 'Resizing saves the new width');
+  await sb.resetDashboardLayout();
+  c = sb.__prefs();
+  assert(c && c.row.dashboard_layout===null && sb.dashboardLayout()[0].id==='snapshot', 'Reset layout goes back to the default');
+}
+async function testPositionBoxEditorValidatesAndSaves(){
+  const sb = dashSandbox();
+  sb.openPosBoxEditor('ste');
+  const d = vm.runInContext('posBoxEdit', sb);
+  assert(d && d.id==='ste', 'Edit opens the box editor');
+  sb.posBoxEditSet(0, 'cat', ''); // presets follow a category; switch to typed numbers
+  sb.posBoxEditSet(0, 'accs', '10101, 99999');
+  await sb.savePosBoxEdit();
+  assert(!sb.__prefs() && vm.runInContext('posBoxEdit', sb), 'An unknown account number is refused and nothing is saved');
+  sb.posBoxEditSet(0, 'accs', '10101');
+  sb.posBoxEditTitle('My equity');
+  sb.posBoxEditFlip(0);
+  await sb.savePosBoxEdit();
+  const c = sb.__prefs();
+  assert(c && Object.keys(c.row).sort().join()==='id,position_boxes', 'Saving writes only position_boxes');
+  const saved = c && c.row.position_boxes.find(b=>b.id==='ste');
+  assert(saved && saved.title==='My equity' && saved.rows[0].sign===-1 && saved.rows[0].accs==='10101', 'The edited box is saved');
+  assert(c && c.row.position_boxes.length===3, 'The other presets are saved alongside it');
+  sb.openPosBoxEditor('cash'); sb.posBoxEditSet(1, 'type', 'account'); sb.posBoxEditSet(1, 'accs', '10101, 10102');
+  await sb.savePosBoxEdit();
+  assert(vm.runInContext('posBoxEdit', sb), 'An account row with several accounts is refused');
+}
+async function testNewAndRemovedPositionBoxes(){
+  const sb = dashSandbox();
+  await sb.addDashPositionBox();
+  const D = vm.runInContext('D', sb);
+  const boxes = D.uiPrefs.positionBoxes;
+  assert(boxes && boxes.length===4, '+ New box adds a fourth box');
+  const nb = boxes[3];
+  assert(sb.dashboardLayout().some(w=>w.id==='box:'+nb.id) && vm.runInContext('posBoxEdit', sb).id===nb.id, 'The new box is on the Dashboard and open for editing');
+  await sb.removeDashPositionBox(nb.id);
+  assert(D.uiPrefs.positionBoxes.length===3 && !sb.dashboardLayout().some(w=>w.id==='box:'+nb.id), 'Remove deletes the box and its place');
+}
+async function testThingsThatNeedYouList(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.find(a=>a.id===10101).stmt_balance = 48000; // off by -250.50
+  const sav = D.accounts.find(a=>a.id===10102); sav.stmt_balance = 126400; sav.stmt_date = '2026-10-01'; // reconciled, 37 days old
+  D.accounts.push({id:10103, name:'New bank', category:'Bank Accounts', status:'Active', acc_type:'Individual Account'}); // no statement
+  D.accounts.push({id:10104, name:'Old bank', category:'Bank Accounts', status:'Inactive', acc_type:'Individual Account'}); // inactive: ignored
+  D.ledger.push({id:50, jv:50, date:'2026-11-03', acc:60101, amt:1300, descr:'food'});
+  sb.rebuildIndex();
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 1000 : 0);
+  sb.__set('computeDriftFlags', ()=>[{key:'smartrule:1', kind:'smartrule', ruleName:'Fuel', acc:60101, avgPlan:900, avgActual:1150}]);
+  const items = sb.dashboardTodoItems();
+  const t = items.map(i=>i.title);
+  assert(t.some(x=>/Acc 10101 is off by -250\.50/.test(x)) && items.find(i=>/off by/.test(i.title)).onclick==='startReconcile(10101)', 'An unreconciled account is listed and opens a reconciliation');
+  assert(t.some(x=>/Acc 10102 last reconciled 37 days ago/.test(x)), 'A stale reconciliation is listed');
+  assert(t.some(x=>/New bank has no statement balance/.test(x)), 'An account with no statement is listed');
+  assert(!t.some(x=>/Old bank|10199/.test(x)), 'Inactive accounts and Working Capital are left out');
+  assert(t.some(x=>/Living is over budget by 300\.00/.test(x)), 'An over-budget category is listed');
+  assert(t.some(x=>/^Drift: Fuel/.test(x)) && items.find(i=>i.drift).dismiss==="dismissDriftFlag('smartrule:1')", 'Drift alerts are listed with Dismiss');
+  sb.renderDashboard();
+  assert(/5 things need you/.test(sb.document.getElementById('app').textContent), 'The box heading counts them ('+items.length+')');
+}
+async function testDashboardSchemaAndLoadingOfTheNewPrefs(){
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_SQL', sb);
+  assert(/alter table pd_ui_prefs add column if not exists dashboard_layout jsonb/i.test(sql) && /alter table pd_ui_prefs add column if not exists position_boxes jsonb/i.test(sql), 'The schema script adds both pd_ui_prefs columns idempotently');
+  const bare = {uiPrefs:{pageOrder:null}};
+  sb.normalizeDataShape(bare);
+  assert(bare.uiPrefs.dashboardLayout===null && bare.uiPrefs.positionBoxes===null, 'Old caches get both defaults');
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  assert(/dashboardLayout: Array\.isArray\(u\.dashboard_layout\)/.test(src) && /positionBoxes: Array\.isArray\(u\.position_boxes\)/.test(src), 'Cloud load reads both columns');
+  assert(/dashboard_layout:D\.uiPrefs\.dashboardLayout\|\|null, position_boxes:D\.uiPrefs\.positionBoxes\|\|null/.test(src), 'Restore from backup writes both columns back');
+}
+async function testEditLayoutModeShowsHandles(){
+  const sb = dashSandbox();
+  sb.renderDashboard();
+  assert(!sb.document.querySelector('.dash-cell[draggable]') && !sb.document.querySelector('.dash-resize'), 'Normal view has no drag handles');
+  sb.toggleDashEditing();
+  const cells = [...sb.document.querySelectorAll('.dash-cell')];
+  assert(cells.length>=9 && cells.every(c=>c.getAttribute('draggable')==='true' && c.querySelector('.dash-resize')), 'Edit layout: every box can be dragged and resized');
+  const app = sb.document.getElementById('app').innerHTML;
+  assert(/addDashPositionBox\(\)">\+ New box/.test(app) && /resetDashboardLayout\(\)">Reset layout/.test(app), 'Edit layout offers + New box and Reset layout');
+  assert(sb.document.querySelectorAll('.dash-cell [onclick^="removeDashPositionBox"]').length===3, 'Only position boxes can be removed');
+  sb.toggleDashEditing();
+  assert(!sb.document.querySelector('.dash-cell[draggable]'), 'Done leaves edit mode');
+}
+
+async function testPositionBoxLineCanFollowAWholeCategory(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  const box = {id:'c', title:'C', rows:[{type:'line', label:'Banks (live)', sign:1, cat:'Bank Accounts', accs:''}, {type:'line', label:'Banks (typed)', sign:1, accs:'10101, 10102'}, {type:'total', label:'T'}]};
+  D.accounts.push({id:10107, name:'Brand new bank', category:'Bank Accounts', status:'Active', acc_type:'Individual Account'});
+  D.ledger.push({id:70, jv:70, date:'2026-10-02', acc:10107, amt:1000, descr:'x'});
+  sb.rebuildIndex();
+  const c = sb.computePositionBox(box);
+  assert(Math.abs(c.rows[0].value - (48250.5+126400+1000)) < 0.005, 'A category line picks up a new account in that category automatically');
+  assert(Math.abs(c.rows[1].value - (48250.5+126400)) < 0.005, 'A typed line keeps only the accounts typed');
+  assert(sb.getPositionBoxes().every(b=>b.rows.filter(r=>r.type==='line').every(r=>r.cat)), 'The three presets follow their categories live');
+  const ste = sb.computePositionBox(sb.getPositionBoxes()[0]);
+  assert(ste.rows[0].ids.includes(10107), 'So the presets include the new bank account too');
+  sb.openPosBoxEditor('ste');
+  sb.posBoxEditSet(0, 'cat', '');
+  assert(!('cat' in vm.runInContext('posBoxEdit', sb).draft.rows[0]), 'Choosing typed numbers turns the toggle off');
+  sb.posBoxEditSet(0, 'cat', 'Made up category');
+  await sb.savePosBoxEdit();
+  assert(!sb.__prefs() && vm.runInContext('posBoxEdit', sb), 'An unknown category is refused');
+  sb.posBoxEditSet(0, 'cat', 'Bank Accounts');
+  await sb.savePosBoxEdit();
+  const saved = sb.__prefs();
+  assert(saved && saved.row.position_boxes[0].rows[0].cat==='Bank Accounts', 'The toggle is saved with the box');
+  sb.openPosBoxEditor('ste');
+  sb.renderDashboard();
+  const sel = sb.document.querySelector('.posbox-edrow select[aria-label="Which accounts"]');
+  assert(sel && sel.value==='Bank Accounts' && /All in: Savings accounts/.test(sel.innerHTML), 'The editor shows the category toggle for lines');
+}
+
+// ---- v5.0 step 3: restyled pages ----
+async function testNewJvShowsBudgetImpactAndDraftsBelow(){
+  const sb = dashSandbox();
+  vm.runInContext('D', sb).ledger.push({id:80, jv:80, date:'2026-11-02', acc:60101, amt:700, descr:'food'});
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 1000 : 0);
+  sb.__set('jvDraft', {date:'2026-11-07', lines:[{key:'a', acc:60101, descr:'Food', amt:'400'}, {key:'b', acc:10101, descr:'Food', amt:'-400'}]});
+  sb.__set('jvDrafts', [{id:5, date:'2026-11-01', lines:[{acc:10101, descr:'x', amt:1}], savedAt:'2026-11-01T10:00'}]);
+  const rows = sb.jvBudgetImpactRows();
+  assert(rows.length===1 && rows[0].acc===60101 && Math.abs(rows[0].after-1100)<0.005, 'Only expense lines count: 700 spent + 400 in this JV');
+  sb.renderNewJV();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Goes over budget by 100\.00/.test(html), 'The impact says the JV takes the account over budget');
+  const jvAt = html.indexOf('New Journal Voucher'), impAt = html.indexOf('id="jvBudgetImpact"'), drAt = html.indexOf('Draft journal vouchers');
+  assert(jvAt>-1 && impAt>jvAt && drAt>jvAt, 'Budget impact and Draft JVs come below the JV');
+  assert(/continueDraft\(5\)/.test(html), 'Drafts can be continued from the page');
+}
+async function testLedgerGroupsByJvAndFramesTheSelectedOne(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.ledger.push({id:90, jv:500, date:'2026-10-05', acc:10101, amt:-50, descr:'pair'}, {id:91, jv:500, date:'2026-10-05', acc:60101, amt:50, descr:'pair'});
+  sb.go('ledger');
+  sb.__set('ledgerFilter', {acc:'', from:'', to:'', q:'', jv:'500', preset:'', unallocOnly:false});
+  sb.renderLedgerResults();
+  let trs = [...sb.document.querySelectorAll('#ledgerResults tbody tr')];
+  assert(trs.length===2 && trs[0].classList.contains('jv-first') && trs[1].classList.contains('jv-last'), 'Lines of one JV are grouped');
+  assert(/#500/.test(trs[0].textContent) && !/#500/.test(trs[1].textContent), 'The JV number shows once per group');
+  sb.selectLedgerJv(500);
+  trs = [...sb.document.querySelectorAll('#ledgerResults tbody tr')];
+  assert(trs.filter(t=>t.classList.contains('jv-sel')).length===2, 'Clicking frames the whole JV');
+  const act = sb.document.querySelector('#ledgerResults tr.jv-actions');
+  assert(act && /startEditJV\(500\)/.test(act.innerHTML) && /duplicateJV\(500\)/.test(act.innerHTML) && /reverseJV\(500\)/.test(act.innerHTML) && /exportJVCSV\(500\)/.test(act.innerHTML), 'Its actions appear: Edit, Duplicate, Reverse, Download CSV');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/#ledgerResults tr\.jv-sel td:first-child\{box-shadow:inset 2px 0 0 var\(--accent\)\}/.test(html) && /#ledgerResults tr\.jv-sel td\{background:none/.test(html), 'The selection is an accent frame, not a fill');
+  sb.selectLedgerJv(500);
+  assert(!sb.document.querySelector('#ledgerResults tr.jv-actions'), 'Clicking again clears it');
+}
+async function testAccountsCategoryChipsAndSidePanel(){
+  const sb = dashSandbox();
+  sb.__set('browsableAccounts', ()=> vm.runInContext('D', sb).accounts);
+  sb.go('accounts');
+  const chips = [...sb.document.querySelectorAll('#accCatChips .chipbtn')];
+  assert(chips.length>3 && chips[0].textContent==='All' && chips[0].getAttribute('aria-pressed')==='true', 'Category chips, All selected');
+  sb.setAccCatFilter('Accruals');
+  const rows = [...sb.document.querySelectorAll('#accountResults tbody tr')];
+  assert(rows.length===1 && /22901/.test(rows[0].textContent), 'A chip filters to that category');
+  sb.setAccCatFilter('Accruals');
+  sb.openAccSide(10101);
+  const side = sb.document.getElementById('accSide');
+  assert(side && /48,250\.50/.test(side.textContent), 'Side panel shows the balance');
+  assert(/jumpToLedgerForAccount\(10101\)">Full history in Ledger/.test(side.innerHTML), 'Side panel links to the full history in the Ledger');
+  const D = vm.runInContext('D', sb);
+  for(let i=0;i<7;i++) D.ledger.push({id:200+i, jv:200+i, date:'2026-10-1'+i, acc:10101, amt:i+1, descr:'t'+i});
+  sb.renderAccountResults();
+  const jvs = new Set([...side.querySelectorAll('tr')].map(t=>(t.getAttribute('onclick')||'')));
+  assert(jvs.size===5 && [...jvs].every(o=>/viewJV\(20[2-6]\)/.test(o)), 'The 5 most recent JVs are listed, newest first');
+}
+async function testBudgetChartsWriteAmountsOnBars(){
+  const sb = makeSandbox();
+  const texts = [];
+  const ctx = {save(){}, restore(){}, fillText(t,x,y){ texts.push([t,x,y]); }};
+  const chart = {ctx, data:{datasets:[{data:[1500, 0]}, {data:[250.5, 99]}]}, getDatasetMeta:(i)=>({hidden: false, data:[{x:10,y:50},{x:20,y:60}]})};
+  vm.runInContext('chartValueLabelsPlugin', sb).afterDatasetsDraw(chart);
+  assert(texts.map(t=>t[0]).join('|')===[sb.money(1500), sb.money(250.5), sb.money(99)].join('|'), 'Every non-zero bar gets its amount');
+  assert(texts[0] && texts[0][1]===10 && texts[0][2]===47, 'The amount sits just above the bar');
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  const fn = src.slice(src.indexOf('function renderBudgetCharts('), src.indexOf('function renderBudgetCharts(')+6000);
+  assert((fn.match(/plugins:\[chartValueLabelsPlugin\]/g)||[]).length===2, 'Both the Budget vs Actual and the trend chart show amounts');
+  assert(/_budgetChartTrend = new Chart\(ctxTrend, \{\s*type: 'bar'/.test(fn), 'The trend is shown as bars');
+}
+function actSandbox(){
+  const sb = moveSandbox({
+    invOwners:[{id:1, name:'Me', isSelf:true, outAcc:21001}, {id:2, name:'Relative', isSelf:false, outAcc:21002}],
+    invPlatforms:[{id:1, name:'A', outAcc:13001}, {id:2, name:'B', outAcc:13002}],
+    invCashMovements:[
+      {id:11, platformId:1, date:'2026-03-01', kind:'deposit', usdAmount:1000, owners:[{ownerId:1, usd:600, sar:2250}, {ownerId:2, usd:400, sar:1520}]},
+      {id:12, platformId:2, date:'2026-05-01', kind:'deposit', usdAmount:200, owners:[{ownerId:2, usd:200, sar:750}]}]});
+  return sb;
+}
+async function testInvActivityFiltersByAccountAndDates(){
+  const sb = actSandbox();
+  const set = (o) => sb.__set('invActivityFilter', Object.assign({platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100}, o));
+  set({}); assert(sb.invActivityFiltered().length===3, 'Everything shows by default');
+  set({acc:'13002'}); let r = sb.invActivityFiltered();
+  assert(r.length===1 && r[0].id===12, 'Filtering by a platform\'s ledger account keeps only that platform');
+  set({acc:'21001'}); r = sb.invActivityFiltered();
+  assert(r.length===2 && r.every(x=>x.ownerIds.includes(1)), 'Filtering by a person\'s ledger account keeps only rows with that person');
+  set({from:'2026-02-01', to:'2026-04-30'}); r = sb.invActivityFiltered();
+  assert(r.length===1 && r[0].id===11, 'Date range keeps only rows inside it');
+  assert(sb.invActivityLinkedAccounts().join()==='13001,13002,21001,21002', 'The account list offers every linked ledger account');
+}
+async function testInvActivityCsvHasPerPersonColumns(){
+  const sb = actSandbox();
+  sb.__set('invActivityFilter', {platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100});
+  const lines = sb.invActivityCsv().split('\n');
+  assert(lines[0]==='Date,Type,Platform,Detail,People,USD,SAR,Me SAR,Me USD,Me rate,Relative SAR,Relative USD,Relative rate', 'Header has SAR, USD and rate per person');
+  const dep = lines.find(l=>l.startsWith('2026-03-01'));
+  assert(dep && /,2250\.00,600\.00,3\.7500,1520\.00,400\.00,3\.8000$/.test(dep), 'A deposit shows each person\'s own SAR, USD and actual rate, got '+dep);
+  const buy = lines.find(l=>l.startsWith('2026-01-01'));
+  assert(buy && /,60000\.00,[\d.]+,[\d.]+,40000\.00,[\d.]+,[\d.]+$/.test(buy), 'A buy shows each person\'s SAR cost, got '+buy);
+  assert(lines.length===4, 'One line per Activity row plus the header');
+}
+
+// ---- v5.0 step 4: Provisions ----
+function provSandbox(){
+  const sb = dashSandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="toast"></div>');
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:23102, name:'Car reserve', category:'Provisions', status:'Active', acc_type:'Individual Account'}, {id:60601, name:'Car service', category:'Car', status:'Active', acc_type:'Individual Account'});
+  sb.rebuildIndex();
+  D.provisionGroups = [
+    {id:1, name:'Car service', lines:[{acc:60601, lineId:1, descrBase:'Car service provision'}, {acc:23102, lineId:2, descrBase:'Car reserve'}],
+      months:{'2026-11':{1:500, 2:-500}, '2026-12':{1:500, 2:-450}, '2027-01':{1:500, 2:-500}, '2026-09':{1:999}}},
+    {id:2, name:'School', lines:[{acc:60101, lineId:10, descrBase:'School'}, {acc:22901, lineId:11, descrBase:'School accrual'}, {acc:22901, lineId:12, descrBase:'School release'}],
+      months:{'2026-11':{10:300, 11:-300}, '2026-12':{10:300, 11:-300}}},
+  ];
+  sb.__set('provisionsSelectedMonth', '2026-11');
+  sb.__set('provisionEditingId', null);
+  return sb;
+}
+async function testProvisionIssuesListEveryBadMonthAndDuplicate(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  D.provisionGroups[0].months['2027-02'] = {1:100};
+  const car = sb.provisionGroupIssues(D.provisionGroups[0]);
+  assert(car.map(i=>i.mk+':'+i.sum).join()==='2026-12:50,2027-02:100', 'Every unbalanced visible month is listed (past months ignored), got '+JSON.stringify(car));
+  const school = sb.provisionGroupIssues(D.provisionGroups[1]);
+  assert(school.length===1 && school[0].dup && school[0].dup.acc===22901 && Math.abs(school[0].dup.total+600)<0.005, 'Unbalanced duplicate-account lines are listed');
+  D.provisionGroups[1].dupBalanceExempt = true;
+  assert(sb.provisionGroupIssues(D.provisionGroups[1]).length===0, 'Exempted groups do not list duplicates');
+  assert(Math.abs(sb.provisionMonthExpense(D.provisionGroups[0], '2026-11') - 500) < 0.005, 'Expense for the month is the amount on 6xxxx accounts');
+}
+async function testProvisionGenerateAllIsBlockedWithAReason(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  D.provisionGroups[1].dupBalanceExempt = true;
+  sb.renderProvisions();
+  let btn = sb.document.getElementById('provGenAllBtn');
+  assert(btn && !btn.disabled, 'November is balanced: Generate is enabled');
+  assert(/Provision expense for Nov-26/.test(sb.document.getElementById('app').textContent) && /800\.00/.test(sb.document.querySelector('.prov-summary').textContent), 'Total provision expense for the month is shown (500 + 300)');
+  sb.__set('provisionsSelectedMonth', '2026-12');
+  sb.renderProvisionGroupsList();
+  btn = sb.document.getElementById('provGenAllBtn');
+  assert(btn && btn.disabled, 'December has an error: Generate is disabled');
+  assert(/Fix this first: Car service: Dec-26 is off by 50\.00/.test(sb.document.querySelector('.prov-summary').textContent), 'The reason is shown');
+  let jv = null; sb.__set('go', ()=>{ jv = vm.runInContext('jvDraft', sb); });
+  sb.combinedGenerateProvisionJV();
+  assert(jv===null, 'Generating December is refused even if called directly');
+  sb.__set('provisionsSelectedMonth', '2026-11');
+  sb.combinedGenerateProvisionJV();
+  assert(jv && jv.lines.length===4 && jv.date==='2026-11-01', 'November generates all groups\' lines');
+}
+async function testProvisionGroupRowsSearchAndShowMe(){
+  const sb = provSandbox();
+  sb.renderProvisions();
+  const heads = [...sb.document.querySelectorAll('.prov-head')];
+  assert(heads.length===2, 'One row per group');
+  assert(/Car service provision - Nov - 26'/.test(heads[0].textContent) && /500\.00/.test(heads[0].textContent) && /Error/.test(heads[0].textContent), 'Group row: name, the month\'s JV description, expense amount, status');
+  sb.setProvSearch('22901');
+  assert(sb.document.querySelectorAll('.prov-head').length===1 && /School/.test(sb.document.querySelector('.prov-head').textContent), 'Search by account number');
+  sb.setProvSearch('car');
+  assert(sb.document.querySelectorAll('.prov-head').length===1, 'Search by group name');
+  sb.setProvSearch('');
+  const bar = sb.document.querySelector('.needs-fix');
+  assert(bar && /Needs fixing \(2\)/.test(bar.textContent) && /Dec-26 is off by 50\.00/.test(bar.textContent), 'Needs fixing lists every problem with the amount');
+  const show = [...bar.querySelectorAll('button')].find(b=>/'2026-12'/.test(b.getAttribute('onclick')));
+  assert(show, 'Each problem has Show me');
+  sb.provShowMe(1, '2026-12');
+  const row = sb.document.getElementById('provRow_1_2026-12');
+  assert(row && row.classList.contains('hl') && row.classList.contains('bad'), 'Show me opens the group and highlights the month');
+}
+async function testProvisionMonthsRunDownwardWithNetCheck(){
+  const sb = provSandbox();
+  sb.renderProvisions();
+  sb.toggleProvisionEdit(1);
+  const table = sb.document.querySelector('#provGroup_1 .prov-grid');
+  assert(table, 'An open group shows its grid');
+  const heads = [...table.querySelectorAll('thead th')].map(t=>t.textContent);
+  assert(/^Month/.test(heads[0]) && /60601/.test(heads[1]) && /23102/.test(heads[2]) && /Net/.test(heads[3]), 'Accounts run across, with a Net column');
+  const rows = [...table.querySelectorAll('tbody tr')];
+  assert(rows.map(r=>r.id).join()==='provRow_1_2026-11,provRow_1_2026-12,provRow_1_2027-01', 'Months run downward, from this month on');
+  assert(rows[0].classList.contains('cur') && !rows[1].classList.contains('cur'), 'The current month is highlighted');
+  assert(/0\.00/.test(rows[0].lastElementChild.textContent) && /50\.00/.test(rows[1].lastElementChild.textContent) && rows[1].classList.contains('bad'), 'Each month shows its net check');
+  const cards = [...sb.document.querySelectorAll('#provGroup_1 .prov-card')];
+  assert(cards.length===2 && /Balance now/.test(cards[0].textContent) && /Still planned/.test(cards[0].textContent) && /Projected/.test(cards[0].textContent), 'Line cards show balance now, still planned and projected');
+  assert(/1,500\.00/.test(cards[0].textContent), 'Still planned sums the visible months (500 x 3)');
+  assert(sb.document.getElementById('genMonthSel_1') && sb.document.getElementById('provAddMonth_1') && sb.document.getElementById('provAddAcc_1') && sb.document.getElementById('pbfLine_1'), 'Generate for this group, add month, add account and bulk fill are there');
+}
+async function testProvisionBulkFillBalancesOnASecondLine(){
+  const sb = provSandbox();
+  const D = vm.runInContext('D', sb);
+  const g = D.provisionGroups[1];
+  let r = sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:3, amt:200, balanceLineId:12});
+  assert(r.months && r.months.join()==='2027-01,2027-02,2027-03', 'Fills the right months');
+  assert(g.months['2027-02'][11]===200 && g.months['2027-02'][12]===-200 && g.months['2027-02'][10]===undefined, 'Writes the amount and its opposite on the two duplicate-account lines only');
+  assert(g.lastBulkFillMonths===3, 'Remembers the month count');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:3, amt:200, balanceLineId:11}).error, 'Balancing on the same line is refused');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'', count:3, amt:200}).error, 'A month is required');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:0, amt:200}).error, 'At least one month');
+  assert(sb.provBulkFillApply(g, {lineId:11, from:'2027-01', count:2, amt:''}).error, 'An amount is required');
+  const before = JSON.stringify(g.months);
+  sb.provBulkFillApply(g, {lineId:99, from:'2027-01', count:2, amt:5});
+  assert(JSON.stringify(g.months)===before, 'A refused fill changes nothing');
+  sb.provBulkFillApply(g, {lineId:10, from:'2027-05', count:1, amt:-12.346});
+  assert(g.months['2027-05'][10]===-12.35, 'Amounts are rounded to cents');
+}
+async function testProvisionCellTabMovesAcrossAccounts(){
+  const sb = provSandbox();
+  sb.renderProvisions();
+  sb.toggleProvisionEdit(1);
+  const cell = sb.document.getElementById('provCell_1_0_0');
+  assert(cell, 'Cells are there');
+  cell.focus();
+  sb.provCellKey({key:'Tab', shiftKey:false, preventDefault(){}, target:cell}, 1, 0, 0, 2, 3);
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_1_0', 'Tab moves to the next account in the same month');
+  const c2 = sb.document.activeElement;
+  sb.provCellKey({key:'Tab', shiftKey:false, preventDefault(){}, target:c2}, 1, 1, 0, 2, 3);
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_0_1', 'From the last account, Tab goes to the next month');
+  const c3 = sb.document.activeElement;
+  sb.provCellKey({key:'Enter', shiftKey:false, preventDefault(){}, target:c3}, 1, 0, 1, 2, 3);
+  assert(sb.document.activeElement && sb.document.activeElement.id==='provCell_1_0_2', 'Enter moves down a month');
+}
+
+// ---- v5.0 step 4: Jamiah ----
+function jam5Sandbox(){
+  const t = jamSummarySandbox();
+  const D = vm.runInContext('D', t.sb);
+  D.ledger.push({id:10, jv:10, date:'2026-10-08', acc:10501, amt:100, descr:'B pays'}, {id:11, jv:11, date:'2026-10-09', acc:10501, amt:42, descr:'odd'}, {id:12, jv:12, date:'2026-11-02', acc:10501, amt:100, descr:'next month'});
+  D.jamiahs = [t.j];
+  if(!t.sb.document.getElementById('modalRoot')) t.sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div><div id="app"></div>');
+  t.sb.__set('persistJamiah', ()=>{});
+  return t;
+}
+async function testJamiahEmptyCellOffersMatchingUntaggedTransactions(){
+  const {sb, j} = jam5Sandbox();
+  let c = sb.jamiahCellCandidates(j, 2, '2026-10');
+  assert(c.match && c.lines.map(l=>l.id).join()==='10', 'B owes 100 in October: only the untagged 100.00 that month is offered, got '+JSON.stringify(c.lines.map(l=>l.id)));
+  c = sb.jamiahCellCandidates(j, 3, '2026-10');
+  assert(!c.match && c.lines.map(l=>l.id).join()==='10,11' && Math.abs(c.due-30)<0.005, 'C owes 30 and nothing matches: the other untagged amounts that month are listed');
+  sb.openJamiahCell(1, 2, '2026-10');
+  const modal = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/tagJamiahTransaction\(1,10,2\)/.test(modal) && !/tagJamiahTransaction\(1,12,/.test(modal), 'The cell lets you tag the matching transaction, not one from another month');
+  const html = sb.renderJamiahSummary(j);
+  assert(/openJamiahCell\(1,2,'2026-10'\)/.test(html) && /openJamiahTick\(1,1,'2026-10'\)/.test(html), 'Empty cells open matching transactions; ticks open their transaction');
+}
+async function testJamiahTickShowsItsTransactionWithUntag(){
+  const {sb, j} = jam5Sandbox();
+  sb.openJamiahTick(1, 1, '2026-10');
+  const modal = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/A pays|>A</.test(modal) && /tagJamiahTransaction\(1,1,null\)/.test(modal) && />Untag</.test(modal), 'Clicking a tick shows its transaction with Untag');
+  sb.__set('renderJamiahDetail', ()=>{});
+  sb.tagJamiahTransaction(1, 1, null);
+  assert(!(1 in j.tags), 'Untag removes the tag');
+  const html = sb.renderJamiahSummary(j);
+  assert(/openJamiahCell\(1,1,'2026-10'\)/.test(html), 'With the tag gone, the tick is gone too');
+}
+async function testJamiahTaggedTransactionsLeaveEveryList(){
+  const {sb, j} = jam5Sandbox();
+  const D = vm.runInContext('D', sb);
+  const other = {id:2, name:'Other', account:10501, startMonth:'2026-10', durationMonths:1, groups:[], participants:[], roundGroup:{}, tags:{11:9}};
+  D.jamiahs.push(other);
+  const ids = sb.jamiahUntaggedLines(j).map(l=>l.id);
+  assert(ids.join()==='10,12', 'Lines tagged in this Jamiah (1,2,3) or another (11) are not offered, got '+ids.join());
+  const html = sb.renderJamiahUntagged(j);
+  assert(!/B last month/.test(html) && !/>odd</.test(html) && /B pays/.test(html), 'The to-tag list drops tagged transactions');
+}
+async function testJamiahSettingsIsOnePanel(){
+  const {sb} = jam5Sandbox();
+  sb.__set('jamiahSetupExpanded', true);
+  sb.renderJamiahDetail(1);
+  const app = sb.document.getElementById('app').innerHTML;
+  const at = app.indexOf('Jamiah settings');
+  assert(at>-1 && app.indexOf("setJamiahField(1,'name'")>at && app.indexOf("setJamiahField(1,'startMonth'")>at && app.indexOf('addJamiahParticipant(1)')>at && app.indexOf('setJamiahRoundGroup(1,')>at, 'Name, account, months, participants and rounds are all in Jamiah settings');
+  assert((app.match(/Jamiah settings/g)||[]).length===1 && !/Setup: Groups/.test(app), 'One settings panel');
+}
+
+// ---- v5.0 step 4: Allocations ----
+async function testAllocationLookupPreviewsLinesAndNet(){
+  const {sb} = allocSandbox();
+  if(!sb.document.getElementById('app')) sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.renderAlloc();
+  sb.setAllocLookup('00007');
+  const el = sb.document.getElementById('allocLookup');
+  assert(el && el.querySelectorAll('tbody tr').length===2, 'Allocation #7 shows its two lines');
+  assert(/Net \(#00007, 2 lines\)/.test(el.textContent) && /200\.00/.test(el.querySelector('tfoot').textContent), 'And its net (+200)');
+  assert(/openAllocationArabicStatement\(7\)/.test(el.innerHTML), 'With its own Arabic Statement button');
+  sb.setAllocLookup('123');
+  assert(/No allocation #123/.test(el.textContent) && !/openAllocationArabicStatement/.test(el.innerHTML), 'An unknown number says so');
+}
+async function testAllocationLookupArabicStatementUsesOnlyThatAllocation(){
+  const {sb} = allocSandbox();
+  sb.__set('translateDescriptionToArabic', async (d)=>({text:'ar:'+d, source:'test'}));
+  sb.__set('renderSettlementStatement', ()=>{});
+  await sb.openAllocationArabicStatement(7);
+  const d = vm.runInContext('settlementDraft', sb);
+  assert(d && d.acc===10501 && d.lines.map(l=>l.id).join()==='1,2', 'The statement holds only allocation #7\'s lines, got '+(d&&d.lines.map(l=>l.id).join()));
+  await sb.openSettlementStatement(10501);
+  const d2 = vm.runInContext('settlementDraft', sb);
+  assert(d2 && d2.lines.map(l=>l.id).join()==='6,7', 'The per-account statement still uses the unallocated lines (6 and 7)');
+}
+async function testUnallocatedBoxesPerAccountWithAllActions(){
+  const {sb} = allocSandbox();
+  if(!sb.document.getElementById('app')) sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.__set('allocTab', 'unalloc');
+  sb.renderAlloc();
+  allocSel(sb, [7]);
+  sb.renderAllocUnallocResults();
+  const html = sb.document.getElementById('allocUnallocResults').innerHTML;
+  assert(/openSettlementStatement\(10501\)/.test(html) && /createBalancingJV\(10501\)/.test(html) && /openAddToAllocation\(10501\)/.test(html) && /assignAllocation\(10501\)/.test(html), 'Each account box offers Arabic statement, Create JV to balance, Add to existing and Assign');
+  sb.__set('allocTab', 'groups');
+  sb.renderAlloc();
+  assert(!/Arabic/.test(sb.document.getElementById('allocBody').innerHTML), 'No Arabic statement on the existing allocations list');
+}
+
+// ---- v5.0 step 4: Forecast ----
+async function testForecastHorizonLimitsTheMonths(){
+  const sb = dashSandbox();
+  sb.localStorage.setItem('gridEndMonth', '2027-12');
+  sb.__set('forecastWindowStart', '2026-11');
+  assert(sb.getForecastHorizon()==='end' && sb.forecastMonthsWindow().length===14, 'Default: through the Grid & Export End Month (Nov-26..Dec-27)');
+  sb.go('forecast');
+  sb.setForecastHorizon('6');
+  assert(sb.localStorage.getItem('forecastHorizon')==='6' && sb.forecastMonthsWindow().join()==='2026-11,2026-12,2027-01,2027-02,2027-03,2027-04', '6 months');
+  sb.setForecastHorizon('18');
+  assert(sb.forecastMonthsWindow().length===14, '18 months still stops at the end month');
+  sb.setForecastHorizon('99');
+  assert(sb.localStorage.getItem('forecastHorizon')==='18', 'Unknown horizons are ignored');
+  const seg = sb.document.querySelector('[aria-label="Horizon"]');
+  assert(seg && seg.querySelectorAll('button').length===4 && /18 months/.test((seg.querySelector('[aria-pressed="true"]')||{}).textContent||''), 'The page offers 6 / 12 / 18 / End of reporting period');
+}
+async function testForecastChartMatchesTheClosingBalanceRow(){
+  const sb = dashSandbox();
+  sb.localStorage.setItem('gridEndMonth', '2027-04');
+  sb.__set('forecastWindowStart', '2026-11');
+  sb.__set('computeMonthlyCashFlow', (months)=> months.map((m,i)=>({month:m, starting:0, inflow:0, outflow:0, change:0, closing:[5000, -1200.5, 300, 9000, 4000, 2500][i]||0, subrows:{}})));
+  // The table shows whole units; so do the bars (exact amount in the tooltip).
+  sb.__set('renderCashFlowPanel', (months)=> '<div id="cfp">'+vm.runInContext('computeMonthlyCashFlow', sb)(months).map(r=>'<i>'+Math.round(r.closing).toLocaleString()+'</i>').join('')+'</div>');
+  sb.go('forecast');
+  const chart = sb.document.querySelector('.fc-chart');
+  const vals = chart? [...chart.querySelectorAll('.fc-val')].map(e=>e.textContent) : [];
+  const table = [...sb.document.querySelectorAll('#cfp i')].map(e=>e.textContent);
+  assert(vals.length===6 && vals.join('|')===table.join('|'), 'Every bar carries the same amount as the Closing Balance row, got '+vals.join('|'));
+  const tips = chart? [...chart.querySelectorAll('.fc-col')].map(c=>c.getAttribute('title')) : [];
+  assert(tips[1]==='Dec-26: '+sb.money(-1200.5), 'The tooltip carries the exact amount, got '+tips[1]);
+  const low = chart && chart.querySelector('.fc-col.low');
+  assert(low && /Dec-26/.test(low.textContent) && /lowest/.test(low.textContent), 'The lowest month is marked');
+  assert(/Lowest: -1,200\.50 in Dec-26/.test(sb.document.getElementById('app').textContent), 'And named above the chart');
+}
+
+async function testThingsThatNeedYouShowsEightThenShowAll(){
+  const sb = dashSandbox();
+  sb.__set('dashboardTodoItems', ()=> Array.from({length:12}, (_,i)=>({tone:'warn', title:'Item '+i, sub:'s', label:'Go', onclick:'void 0'})));
+  sb.renderDashboard();
+  let app = sb.document.getElementById('app');
+  assert(app.querySelectorAll('.todo-item').length===8 && /12 things need you/.test(app.textContent), 'Shows the first 8 and counts all 12');
+  assert(/Show all 12/.test(app.textContent), 'Offers Show all');
+  sb.toggleDashTodoAll();
+  assert(sb.document.getElementById('app').querySelectorAll('.todo-item').length===12 && /Show fewer/.test(sb.document.getElementById('app').textContent), 'Show all lists every item');
+  sb.toggleDashTodoAll();
+}

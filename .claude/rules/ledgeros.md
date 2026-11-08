@@ -73,7 +73,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 ## 3. Tests
 
 - **Run:** `bash dev/ledgeros/run_tests.sh`. It extracts the app's JS to `dev/ledgeros/.build/`, installs `jsdom` and `fake-indexeddb` on first run, prints any `FAIL` lines, then `N passed, 0 failed`.
-  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0).
+  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0.
   - Console noise about `QuotaExceededError` or "Not implemented: scrollTo" is expected.
 - **Harness basics:**
   - `makeSandbox()` gives a fresh app context in a vm.
@@ -100,7 +100,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 ## 6. Open items and future features (ask before starting any of them)
 
-- **Redesign to v5.0.0 ("Command Center") is agreed and ready to build.** Follow `dev/ledgeros/redesign/REDESIGN_PLAN.md`; the mockup sources are in `dev/ledgeros/redesign/mockup/`.
+- **v5.0.0 ("Command Center") shipped** from `dev/ledgeros/redesign/REDESIGN_PLAN.md`. `LedgerOS-classic.html` is the frozen v4.63.0 copy: never change it; delete it only when Muhannad says so. Classic's Restore from backup would clear `dashboard_layout` and `position_boxes` (he has been warned). `dev/ledgeros/redesign/demo_walk.js` screenshots any page with invented data.
 
 - **Security hardening (planned):** add Supabase Auth sign-in and tighten the database policies. Muhannad has the details. It needs careful planning with him because it touches every sync path and his backup script.
 - **A platform-to-platform cleanup is in progress:** recording some missing buys, then using Move coins. Muhannad has the details. Afterwards, read the moved cost (read-only) so he can post the matching ledger JV himself.
@@ -124,3 +124,4 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 | 4.61 | Accrual cap per sub category |
 | 4.62 | Platform-perspective wording: "Invested into platform" / "Withdrawn from platform" |
 | 4.63 | Move coins between platforms (multi-asset, sent vs received, fee per owner, full cost carried) |
+| 5.0 | Command Center redesign: rail + top bar, accent-driven theme, editable Dashboard boxes and position boxes (`pd_ui_prefs.dashboard_layout` / `position_boxes`), reworked Provisions, Jamiah, Allocations lookup, Forecast horizon + chart |
