@@ -8012,6 +8012,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testPositionSubtotalEditorAndValidation();
   await testUpdatePlanGoesToTheExactPlace();
   await testAuroraAndGlassStyle();
+  await testDriftComparesPerAccount();
+  await testDriftIncomeExpenseOnlyAndExcludeList();
+  await testDriftSettingsAreSyncedWithToggles();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8993,4 +8996,77 @@ async function testAuroraAndGlassStyle(){
   const sb = shellSandbox();
   sb.setUiBackground('aurora');
   assert(sb.document.body.classList.contains('bg-aurora'), 'Choosing it in Settings turns the glass on');
+}
+
+// ---- v5.3: drift A + B + C (#17) ----
+function driftSandbox(){
+  const sb = dashSandbox();
+  freezeDate(sb, '2026-11-07T10:00:00.000Z');
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:60504, name:'Bills', category:'Bills', status:'Active', acc_type:'Individual Account'}, {id:20111, name:'This Month Payable', category:'Short Term Liabilities', status:'Active', acc_type:'Individual Account'});
+  sb.rebuildIndex();
+  // Two lines on Bills (125 + 162.50) whose total matches the actual 287.50; a pass-through payable that nets to zero.
+  D.provisionGroups = [
+    {id:1, name:'Internet', lines:[{acc:60504, lineId:1}, {acc:20111, lineId:2}], months:{'2026-09':{1:125, 2:-125}, '2026-10':{1:125, 2:-125}}},
+    {id:2, name:'Phone', lines:[{acc:60504, lineId:1}, {acc:20111, lineId:2}], months:{'2026-09':{1:162.5, 2:-162.5}, '2026-10':{1:162.5, 2:-162.5}}}];
+  D.ledger = D.ledger.filter(l=>![60504,20111].includes(l.acc));
+  ['2026-09','2026-10'].forEach((m,i)=>D.ledger.push({id:900+i*4, jv:900+i, date:m+'-05', acc:60504, amt:287.5, descr:'bills'}, {id:901+i*4, jv:900+i, date:m+'-05', acc:20111, amt:-287.5, descr:'bills'},
+    {id:902+i*4, jv:910+i, date:m+'-20', acc:20111, amt:287.5, descr:'paid'}, {id:903+i*4, jv:910+i, date:m+'-20', acc:10101, amt:-287.5, descr:'paid'}));
+  return sb;
+}
+async function testDriftComparesPerAccount(){
+  const sb = driftSandbox();
+  sb.setDriftSettings({perAccount:false, plOnly:false, excludeOn:false});
+  let f = sb.computeDriftFlags().filter(x=>x.kind==='provision');
+  assert(f.filter(x=>x.acc===60504).length===2 && f.filter(x=>x.acc===20111).length===2, 'Old way: each Bills line is compared with the whole account, and the payable is flagged too');
+  sb.setDriftSettings({perAccount:true});
+  f = sb.computeDriftFlags().filter(x=>x.kind==='provision');
+  assert(!f.some(x=>x.acc===60504), 'A: per account, Bills plan 125 + 162.50 = 287.50 matches the actual, so no drift');
+  assert(f.filter(x=>x.acc===20111).length===1 && f[0].key==='provacc:20111' && f[0].lines.length===2, 'A: one alert per account, covering both lines');
+  vm.runInContext('D', sb).ledger.push({id:990, jv:990, date:'2026-10-09', acc:60504, amt:400, descr:'extra'}, {id:991, jv:991, date:'2026-09-09', acc:60504, amt:400, descr:'extra'});
+  assert(sb.computeDriftFlags().some(x=>x.acc===60504), 'A still catches real drift on the account');
+}
+async function testDriftIncomeExpenseOnlyAndExcludeList(){
+  const sb = driftSandbox();
+  sb.setDriftSettings({perAccount:true, plOnly:false, excludeOn:false});
+  assert(sb.computeDriftFlags().some(x=>x.acc===20111), 'Without B, the pass-through payable is flagged');
+  sb.setDriftSettings({plOnly:true});
+  assert(!sb.computeDriftFlags().some(x=>x.acc===20111), 'B: balance-sheet accounts are left out');
+  const D = vm.runInContext('D', sb);
+  D.ledger.push({id:990, jv:990, date:'2026-10-09', acc:60504, amt:400, descr:'x'}, {id:991, jv:991, date:'2026-09-09', acc:60504, amt:400, descr:'x'});
+  assert(sb.computeDriftFlags().some(x=>x.acc===60504), 'Expense accounts are still checked');
+  sb.setDriftSettings({excludeOn:true, excluded:[60504]});
+  assert(!sb.computeDriftFlags().some(x=>x.acc===60504), 'C: an excluded account is never flagged');
+  sb.__set('provisionEditingId', 1); sb.renderProvisions();
+  assert(!/>Drift</.test(sb.document.getElementById('provGroup_1').innerHTML), 'C: its Drift badge is gone too');
+  sb.setDriftSettings({excludeOn:false});
+  assert(sb.computeDriftFlags().some(x=>x.acc===60504), 'Turning the list off checks it again');
+  sb.__set('provisionEditingId', 1); sb.renderProvisions();
+  assert(/>Drift</.test(sb.document.getElementById('provGroup_1').innerHTML) && /Drift/.test(sb.document.getElementById('provCard_1_1').textContent), 'And the badge shows on the line again (per-account alerts mark every line of that account)');
+  assert(/Drift/.test((sb.driftFlagsFor('provision', 2)[0]||{}).key? 'Drift' : ''), 'The second group sees the same per-account alert');
+  sb.__set('provisionEditingId', 2); sb.renderProvisionGroupsList();
+  const card2 = sb.document.getElementById('provCard_2_1');
+  assert(card2 && /Drift/.test(card2.textContent), 'The Drift badge also shows on the same account\u2019s line in the other group');
+}
+async function testDriftSettingsAreSyncedWithToggles(){
+  const sb = driftSandbox();
+  sb.localStorage.setItem('driftSettings', JSON.stringify({thresholdPct:30, minMonths:3}));
+  let s = sb.getDriftSettings();
+  assert(s.thresholdPct===30 && s.minMonths===3 && s.perAccount && s.plOnly && s.excludeOn, 'Upgrade: keeps this device’s threshold and months, A/B/C on by default');
+  sb.setDriftToggle('plOnly', false);
+  const c = sb.__prefs();
+  assert(c && Object.keys(c.row).sort().join()==='dismissals,id' && c.row.dismissals.driftSettings.plOnly===false && c.row.dismissals.driftSettings.thresholdPct===30, 'Toggles save to the synced settings (no new column)');
+  sb.localStorage.setItem('driftSettings', JSON.stringify({thresholdPct:99}));
+  assert(sb.getDriftSettings().thresholdPct===30, 'Once synced, the synced settings win over this device’s old ones');
+  sb.__set('settingsTab', 'driftdetection');
+  sb.renderSettings();
+  const app = sb.document.getElementById('app');
+  const boxes = [...app.querySelectorAll('input[type=checkbox][onchange^="setDriftToggle"]')].map(i=>i.getAttribute('onchange').match(/'(\w+)'/)[1]);
+  assert(boxes.join()==='perAccount,plOnly,excludeOn', 'Settings has a toggle for each of A, B and C');
+  const sel = app.querySelector('#driftExcludeSel');
+  assert(sel && /20111/.test(sel.innerHTML) && /60504/.test(sel.innerHTML), 'The exclude list offers accounts used in Provisions');
+  sel.value = '60504'; sb.addDriftExclusion();
+  assert(sb.getDriftSettings().excluded.join()==='60504' && /removeDriftExclusion\(60504\)/.test(sb.document.getElementById('app').innerHTML), 'Excluding adds it to the list, with a way to remove it');
+  sb.removeDriftExclusion(60504);
+  assert(sb.getDriftSettings().excluded.length===0, 'And it can be removed');
 }
