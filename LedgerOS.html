@@ -366,7 +366,7 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .rise{animation:riseIn .4s cubic-bezier(.2,.8,.2,1) both}
 .dash-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px}
 .btn.dashed{border:1px dashed var(--accent);background:var(--accent-soft);color:var(--nav-on-fg)}
-.dash-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:20px;align-items:start}
+.dash-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:4px;column-gap:20px;row-gap:0;align-items:start}
 .dash-cell{position:relative;min-width:0}
 .dash-cell>.panel{margin:0}
 .dash-grid.editing .dash-cell{outline:2px dashed color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:6px;border-radius:18px;cursor:grab}
@@ -534,12 +534,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.0.0';
+const APP_VERSION = '5.0.1';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.0.1', date:'2026-11-08', changes:[
+    'Dashboard: boxes now stack up into any free space. A box goes straight under a shorter box above it instead of waiting below the tallest box in that row (for example, Things that need you can now sit right under the Forecast snapshot).',
+  ]},
   {version:'5.0.0', date:'2026-11-08', changes:[
     'NEW LOOK: a slim side rail and a top bar with search (Ctrl+K), sync status, a Light / Dark switch and + New JV. The whole app now follows your accent colour. Geist is the new default font (the old fonts are still in Settings).',
     'Settings \u2192 Appearance: accent colour swatches, Background (Plain, Tinted or Aurora) and Motion (On / Off). Your computer\u2019s reduced-motion setting always wins. These are per device.',
@@ -4825,7 +4828,25 @@ function renderDashboard(){
       <button class="btn ${dashEditing?'pri':'ghost'} sm" aria-pressed="${dashEditing}" onclick="toggleDashEditing()">${dashEditing? 'Done' : 'Edit layout'}</button>
     </div>
     <div class="dash-grid${dashEditing?' editing':''}">${cells}</div>`;
+  watchDashMasonry();
   animateKpiCountUps();
+}
+// Masonry (v5.0.1): the grid has 4px rows and each box spans as many as its height needs, so a
+// box moves up into the highest free spot in its columns instead of waiting below the tallest
+// box of the row before. Order and widths still come from the saved layout.
+const DASH_ROW_PX = 4, DASH_GAP_PX = 20;
+function dashRowSpan(heightPx){ return Math.max(1, Math.ceil(((Number(heightPx)||0) + DASH_GAP_PX) / DASH_ROW_PX)); }
+let _dashResizeObs = null;
+function layoutDashMasonry(){
+  document.querySelectorAll('.dash-grid .dash-cell').forEach(c=>{ c.style.gridRowEnd = 'span '+dashRowSpan(c.getBoundingClientRect().height); });
+}
+function watchDashMasonry(){
+  layoutDashMasonry();
+  if(_dashResizeObs){ _dashResizeObs.disconnect(); _dashResizeObs = null; }
+  if(typeof ResizeObserver==='undefined') return;
+  // Boxes change height after render (fonts, count-ups, resizing a box): re-measure then.
+  _dashResizeObs = new ResizeObserver(()=>layoutDashMasonry());
+  document.querySelectorAll('.dash-grid .dash-cell').forEach(c=>_dashResizeObs.observe(c));
 }
 
 /* ============================= NEW JV ============================= */

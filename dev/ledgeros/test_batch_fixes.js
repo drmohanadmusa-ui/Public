@@ -7994,6 +7994,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testForecastHorizonLimitsTheMonths();
   await testForecastChartMatchesTheClosingBalanceRow();
   await testThingsThatNeedYouShowsEightThenShowAll();
+  await testDashboardBoxesStackIntoFreeSpace();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8668,4 +8669,17 @@ async function testThingsThatNeedYouShowsEightThenShowAll(){
   sb.toggleDashTodoAll();
   assert(sb.document.getElementById('app').querySelectorAll('.todo-item').length===12 && /Show fewer/.test(sb.document.getElementById('app').textContent), 'Show all lists every item');
   sb.toggleDashTodoAll();
+}
+
+// ---- v5.0.1: masonry Dashboard ----
+async function testDashboardBoxesStackIntoFreeSpace(){
+  const sb = dashSandbox();
+  assert(sb.dashRowSpan(0)===5 && sb.dashRowSpan(100)===30 && sb.dashRowSpan(101)===31, 'Row span = (height + 20px gap) / 4px rows, rounded up');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\.dash-grid\{[^}]*grid-auto-rows:4px[^}]*row-gap:0/.test(html), 'The grid uses 4px rows with the gap folded into each span');
+  sb.renderDashboard();
+  const cells = [...sb.document.querySelectorAll('.dash-grid .dash-cell')];
+  cells.forEach((c,i)=>{ c.getBoundingClientRect = () => ({height: 100 + i*10}); });
+  sb.layoutDashMasonry();
+  assert(cells.length>3 && cells.every((c,i)=>c.style.gridRowEnd==='span '+sb.dashRowSpan(100+i*10)), 'Every box spans rows matching its own height');
 }
