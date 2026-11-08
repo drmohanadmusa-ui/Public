@@ -21,6 +21,7 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 | 14 | 2026-11-08 | Glass effect for the left side rail, like the latest iOS. Mock it up first. | shipped 5.2.0 | Liked the mock-up. Part of the Aurora background, renamed "Aurora & glass" (the Settings toggle). Top bar too, rounded and floating. |
 | 15 | 2026-11-08 | Position box opened lines: no banded rows, hover highlight only (reverses the bands from #1). | shipped 5.2.0 | |
 | 16 | 2026-11-08 | Position boxes: named subtotals with his own calculation (e.g. This month liabilities = STL + Accruals; Liquid Cash After Liabilities = Liquid Cash + This month liabilities), in every box. | shipped 5.2.0 | Subtotal/total: "Running total so far" or "Add up chosen rows" (rows above it, each + or −). Stored in position_boxes, no schema change. |
+| 17 | 2026-11-08 | Can an account be removed from the drift check? | question asked | Not possible today (only Dismiss until a new month closes, plus the global threshold and months in Settings → Drift Detection). Proposed a permanent exclusion; questions in Message #15. |
 
 ## Schema changes
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
