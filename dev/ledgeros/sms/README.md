@@ -42,20 +42,44 @@ Running the script by hand inside Scriptable uses whatever SMS is on the clipboa
 
 ## 3. Banks and triggers
 
-**Trigger rule (agreed 2026-11-11):** one automation per account or card, and its *Message Contains* is that account's or card's **last 4 digits**, as printed in the SMS. This works for every bank, because bank SMS name the account. A phrase is used only where a bank doesn't print the account (SNB credit card). The real last-4 numbers live only in the phone's automations, never in this public repo.
+**Triggers.** First agreed rule (2026-11-11): one automation per account or card, with *Message Contains* set to its last 4. That works for SAIB, Al Rajhi and meem, but **not** for SNB's debit account (most of its SMS never name your own account) or STC (no account digits at all).
 
-| Source (column 3) | Bank / account | Trigger(s) | Status |
-|---|---|---|---|
-| `SNB CC` | SNB credit card | phrase `الصرف المتبقي` | done |
-| `SAIB` | SAIB main account, SAIB-2 account, mada card, travel card | last 4 of each (4 automations) | done |
-| `Al Rajhi` | Al Rajhi account, mada card, Visa card | last 4 of each (3 automations) | done |
-| `meem` | meem account (+ its mada card) | account last 4 only (1 automation: every meem transaction SMS names the account, card purchases included) | done |
-| | SNB debit account | | waiting for samples |
-| | D360 | | waiting for samples |
-| | urpay | | waiting for samples |
-| | STC Pay | | waiting for samples |
+**Proposed instead (waiting for Muhannad's OK): 3 automations cover all 7 banks**, with Message Contains set to:
+1. `Amount` (Al Rajhi, meem, STC, D360, urpay)
+2. `مبلغ` (SNB, SAIB, and SNB's annual-fee notice, which has no "SAR")
+3. `SAR` (SNB and SAIB "بSAR" purchases, which have neither of the above)
+
+The script ignores anything it doesn't recognise, so OTPs and promos that contain these words are harmless. One SMS can fire two automations (e.g. "Amount" and "SAR"). The second run finds the row already logged ("Duplicate"), and the LedgerOS inbox will also reject duplicates by a unique key.
+
+| Source (column 3) | Bank / account | Status |
+|---|---|---|
+| `SNB CC` | SNB credit card(s) | done |
+| `SNB` | SNB debit account (Acct is always `SNB debit`) | done |
+| `SAIB` | SAIB main account, SAIB-2 account, mada card, travel card | done |
+| `Al Rajhi` | Al Rajhi account, mada card, Visa card | done |
+| `meem` | meem account (+ its mada card) | done |
+| `STC` | STC Bank wallet (Acct is always `STC`) | done |
+| | D360 | waiting for samples |
+| | urpay | waiting for samples |
 
 The script ignores anything it doesn't recognise, so a trigger that's slightly too broad is harmless. For example, an OTP that happens to contain the digits is just skipped.
+
+**SNB notes** (one parser for both: rows come out as `SNB CC` or `SNB`)
+- **Credit card** (Acct = card last 4; a replacement card has a new number, so map it too):
+  - **Logged:** purchases (online and POS), cashback, reversals ("حوالة عكسية"), refunds ("إسترداد مبلغ"), annual fee.
+  - **Foreign purchases:** SNB gives its own rate ("سعر الصرف 1.02"), so Amount SAR = foreign amount × that rate. The rate is rounded to 2 decimals, so the result can be a few halalas off. The international fee ("رسوم العمليات الدولية") goes in Fee SAR.
+- **Debit account** (Acct = `SNB debit`, because most debit SMS don't show your own account):
+  - **Logged:** salary ("ايداع رواتب"), incoming transfers (internal, and local from another bank, with the bank name), outgoing internal, local and international transfers (with fee), mada purchases (local and international online), credit card payments (Counter Acct = the card, so it's a transfer between your own accounts), and finance instalments (personal and home, with the remaining loan balance).
+  - **Local outgoing transfers include SNB's SAR 0.50 fee in the amount** (e.g. 19000.50, while the other bank receives 19000).
+- **Ignored:** OTPs and activation codes (some contain amounts and merchants), failed transfers ("غير ناجحة"), card issue, activation, freeze and cancel notices, and PIN changes.
+- **Line order:** SNB's Arabic lines are stored in a different order from how they're shown. Every SNB field is found by keyword anywhere in its line, and labels are stripped only at the **start or end** of a line, because names like "عبدالمنعم" contain "من" and "ل".
+- **Dates:** usually `dd/mm/yy`, but international transfers use `yy/mm/dd` (`26/10/23`). `anyDate` tries both and keeps the valid one closest to today.
+
+**STC Bank notes**
+- **Logged:** top-ups ("Adding money to account", and the old "STC pay wallet top up"), internal transfers in and out (old and new wording), Western Union transfers (with fee), and card purchases.
+- **Ignored:** OTPs, security codes, beneficiary notices, and "Hello," announcements.
+- **Dates are always day first** (`anyDate(t, "dmy")`), except `3/10/2026 10:11 PM`: a 12-hour time means US month-first (10 March).
+- Amounts like `660.00SAR` and `50SR` are read as SAR.
 
 **SAIB notes**
 - **Message types logged:**
@@ -133,6 +157,8 @@ If the columns ever change, the script moves the old file aside as *Ledger Inbox
    - `mdNoYear(text)`: `mm-dd hh:mm` with no year (SAIB).
    - `ymdOrDmy(text)`: `yy/m/d` or `d/m/yy`, whichever reading is valid and closest to today (Al Rajhi).
    - `dmyAny(text)`: `dd/mm/yyyy`, `dd/mm/yy`, or ISO date plus a `Time:` line (meem).
+   - `anyDate(text, order)`: any d/m/y date. It tries both orders unless `order` is `"dmy"`, and AM/PM means month first. Time is read separately (SNB, STC).
+   - `lineWith` / `lineWithNum` / `without` / `isAmountLine` / `masked4`: keyword-based helpers for Arabic lines whose stored order differs from what's shown (SNB).
    - `ownWallet(merchant)`: `urpay` / `D360` when a "merchant" is really your own wallet (`OWN_WALLETS`).
    - `xAcct(s)` / `stripAcct(s)`: pull out or remove `XXX1234`.
    - `tr(s)`: Arabic → English using `TRANSLATE`.
@@ -190,3 +216,5 @@ Then add tests (section 6, step 3), add the trigger phrase to the table in secti
 7. **Check a parser against a real batch, privately.** When Muhannad pastes a bank's history, run every message through the script outside the repo, read every logged row, and only commit invented copies as tests. SAIB's first run caught the card line "بطاقة:XXX…" being read as the amount.
 8. **One bank can use two date orders** (Al Rajhi). Never pick a date order per bank by assumption: let `ymdOrDmy` choose the reading closest to today.
 9. **Banks share headings.** "Online Purchase" is used by Al Rajhi, meem and probably others. Every parser's `test()` needs a heading **and** a marker only that bank uses, and every new bank gets a test proving it doesn't steal another bank's message.
+10. **Never strip a word from the middle of an Arabic line.** "من", "ل" and "في" are also letters inside names. Labels come off only at the edges (`without`).
+11. **A "guard" test only counts if removing the guard turns it red.** Two first-draft guard tests (meem's label check and SNB's failed-transfer skip) passed with or without the guard and had to be rewritten.

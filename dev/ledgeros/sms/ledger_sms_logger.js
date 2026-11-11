@@ -21,6 +21,7 @@ const normalise = s => clean(s)
   .replace(/[  -​ ]/g, " ")                     // odd spaces
   .replace(/[٠-٩]/g, d => ARABIC_DIGITS.indexOf(d))       // Arabic-Indic digits
   .replace(/٫/g, ".").replace(/٬/g, ",")                  // Arabic decimal/thousands
+  .replace(/\u0640/g, "")                                          // tatweel: "بـSAR" -> "بSAR"
   .replace(/\r/g, "");
 // non-empty, trimmed lines
 const linesOf = t => t.split("\n").map(l => l.trim()).filter(Boolean);
@@ -92,9 +93,55 @@ const dmyAny = t => {
   const iso = t.match(/(\d{4})-(\d{2})-(\d{2})/), tm = t.match(/Time:\s*(\d{1,2}):(\d{2})/i);
   return { date: iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : "", time: tm ? `${pad(tm[1])}:${tm[2]}` : "" };
 };
+// any d/m/y-looking date (2- or 4-digit year), either order, closest valid day not in the future;
+// "3/10/2026 10:11 PM" (12-hour clock) is US month-first. Time is read separately.
+// order "dmy" = the bank always writes the day first (no guessing between readings)
+const anyDate = (t, order) => {
+  const pad = n => String(n).padStart(2, "0");
+  const iso = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+  let date = "";
+  if (iso) date = `${iso[1]}-${iso[2]}-${iso[3]}`;
+  else {
+    const m = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)/);
+    if (m) {
+      const now = TODAY(), ampm = /\d:\d{2}\W*[AP]M/i.test(t);
+      const read = (dd, mo, yy) => {
+        const y = yy.length === 4 ? parseInt(yy, 10) : 2000 + parseInt(yy, 10), mm = parseInt(mo, 10), d = parseInt(dd, 10);
+        const dt = new Date(y, mm - 1, d);
+        return (mm >= 1 && mm <= 12 && dt.getDate() === d && dt - now <= 86400000) ? { date: `${y}-${pad(mm)}-${pad(d)}`, gap: Math.abs(now - dt) } : null;
+      };
+      const cands = (ampm ? [read(m[2], m[1], m[3])]
+        : (m[3].length === 4 || order === "dmy") ? [read(m[1], m[2], m[3])]
+        : [read(m[1], m[2], m[3]), read(m[3], m[2], m[1])]).filter(Boolean).sort((a, b) => a.gap - b.gap);
+      date = cands.length ? cands[0].date : "";
+    }
+  }
+  const tm = t.match(/(\d{1,2}):(\d{2})(?::\d{2})?\W*([AP]M)?/i);
+  let time = "";
+  if (tm) {
+    let h = parseInt(tm[1], 10);
+    if (tm[3] && /PM/i.test(tm[3]) && h < 12) h += 12;
+    if (tm[3] && /AM/i.test(tm[3]) && h === 12) h = 0;
+    time = `${pad(h)}:${tm[2]}`;
+  }
+  return { date, time };
+};
+// first line that contains one of `inc`, none of `exc`, and a number
+const lineWithNum = (L, inc, exc = []) => L.find(l => inc.some(w => l.includes(w)) && !exc.some(w => l.includes(w)) && /\d/.test(l)) || "";
+// first line that contains one of `inc` and none of `exc`
+const lineWith = (L, inc, exc = []) => L.find(l => inc.some(w => l.includes(w)) && !exc.some(w => l.includes(w))) || "";
+// a line's text with an Arabic label word removed, whichever side it is on
+// Only at the START or END of the line: names like "عبدالمنعم" contain "من" and "ل" inside them.
+const without = (line, ...words) => words.reduce((s, w) => {
+  const e = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(new RegExp(`^\\s*${e}\\s*:?\\s*`), "").replace(new RegExp(`\\s*:?\\s*${e}\\s*$`), "");
+}, (line || "").trim()).replace(/\s+/g, " ").trim();
+// a line that is only an amount, maybe with a leading "ب" ("بSAR 274.00" / "SAR 274.00ب")
+const isAmountLine = l => /^\s*ب?\s*(?:[A-Z]{3}\s*[\d.,]+|[\d.,]+\s*[A-Z]{3})\s*ب?\s*$/.test(l);
+const masked4 = s => { const m = (s || "").match(/\*+\s*(\d{4})(?!\d)|(?<!\d)(\d{4})\s*\*+/); return m ? (m[1] || m[2]) : ""; };
 // merchants that are really your own wallets: a purchase there is a transfer to that wallet.
 // LedgerOS maps these names to accounts like any other Acct/Counter value.
-const OWN_WALLETS = [[/URPAY/i, "urpay"], [/MYSR|D360|D36\)/i, "D360"]];
+const OWN_WALLETS = [[/URPAY/i, "urpay"], [/MYSR|D360|D36\)/i, "D360"], [/STC ?PAY|STC ?BANK/i, "STC"]];
 const ownWallet = merchant => { const w = OWN_WALLETS.find(([re]) => re.test(merchant || "")); return w ? w[1] : ""; };
 
 // Arabic names that appear in bank SMS -> English (anything not listed stays as written)
@@ -105,6 +152,11 @@ const TRANSLATE = {
   "الجوازات السعودية": "Passports (Jawazat)",
   "تجديد جواز سفر": "Passport renewal",
   "منصة ايجار": "Ejar platform",
+  "البنك السعودي البريطاني ساب": "SAB",
+  "الولايات المتحدة الامريكية": "USA",
+  "تمويل شخصي": "Personal finance",
+  "تمويل عقاري": "Home finance",
+  "شركة منصة سلة للاتصالات وتقنية المعلومات": "Salla",
 };
 const tr = s => { const k = (s || "").trim(); return TRANSLATE[k] || k; };
 
@@ -117,23 +169,104 @@ const tr = s => { const k = (s || "").trim(); return TRANSLATE[k] || k; };
 // Return null from parse() to skip a message the test() let through.
 const PARSERS = [
   {
-    source: "SNB CC",
-    test: t => t.includes("الصرف المتبقي"),          // remaining limit — CC transactions only
+    // SNB sends Arabic SMS for both the credit card(s) and the debit account. Lines are matched by
+    // keyword wherever it sits in the line, because Arabic lines are stored in a different order
+    // from how they are displayed. Rows: source "SNB CC" (acct = card last 4) or "SNB" (acct = "SNB debit";
+    // many debit SMS don't name your own account at all).
+    source: "SNB",
+    test: t => {
+      const h = linesOf(t)[0] || "";
+      if (/غير ناجح|لا تشارك|الرقم السري|رمز التفعيل|تم تغيير|تم إصدار|تم تفعيل|مبروك|إيقاف|إلغاء|تجميد|ايقاف/.test(h)) return false;
+      return /الصرف المتبقي|الرصيد المتبقي|حوالة عكسية|إسترداد مبلغ|استرداد مبلغ|الرسوم السنوية|حوالة واردة|حوالة صادرة|ايداع رواتب|إيداع رواتب|سداد بطاقة|قسط تمويل|مدى/.test(t)
+             && !/X{1,3}\s*\d{4}|بطاقة السفر/.test(t);   // SAIB writes accounts as XXX1234
+    },
     parse: t => {
-      const refund = /استرجاع/.test(t);
-      let type = refund ? "Cashback/Refund"
-        : /إنترنت/.test(t) ? "Online purchase"
-        : "POS purchase";
-      if (!refund && /Apple Pay/i.test(t)) type += " (Apple Pay)";
-      const merch = t.match(/(?:^|\n)\s*من\s+([^\n]+)/);
-      return {
-        date: dmy(t), time: hhmm(t), acct: last4(t), type,
-        desc: merch ? merch[1].trim() : type,
-        amount: amountOn(t, "مبلغ"),
-        side: refund ? "Dr" : "Cr",
-        currency: "SAR",
-        remaining: amountOn(t, "المتبقي"),
+      const L = linesOf(t), head = L[0];
+      const { date, time } = anyDate(t);
+      const base = { date, time, counter: "", fee: "", remaining: "" };
+      const amtOf = line => money(line);
+      const fxPack = (m, rate) => {
+        if (m.cur === "SAR") return { amount: m.amt, currency: "SAR", fxAmount: "" };
+        const r = parseFloat(rate || "");
+        return { amount: r ? (Math.round(parseFloat(m.amt) * r * 100) / 100).toFixed(2) : toSar(m), currency: m.cur, fxAmount: m.amt };
       };
+      const isCC = /ائتمان|إئتمان|إتمان/.test(t);
+      const remainingOf = () => { const l = lineWith(L, ["المتبقي", "المتبقى"]); return l ? money(l).amt : ""; };
+
+      // ---------- credit card ----------
+      if (/الرسوم السنوية/.test(t)) {
+        const m = money((t.match(/بمبلغ\s*([\d.,]+)/) || ["", ""])[1] + " SAR");
+        return { ...base, source: "SNB CC", acct: masked4(t), type: "Annual card fee", desc: "Annual card fee", side: "Cr", ...fxPack(m) };
+      }
+      if (isCC && !/سداد بطاقة/.test(t)) {
+        const card = L.filter(l => /بطاقة|ائتمان|إئتمان|إتمان/.test(l)).map(masked4).find(Boolean) || masked4(t);
+        const refundish = /استرجاع|إسترداد|استرداد|حوالة عكسية/.test(t);
+        const amtLine = L.find(isAmountLine) || lineWithNum(L, ["مبلغ"], ["المتبقي", "المتبقى", "رسوم", "سعر الصرف"]);
+        const m = amtOf(amtLine);
+        const rate = (lineWith(L, ["سعر الصرف"]).match(/\d+(?:\.\d+)?/) || [""])[0];
+        const fee = money(lineWith(L, ["رسوم العمليات الدولية"])).amt;
+        const merchLine = lineWith(L, ["من ", "لدى"], ["بطاقة", "ائتمان", "إئتمان"]);
+        const merchant = without(merchLine, "لدى", "من");
+        let type = /استرجاع/.test(t) ? "Cashback" : /حوالة عكسية/.test(t) ? "Reversal/refund" : /إسترداد|استرداد/.test(t) ? "Refund"
+          : /POS/i.test(head) ? "POS purchase" : "Online purchase";
+        if (!refundish && /Apple Pay/i.test(t)) type += " (Apple Pay)";
+        const pk = fxPack(m, rate);
+        return { ...base, source: "SNB CC", acct: card, type,
+          desc: merchant ? (pk.currency === "SAR" ? merchant : `${merchant} (${pk.currency} ${pk.fxAmount})`) : type,
+          side: refundish ? "Dr" : "Cr", fee: fee && parseFloat(fee) > 0 ? fee : "", remaining: remainingOf(), ...pk };
+      }
+
+      // ---------- debit account ----------
+      const deb = { ...base, source: "SNB", acct: "SNB debit" };
+      if (/سداد بطاقة/.test(t)) {
+        const m = amtOf(lineWithNum(L, ["مبلغ"], ["المتبقي"]));
+        return { ...deb, counter: masked4(lineWith(L, ["بطاقة"], ["سداد"])), type: "Credit card payment",
+          desc: "Credit card payment", side: "Cr", ...fxPack(m) };
+      }
+      if (/قسط تمويل/.test(t)) {
+        const m = amtOf(lineWith(L, ["القسط"], ["خصم"]));
+        const loan = tr(without(lineWith(L, ["تمويل"], ["قسط"]), "ل"));
+        return { ...deb, type: "Finance instalment", desc: loan ? `${loan} instalment` : "Finance instalment",
+          side: "Cr", remaining: money(lineWith(L, ["المتبقي"])).amt, ...fxPack(m) };
+      }
+      if (/ايداع رواتب|إيداع رواتب/.test(t)) {
+        return { ...deb, type: "Salary", desc: "Salary deposit", side: "Dr", ...fxPack(amtOf(lineWithNum(L, ["مبلغ"]))) };
+      }
+      if (/حوالة واردة محلية/.test(head)) {
+        const sender = without(lineWith(L, ["مرسل"]), "مرسل من", "مرسل");
+        const bank = tr(without(lineWith(L, ["عبر"]), "عبر"));
+        return { ...deb, counter: masked4(lineWith(L, ["من "], ["مرسل"])), type: "Incoming transfer (other bank)",
+          desc: bank ? `${sender} (via ${bank})` : sender, side: "Dr", ...fxPack(amtOf(lineWithNum(L, ["مبلغ"]))) };
+      }
+      if (/حوالة واردة/.test(head)) {          // internal: amount on the heading, "من0101* name" below
+        const who = L[1] || "";
+        return { ...deb, counter: masked4(who), type: "Incoming transfer",
+          desc: without(who.replace(/\*?\d{4}\*?/, ""), "من"), side: "Dr", ...fxPack(amtOf(head)) };
+      }
+      if (/حوالة صادرة دولية/.test(head)) {
+        const ben = without(lineWith(L, ["مستفيد"]), "مستفيد");
+        const country = tr(without(lineWith(L, ["دولة"]), "دولة"));
+        const bank = without(lineWith(L, ["بنك "], ["مستفيد"]), "بنك");
+        const extra = [bank, country].filter(Boolean).join(", ");
+        return { ...deb, counter: masked4(lineWith(L, ["إلى", "الى"])), type: "International transfer",
+          desc: extra ? `${ben} (${extra})` : ben, side: "Cr",
+          fee: money(lineWith(L, ["رسوم"])).amt, ...fxPack(amtOf(lineWithNum(L, ["مبلغ"], ["رسوم"]))) };
+      }
+      if (/حوالة صادرة/.test(head)) {          // internal or local: amount on the heading, "ل0101* name" below
+        const who = L[1] || "";
+        return { ...deb, counter: masked4(who), type: /محلية/.test(head) ? "Outgoing transfer (other bank)" : "Outgoing transfer",
+          desc: without(who.replace(/\*?\d{4}\*?/, "").replace(/\*/g, ""), "ل"), side: "Cr", ...fxPack(amtOf(head)) };
+      }
+      if (/^شراء/.test(head) && /مدى/.test(t)) {
+        const merchLine = L.find(l => /من/.test(l) && !/\d{4}/.test(l) && !isAmountLine(l)) || "";
+        const merchant = without(merchLine, "من");
+        const intl = /دولي/.test(head);
+        const m = amtOf(L.find(isAmountLine) || lineWithNum(L, ["مبلغ"]));
+        return { ...deb, counter: ownWallet(merchant),
+          type: (intl ? "International online purchase" : /POS/i.test(head) ? "POS purchase" : "Online purchase") + (/ابل|Apple/i.test(t) ? " (Apple Pay)" : ""),
+          desc: merchant, side: "Cr", ...fxPack(m) };
+      }
+      return null;
     },
   },
   {
@@ -320,6 +453,36 @@ const PARSERS = [
         type: "Online purchase" + (/Apple Pay/i.test(t) ? " (Apple Pay)" : ""), desc: merchant, side: "Cr", fee: "" };
     },
   },
+  {
+    source: "STC",
+    // STC Bank (formerly STC Pay): English headings, the wallet has one account so acct = "STC"
+    test: t => /^(Adding money to account|Internal outward transfer|Internal incoming transfer|Internal transfer|Transfer via WU|Online Purchase Transaction Amount|STC pay wallet top up)/i.test(linesOf(t)[0] || ""),
+    parse: t => {
+      const L = linesOf(t), head = L[0];
+      const one = key => { const l = L.find(x => x.toLowerCase().startsWith(key.toLowerCase())); return l ? l.slice(key.length).replace(/^\s*:?\s*/, "").trim() : ""; };
+      const { date, time } = anyDate(t, "dmy");
+      const base = { date, time, acct: "STC", counter: "", fee: "", remaining: "", currency: "SAR", fxAmount: "" };
+      const sar = s => toSar(money((s || "").replace(/(\d)\s*SR\b/, "$1 SAR").replace(/\bSR\b/, "SAR")));
+      if (/^Adding money|wallet top up/i.test(head)) {
+        const via = one("Via") || one("Card");
+        return { ...base, type: "Top-up", desc: via ? `Top-up (${via})` : "Top-up", amount: sar(one("Amount") || one("With")), side: "Dr" };
+      }
+      if (/^Online Purchase Transaction Amount/i.test(head)) {
+        return { ...base, type: "Online purchase", desc: tr(one("From")), amount: sar(head.replace(/^Online Purchase Transaction Amount/i, "") + " SAR"),
+          side: "Cr", counter: "" };
+      }
+      if (/^Transfer via WU/i.test(head)) {
+        const who = one("Receiver"), country = one("Country");
+        return { ...base, type: "International transfer (Western Union)", desc: country ? `${who} (WU, ${country})` : `${who} (WU)`,
+          amount: sar(one("Amount")), fee: sar(one("Fees")), side: "Cr" };
+      }
+      const incoming = /incoming/i.test(head) || (/^Internal transfer/i.test(head) && one("From"));
+      const who = incoming ? one("From") : one("To");
+      const acc = (one("Acc").match(/\d{4}/) || [""])[0];
+      return { ...base, type: incoming ? "Incoming transfer" : "Outgoing transfer", desc: who, counter: acc,
+        amount: sar(one("Amount")), side: incoming ? "Dr" : "Cr" };
+    },
+  },
   // next banks get added here (see README.md, "Adding a bank")
 ];
 
@@ -349,7 +512,8 @@ async function main() {
 
   const df = new DateFormatter();
   df.dateFormat = "yyyy-MM-dd HH:mm";
-  const core = [r.date, r.time, p.source, r.acct, r.counter, r.type, r.desc, r.amount, r.side,
+  const source = r.source || p.source;
+  const core = [r.date, r.time, source, r.acct, r.counter, r.type, r.desc, r.amount, r.side,
     r.fee, r.currency, r.fxAmount, r.remaining].join("\t");
   const line = core + "\t" + df.string(new Date());
 
@@ -370,7 +534,7 @@ async function main() {
   const base = existing ? existing.replace(/\n*$/, "\n") : HEADER + "\n";
   fm.writeString(path, base + line + "\n");
 
-  const msg = `${p.source} · ${shown} · ${r.desc}`;
+  const msg = `${source} · ${shown} · ${r.desc}`;
   if (NOTIFY) {
     const n = new Notification();
     n.title = "Logged to Ledger Inbox";
