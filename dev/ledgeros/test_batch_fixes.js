@@ -8027,6 +8027,16 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testSmsInboxLoadsFromTheCloud();
   await testGlassRailScrollsOnShortScreens();
   await testOverBudgetOpenPnLGoesToTheCategory();
+  await testOverflowIsSharedByRoomLeft();
+  await testOverflowNeverPassesACap();
+  await testOverflowLeftoverGoesToTheCatchAll();
+  await testOverflowReceiverRoomIsAfterItsOwnAccrual();
+  await testOverflowDoesNotCoverAnOverspend();
+  await testOverspentCategoryCanBeToppedUpAfterItsFullDrawdown();
+  await testUncappedCategoryNeitherGivesNorReceivesOverflow();
+  await testCatchAllSettingIsSyncedAndRefusesACategoryReserve();
+  await testAccrualPanelShowsOverflowDetail();
+  await testSettingsShowsTheCatchAllPicker();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9289,4 +9299,165 @@ async function testOverBudgetOpenPnLGoesToTheCategory(){
   let went = null; other.__set('go', s=>{ went = s; });
   other.goPnLThisMonth();
   assert(went==='pnl', 'Without a category it still just opens the P&L');
+}
+
+// ================= v5.5.0 (#21): accrual cap overflow =================
+// Invented fixture. October 2026 budgets come from D.budget; reserves are the 203xx liabilities.
+function ovfSandbox(opts){
+  opts = opts||{};
+  const D = {
+    accounts: [
+      {id:20301, name:'Self Improvement Reserve', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:20302, name:'Shopping Reserve', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:20303, name:'Entertainment Reserve', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:20304, name:'Bills Reserve', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:20305, name:'Hobbies Reserve', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:20399, name:'General Reserve', category:'Accruals', acc_type:'Accrual Account', status:'Active'},
+      {id:60100, name:'SI - Courses', category:'Self Improvement', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60199, name:'SI - Accrual', category:'Self Improvement', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
+      {id:60200, name:'Shopping - Spend', category:'Shopping', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60299, name:'Shopping - Accrual', category:'Shopping', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
+      {id:60300, name:'Fun - Spend', category:'Entertainment', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60399, name:'Fun - Accrual', category:'Entertainment', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
+      {id:60400, name:'Bills - Spend', category:'Bills', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60499, name:'Bills - Accrual', category:'Bills', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
+      {id:60500, name:'Hobbies - Spend', category:'Hobbies', acc_type:'Individual Account', status:'Active', forecast_category:'expense'},
+      {id:60599, name:'Hobbies - Accrual', category:'Hobbies', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
+    ],
+    ledger: [
+      // Self Improvement: 3,800 reserved, cap 3 × 1,350 = 4,050 → own 250, overflow 1,100
+      {id:1, jv:1, date:'2026-09-30', acc:20301, amt:-3800, descr:'reserve'},
+      // Shopping: budget 1,000, spent 1,000 (on budget), reserve 2,000 of 3,000 → room 1,000
+      {id:2, jv:2, date:'2026-09-30', acc:20302, amt:-(opts.shopReserve===undefined? 2000 : opts.shopReserve), descr:'reserve'},
+      {id:3, jv:3, date:'2026-10-05', acc:60200, amt:opts.shopSpend===undefined? 1000 : opts.shopSpend, descr:'shop'},
+      // Entertainment: budget 500, spent 500, reserve 0 of 1,500 → room 1,500
+      {id:4, jv:4, date:'2026-10-06', acc:60300, amt:500, descr:'fun'},
+      {id:5, jv:5, date:'2026-09-30', acc:20303, amt:-(opts.funReserve||0), descr:'reserve'},
+      // Bills: budget 1,000, spent 1,500 → 500 over; reserve 300 at month end (a November posting must not count)
+      {id:6, jv:6, date:'2026-10-07', acc:60400, amt:1500, descr:'bills'},
+      {id:7, jv:7, date:'2026-09-30', acc:20304, amt:-300, descr:'reserve'},
+      {id:8, jv:8, date:'2026-11-03', acc:20304, amt:-5000, descr:'after the month'},
+      // Hobbies: no cap, on budget
+      {id:9, jv:9, date:'2026-10-08', acc:60500, amt:400, descr:'hobby'},
+    ],
+    budget: [
+      {id:1, acc:60100, date:'2026-10-01', amt:1350},
+      {id:2, acc:60200, date:'2026-10-01', amt:1000},
+      {id:3, acc:60300, date:'2026-10-01', amt:500},
+      {id:4, acc:60400, date:'2026-10-01', amt:1000},
+      {id:5, acc:60500, date:'2026-10-01', amt:400},
+    ],
+    provisionGroups: [], forecastAccountRules: [], forecastPlans:{},
+    accrualMappings: [
+      {category:'Self Improvement', liabilityAcc:20301, expenseAcc:60199, capMonths:3},
+      {category:'Shopping', liabilityAcc:20302, expenseAcc:60299, capMonths:3},
+      {category:'Entertainment', liabilityAcc:20303, expenseAcc:60399, capMonths:3},
+      {category:'Bills', liabilityAcc:20304, expenseAcc:60499, capMonths:opts.billsCap===undefined? null : opts.billsCap},
+      {category:'Hobbies', liabilityAcc:20305, expenseAcc:60599, capMonths:null},
+    ],
+    uiPrefs: {dismissals: opts.catchAll? {accrualOverflowAcc:opts.catchAll} : {}},
+  };
+  const sb = v455Sandbox(D, '2026-11-11');
+  const toasts = [];
+  sb.__set('renderNewJV', ()=>{}); sb.__set('toast', (m)=>toasts.push(m));
+  sb.__set('accrualMonth', '2026-10');
+  sb.__toasts = toasts;
+  return sb;
+}
+function ovfRun(sb){
+  sb.computeAccrualJV();
+  const lines = vm.runInContext('jvDraft.lines', sb) || [];
+  const expl = vm.runInContext('accrualExplanation', sb) || [];
+  const by = (c)=>expl.find(e=>e.category===c) || {};
+  const amt = (acc, re)=>lines.filter(l=>l.acc===acc && (!re || re.test(l.descr))).reduce((s,l)=>s+l.amt,0);
+  return {lines, expl, by, amt, sum: lines.reduce((s,l)=>s+Math.round(l.amt*100),0), summary: vm.runInContext('accrualOverflowSummary', sb)};
+}
+const near = (a,b)=>Math.abs(a-b)<0.005;
+async function testOverflowIsSharedByRoomLeft(){
+  const r = ovfRun(ovfSandbox());
+  // Own accrual unchanged: 119.99 to the reserve.
+  assert(near(r.amt(20301, /Accrual - /), -250), 'Self Improvement still accrues its own 250 up to the cap, got ' + r.amt(20301));
+  // Pool 1,100 shared 1,000 : 1,500 → 440 and 660.
+  assert(near(r.amt(20302), -440), 'Shopping (room 1,000) gets 440.00, got ' + r.amt(20302));
+  assert(near(r.amt(20303), -660), 'Entertainment (room 1,500) gets 660.00, got ' + r.amt(20303));
+  assert(near(r.amt(60199, /overflow/), 1100), 'The whole overflow is debited to the source\'s 99 account, got ' + r.amt(60199, /overflow/));
+  assert(r.sum===0, 'The JV balances, got ' + r.sum + ' cents');
+  const shopLine = r.lines.find(l=>l.acc===20302);
+  assert(shopLine && /^Shopping Accrual overflow \(from Self Improvement\) - /.test(shopLine.descr), 'Receiver lines say where the overflow came from, got ' + (shopLine&&shopLine.descr));
+  assert(near(r.by('Self Improvement').overflowOut, 1100) && near(r.by('Shopping').overflowIn, 440) && near(r.by('Entertainment').overflowIn, 660), 'The explanation records overflow out and in');
+  assert(/the other 1,100\.00 is overflow/.test(r.by('Self Improvement').action) && /1,100\.00 overflow passed on/.test(r.by('Self Improvement').action), 'The source explains its overflow, got ' + r.by('Self Improvement').action);
+  assert(/received 440\.00 overflow from Self Improvement/.test(r.by('Shopping').action), 'The receiver explains what it got, got ' + r.by('Shopping').action);
+}
+async function testOverflowNeverPassesACap(){
+  const r = ovfRun(ovfSandbox({shopReserve:2900, funReserve:1200}));
+  // Rooms 100 + 300 = 400 < pool 1,100; no catch-all → only 400 is placed, 700 is not accrued.
+  assert(near(r.amt(20302), -100) && near(r.amt(20303), -300), 'Each receiver is filled exactly to its cap, got ' + r.amt(20302) + ' / ' + r.amt(20303));
+  assert(near(r.amt(60199, /overflow/), 400), 'Only what was placed is debited, got ' + r.amt(60199, /overflow/));
+  assert(r.sum===0, 'The JV balances');
+  assert(r.summary && near(r.summary.unaccrued, 700) && !r.summary.catchAcc, 'The summary reports 700 not accrued');
+  assert(/700\.00 not accrued/.test(r.by('Self Improvement').action), 'The source says what was not accrued, got ' + r.by('Self Improvement').action);
+}
+async function testOverflowLeftoverGoesToTheCatchAll(){
+  const sb = ovfSandbox({shopReserve:2900, funReserve:1200, catchAll:20399});
+  const r = ovfRun(sb);
+  assert(near(r.amt(20399), -700), 'The leftover goes to the catch-all reserve, got ' + r.amt(20399));
+  const c = r.lines.find(l=>l.acc===20399);
+  assert(c && /^Accrual overflow reserve \(from Self Improvement\)/.test(c.descr), 'Catch-all line names its source, got ' + (c&&c.descr));
+  assert(near(r.amt(60199, /overflow/), 1100) && r.sum===0, 'Then all the overflow is debited and the JV balances');
+  const html = sb.renderAccrualPanel();
+  assert(/Catch-all reserve 20399/.test(html), 'The panel names the catch-all and its amount');
+}
+async function testOverflowReceiverRoomIsAfterItsOwnAccrual(){
+  const r = ovfRun(ovfSandbox({shopSpend:800}));   // Shopping 200 under: own 200 → room 1,000 − 200 = 800
+  assert(near(r.amt(20302, /Shopping Accrual - /), -200), 'Shopping accrues its own 200 first');
+  // Pool 1,100 over rooms 800 : 1,500 (2,300) → 382.61 and 717.39 (the odd cent goes to the larger remainder)
+  assert(near(r.amt(20302, /overflow/), -382.61) && near(r.amt(20303), -717.39), 'Overflow uses the room left after its own accrual, got ' + r.amt(20302, /overflow/) + ' / ' + r.amt(20303));
+  assert(r.sum===0, 'The JV balances');
+}
+async function testOverflowDoesNotCoverAnOverspend(){
+  const r = ovfRun(ovfSandbox());
+  // Bills: 500 over, reserve 300 at 31 Oct (the 5,000 posted in November is ignored) → draws 300 only.
+  assert(near(r.amt(20304, /Drawdown/), 300) && near(r.amt(60499, /Drawdown/), -300), 'Bills draws its own reserve, measured at month end, got ' + r.amt(20304, /Drawdown/));
+  assert(/only 300\.00 was available at month end/.test(r.by('Bills').action), 'It says only 300 was available, got ' + r.by('Bills').action);
+  assert(!r.lines.some(l=>l.acc===60499 && /overflow/.test(l.descr)), 'The overspend itself is not offset by overflow');
+}
+async function testOverspentCategoryCanBeToppedUpAfterItsFullDrawdown(){
+  const r = ovfRun(ovfSandbox({billsCap:0.5}));   // cap 500; draws its 300, then has 500 of room
+  assert(near(r.amt(20304, /Drawdown/), 300), 'The drawdown is still booked in full, so the overspend stays visible, got ' + r.amt(20304, /Drawdown/));
+  // Rooms 1,000 : 1,500 : 500 → 366.67, 550.00, 183.33
+  assert(near(r.amt(20304, /overflow/), -183.33) && near(r.amt(20302), -366.67) && near(r.amt(20303), -550), 'Then its reserve is topped up by its share like any other, got ' + [r.amt(20304, /overflow/), r.amt(20302), r.amt(20303)].join(' / '));
+  assert(r.sum===0, 'The JV balances');
+}
+async function testUncappedCategoryNeitherGivesNorReceivesOverflow(){
+  const r = ovfRun(ovfSandbox());
+  assert(!r.lines.some(l=>l.acc===20305 || l.acc===60599) && !r.lines.some(l=>l.acc===20304 && /overflow/.test(l.descr)), 'Categories with no cap are left out of the overflow');
+}
+async function testCatchAllSettingIsSyncedAndRefusesACategoryReserve(){
+  const sb = ovfSandbox();
+  const writes = [];
+  sb.__set('syncWrite', async (t, op, row)=>{ writes.push({t, row}); });
+  sb.__set('persistLocal', ()=>{}); sb.__set('renderSettings', ()=>{});
+  const bad = await sb.setAccrualOverflowAcc(20302);
+  assert(bad===false && !writes.length, 'A category\'s own reserve can\'t be the catch-all');
+  await sb.setAccrualOverflowAcc(20399);
+  assert(writes[0] && writes[0].t==='pd_ui_prefs' && writes[0].row.dismissals.accrualOverflowAcc===20399, 'Saved in the synced preferences, got ' + JSON.stringify(writes[0]));
+  assert(sb.getAccrualOverflowAcc()===20399, 'And read back');
+  await sb.setAccrualOverflowAcc(null);
+  assert(sb.getAccrualOverflowAcc()===null && !('accrualOverflowAcc' in writes[1].row.dismissals), 'Clearing removes it');
+}
+async function testAccrualPanelShowsOverflowDetail(){
+  const sb = ovfSandbox();
+  ovfRun(sb);
+  const html = sb.renderAccrualPanel();
+  sb.document.body.innerHTML = html;
+  const head = [...sb.document.querySelectorAll('.accrual-expl th')].map(t=>t.textContent);
+  ['Cap','Reserve at month end','Own','Overflow out','Overflow in'].forEach(h=>assert(head.includes(h), 'The explanation has a "'+h+'" column, got ' + head.join('|')));
+  const shop = sb.document.querySelector('tr[data-accr-cat="Shopping"]');
+  assert(shop && /3,000\.00/.test(shop.textContent) && /440\.00/.test(shop.textContent), 'The Shopping row shows its cap and overflow in');
+  const sum = sb.document.querySelector('.accrual-overflow-sum');
+  assert(sum && /Overflow pool: 1,100\.00 from Self Improvement/.test(sum.textContent) && /Shopping 440\.00/.test(sum.textContent) && /Entertainment 660\.00/.test(sum.textContent), 'A summary line lists the pool and who got what, got ' + (sum&&sum.textContent));
+}
+async function testSettingsShowsTheCatchAllPicker(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/id="acpin_accrOverflow"/.test(html) && /setAccrualOverflowAcc\(document\.getElementById\('acpin_accrOverflow'\)/.test(html), 'Settings → Accrual Mappings has a catch-all reserve picker with a Save button');
 }
