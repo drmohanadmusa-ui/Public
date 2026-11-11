@@ -52,7 +52,7 @@ If iCloud Drive can't be opened (for example while the phone is locked), the scr
    - Choose **Run Immediately**, then **New Blank Automation**.
    - Add **Get Text from Input** and set it to **Shortcut Input**. Don't leave it on the faded "Input" placeholder.
    - Add **Run Script** (Scriptable): Script = Ledger SMS Logger, Parameter = Text, **Run In App off**.
-4. **Make 3 automations, one per trigger word.** All of them run the same script, because Shortcuts allows only one phrase per automation.
+4. **Make 4 automations, one per trigger word.** All of them run the same script, because Shortcuts allows only one phrase per automation.
 
 ## 3. Banks and triggers
 
@@ -62,6 +62,9 @@ If iCloud Drive can't be opened (for example while the phone is locked), the scr
 1. `Amount` (Al Rajhi, meem, STC, D360, urpay)
 2. `مبلغ` (SNB, SAIB, and SNB's annual-fee notice, which has no "SAR")
 3. `SAR` (SNB and SAIB "بSAR" purchases, which have neither of the above)
+4. `ائتمان` (added 2026-11-12, a safety net: every SNB credit card SMS has it, including the Nov 2026 wording where "SAR" is glued to the number, `ب143.89SAR`, which iOS may not count as containing "SAR")
+
+In every automation turn **Notify When Run off** (it's the "Running your automation" banner that also shows for OTPs).
 
 The script ignores anything it doesn't recognise, so OTPs and promos that contain these words are harmless. One SMS can fire two automations (e.g. "Amount" and "SAR"). The second run finds the row already logged ("Duplicate"), and the LedgerOS inbox will also reject duplicates by a unique key.
 
