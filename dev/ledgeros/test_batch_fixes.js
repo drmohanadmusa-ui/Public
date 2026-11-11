@@ -6629,8 +6629,10 @@ async function testInvestmentsOpensOnMineAndHasEveryView(){
   assert(vm.runInContext('invView', sb)==='mine', 'The Investments page should open on 👤 Mine by default');
   sb.renderInvestmentsPage();
   const html = sb.document.getElementById('app').innerHTML;
-  const views = ['mine','family','activity','recon','insights','setup','classic'];
-  assert(views.every(v=>html.includes('data-invview="'+v+'"')), 'The nav should offer all seven views');
+  const views = ['mine','family','activity','recon','insights','setup'];
+  assert(views.every(v=>html.includes('data-invview="'+v+'"')), 'The nav should offer all six views');
+  assert(!html.includes('data-invview="classic"'), 'v5.6: the Classic tab is gone from the menu');
+  sb.localStorage.setItem('invView', 'classic');
   sb.setInvView('family');
   assert(sb.localStorage.getItem('invView')==='family' && vm.runInContext('invView', sb)==='family', 'The chosen view should be remembered on this device');
   sb.setInvTab('recon');
@@ -6639,7 +6641,6 @@ async function testInvestmentsOpensOnMineAndHasEveryView(){
 async function testMineShowsOnlyMySliceAndNoFamilyFigures(){
   const sb = viewSandbox();
   await viewPooledSetup(sb);
-  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
   const html = viewHtml(sb, 'mine');
   const value = html.match(/id="invKpiValue"[\s\S]*?<div class="v[^"]*">([^<]*)</);
   // My slice: 0.02 ETH × 4000 × 3.75 = 300 SAR; my cash $20 left (cost 4.00 → 80 SAR) valued 20×3.75 = 75. Total 375.
@@ -6647,13 +6648,15 @@ async function testMineShowsOnlyMySliceAndNoFamilyFigures(){
   const cost = html.match(/id="invKpiCost"[\s\S]*?<div class="v[^"]*">([^<]*)</);
   assert(cost && cost[1].trim()==='400.00', 'My Cost = 320 (ETH at my 4.00 rate) + 80 (cash) = 400.00, got ' + (cost&&cost[1]));
   assert(!/>B</.test(html) && !html.includes('Held for Family'), 'Mine must not show family members or family totals');
-  const card = html.match(/data-card="mine:1"[\s\S]*?<\/table>/);
+  vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
+  const page = viewHtml(sb, 'mine');
+  const card = page.match(/data-card="mine:1"[\s\S]*?<\/table>/);
   assert(card && card[0].includes('0.02'), 'The expanded card shows my 0.02 ETH, got ' + (card&&card[0].replace(/\s+/g,' ').slice(0,400)));
 }
 async function testMineTableHasFiveColumnsUntilDetailsAreShown(){
   const sb = viewSandbox();
   await viewPooledSetup(sb);
-  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
   let html = viewHtml(sb, 'mine');
   let head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
   assert(head && (head[1].match(/<th/g)||[]).length===5, 'Default table should have 5 columns, got ' + (head&&(head[1].match(/<th/g)||[]).length));
@@ -6663,20 +6666,24 @@ async function testMineTableHasFiveColumnsUntilDetailsAreShown(){
   assert(head && /Cost/.test(head[1]) && /Price/.test(head[1]) && /Realised/.test(head[1]), 'Show details adds Cost, Price and Realised');
 }
 async function testPlatformCardIsOneLineUntilExpanded(){
+  // v5.6 (#22): Mine shows one box per platform; clicking a box opens that platform's own page with the full table.
   const sb = viewSandbox();
   await viewPooledSetup(sb);
   let html = viewHtml(sb, 'mine');
-  const card = html.match(/<div class="panel inv-card" data-card="mine:1">[\s\S]*?<\/div>\s*<\/div><\/div>/);
-  assert(card && !card[0].includes('<table'), 'A collapsed platform card is a single summary line (no table)');
-  assert(/toggleInvCard\('mine:1'\)/.test(html), 'Clicking the line expands it');
-  sb.toggleInvCard('mine:1');
+  sb.document.getElementById('app').innerHTML = html;
+  const box = sb.document.querySelector('.inv-box[data-box="1"]');
+  assert(box && !box.querySelector('table'), 'Mine shows the platform as a box, without the detail table');
+  assert(box && /openInvPlatformPage\(1\)/.test(box.getAttribute('onclick')||''), 'Clicking the box opens the platform page');
+  sb.openInvPlatformPage(1);
   html = sb.document.getElementById('app').innerHTML;
-  assert(/data-card="mine:1"[\s\S]*?<table/.test(html), 'After expanding, the table shows');
+  assert(/data-card="mine:1"[\s\S]*?<table/.test(html) && /closeInvPlatformPage\(\)/.test(html), 'The platform page shows the full table and a way back');
+  sb.closeInvPlatformPage();
+  assert(sb.document.querySelector('.inv-box[data-box="1"]'), 'Back returns to the boxes');
 }
 async function testMinePlatformCardHasItsOwnActions(){
   const sb = viewSandbox();
   await viewPooledSetup(sb);
-  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
   const html = viewHtml(sb, 'mine');
   ['openInvTradePicker(1)','INV_PLATFORM_ACTIONS.deposit.open(1)','INV_PLATFORM_ACTIONS.withdrawal.open(1)','INV_PLATFORM_ACTIONS.transfer.open(1)','openInvCashLog(1)']
     .forEach(a=>assert(html.includes(a), 'The platform card should offer '+a+' directly, without a platform picker'));
@@ -6690,11 +6697,11 @@ async function testStablecoinsCountAsCash(){
     {id:1, positionId:3, date:'2026-10-01', kind:'buy', units:50, totalSar:187.5, owners:[{ownerId:1, units:50}], cashSide:'bank'},
     {id:2, positionId:4, date:'2026-10-01', kind:'buy', units:30, totalSar:112.5, owners:[{ownerId:1, units:30}], cashSide:'bank'});
   await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
-  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
   const html = viewHtml(sb, 'mine');
   const cash = html.match(/id="invKpiCash"[\s\S]*?<div class="v[^"]*">([^<]*)</);
   assert(cash && cash[1].trim()==='$180.00', 'Cash = $100 USD + 50 USDT + 30 USDC = $180.00, got ' + (cash&&cash[1]));
-  const card = html.match(/data-card="mine:1"[\s\S]*?<\/table>/)[0];
+  vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
+  const card = viewHtml(sb, 'mine').match(/data-card="mine:1"[\s\S]*?<\/table>/)[0];
   assert(/USDT cash/.test(card) && /USDC cash/.test(card) && /USD cash/.test(card), 'USD, USDT and USDC each show as cash lines');
   assert(!/<b>Tether<\/b>/.test(card), 'USDT must not also be listed as an ordinary position');
   assert(/USD cash <span[^>]*>@ 4\.0000<\/span>/.test(card), 'A cash line shows its cost rate next to the label (@ 4.0000)');
@@ -6713,7 +6720,7 @@ async function testClosedPositionsFoldIntoACollapsedGroup(){
   sb._D.invTransactions.push(
     {id:1, positionId:2, date:'2026-09-01', kind:'buy', units:1, totalSar:100, owners:[{ownerId:1, units:1}], cashSide:'bank'},
     {id:2, positionId:2, date:'2026-09-10', kind:'sell', units:1, totalSar:150, owners:[{ownerId:1, units:1}], cashSide:'bank'});
-  vm.runInContext("invCardsExpanded.add('mine:1')", sb);
+  vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
   const html = viewHtml(sb, 'mine');
   assert(/<details[^>]*><summary[^>]*>Closed positions \(1\)/.test(html), 'A fully sold position goes into a collapsed "Closed positions" group');
   assert(/Solana[\s\S]*realised/.test(html), 'The closed group shows its realised result');
@@ -6836,7 +6843,7 @@ async function testInsightsViewDrawsTheCharts(){
   sb.__set('drawInvCharts', ()=>{ drawn = true; });
   const html = viewHtml(sb, 'insights');
   assert(drawn, 'Insights should draw the charts');
-  assert(/Classic/.test(html), 'Insights points to Family / Classic for the per-person tables');
+  assert(/Family/.test(html) && !/in 🗂 Classic/.test(html), 'Insights points to Family for the per-person tables (Classic tab dropped in v5.6)');
 }
 async function testClassicViewIsThePreviousPage(){
   const sb = viewSandbox();
@@ -8037,6 +8044,30 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testCatchAllSettingIsSyncedAndRefusesACategoryReserve();
   await testAccrualPanelShowsOverflowDetail();
   await testSettingsShowsTheCatchAllPicker();
+  await testV56CloseIdsAreFixedAndNeverBecomeTheNextId();
+  await testV56SameDayCloseBeatsARefreshButANewerDayWins();
+  await testV56PriceSettingsAreSyncedInPreferences();
+  await testV56RefreshWritesOnePricePerPositionForToday();
+  await testV56OneFailingSourceDoesNotStopTheOthers();
+  await testV56AutoRefreshOnlyWhenThisDeviceIsBehind();
+  await testV56BackfillSavesDailyClosesOnce();
+  await testV56BoxesShowValueHoldingsShareAndFreshness();
+  await testV56TopHoldingsAreSortedByValue();
+  await testV56BoxActionsAppearOnHoverOnly();
+  await testV56ArrangeBoxesIsSynced();
+  await testV56NeedsYouListsWhatIsWaiting();
+  await testV56RailBadgeCountsInvestmentItems();
+  await testV56NeedsYouIsOnMineAndOpensAPrefilledDeposit();
+  await testV56WalletCheckReadsSolanaTokenBalances();
+  await testV56WalletCheckReadsEvmBalancesWithDecimals();
+  await testV56WalletAddressIsCheckedAgainstTheChain();
+  await testV56RepeatLastBuyCopiesPositionAmountAndSplit();
+  await testV56CollectOffersInvestItNow();
+  await testV56PriceLinkSearchOffersOnlyMatchingCoins();
+  await testV56PasteAddressDetectsTheChain();
+  await testV56SetupHasPriceLinksAndTheJobButtons();
+  await testV56NewStorageKeysAreListed();
+  await testV56EdgeJobSavesYesterdaysCloses();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9460,4 +9491,405 @@ async function testAccrualPanelShowsOverflowDetail(){
 async function testSettingsShowsTheCatchAllPicker(){
   const html = fs.readFileSync(APP_HTML, 'utf8');
   assert(/id="acpin_accrOverflow"/.test(html) && /setAccrualOverflowAcc\(document\.getElementById\('acpin_accrOverflow'\)/.test(html), 'Settings → Accrual Mappings has a catch-all reserve picker with a Save button');
+}
+
+// ================= v5.6.0: platform boxes, Needs you, live prices, daily closes, wallet check (#22) =================
+// Every network call is faked: `routes` maps a URL pattern to the JSON it returns.
+function v56Sandbox(extra, routes){
+  const sb = poolSandbox(Object.assign({
+    accounts: [10201,10202,10203,10204,10205,30101].map(id=>({id, acc_type:'Individual Account', status:'Active'})),
+    invPlatforms: [{id:1, name:'Binance'}, {id:2, name:'Phantom'}, {id:3, name:'Robo Fund', isRobo:true, outAcc:30101, roboValue:1000, roboValueDate:'2026-11-01'}],
+    invPositions: [
+      {id:1, platformId:1, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:3, platformId:2, name:'Test Frog', ticker:'FROG', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:4, platformId:2, name:'Base Cat', ticker:'BCAT', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:5, platformId:1, name:'Tether', ticker:'USDT', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:6, platformId:1, name:'Mining Co', ticker:'MINE', currency:'USD', assetClass:'Stocks', status:'Active'},
+    ],
+    invTransactions: [
+      {id:1, positionId:1, date:'2026-09-02', kind:'buy', units:1, totalSar:7500, owners:[{ownerId:1, units:0.6},{ownerId:2, units:0.4}], cashSide:'opening'},
+      {id:2, positionId:2, date:'2026-09-02', kind:'buy', units:10, totalSar:3750, owners:[{ownerId:1, units:10}], cashSide:'bank'},
+      {id:3, positionId:3, date:'2026-09-02', kind:'buy', units:1000, totalSar:375, owners:[{ownerId:1, units:1000}], cashSide:'bank'},
+      {id:4, positionId:4, date:'2026-09-02', kind:'buy', units:50, totalSar:187.5, owners:[{ownerId:1, units:50}], cashSide:'bank'},
+      {id:5, positionId:5, date:'2026-09-02', kind:'buy', units:20, totalSar:75, owners:[{ownerId:1, units:20}], cashSide:'bank'},
+      {id:6, positionId:6, date:'2026-09-02', kind:'buy', units:5, totalSar:375, owners:[{ownerId:1, units:5}], cashSide:'bank'},
+    ],
+    invValuations: [{id:1, positionId:1, date:'2026-09-10', price:2000}, {id:2, positionId:2, date:'2026-09-10', price:100}],
+    ledger: [], uiPrefs: {dismissals:{}},
+  }, extra||{}), true);
+  freezeDate(sb, '2026-11-12T10:00:00Z');
+  const writes = [], calls = [];
+  sb.__set('syncWrite', async (t, op, row)=>{ writes.push({t, op, row}); return {ok:true}; });
+  sb.__set('invSleep', ()=>Promise.resolve());
+  sb.__set('renderNav', ()=>{});
+  sb.__set('drawInvCharts', ()=>{});
+  sb.fetch = async (url, opts)=>{
+    calls.push({url:String(url), opts});
+    const r = (routes||[]).find(x=>x[0].test(String(url)));
+    if(!r) return {ok:false, status:404, json: async()=>({}), text: async()=>'not found'};
+    const status = r[2]||200;
+    const body = typeof r[1]==='function'? r[1](String(url), opts) : r[1];
+    return {ok: status<300, status, json: async()=>body, text: async()=>JSON.stringify(body)};
+  };
+  sb._writes = writes; sb._calls = calls;
+  return sb;
+}
+async function v56Link(sb, links, keys){
+  await sb.saveInvPriceCfg({links, keys: keys||{cg:'cg-test', finnhub:'fh-test'}});
+}
+const FROG = 'Frog1111111111111111111111111111111111111111', BCAT = '0x00000000000000000000000000000000000000c4';
+const v56Html = sb => { sb.renderInvestmentsPage(); return sb.document.getElementById('app').innerHTML; };
+
+async function testV56CloseIdsAreFixedAndNeverBecomeTheNextId(){
+  const sb = v56Sandbox();
+  const id = sb.invCloseValId(7, '2026-11-11');
+  assert(id === 1e12 + 7*1e5 + Math.round(Date.parse('2026-11-11T00:00:00Z')/864e5), 'Close id = base + position×100000 + day number, got ' + id);
+  assert(sb.invCloseValId(7, '2026-11-11') === id && sb.invCloseValId(7, '2026-11-12') === id+1, 'Same position and date always give the same id; next day is +1');
+  sb._D.invValuations.push({id, positionId:7, date:'2026-11-11', price:1});
+  assert(sb.invNextId(sb._D.invValuations) === 3, 'A close id is ignored when picking the next ordinary id, got ' + sb.invNextId(sb._D.invValuations));
+  assert(Number.isSafeInteger(sb.invCloseValId(99999, '2030-01-01')), 'Close ids stay safe integers');
+}
+async function testV56SameDayCloseBeatsARefreshButANewerDayWins(){
+  const sb = v56Sandbox({invValuations:[]});
+  const V = sb._D.invValuations;
+  V.push({id:1, positionId:1, date:'2026-11-10', price:1000});
+  V.push({id:sb.invCloseValId(1,'2026-11-10'), positionId:1, date:'2026-11-10', price:1100});
+  assert(sb.invLatestValuation(1).price===1100 && sb.invPriceAsOf(1,'2026-11-10')===1100, 'On the same date the close wins over a refreshed or typed price');
+  V.push({id:2, positionId:1, date:'2026-11-11', price:1200});
+  assert(sb.invLatestValuation(1).price===1200 && sb.invPriceAsOf(1,'2026-11-10')===1100, 'A newer day\'s refresh is the current price; history still reads the close');
+  // Order of arrival must not matter: a close saved BEFORE the refresh (server job, then a late typed price) still wins.
+  const sb2 = v56Sandbox({invValuations:[]});
+  sb2._D.invValuations.push({id:sb2.invCloseValId(1,'2026-11-10'), positionId:1, date:'2026-11-10', price:1100});
+  sb2._D.invValuations.push({id:1, positionId:1, date:'2026-11-10', price:1000});
+  assert(sb2.invLatestValuation(1).price===1100 && sb2.invPriceAsOf(1,'2026-11-10')===1100, 'The close wins whichever was saved first');
+}
+async function testV56PriceSettingsAreSyncedInPreferences(){
+  const sb = v56Sandbox();
+  await sb.setInvPriceLink(3, {kind:'dex', chain:'solana', address:FROG});
+  const w = sb._writes.filter(x=>x.t==='pd_ui_prefs').pop();
+  assert(w && w.row.dismissals.invPrices.links[3].address===FROG, 'Price links are saved in the synced preferences, got ' + JSON.stringify(w&&w.row));
+  assert(sb.invPriceLink(3) && sb.invPriceLink(3).chain==='solana' && sb.invPriceLink(1)===null, 'And read back per position');
+  sb.document.body.innerHTML += '<input id="invKeyCg" value=" CG-abc "><input id="invKeyFh" value="fh1">';
+  await sb.saveInvPriceKeys();
+  const cfg = sb.getInvPriceCfg();
+  assert(cfg.keys.cg==='CG-abc' && cfg.keys.finnhub==='fh1' && cfg.links[3], 'Keys are trimmed and saved without losing the links');
+  await sb.setInvPriceLink(3, null);
+  assert(!sb.getInvPriceCfg().links[3], 'Clearing a link removes it');
+}
+function v56PriceRoutes(over){
+  return [
+    [/dexscreener\.com\/tokens\/v1\/solana\//, [
+      {chainId:'solana', baseToken:{address:FROG}, priceUsd:'0.002', liquidity:{usd:500}, volume:{h24:10}},
+      {chainId:'solana', baseToken:{address:FROG}, priceUsd:'0.0025', liquidity:{usd:90000}, volume:{h24:5000}},
+      {chainId:'solana', baseToken:{address:'Other1111111111111111111111111111111111111'}, priceUsd:'9', liquidity:{usd:1e6}}]],
+    [/dexscreener\.com\/tokens\/v1\/base\//, []],
+    [/geckoterminal\.com\/api\/v2\/simple\/networks\/base\/token_price\//, {data:{attributes:{token_prices:{[BCAT]:'0.5'}}}}],
+    [/api\.coingecko\.com\/api\/v3\/simple\/price/, (over&&over.cg) || {ethereum:{usd:3000}}, (over&&over.cgStatus)||200],
+    [/finnhub\.io\/api\/v1\/quote/, {c:12.5}],
+  ];
+}
+const V56_LINKS = {1:{kind:'cg', id:'ethereum'}, 3:{kind:'dex', chain:'solana', address:FROG}, 4:{kind:'dex', chain:'base', address:BCAT}, 6:{kind:'stock', id:'MINE'}};
+async function testV56RefreshWritesOnePricePerPositionForToday(){
+  const sb = v56Sandbox({}, v56PriceRoutes());
+  await v56Link(sb, V56_LINKS);
+  sb._writes.length = 0;
+  const r = await sb.refreshInvPrices({quiet:true});
+  const rows = sb._writes.filter(x=>x.t==='pd_inv_valuations').map(x=>x.row);
+  const p = id => (rows.find(x=>x.position_id===id)||{}).price;
+  assert(r && r.updated===4 && rows.length===4, 'Four linked positions get a price, got ' + JSON.stringify(r));
+  assert(p(1)===3000 && p(3)===0.0025 && p(4)===0.5 && p(6)===12.5, 'CoinGecko, DEX (deepest pool), GeckoTerminal backup and Finnhub prices, got ' + JSON.stringify(rows));
+  assert(rows.every(x=>x.entry_date==='2026-11-12' && x.id < 1e12), 'Refreshed prices are today\'s ordinary rows, not closes');
+  assert(!rows.some(x=>x.position_id===2 || x.position_id===5), 'Unlinked (SOL) and stablecoin (USDT) positions are left alone');
+  const dexCalls = sb._calls.filter(c=>/dexscreener\.com\/tokens\/v1\/solana\//.test(c.url));
+  assert(dexCalls.length===1 && dexCalls[0].url.endsWith(FROG), 'One DexScreener call per chain with the addresses');
+  assert(sb._calls.some(c=>/x_cg_demo_api_key=cg-test/.test(c.url)) && sb._calls.some(c=>/token=fh-test/.test(c.url)), 'The CoinGecko and Finnhub keys are used');
+  const before = sb._D.invValuations.length;
+  await sb.refreshInvPrices({quiet:true});
+  assert(sb._D.invValuations.length===before, 'A second refresh the same day overwrites today\'s price instead of adding rows');
+  assert(sb.localStorage.getItem('invPricesFetchedAt'), 'The refresh time is remembered on this device');
+}
+async function testV56OneFailingSourceDoesNotStopTheOthers(){
+  const sb = v56Sandbox({}, v56PriceRoutes({cg:{error:'rate limited'}, cgStatus:429}));
+  await v56Link(sb, V56_LINKS);
+  const r = await sb.refreshInvPrices({quiet:true});
+  assert(r.updated===3 && r.failed[1] && r.errors.some(e=>/CoinGecko/.test(e) && /429/.test(e)), 'CoinGecko refusing still saves the other three and reports why, got ' + JSON.stringify(r));
+  const sb2 = v56Sandbox({}, v56PriceRoutes());
+  await v56Link(sb2, V56_LINKS, {cg:'x'});
+  const r2 = await sb2.refreshInvPrices({quiet:true});
+  assert(r2.errors.some(e=>/Finnhub: no key/.test(e)) && r2.failed[6], 'Without a Finnhub key the stock is reported, not silently skipped');
+}
+async function testV56AutoRefreshOnlyWhenThisDeviceIsBehind(){
+  const sb = v56Sandbox({}, v56PriceRoutes());
+  await v56Link(sb, V56_LINKS);
+  sb.localStorage.setItem('invPricesFetchedAt', new Date(Date.parse('2026-11-12T08:00:00Z')).toISOString());
+  sb._calls.length = 0;
+  sb.invMaybeAutoRefresh();
+  await new Promise(r=>setTimeout(r, 20));
+  assert(!sb._calls.length, 'Refreshed 2 hours ago: opening Investments does not fetch again');
+  sb.localStorage.setItem('invPricesFetchedAt', '2026-11-12T01:00:00.000Z');
+  sb.invMaybeAutoRefresh();
+  await new Promise(r=>setTimeout(r, 20));
+  assert(sb._calls.length>0, 'Last refresh 9 hours ago: opening Investments refreshes quietly');
+}
+async function testV56BackfillSavesDailyClosesOnce(){
+  const day = d => Date.parse(d+'T00:00:00Z');
+  const sb = v56Sandbox({}, [
+    [/coins\/ethereum\/market_chart/, {prices:[[day('2026-09-01'), 1500], [day('2026-09-03'), 1600], [day('2026-09-04'), 1650], [day('2026-11-12')+5*3600e3, 9999]]}],
+    [/networks\/solana\/tokens\/Frog.*\/pools/, {data:[{attributes:{address:'PoolA'}}]}],
+    [/networks\/solana\/pools\/PoolA\/ohlcv\/day/, {data:{attributes:{ohlcv_list:[[day('2026-11-10')/1000, 1,1,1, 0.003, 9], [day('2026-11-11')/1000, 1,1,1, 0.004, 9]]}}}],
+  ]);
+  await v56Link(sb, V56_LINKS);
+  sb._writes.length = 0;
+  await sb.backfillInvCloses();
+  const rows = sb._writes.filter(x=>x.t==='pd_inv_valuations').map(x=>x.row);
+  const eth = rows.filter(r=>r.position_id===1).map(r=>r.entry_date+'='+r.price).sort();
+  assert(eth.join(',')==='2026-09-02=1600,2026-09-03=1650', 'A 00:00 UTC point is the previous day\'s close; days before the first buy and the live point are skipped, got ' + eth.join(','));
+  assert(rows.filter(r=>r.position_id===3).map(r=>r.entry_date+'='+r.price).join(',')==='2026-11-10=0.003,2026-11-11=0.004', 'DEX history comes from the token\'s top pool, daily closes, got ' + JSON.stringify(rows.filter(r=>r.position_id===3)));
+  assert(rows.every(r=>r.id===sb.invCloseValId(r.position_id, r.entry_date)), 'Backfilled rows use the fixed close ids');
+  assert(sb._calls.some(c=>/ohlcv\/day.*token=Frog/.test(c.url)), 'The candles are asked for in the token\'s own price');
+  assert(!rows.some(r=>r.position_id===6), 'Stocks are not backfilled (no free history)');
+  sb._writes.length = 0;
+  await sb.backfillInvCloses();
+  assert(!sb._writes.some(x=>x.t==='pd_inv_valuations'), 'Running it again writes nothing new');
+}
+async function testV56BoxesShowValueHoldingsShareAndFreshness(){
+  const sb = v56Sandbox();
+  const html = v56Html(sb);
+  sb.document.getElementById('app').innerHTML = html;
+  const box = sb.document.querySelector('.inv-box[data-box="1"]');
+  assert(box, 'Binance gets a box');
+  if(!box) return;
+  const t = box.textContent.replace(/\s+/g,' ');
+  assert(/Binance/.test(t) && /Crypto, Stocks/.test(t), 'The box names the platform and what it holds, got ' + t.slice(0,120));
+  const top = [...box.querySelectorAll('.inv-box-top b')].map(b=>b.textContent);
+  assert(top.length===3 && !/more<\/div>/.test(box.innerHTML), 'The box lists its three holdings (USDT counts as cash, not a holding), got ' + top.join(','));
+  assert(/% mine/.test(t) && /% family/.test(t), 'The box shows the mine / family share');
+  assert(/Prices 63 days old/.test(t) && box.querySelector('.inv-box-fresh .r'), 'Old prices are flagged in red, got ' + t);
+  assert(/without a price/.test(t) && /Never checked/.test(t), 'Unpriced holdings and never-checked units are shown');
+  assert(/openInvTradePicker\(1\)/.test(box.innerHTML) && /openInvRepeatLastBuy\(1\)/.test(box.innerHTML) && /INV_PLATFORM_ACTIONS\.collect\.open\(1\)/.test(box.innerHTML), 'The box has Buy, Repeat last buy and Collect');
+  const robo = sb.document.querySelector('.inv-box[data-box="3"]');
+  assert(robo && /openInvEditPlatform\(3\)/.test(robo.innerHTML), 'A robo platform box offers Update value');
+}
+async function testV56TopHoldingsAreSortedByValue(){
+  const sb = v56Sandbox();
+  sb.document.getElementById('app').innerHTML = v56Html(sb);
+  const top = [...sb.document.querySelectorAll('.inv-box[data-box="1"] .inv-box-top b')].map(b=>b.textContent);
+  // Mine: ETH 0.6 × 2000 × 3.75 = 4,500; SOL 10 × 100 × 3.75 = 3,750; MINE unpriced at cost 375.
+  assert(top.join(',')==='ETH,SOL,MINE', 'Largest first, got ' + top.join(','));
+}
+async function testV56BoxActionsAppearOnHoverOnly(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\.inv-box \.inv-box-actions\{opacity:0;max-height:0/.test(html), 'Box buttons are hidden until hovered');
+  assert(/\.inv-box:hover \.inv-box-actions, \.inv-box:focus-within \.inv-box-actions\{opacity:1/.test(html), 'They appear on hover or keyboard focus');
+  assert(/@media \(hover:none\)\{ \.inv-box \.inv-box-actions\{opacity:1/.test(html), 'On touch screens (no hover) they always show');
+}
+async function testV56ArrangeBoxesIsSynced(){
+  const sb = v56Sandbox();
+  sb.__set('invBoxEdit', true);
+  await sb.moveInvBox(1, 1);
+  let prefs = sb.getInvBoxPrefs();
+  assert(prefs.order.indexOf(1) > prefs.order.indexOf(2), 'Moving Binance later puts it after Phantom, got ' + JSON.stringify(prefs.order));
+  assert(sb._writes.some(w=>w.t==='pd_ui_prefs' && w.row.dismissals.invBoxes), 'The order is saved in the synced preferences');
+  sb.document.getElementById('app').innerHTML = v56Html(sb);
+  const ids = [...sb.document.querySelectorAll('.inv-boxes > .inv-box[data-box]')].map(b=>b.getAttribute('data-box'));
+  assert(ids.indexOf('2') < ids.indexOf('1'), 'The boxes show in the saved order, got ' + ids.join(','));
+  await sb.toggleInvBoxFlag(2, 'grouped');
+  await sb.toggleInvBoxFlag(3, 'grouped');
+  sb.document.getElementById('app').innerHTML = v56Html(sb);
+  const grp = sb.document.querySelector('.inv-box-group');
+  assert(grp && grp.querySelectorAll('[data-groupplat]').length===2 && !sb.document.querySelector('.inv-box[data-box="2"]'), 'Grouped platforms share one "Other wallets" box');
+  await sb.toggleInvBoxFlag(1, 'hidden');
+  const html = v56Html(sb);
+  assert(!/data-box="1"/.test(html) && /Hidden: Binance/.test(html) && /toggleInvBoxFlag\(1, 'hidden'\)/.test(html), 'A hidden box is listed under Hidden with Show');
+}
+async function testV56NeedsYouListsWhatIsWaiting(){
+  const sb = v56Sandbox({ledger:[
+    {id:1, jv:1, date:'2026-10-27', acc:10202, amt:500, descr:'B contribution'},
+    {id:2, jv:2, date:'2026-10-27', acc:30101, amt:100, descr:'robo top-up'},
+  ], invPlatforms:[{id:1, name:'Binance', outAcc:10205}, {id:2, name:'Phantom'}, {id:3, name:'Robo Fund', isRobo:true, outAcc:30101, roboValue:1000, roboValueDate:'2026-09-01'}],
+     invSettings:{fxUsdSar:3.75, mgmtFeePct:0, reconStartDate:'2026-10-01'}});
+  sb._D.ledger.push({id:3, jv:3, date:'2026-11-02', acc:10205, amt:20000, descr:'paid into Binance'});
+  const items = sb.invNeedsYouItems();
+  const keys = items.map(i=>i.key);
+  assert(keys.includes('collect') && items.find(i=>i.key==='collect').act==="invStartPlatformAction('collect')", 'Money in an onboarding account that isn\'t collected shows, with Collect');
+  const dep = items.find(i=>/^dep1/.test(i.key));
+  assert(dep && /20,000\.00 SAR paid in on 2026-11-02/.test(dep.text) && /openInvDepositFromLedger\(1, '2026-11-02', 20000\)/.test(dep.act), 'Ledger money paid onto a platform with no deposit shows, got ' + JSON.stringify(dep));
+  assert(keys.includes('robo3') && /last updated 72 days ago/.test(items.find(i=>i.key==='robo3').text), 'A robo value older than a month asks for this month\'s value');
+  assert(keys.includes('links'), 'Positions with old prices and no link point to Price links');
+  sb._D.invCashMovements.push({id:9, platformId:1, date:'2026-11-03', kind:'deposit', usdAmount:5333.33, owners:[{ownerId:1, usd:5333.33, sar:20000}]});
+  assert(!sb.invNeedsYouItems().some(i=>/^dep1/.test(i.key)), 'A deposit within 5 days and 2% clears it');
+}
+async function testV56RailBadgeCountsInvestmentItems(){
+  const sb = v56Sandbox({invPlatforms:[{id:3, name:'Robo Fund', isRobo:true, roboValue:1000, roboValueDate:'2026-08-01'}], invPositions:[], invTransactions:[], invValuations:[]});
+  const b = sb.invNavBadgeHTML();
+  assert(/inv-nav-badge/.test(b) && />1<\/span>/.test(b), 'One item → a badge with 1 on the Investments button, got ' + b);
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\$\{id==='investments'\? invNavBadgeHTML\(\) : ''\}/.test(html), 'renderNav puts the badge on the Investments button');
+  sb._D.invPlatforms[0].roboValueDate = '2026-11-10';
+  assert(sb.invNavBadgeHTML()==='', 'Nothing waiting → no badge');
+}
+async function testV56NeedsYouIsOnMineAndOpensAPrefilledDeposit(){
+  const sb = v56Sandbox({invPlatforms:[{id:1, name:'Binance', outAcc:10205}, {id:2, name:'Phantom'}],
+    ledger:[{id:3, jv:3, date:'2026-11-02', acc:10205, amt:3750, descr:'paid in'}], invSettings:{fxUsdSar:3.75, mgmtFeePct:0, reconStartDate:'2026-10-01'}});
+  const html = v56Html(sb);
+  assert(/id="invNeedsYou"/.test(html) && /Record deposit/.test(html), 'Needs you shows at the top of Mine');
+  sb.openInvDepositFromLedger(1, '2026-11-02', 3750);
+  const d = sb._invCashDraft;
+  assert(d && d.kind==='deposit' && d.date==='2026-11-02' && d.usdAmount===1000 && d.owners[0].usd===1000, 'The deposit opens with the ledger date and amount in USD, got ' + JSON.stringify(d));
+}
+async function testV56WalletCheckReadsSolanaTokenBalances(){
+  const sb = v56Sandbox({}, [
+    [/api\.mainnet-beta\.solana\.com/, (url, opts)=>{
+      const b = JSON.parse(opts.body);
+      if(b.params[1].programId.startsWith('Tokenkeg')) return {result:{value:[
+        {account:{data:{parsed:{info:{mint:FROG, tokenAmount:{uiAmountString:'990.5'}}}}}},
+        {account:{data:{parsed:{info:{mint:'Stray111111111111111111111111111111111111', tokenAmount:{uiAmountString:'7'}}}}}}]}};
+      return {result:{value:[]}};
+    }],
+  ]);
+  await v56Link(sb, V56_LINKS);
+  await sb.setInvPlatformWallets(2, [{chain:'solana', address:'Wallet1111111111111111111111111111111111111'}]);
+  await sb.checkInvPlatformWallet(2);
+  const r = vm.runInContext('invWalletResults[2]', sb);
+  const frog = r && r.rows.find(x=>x.pos.id===3);
+  assert(frog && frog.wallet===990.5 && frog.tracker===1000, 'The wallet\'s FROG balance is read next to the tracker\'s, got ' + JSON.stringify(r && r.rows.map(x=>[x.pos.id, x.tracker, x.wallet])));
+  assert(r.untracked===1, 'Tokens in the wallet that the tracker doesn\'t have are counted');
+  assert(sb._calls.filter(c=>/solana\.com/.test(c.url)).length===2, 'Both Solana token programs are read');
+  sb.__set('invView', 'recon');
+  const html = v56Html(sb);
+  assert(/data-walletplat="2"/.test(html) && /Save wallet units as statement units/.test(html) && /data-walletpos="3"/.test(html), 'Reconcile shows the wallet result for that platform');
+  sb._writes.length = 0;
+  await sb.saveInvWalletUnits(2);
+  const w = sb._writes.find(x=>x.t==='pd_inv_positions' && x.row.id===3);
+  assert(w && w.row.stmt_units===990.5 && w.row.stmt_date==='2026-11-12', 'Saving writes the wallet units as today\'s statement units, got ' + JSON.stringify(w));
+}
+async function testV56WalletCheckReadsEvmBalancesWithDecimals(){
+  const sb = v56Sandbox({}, [
+    [/mainnet\.base\.org/, (url, opts)=>JSON.parse(opts.body).map(c=>({id:c.id,
+      result: c.id[0]==='b'? '0x' + (2500000n).toString(16) : c.id[0]==='d'? '0x6' : '0x' + (15n*10n**17n).toString(16)}))],
+  ]);
+  await v56Link(sb, {4:{kind:'dex', chain:'base', address:BCAT}});
+  const bal = await sb.invWalletBalances({chain:'base', address:'0x00000000000000000000000000000000000000aa'}, [BCAT, '0x0000000000000000000000000000000000000000']);
+  assert(bal[BCAT.toLowerCase()]===2.5, 'balanceOf 2,500,000 with 6 decimals = 2.5 units, got ' + bal[BCAT.toLowerCase()]);
+  assert(bal['0x0000000000000000000000000000000000000000']===1.5, 'Native coin balance in 18 decimals = 1.5, got ' + bal['0x0000000000000000000000000000000000000000']);
+  const call = sb._calls[0] && JSON.parse(sb._calls[0].opts.body).find(c=>c.id==='b0');
+  assert(call && call.params[0].data==='0x70a08231' + '00000000000000000000000000000000000000aa'.padStart(64,'0'), 'balanceOf is called with the wallet address');
+}
+async function testV56WalletAddressIsCheckedAgainstTheChain(){
+  const sb = v56Sandbox();
+  sb.prompt = ()=>'solana:0x00000000000000000000000000000000000000aa';
+  await sb.editInvPlatformWallet(2);
+  assert(sb.invPlatformWallets(2).length===0, 'An Ethereum-style address is refused for Solana');
+  sb.prompt = ()=>'solana:WkPet1111111111111111111111111111111111111, base:0x00000000000000000000000000000000000000aa';   // base58: no 0, O, I or l
+  await sb.editInvPlatformWallet(2);
+  const w = sb.invPlatformWallets(2);
+  assert(w.length===2 && w[0].chain==='solana' && w[1].chain==='base', 'One wallet per chain is saved, got ' + JSON.stringify(w));
+}
+async function testV56RepeatLastBuyCopiesPositionAmountAndSplit(){
+  const sb = v56Sandbox();
+  sb._D.invTransactions.push({id:20, positionId:2, date:'2026-11-05', kind:'buy', units:4, totalSar:1500, usdAmount:400, owners:[{ownerId:1, units:3},{ownerId:2, units:1}], cashSide:'bank', note:'weekly'});
+  sb.__set('renderInvTxModal', ()=>{});
+  assert(sb.invLastBuy(1).id===20, 'The last real buy on the platform is found (opening balances don\'t count)');
+  sb.openInvRepeatLastBuy(1);
+  const d = sb._invTxDraft;
+  assert(d && d.positionId===2 && !d.id && d.date==='2026-11-12' && d.units==='', 'A new buy of the same position, today, units left for you, got ' + JSON.stringify(d));
+  assert(d.totalSar===1500 && d.usdAmount===400 && d.note==='weekly' && d.cashSide==='bank', 'Same amount and funding');
+  assert(d.splitMode==='sar' && Math.abs(d.ownersSar[1]-1125)<0.01 && Math.abs(d.ownersSar[2]-375)<0.01 && d.owners.length===2, 'Same SAR split per person, got ' + JSON.stringify(d.ownersSar));
+  sb.openInvTxModal(2, null);
+  assert(sb._invTxDraft.totalSar==='' && sb._invTxDraft.splitMode==='units', 'The preset is used once only');
+}
+async function testV56CollectOffersInvestItNow(){
+  const sb = v56Sandbox();
+  await poolCollect(sb, 1, '2026-11-12', {2:375}, 100);
+  const modal = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Invest it now\?/.test(modal) && /\$100\.00 just landed on Binance/.test(modal), 'After Collect, Invest it now is offered');
+  assert(/_invTxPreset=\{cashSide:'cash', usdAmount:100\}; openInvTradePicker\(1\)/.test(modal), 'Buy now opens the trade with the cash amount');
+  sb.__set('renderInvTxModal', ()=>{});
+  vm.runInContext("window._invTxPreset={cashSide:'cash', usdAmount:100}", sb);
+  sb.openInvTxModal(1, null);
+  assert(sb._invTxDraft.cashSide==='cash' && sb._invTxDraft.usdAmount===100, 'The trade starts as a cash-funded buy of $100');
+}
+async function testV56PriceLinkSearchOffersOnlyMatchingCoins(){
+  const sb = v56Sandbox({}, [
+    [/api\/v3\/search\?query=FROG/, {coins:[{id:'test-frog', name:'Test Frog', symbol:'frog', market_cap_rank:900}, {id:'frogger', name:'Frogger', symbol:'FRGR'}]}],
+    [/latest\/dex\/search\?q=FROG/, {pairs:[
+      {chainId:'solana', baseToken:{address:FROG, symbol:'FROG', name:'Test Frog'}, priceUsd:'0.002', liquidity:{usd:5000}},
+      {chainId:'solana', baseToken:{address:FROG, symbol:'FROG', name:'Test Frog'}, priceUsd:'0.002', liquidity:{usd:100}},
+      {chainId:'bsc', baseToken:{address:'0xbsc', symbol:'FROG', name:'BSC Frog'}, priceUsd:'1', liquidity:{usd:1e6}}]}],
+  ]);
+  sb.__set('showModal', ()=>{});
+  await sb.invLinkSearch(3);
+  const res = vm.runInContext('window._invLinkUi.results', sb);
+  assert(res && res.length===2 && res[0].link.kind==='cg' && res[0].link.id==='test-frog' && res[1].link.kind==='dex' && res[1].link.address===FROG,
+    'Only exact symbol matches; one DEX entry per token; other chains left out, got ' + JSON.stringify(res && res.map(r=>r.link)));
+  await sb.invLinkPick(3, 1);
+  assert(sb.invPriceLink(3).address===FROG, 'Use saves the chosen link');
+  await sb.invLinkSearch(6);
+  const st = vm.runInContext('window._invLinkUi.results', sb);
+  assert(st.length===1 && st[0].link.kind==='stock' && st[0].link.id==='MINE', 'A stock is offered as its ticker on Finnhub');
+}
+async function testV56PasteAddressDetectsTheChain(){
+  const sb = v56Sandbox();
+  sb.__set('showModal', ()=>{});
+  sb.prompt = ()=>FROG;
+  await sb.invLinkPasteAddress(3);
+  assert(sb.invPriceLink(3).chain==='solana', 'A Solana address is recognised');
+  const answers = [BCAT, 'base'];
+  sb.prompt = ()=>answers.shift();
+  await sb.invLinkPasteAddress(4);
+  assert(sb.invPriceLink(4).chain==='base' && sb.invPriceLink(4).address===BCAT, 'An 0x address asks Base or Ethereum');
+  sb.prompt = ()=>'not-an-address';
+  await sb.invLinkPasteAddress(1);
+  assert(!sb.invPriceLink(1), 'Anything else is refused');
+}
+async function testV56SetupHasPriceLinksAndTheJobButtons(){
+  const sb = v56Sandbox();
+  sb.__set('invView', 'setup');
+  assert(/openInvPriceLinks\(\)/.test(v56Html(sb)), 'Setup has 💹 Price links');
+  sb.openInvPriceLinks();
+  const m = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/id="invKeyCg"/.test(m) && /id="invKeyFh"/.test(m) && /backfillInvCloses\(\)/.test(m) && /runInvDailyCloseNow\(\)/.test(m) && /refreshInvPrices\(\)/.test(m), 'The Price links window has the keys, Refresh, Backfill and Run the daily job');
+  assert(/data-linkpos="3"/.test(m) && !/data-linkpos="5"/.test(m), 'Stablecoins are not listed for linking');
+}
+async function testV56NewStorageKeysAreListed(){
+  const sb = v56Sandbox();
+  ['invView','invCcy','invPricesFetchedAt'].forEach(k=>assert(sb.isLedgerOsKey(k), k+' is listed as a LedgerOS storage key'));
+}
+// ---------- the daily closing-price Edge Function ----------
+function loadEdgeFunction(){
+  const src = fs.readFileSync(path.join(__dirname, 'edge', 'inv-daily-close', 'index.ts'), 'utf8').replace(/^export /m, '');
+  const served = {};
+  const ctx = {console, Response: class { constructor(b, o){ this.body = b; this.status = (o&&o.status)||200; this.headers = (o&&o.headers)||{}; } },
+    Deno: {serve(fn){ served.fn = fn; }, env:{get: k=>({SUPABASE_URL:'https://test.example.co', SUPABASE_SERVICE_ROLE_KEY:'svc'}[k])}}};
+  vm.createContext(ctx);
+  vm.runInContext(src + '\nthis.runDailyClose = runDailyClose;', ctx);
+  ctx._served = served;
+  return ctx;
+}
+async function testV56EdgeJobSavesYesterdaysCloses(){
+  const ctx = loadEdgeFunction();
+  const calls = [];
+  ctx.fetch = async (url, opts)=>{
+    calls.push({url:String(url), opts});
+    const j = b => ({ok:true, status:200, json: async()=>b, text: async()=>''});
+    if(/pd_ui_prefs/.test(url)) return j([{dismissals:{invPrices:{keys:{cg:'k1', finnhub:'k2'}, links:{1:{kind:'cg', id:'ethereum'}, 3:{kind:'dex', chain:'solana', address:FROG}, 6:{kind:'stock', id:'MINE'}, 9:{kind:'cg', id:'gone'}}}}}]);
+    if(/pd_inv_positions/.test(url)) return j([{id:1, status:'Active'}, {id:3, status:'Active'}, {id:6, status:'Active'}, {id:9, status:'Closed'}]);
+    if(/dexscreener/.test(url)) return j([{baseToken:{address:FROG}, priceUsd:'0.003', liquidity:{usd:10}}]);
+    if(/coingecko/.test(url)) return j({ethereum:{usd:3100}});
+    if(/finnhub/.test(url)) return j({c:0});
+    if(/pd_inv_valuations/.test(url)) return j({});
+    return {ok:false, status:404, json: async()=>({}), text: async()=>''};
+  };
+  const r = await ctx.runDailyClose({supabaseUrl:'https://test.example.co/', serviceKey:'svc', now:'2026-11-12T00:05:00Z'});
+  assert(r.date==='2026-11-11' && r.linked===3 && r.saved===2 && r.missing===1, 'Saves yesterday\'s closes for open linked positions, got ' + JSON.stringify(r));
+  const save = calls.find(c=>/pd_inv_valuations\?on_conflict=id/.test(c.url));
+  const rows = save && JSON.parse(save.opts.body);
+  const sb = v56Sandbox();
+  assert(rows && rows.length===2 && rows.every(x=>x.id===sb.invCloseValId(x.position_id, '2026-11-11') && x.entry_date==='2026-11-11'), 'Its ids match the app\'s close ids, got ' + JSON.stringify(rows));
+  assert(/merge-duplicates/.test(save.opts.headers.Prefer) && save.opts.headers.apikey==='svc', 'A re-run updates the same rows (merge) using the service key');
+  assert(!calls.some(c=>/gone/.test(c.url)), 'Closed positions are skipped');
+  assert(calls.some(c=>/x_cg_demo_api_key=k1/.test(c.url)), 'It uses the synced CoinGecko key');
+  const pre = await ctx._served.fn({method:'OPTIONS'});
+  assert(pre.headers['Access-Control-Allow-Origin']==='*', 'It answers the browser\'s CORS check (Run the daily job now)');
 }
