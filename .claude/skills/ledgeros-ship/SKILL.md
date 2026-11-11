@@ -10,7 +10,7 @@ Only ship work Muhannad has agreed to. If a step fails, stop, say exactly what f
 
 ## 1. Version and changelog
 
-- Bump `const APP_VERSION` in `LedgerOS.html` (near line 350). Use the version given in the arguments if any; otherwise semver, where a new feature bumps the minor version.
+- Bump `const APP_VERSION` in `LedgerOS.html` (near line 580; grep `const APP_VERSION`). Use the version given in the arguments if any; otherwise semver, where a new feature bumps the minor version.
 - Add the matching entry at the **top** of `CHANGELOG`: `{version:'X.Y.Z', date:'YYYY-MM-DD', changes:[...]}`.
   - Use today's date in Asia/Riyadh time.
   - Write plain sentences for Muhannad: what he'll see and where, not code names.

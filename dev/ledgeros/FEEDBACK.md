@@ -33,3 +33,5 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 
 ## Release notes
 - v5.0.1 (Dashboard boxes stack into free space) went live on its own when Muhannad merged it.
+- v5.4.0 (#18), v5.4.1 (#19, #20) and v5.5.0 (#21) shipped 2026-11-11 and were merged by Claude (PRs #9 and #10).
+- #21 open follow-up: should an over-budget category be topped back up by overflow after its drawdown (current behaviour), or get none that month? Asked 2026-11-11, not answered yet.

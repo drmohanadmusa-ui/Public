@@ -24,7 +24,7 @@ He uses LedgerOS every day for real family money, so **treat it as production so
 4. **Every change gets real tests** in `dev/ledgeros/test_batch_fixes.js`, registered in the runner list at the bottom.
 5. **Break-then-restore before shipping** (`dev/ledgeros/break_restore.py`, see `/ledgeros-ship`). Every break must turn the suite red.
 6. **Every version bump gets a matching `CHANGELOG` entry.**
-   - `APP_VERSION` and `CHANGELOG` are near line 350 of `LedgerOS.html`.
+   - `APP_VERSION` and `CHANGELOG` are near line 580 of `LedgerOS.html` (grep `const APP_VERSION`).
    - Entries are plain sentences written for Muhannad. Non-ASCII characters are written as `\uXXXX` escapes, like the existing entries.
    - Use semver: a new feature bumps the minor version.
 7. **Be honest about mistakes**, including mistakes in first-draft tests. Say what was wrong and what you changed.
@@ -67,8 +67,17 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - **Pooled family contributions:** Collect Contributions plus "Split by platform cash".
   - **The app never posts ledger JVs for this.** Muhannad posts them by hand.
 
-**Accruals (v4.61)**
-- `pd_accrual_mappings.cap_months` sets the cap. `computeAccrualJV` accrues only up to cap months × that month's budget.
+**Accruals (v4.61, v5.5)**
+- `pd_accrual_mappings.cap_months` sets the cap: cap months × that month's budget (budget = Forecast Plan via `computeForecastCell(a, mk, mk)`).
+- `computeAccrualJV` runs in two passes:
+  - **Pass 1, own entry per category:** under budget, accrue up to the cap; over budget, draw down its own reserve. Reserves are read at the **end of the month being accrued**, never today.
+  - **Pass 2, overflow (v5.5):** surplus above a cap is pooled and split among categories with room left after their own entry, in proportion to that room, never past a cap (`accrualSplitCents`, in cents). Uncapped categories neither give nor receive. Leftover goes to the catch-all reserve (`getAccrualOverflowAcc`, synced in `dismissals.accrualOverflowAcc`; it can't be a category's own reserve), otherwise it isn't accrued.
+  - Overspends are never offset by overflow: the drawdown is booked in full, then that reserve may be topped up by its share like any other.
+- `accrualExplanation` rows carry cap, accrued, own, overflowOut, overflowIn; `accrualOverflowSummary` feeds the pool line. Tests: `capSandbox` (v4.61) and `ovfSandbox` (v5.5).
+
+**SMS inbox (v5.4)**
+- iPhone side: Shortcuts Message automations → Scriptable `dev/ledgeros/sms/ledger_sms_logger.js` (7 banks) → upload to `pd_sms_inbox` (dedupe by hashed id; failed uploads queue in iCloud). Its `README.md` is the explainer; parser tests: `node dev/ledgeros/sms/test_parsers.js` (93 passed).
+- App side: New JV → 📩 SMS. Groups by mapped account (`dismissals.smsMap`), one JV per SMS date, own-bank transfers paired within SAR 1 (difference = fee line), exact reversals cancel. Posting marks the SMS done (`smsId` on lines).
 
 ## 3. Tests
 
@@ -99,6 +108,18 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - Never post ledger JVs on his behalf. Never make destructive schema changes.
 
 ## 6. Open items and future features (ask before starting any of them)
+
+**Where the last session stopped (2026-11-11, v5.5.0 live, 2150 tests):**
+- **Waiting on Muhannad:**
+  - #21 follow-up: an over-budget category can currently be topped back up by overflow after its full drawdown. He may veto that ("over-budget categories get no overflow that month"), a one-line change in the receivers filter of `computeAccrualJV`.
+  - The older v4.61 cap tests (`capSandbox`) use one of his real reserve figures. Offered to swap it for an invented number; not answered yet.
+  - Offered an SMS logger version that only notifies on failure; not answered yet.
+  - He still needs to set the catch-all reserve account in Settings → Accrual Mappings.
+- **Reminders for him:** run the backup workflow manually once (it last ran before his v4 backup script update) and ask Claude to check the result; delete the merged branches `claude/sms-inbox` and `claude/accrual-overflow` on GitHub (the session proxy can't delete branches).
+- **Process notes:**
+  - `gh pr create` fails (GraphQL blocked). Use REST: `gh api repos/drmohanadmusa-ui/Public/pulls -f title=... -f head=<branch> -f base=main -F body=@file`, then `gh api -X PUT repos/drmohanadmusa-ui/Public/pulls/<n>/merge -f merge_method=squash`.
+  - **Squash-merge**, so anything removed from a branch before merging never reaches main.
+  - `break_restore.py` takes several minutes: run it in the foreground with a long timeout (up to 600000 ms), not in the background.
 
 - **v5.0.0 ("Command Center") shipped** from `dev/ledgeros/redesign/REDESIGN_PLAN.md`. `LedgerOS-classic.html` is the frozen v4.63.0 copy: never change it; delete it only when Muhannad says so. Classic's Restore from backup would clear `dashboard_layout` and `position_boxes` (he has been warned). `dev/ledgeros/redesign/demo_walk.js` screenshots any page with invented data.
 
