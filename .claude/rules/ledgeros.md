@@ -63,9 +63,18 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - **Cost corrections (v4.59):** stored as `kind:'costadj'` rows in `pd_inv_cash_movements`. The cash maths ignores them.
 - **Owner accounts:** `outAcc` is labelled "Invested into platform" and `inAcc` "Withdrawn from platform". His chart of accounts names accounts from the **platform's** perspective: "X - In" means money into platform X.
 - **Withdrawals:** capital at cost goes to the withdrawn account and the rest goes to Profit (`invWithdrawalBooking`).
-- **Views:** Mine / Family / Activity / Reconcile / Insights / Setup / Classic (`INV_VIEWS`, `invView`).
+- **Views:** Mine / Family / Activity / Reconcile / Insights / Setup (`INV_VIEWS`, `invView`). The Classic tab was dropped in v5.6; `renderInvClassicPage` is still the dispatch fallback and old tests use it.
 - **Pooled family contributions:** Collect Contributions plus "Split by platform cash".
   - **The app never posts ledger JVs for this.** Muhannad posts them by hand.
+
+**Investments v5.6 (#22): boxes, Needs you, prices, wallets**
+- **Mine = platform boxes** (`invBoxesHTML`, `invBoxHTML`): click opens the platform page (`invPlatformPageId`, `renderInvPlatformPage` reuses `invHoldingCardHTML(h,'mine',true)`). Box buttons show on hover only (CSS `.inv-box-actions`; always on touch). Arrange: order / hidden / grouped ("Other wallets") in `dismissals.invBoxes`.
+- **Needs you** (`invNeedsYouItems`): uncollected contributions, ledger lines on a platform's `outAcc` with no tracker deposit (±5 days, ±2%, since `reconStartDate` or 90 days; `openInvDepositFromLedger`), platform cash, stale prices, robo value > 30 days, recon issues; "checks due" (units not checked 30 days) are minor and not counted. Rail badge `invNavBadgeHTML()` in `renderNav`.
+- **Prices:** synced config `dismissals.invPrices = {keys:{cg,finnhub}, links:{posId:{kind:'dex'|'cg'|'stock', chain, address, id}}, wallets:{platformId:[{chain,address}]}, rpc}` (no schema change; anyone with the anon key can read the free API keys). Sources: DexScreener (+ GeckoTerminal backup), CoinGecko Demo, Finnhub. `refreshInvPrices` writes one row per position per day (`invTodayLiveRow`); auto-refresh on opening Investments after 6 h (`invPricesFetchedAt`, per device).
+- **Daily closes:** id = `1e12 + positionId×1e5 + day number` (`invCloseValId`); `invNextId` ignores that range; same date → close wins (`invValCmp`, used by `invLatestValuation` and `invPriceAsOf`). Written by `backfillInvCloses` (CoinGecko `market_chart` 00:00 UTC point = previous day's close; GeckoTerminal top pool daily OHLCV with `token=`; stocks not backfilled) and by the Edge Function `dev/ledgeros/edge/inv-daily-close` (Muhannad deploys it by hand; README there; tests are the `edge:` tests in the main suite).
+- **Wallet check** (Reconcile, `invWalletPanelHTML`): Solana `getTokenAccountsByOwner` (both token programs), EVM `balanceOf` + `decimals` batch; Save writes `stmt_units`/`stmt_date`. Exchange units stay manual.
+- **Logging shortcuts:** `window._invTxPreset` → `invApplyTxPreset` in `openInvTxModal` (new drafts only, used once): Repeat last buy (`invLastBuy`, ignores opening/transfer) and Invest it now after Collect (`invOfferInvestNow`).
+- Network calls can't be tested from the session (allowlist), and CORS from github.io was **not verified** before v5.6 shipped: a refused source shows its error on the prices bar.
 
 **Accruals (v4.61, v5.5)**
 - `pd_accrual_mappings.cap_months` sets the cap: cap months × that month's budget (budget = Forecast Plan via `computeForecastCell(a, mk, mk)`).
@@ -82,11 +91,11 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 ## 3. Tests
 
 - **Run:** `bash dev/ledgeros/run_tests.sh`. It extracts the app's JS to `dev/ledgeros/.build/`, installs `jsdom` and `fake-indexeddb` on first run, prints any `FAIL` lines, then `N passed, 0 failed`.
-  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0.
+  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0.
   - Console noise about `QuotaExceededError` or "Not implemented: scrollTo" is expected.
 - **Harness basics:**
   - `makeSandbox()` gives a fresh app context in a vm.
-  - Fixture sandboxes: `invCashSandbox`, `poolSandbox`, `v455Sandbox`, `fxSandbox`, `viewSandbox`, `moveSandbox`, `costSandbox`, `capSandbox`, `allocSandbox`, `jamSummarySandbox`.
+  - Fixture sandboxes: `invCashSandbox`, `poolSandbox`, `v455Sandbox`, `fxSandbox`, `viewSandbox`, `moveSandbox`, `costSandbox`, `capSandbox`, `allocSandbox`, `jamSummarySandbox`, `v56Sandbox` (v5.6: fake `fetch` routes, captured writes, no rate-limit waits).
   - `sb.__set(name, value)` overrides top-level `let`/`const` values. Read them back with `vm.runInContext('name', sb)`, not `sb.name`.
   - `freezeDate(sb, iso)` pins "today". Modals need a `#modalRoot` div.
 - **Quirks:**
@@ -109,8 +118,12 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 ## 6. Open items and future features (ask before starting any of them)
 
-**Where the last session stopped (2026-11-11, v5.5.0 live, 2150 tests):**
-- **Waiting on Muhannad:**
+**Where the last session stopped (2026-11-12, v5.6.0 built and tested, 2244 tests; SMS parser tests 110):**
+- **Waiting on Muhannad (v5.6 / SMS):**
+  - Merge the PR (this session's safety check refused `gh api .../merge` as "merge without review", despite the standing permission). PR #12 (SMS only) is included in the v5.6 PR; close #12 if the v5.6 PR is merged.
+  - His Shortcuts automations showed **"Automation is turned off"** (screenshot of the 4th one, 2026-11-12); likely why the SMS inbox got nothing after its first row. Told him to switch all 4 on (Run Immediately, Notify When Run off).
+  - Get the free CoinGecko Demo and Finnhub keys, link prices (⚙ Setup → 💹 Price links), add DEX wallet addresses (Reconcile), run Backfill, deploy the Edge Function and schedule it (`dev/ledgeros/edge/README.md`). Then confirm the first refresh worked from his PCs (CORS unverified; his work PC may block these sites).
+- **Waiting on Muhannad (older):**
   - #21 follow-up: an over-budget category can currently be topped back up by overflow after its full drawdown. He may veto that ("over-budget categories get no overflow that month"), a one-line change in the receivers filter of `computeAccrualJV`.
   - The older v4.61 cap tests (`capSandbox`) use one of his real reserve figures. Offered to swap it for an invented number; not answered yet.
   - Offered an SMS logger version that only notifies on failure; not answered yet.
@@ -120,6 +133,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
   - `gh pr create` fails (GraphQL blocked). Use REST: `gh api repos/drmohanadmusa-ui/Public/pulls -f title=... -f head=<branch> -f base=main -F body=@file`, then `gh api -X PUT repos/drmohanadmusa-ui/Public/pulls/<n>/merge -f merge_method=squash`.
   - **Squash-merge**, so anything removed from a branch before merging never reaches main.
   - `break_restore.py` takes several minutes: run it in the foreground with a long timeout (up to 600000 ms), not in the background.
+  - 2026-11-12: `add_repo` with push access and running `run_tests.sh` were first refused by the session's safety check and allowed once Muhannad said so in chat; merging a PR stayed refused.
 
 - **v5.0.0 ("Command Center") shipped** from `dev/ledgeros/redesign/REDESIGN_PLAN.md`. `LedgerOS-classic.html` is the frozen v4.63.0 copy: never change it; delete it only when Muhannad says so. Classic's Restore from backup would clear `dashboard_layout` and `position_boxes` (he has been warned). `dev/ledgeros/redesign/demo_walk.js` screenshots any page with invented data.
 
@@ -128,7 +142,6 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - **Future features:**
   - When coins move between platforms with different invested accounts, offer the matching JV ready-made in New JV for him to post.
   - Per-person shareable investment statement.
-  - Automatic live prices.
   - Platform value from positions vs a single statement number. Parked by him.
 - **Deferred ("ignore for now"):** editing an old transaction adds the price to the history as today's price. The screen was never identified.
 
@@ -151,4 +164,5 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 | 5.3 | Drift Detection for provisions: compare per account, income/expense accounts only, exclude list (toggles, synced in `pd_ui_prefs.dismissals.driftSettings`) |
 | 5.4 | SMS inbox: new table `pd_sms_inbox` filled by the iPhone logger (`dev/ledgeros/sms`, its own README and `node test_parsers.js`); New JV → 📩 SMS groups by mapped account (`dismissals.smsMap`), Create JV builds one JV per date with other halves, pairs own transfers across banks, cancels exact reversals; posting marks SMS done (`smsId` on JV/draft lines) |
 | 5.4.1 | Aurora & glass rail: the button list scrolls inside the floating rail on short windows (it was clipped by `overflow:hidden`); compact buttons up to 820px tall; Dashboard over-budget Open P&L lands on and flashes that category (`goPnLThisMonth(cat)`, `data-pnl-cat`) |
+| 5.6 | Investments (#22): platform boxes (hover actions, arrange/hide/group), Needs you + rail badge, automatic prices (price links, synced keys, refresh, auto after 6 h), daily closes (backfill + Edge Function), wallet unit check, Repeat last buy, Invest it now; Classic tab dropped. Ships with the SMS fix (#25) |
 | 5.5 | Accrual cap overflow (#21): pass 2 in `computeAccrualJV` pools surplus above caps and splits it by room left (`accrualSplitCents`, in cents, never past a cap); catch-all reserve `getAccrualOverflowAcc`/`setAccrualOverflowAcc` in `dismissals.accrualOverflowAcc`; drawdowns use the month-end reserve; wider explanation table + `accrualOverflowSummary` |

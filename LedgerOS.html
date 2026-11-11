@@ -519,6 +519,14 @@ body.still *,body.still *::before,body.still *::after{animation:none!important;t
   body.sidebar-pinned #sidebar .brand{flex-direction:column;justify-content:center}
   body.sidebar-pinned #sidebar .brand h1{display:none}
 }
+
+/* v5.6 platform boxes: action buttons only while the mouse is over the box (or keyboard focus is in it);
+   touch screens can't hover, so there they always show. */
+.inv-box{transition:box-shadow .15s ease, transform .15s ease}
+.inv-box.click:hover{box-shadow:0 4px 18px rgba(0,0,0,.08)}
+.inv-box .inv-box-actions{opacity:0;max-height:0;overflow:hidden;margin-top:0 !important;transition:opacity .15s ease, max-height .15s ease}
+.inv-box:hover .inv-box-actions, .inv-box:focus-within .inv-box-actions{opacity:1;max-height:120px;margin-top:10px !important}
+@media (hover:none){ .inv-box .inv-box-actions{opacity:1;max-height:none;margin-top:10px !important} }
 </style>
 </head>
 <body>
@@ -575,12 +583,24 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.5.0';
+const APP_VERSION = '5.6.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.6.0', date:'2026-11-12', changes:[
+    'Investments \u2192 Mine now shows a box for each platform instead of collapsed lines: value, gain %, cost / gain / cash, the top three holdings, how much is yours vs the family\'s, how old its prices are and when its units were last checked. Click a box to open that platform\'s own page with the full table and all its buttons.',
+    'Box buttons (Buy / Sell, Repeat last buy, Collect, Deposit; Update value on robo platforms) appear when the mouse is over the box. On a phone they always show.',
+    '\u270e Arrange boxes: move boxes earlier or later, hide a box, or put small wallets together in one \u201cOther wallets\u201d box. Saved and synced to all your devices.',
+    'Needs you, at the top of Mine, with a red count on the Investments button: contributions not collected yet, money the ledger shows paid onto a platform with no deposit recorded (one click opens the deposit already filled in), cash waiting on platforms, old prices, robo values older than a month, reconciliation problems, and platforms whose units haven\'t been checked for 30 days.',
+    'Automatic prices: \u2699 Setup \u2192 \ud83d\udcb9 Price links. Link each position once (paste a Phantom / Solana / Base / Ethereum contract address, or pick the right coin, or a US stock ticker) and add your free CoinGecko and Finnhub keys. Prices then refresh with \u21bb Prices, and on their own when you open Investments and this device hasn\'t refreshed for 6 hours. One price per position per day is kept.',
+    'Daily closing prices for history: \ud83d\uddd3 Backfill daily closes fills past days from your first purchase (up to a year), and a daily job on your Supabase project saves yesterday\'s close every night (one-time setup in dev/ledgeros/edge/README.md; \u25b6 Run the daily job now tests it). The Value vs Cost chart in Insights uses them.',
+    'Reconcile: \ud83d\udc5b add a platform\'s wallet address and Check wallet reads how many of each token the wallet really holds, next to the tracker\'s units. Save wallet units as statement units with one click. Exchange units stay typed in.',
+    'After Collect Contributions, \u201cInvest it now?\u201d opens the buy as cash-funded with the amount just collected. \u21bb Repeat last buy opens a new buy with the same position, amount and split as the last one on that platform.',
+    'The \ud83d\uddc2 Classic tab is gone from Investments.',
+    'No database change: price links, keys, wallets and box layout are kept in your synced settings.',
+  ]},
   {version:'5.5.0', date:'2026-11-11', changes:[
     'Month End JV \u2013 Post Accrual: surplus above a category\u2019s cap is no longer dropped. Each category still accrues its own surplus up to its cap first; whatever is left over is pooled and shared among the other capped categories that still have room, in proportion to how much room each has left, and never past their cap. The JV gets a debit on each source\u2019s 99 account and a credit on each receiver\u2019s reserve, with descriptions naming where it came from (e.g. \u201cShopping Accrual overflow (from Self Improvement)\u201d).',
     'Overspends are never covered by overflow: an over-budget category still draws down its own reserve in full, so you can see which categories overspent. Its reserve can then be topped up by its share of overflow like any other.',
@@ -2436,6 +2456,7 @@ const LEDGEROS_KEYS = [
   'budgetCollapsedSections','statementSortDesc','driftDismissals','driftSettings',
   'hiddenPages','sidebarPinned','theme','invFxUsdSar','uiTheme','uiBackground','uiMotion','customAccentColor',
   'fontSize','fontFamily','contentWidthMode','contentWidthPreset',
+  'invView','invCcy','invPricesFetchedAt',
 ];
 const LS_ORIGIN_LIMIT_BYTES = 5 * 1024 * 1024; // browsers land near 5 MB; treated as approximate
 function isLedgerOsKey(k){
@@ -3258,7 +3279,7 @@ function renderNav(){
   const hidden = getHiddenPages();
   const animClass = navHasAnimatedIn? '' : ' anim';
   document.getElementById('nav').innerHTML = orderedScreens().filter(([id])=> ALWAYS_VISIBLE_SCREENS.includes(id) || !hidden.includes(id)).map(([id,label,icon])=>
-    `<button class="${screen===id?'on':''}${animClass}" onclick="go('${id}')"${screen===id?' aria-current="page"':''}>${NAV_ICONS[id]? `<svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${NAV_ICONS[id]}"></path></svg>` : `<span class="nav-ico">${icon||''}</span>`}<span class="nav-lbl">${label}</span></button>`).join('');
+    `<button class="${screen===id?'on':''}${animClass}" onclick="go('${id}')"${screen===id?' aria-current="page"':''}>${NAV_ICONS[id]? `<svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${NAV_ICONS[id]}"></path></svg>` : `<span class="nav-ico">${icon||''}</span>`}<span class="nav-lbl">${label}</span>${id==='investments'? invNavBadgeHTML() : ''}</button>`).join('');
   navHasAnimatedIn = true;
 }
 let pageScrollPositions = {}; // in-memory only, this session — remembers where you were on each page
@@ -9026,10 +9047,10 @@ function invPositionById(id){ return (D.invPositions||[]).find(p=>p.id===id) || 
 function invPositionsForPlatform(pid){ return (D.invPositions||[]).filter(p=>p.platformId===pid).sort((a,b)=>(a.name||'').localeCompare(b.name||'')); }
 function invTxForPosition(posId){ return (D.invTransactions||[]).filter(t=>t.positionId===posId).slice().sort((a,b)=> a.date===b.date? (a.id-b.id) : (a.date<b.date?-1:1)); }
 function invLatestValuation(posId){
-  const vals = (D.invValuations||[]).filter(v=>v.positionId===posId).slice().sort((a,b)=> a.date<b.date?-1:1);
+  const vals = (D.invValuations||[]).filter(v=>v.positionId===posId).slice().sort(invValCmp);
   return vals.length? vals[vals.length-1] : null;
 }
-function invNextId(arr){ return 1 + (arr||[]).reduce((m,x)=>Math.max(m, Number(x.id)||0), 0); }
+function invNextId(arr){ return 1 + (arr||[]).reduce((m,x)=>{ const n = Number(x.id)||0; return n>=INV_CLOSE_ID_BASE? m : Math.max(m, n); }, 0); }
 function invFxFor(currency){ return currency==='USD'? getInvFxRate() : 1; }
 
 /* ===================== MANAGEMENT FEE & TRANSACTION ATTRIBUTION =====================
@@ -9777,7 +9798,7 @@ function invPositionStateAsOf(posId, asOfDate, selfOnly){
   return {units, costSar};
 }
 function invPriceAsOf(posId, asOfDate){
-  const vals = (D.invValuations||[]).filter(v=>v.positionId===posId && v.date<=asOfDate).sort((a,b)=>a.date<b.date?-1:1);
+  const vals = (D.invValuations||[]).filter(v=>v.positionId===posId && v.date<=asOfDate).sort(invValCmp);
   return vals.length? Number(vals[vals.length-1].price)||0 : 0;
 }
 // Portfolio value and cost at every date a price was logged — the series behind the chart.
@@ -10463,8 +10484,9 @@ function invPctText(cost, market, hasVal){
    USDT and USDC holdings count as cash (1:1 with USD) everywhere in these views. */
 const INV_VIEWS = [
   ['mine','👤 Mine'], ['family','👨‍👩‍👧 Family'], ['activity','📋 Activity'], ['recon','✅ Reconcile'],
-  ['insights','📊 Insights'], ['setup','⚙ Setup'], ['classic','🗂 Classic']
+  ['insights','📊 Insights'], ['setup','⚙ Setup']
 ];
+// v5.6: the 🗂 Classic tab is gone from the menu (Muhannad, #22). Its page is still the fallback below.
 let invView = (function(){ try{ const v = localStorage.getItem('invView'); return INV_VIEWS.some(x=>x[0]===v)? v : 'mine'; }catch(e){ return 'mine'; } })();
 let invCcy = (function(){ try{ return localStorage.getItem('invCcy')==='USD'? 'USD' : 'SAR'; }catch(e){ return 'SAR'; } })();
 let invShowDetails = false;
@@ -10566,14 +10588,14 @@ function invTotalsCardsHTML(t, labels){
 }
 // One platform as a compact card: a single summary line, expanding to a simple table.
 // scope 'mine' gets the action buttons; a family member's card is read-only.
-function invHoldingCardHTML(h, scope){
+function invHoldingCardHTML(h, scope, forceOpen){
   const key = scope+':'+h.platform.id;
-  const open = invCardsExpanded.has(key);
+  const open = !!forceOpen || invCardsExpanded.has(key);
   const pl = h.valueSar - h.costSar;
   const cashUsd = h.cashUsd + h.stableUsd;
   const pid = h.platform.id;
-  const head = `<div class="row click" style="justify-content:space-between;align-items:center;cursor:pointer;flex-wrap:wrap;gap:8px" onclick="toggleInvCard('${key}')">
-      <div><b>${h.robo?'🤖':'🏦'} ${esc(h.platform.name)}</b> <span class="mut" style="font-size:12px">${open?'▾':'▸'}</span></div>
+  const head = `<div class="row${forceOpen?'':' click'}" style="justify-content:space-between;align-items:center;${forceOpen?'':'cursor:pointer;'}flex-wrap:wrap;gap:8px" ${forceOpen? '' : `onclick="toggleInvCard('${key}')"`}>
+      <div><b>${h.robo?'🤖':'🏦'} ${esc(h.platform.name)}</b>${forceOpen? '' : ` <span class="mut" style="font-size:12px">${open?'▾':'▸'}</span>`}</div>
       <div class="row mono" style="gap:14px;font-size:13px;flex-wrap:wrap">
         <span>${invDisp(h.valueSar)}</span>
         <span class="${moneyClass(pl)}">${invPlPct(h.costSar, h.valueSar)}</span>
@@ -10633,6 +10655,836 @@ function invHoldingCardHTML(h, scope){
     ${closed}${actions}
   </div>`;
 }
+/* ===================== v5.6: PLATFORM BOXES, NEEDS YOU, LIVE PRICES, WALLET CHECK =====================
+   Price links, API keys and wallet addresses live in the synced preferences (pd_ui_prefs.dismissals.invPrices),
+   so there is no schema change. Prices are written to pd_inv_valuations:
+     - a refresh writes (or overwrites) ONE row per position for today, with a normal id;
+     - a daily closing price uses its own id range (INV_CLOSE_ID_BASE + positionId*1e5 + day number), written by
+       the daily Edge Function (dev/ledgeros/edge/inv-daily-close) or by Backfill here. Same id = same row, so
+       both can run without duplicates. On the same date a close wins over a refresh (it is the later price). */
+const INV_CLOSE_ID_BASE = 1e12;
+const INV_PRICE_AUTO_HOURS = 6;      // open Investments: refresh automatically when this device's last refresh is older
+const INV_ROBO_PROMPT_DAYS = 30;     // robo value older than this → "Needs you"
+const INV_CHECK_STALE_DAYS = 30;     // statement / wallet not checked for this long → "Needs you"
+const INV_CHAINS = {
+  solana:   {label:'Solana',   dex:'solana',   gt:'solana', rpc:'https://api.mainnet-beta.solana.com'},
+  base:     {label:'Base',     dex:'base',     gt:'base',   rpc:'https://mainnet.base.org'},
+  ethereum: {label:'Ethereum', dex:'ethereum', gt:'eth',    rpc:'https://ethereum-rpc.publicnode.com'},
+};
+const INV_SOL_NATIVE_MINT = 'So11111111111111111111111111111111111111112';
+const INV_EVM_NATIVE = '0x0000000000000000000000000000000000000000';
+function invIsCloseVal(v){ return Number(v && v.id) >= INV_CLOSE_ID_BASE; }
+function invDayNumber(date){ return Math.round(Date.parse(String(date)+'T00:00:00Z')/864e5); }
+function invCloseValId(posId, date){ return INV_CLOSE_ID_BASE + Number(posId)*1e5 + invDayNumber(date); }
+// Valuation order: by date; on the same date a daily close sorts after (wins over) a refresh or a typed price.
+function invValCmp(a, b){ return a.date<b.date? -1 : a.date>b.date? 1 : (invIsCloseVal(a)?1:0) - (invIsCloseVal(b)?1:0); }
+function invUtcDate(ms){ return new Date(ms).toISOString().slice(0,10); }
+
+// ---------- synced price settings ----------
+function getInvPriceCfg(){
+  const c = getUiDismissals().invPrices;
+  const o = (c && typeof c==='object' && !Array.isArray(c))? c : {};
+  return {keys: o.keys||{}, links: o.links||{}, wallets: o.wallets||{}, rpc: o.rpc||{}};
+}
+async function saveInvPriceCfg(patch){
+  const d = Object.assign({}, getUiDismissals());
+  d.invPrices = Object.assign({}, getInvPriceCfg(), patch||{});
+  await saveUiDismissals(d);
+}
+function invPriceLink(posId){ const l = getInvPriceCfg().links[posId]; return (l && l.kind)? l : null; }
+async function setInvPriceLink(posId, link){
+  const links = Object.assign({}, getInvPriceCfg().links);
+  if(link) links[posId] = link; else delete links[posId];
+  await saveInvPriceCfg({links});
+}
+function invLinkLabel(l){
+  if(!l) return '';
+  if(l.kind==='cg') return 'CoinGecko · '+(l.label||l.id);
+  if(l.kind==='stock') return 'Finnhub · '+l.id;
+  if(l.kind==='dex') return (INV_CHAINS[l.chain]? INV_CHAINS[l.chain].label : l.chain)+' · '+invShortAddr(l.address)+(l.label? ' · '+l.label : '');
+  return '';
+}
+function invShortAddr(a){ a = String(a||''); return a.length>12? a.slice(0,5)+'…'+a.slice(-4) : a; }
+function invGuessChain(addr){
+  addr = String(addr||'').trim();
+  if(/^0x[0-9a-fA-F]{40}$/.test(addr)) return 'evm';
+  if(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) return 'solana';
+  return '';
+}
+// Positions worth pricing: not closed, still holding units, not a stablecoin (counted as cash).
+function invPricablePositions(){
+  return (D.invPositions||[]).filter(p=>p.status!=='Closed' && !invIsStablecoin(p) && computePositionState(p.id).totalUnits>1e-12);
+}
+
+// ---------- quotes (all return {posId: {price, note}}) ----------
+async function invFetchJson(url, opts){
+  const r = await fetch(url, opts);
+  if(!r.ok){ const host = (String(url).match(/^https?:\/\/([^/]+)/)||[])[1]||'price service'; throw new Error(host+' said '+r.status); }
+  return r.json();
+}
+function invChunks(arr, n){ const out = []; for(let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out; }
+async function invQuoteDex(items){       // items: [{posId, chain, address}]
+  const out = {};
+  const byChain = {};
+  items.forEach(it=>{ if(INV_CHAINS[it.chain]) (byChain[it.chain] = byChain[it.chain]||[]).push(it); });
+  for(const chain of Object.keys(byChain)){
+    const list = byChain[chain];
+    for(const chunk of invChunks(list, 30)){
+      try{
+        const pairs = await invFetchJson(`https://api.dexscreener.com/tokens/v1/${INV_CHAINS[chain].dex}/${chunk.map(i=>i.address).join(',')}`);
+        chunk.forEach(it=>{
+          const mine = (Array.isArray(pairs)? pairs : []).filter(p=>p && p.baseToken && String(p.baseToken.address).toLowerCase()===String(it.address).toLowerCase() && Number(p.priceUsd)>0);
+          if(!mine.length) return;
+          mine.sort((a,b)=>((b.liquidity||{}).usd||0)-((a.liquidity||{}).usd||0));
+          const best = mine[0], vol = (best.volume||{}).h24;
+          out[it.posId] = {price:Number(best.priceUsd), note: (vol!==undefined && Number(vol)===0)? 'no trading in 24h' : ''};
+        });
+      }catch(e){ /* the backup below gets a chance */ }
+      const missing = chunk.filter(it=>!out[it.posId]);
+      if(!missing.length) continue;
+      try{
+        const gt = await invFetchJson(`https://api.geckoterminal.com/api/v2/simple/networks/${INV_CHAINS[chain].gt}/token_price/${missing.map(i=>i.address).join(',')}`);
+        const prices = (((gt||{}).data||{}).attributes||{}).token_prices || {};
+        const lower = {}; Object.keys(prices).forEach(k=>{ lower[k.toLowerCase()] = prices[k]; });
+        missing.forEach(it=>{ const p = Number(lower[String(it.address).toLowerCase()]); if(p>0) out[it.posId] = {price:p, note:''}; });
+      }catch(e){}
+    }
+  }
+  return out;
+}
+async function invQuoteCoinGecko(items, key){  // items: [{posId, id}]
+  const out = {};
+  const ids = Array.from(new Set(items.map(i=>i.id)));
+  for(const chunk of invChunks(ids, 200)){
+    const data = await invFetchJson(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(chunk.join(','))}&vs_currencies=usd${key? '&x_cg_demo_api_key='+encodeURIComponent(key) : ''}`);
+    items.forEach(it=>{ const p = Number(((data||{})[it.id]||{}).usd); if(p>0) out[it.posId] = {price:p, note:''}; });
+  }
+  return out;
+}
+async function invQuoteStocks(items, key){     // items: [{posId, id: 'MARA'}]
+  const out = {};
+  if(!key) return out;
+  for(const it of items){
+    try{
+      const q = await invFetchJson(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(it.id)}&token=${encodeURIComponent(key)}`);
+      if(Number(q && q.c)>0) out[it.posId] = {price:Number(q.c), note:''};
+    }catch(e){}
+  }
+  return out;
+}
+async function invQuoteAll(positions){
+  const cfg = getInvPriceCfg();
+  const dex=[], cg=[], st=[];
+  positions.forEach(p=>{
+    const l = cfg.links[p.id]; if(!l || !l.kind) return;
+    if(l.kind==='dex') dex.push({posId:p.id, chain:l.chain, address:l.address});
+    else if(l.kind==='cg') cg.push({posId:p.id, id:l.id});
+    else if(l.kind==='stock') st.push({posId:p.id, id:l.id});
+  });
+  const errors = [];
+  const safe = async (fn, label) => { try{ return await fn(); }catch(e){ errors.push(label+': '+(e && e.message || e)); return {}; } };
+  const res = Object.assign({},
+    dex.length? await safe(()=>invQuoteDex(dex), 'DEX') : {},
+    cg.length?  await safe(()=>invQuoteCoinGecko(cg, cfg.keys.cg||''), 'CoinGecko') : {},
+    st.length?  await safe(()=>invQuoteStocks(st, cfg.keys.finnhub||''), 'Finnhub') : {});
+  if(st.length && !cfg.keys.finnhub) errors.push('Finnhub: no key yet (Setup → Price links)');
+  return {quotes:res, linked: dex.length+cg.length+st.length, errors};
+}
+
+// ---------- refresh (one price per position per day) ----------
+let invPriceState = {running:false, failed:{}, notes:{}, errors:[], lastAt:null};
+function invLastRefreshAt(){ try{ return localStorage.getItem('invPricesFetchedAt')||null; }catch(e){ return null; } }
+// Upserts today's refreshed price for a position: overwrite today's non-close row, else a new row.
+function invTodayLiveRow(posId, price, date){
+  const row = (D.invValuations||[]).find(v=>v.positionId===posId && v.date===date && !invIsCloseVal(v));
+  if(row){ row.price = price; return row; }
+  const rec = {id: invNextId(D.invValuations), positionId:posId, date, price, updated_at:null};
+  D.invValuations.push(rec);
+  return rec;
+}
+async function refreshInvPrices(opts){
+  opts = opts||{};
+  if(invPriceState.running) return null;
+  const positions = invPricablePositions();
+  const linkedCount = positions.filter(p=>invPriceLink(p.id)).length;
+  if(!linkedCount){ if(!opts.quiet) toast('No price links yet — ⚙ Setup → 💹 Price links', true); return null; }
+  invPriceState.running = true;
+  if(!opts.quiet) toast('Fetching prices…');
+  try{
+    const {quotes, errors} = await invQuoteAll(positions);
+    const date = todayStr();
+    const ops = [];
+    const failed = {}, notes = {};
+    positions.forEach(p=>{
+      if(!invPriceLink(p.id)) return;
+      const q = quotes[p.id];
+      if(!q){ failed[p.id] = 'no price found'; return; }
+      if(q.note) notes[p.id] = q.note;
+      const rec = invTodayLiveRow(p.id, q.price, date);
+      const base = rec.updated_at||null; rec.updated_at = nowISO();
+      ops.push({table:'pd_inv_valuations', kind:'upsert', row:{id:rec.id, position_id:rec.positionId, entry_date:rec.date, price:rec.price}, base});
+    });
+    if(ops.length){ await syncWriteMany(ops); persistLocal(); }
+    invPriceState.failed = failed; invPriceState.notes = notes; invPriceState.errors = errors;
+    invPriceState.lastAt = nowISO();
+    try{ localStorage.setItem('invPricesFetchedAt', invPriceState.lastAt); }catch(e){}
+    if(!opts.quiet) toast(`Prices updated: ${ops.length} of ${linkedCount}`+(Object.keys(failed).length? ` · ${Object.keys(failed).length} not found` : '')+(errors.length? ' · '+errors[0] : ''), !!errors.length && !ops.length);
+    return {updated: ops.length, failed, errors};
+  } finally {
+    invPriceState.running = false;
+    if(typeof screen!=='undefined' && screen==='investments') renderInvestmentsPage();
+    renderNav();
+  }
+}
+// Called when Investments opens: refresh quietly if this device hasn't refreshed for a while.
+function invMaybeAutoRefresh(){
+  if(invPriceState.running) return;
+  const last = invLastRefreshAt();
+  if(last && (Date.now() - Date.parse(last)) < INV_PRICE_AUTO_HOURS*3600*1000) return;
+  if(!invPricablePositions().some(p=>invPriceLink(p.id))) return;
+  invPriceState.lastAt = nowISO();   // don't fire twice while the first is running
+  try{ localStorage.setItem('invPricesFetchedAt', invPriceState.lastAt); }catch(e){}
+  setTimeout(()=>{ refreshInvPrices({quiet:true}); }, 0);
+}
+
+// ---------- backfill daily closes (history) ----------
+let invSleep = ms => new Promise(r=>setTimeout(r, ms));   // a let so tests can skip the waits
+let invBackfillState = {running:false, done:0, total:0, written:0, skipped:[]};
+function invPositionFirstDate(posId){
+  const d = (D.invTransactions||[]).filter(t=>t.positionId===posId).map(t=>t.date).sort();
+  return d[0]||null;
+}
+// Daily closes {date: price} for one linked position, from `from` up to yesterday (UTC).
+async function invHistoryFor(link, days){
+  const cfg = getInvPriceCfg();
+  const out = {};
+  if(link.kind==='cg'){
+    const key = cfg.keys.cg||'';
+    const data = await invFetchJson(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(link.id)}/market_chart?vs_currency=usd&days=${days}&interval=daily${key? '&x_cg_demo_api_key='+encodeURIComponent(key) : ''}`);
+    // A daily point stamped 00:00 UTC is that moment's price = the close of the day before.
+    ((data||{}).prices||[]).forEach(([ms, p])=>{
+      if(new Date(ms).getUTCHours()!==0 || !(Number(p)>0)) return;
+      out[invUtcDate(ms - 864e5)] = Number(p);
+    });
+    return out;
+  }
+  if(link.kind==='dex'){
+    const net = (INV_CHAINS[link.chain]||{}).gt; if(!net) return out;
+    const pools = await invFetchJson(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${link.address}/pools?page=1`);
+    const pool = ((((pools||{}).data||[])[0]||{}).attributes||{}).address;
+    if(!pool) return out;
+    await invSleep(2100);   // GeckoTerminal: 30 calls a minute
+    const o = await invFetchJson(`https://api.geckoterminal.com/api/v2/networks/${net}/pools/${pool}/ohlcv/day?limit=${Math.min(1000, days)}&currency=usd&token=${link.address}`);
+    ((((o||{}).data||{}).attributes||{}).ohlcv_list||[]).forEach(row=>{
+      const [ts, , , , close] = row;
+      if(Number(close)>0) out[invUtcDate(Number(ts)*1000)] = Number(close);
+    });
+    return out;
+  }
+  return out;   // stocks: Finnhub's free plan has no history; closes start from the daily job
+}
+async function backfillInvCloses(fromDate){
+  if(invBackfillState.running) return;
+  const positions = invPricablePositions().filter(p=>{ const l = invPriceLink(p.id); return l && l.kind!=='stock'; });
+  if(!positions.length){ toast('Nothing to backfill: link prices first', true); return; }
+  const today = todayStr();
+  const from = fromDate || positions.map(p=>invPositionFirstDate(p.id)).filter(Boolean).sort()[0] || shiftDate(today, -30);
+  const days = Math.min(365, Math.max(2, Math.ceil((Date.parse(today) - Date.parse(from))/864e5) + 2));
+  invBackfillState = {running:true, done:0, total:positions.length, written:0, skipped:[]};
+  renderInvBackfillProgress();
+  try{
+    for(const p of positions){
+      const link = invPriceLink(p.id);
+      const first = invPositionFirstDate(p.id) || from;
+      let hist = {};
+      try{ hist = await invHistoryFor(link, days); }
+      catch(e){ invBackfillState.skipped.push((p.ticker||p.name)+': '+(e && e.message || e)); }
+      const ops = [];
+      Object.keys(hist).forEach(date=>{
+        if(date<from || date<first || date>=today) return;
+        const id = invCloseValId(p.id, date);
+        let rec = (D.invValuations||[]).find(v=>v.id===id);
+        if(rec && Math.abs(Number(rec.price)-hist[date])<1e-12) return;
+        if(!rec){ rec = {id, positionId:p.id, date, price:hist[date], updated_at:null}; D.invValuations.push(rec); }
+        else rec.price = hist[date];
+        const base = rec.updated_at||null; rec.updated_at = nowISO();
+        ops.push({table:'pd_inv_valuations', kind:'upsert', row:{id:rec.id, position_id:rec.positionId, entry_date:rec.date, price:rec.price}, base});
+      });
+      if(!Object.keys(hist).length && !invBackfillState.skipped.some(s=>s.startsWith((p.ticker||p.name)+':'))) invBackfillState.skipped.push((p.ticker||p.name)+': no history found');
+      if(ops.length){ await syncWriteMany(ops); invBackfillState.written += ops.length; }
+      invBackfillState.done++;
+      renderInvBackfillProgress();
+      if(link.kind==='cg') await invSleep(700);   // CoinGecko free plan: well under 100 calls a minute
+      else await invSleep(2100);
+    }
+    persistLocal();
+    toast(`Backfill done: ${invBackfillState.written} daily closes saved`+(invBackfillState.skipped.length? ` · ${invBackfillState.skipped.length} skipped` : ''));
+  } finally {
+    invBackfillState.running = false;
+    renderInvBackfillProgress();
+  }
+}
+// ⚙ Setup → 💹 Price links → ▶ Run the daily job now: calls the deployed Edge Function (dev/ledgeros/edge) once.
+async function runInvDailyCloseNow(){
+  let url = '', key = '';
+  try{ url = (localStorage.getItem('sb_url')||'').replace(/\/+$/, ''); key = localStorage.getItem('sb_key')||''; }catch(e){}
+  if(!url || !key){ toast('Not connected to Supabase on this device', true); return; }
+  toast('Running the daily closing-price job…');
+  try{
+    const r = await invFetchJson(url+'/functions/v1/inv-daily-close', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key}, body:'{}'});
+    if(r && r.error) throw new Error(r.error);
+    toast(`Daily job ran: ${r.saved} closes saved for ${r.date}`+(r.missing? ` · ${r.missing} without a price` : '')+((r.errors||[]).length? ' · '+r.errors[0] : ''));
+  }catch(e){
+    toast('The daily job didn\'t run: '+(e && e.message || e)+' — is it deployed? See dev/ledgeros/edge/README.md', true);
+  }
+}
+function renderInvBackfillProgress(){
+  const el = document.getElementById('invBackfillStatus');
+  if(!el) return;
+  const s = invBackfillState;
+  el.innerHTML = s.running? `Backfilling… ${s.done} of ${s.total} positions, ${s.written} closes saved`
+    : (s.total? `Last backfill: ${s.written} closes saved${s.skipped.length? '. Skipped: '+s.skipped.map(esc).join('; ') : ''}` : '');
+}
+
+// ---------- price links screen (⚙ Setup → 💹 Price links) ----------
+window._invLinkUi = window._invLinkUi || {posId:null, results:null, loading:false, error:''};
+function openInvPriceLinks(){ window._invLinkUi = {posId:null, results:null, loading:false, error:''}; renderInvPriceLinks(); }
+function renderInvPriceLinks(){
+  const cfg = getInvPriceCfg();
+  const ui = window._invLinkUi;
+  const positions = (D.invPositions||[]).filter(p=>p.status!=='Closed' && !invIsStablecoin(p))
+    .slice().sort((a,b)=>{ const pa = (invPlatformById(a.platformId)||{}).name||'', pb = (invPlatformById(b.platformId)||{}).name||''; return pa===pb? String(a.ticker||a.name).localeCompare(String(b.ticker||b.name)) : pa.localeCompare(pb); });
+  const linked = positions.filter(p=>cfg.links[p.id]).length;
+  const rows = positions.map(p=>{
+    const l = cfg.links[p.id];
+    const plat = invPlatformById(p.platformId);
+    const res = ui.posId===p.id? invLinkResultsHTML(p) : '';
+    return `<tr data-linkpos="${p.id}"><td><b>${esc(p.ticker||p.name)}</b> <span class="mut" style="font-size:11px">${esc(p.name!==p.ticker? p.name : '')}</span><div class="mut" style="font-size:11px">${esc(plat? plat.name : '')}</div></td>
+      <td style="font-size:12px">${l? esc(invLinkLabel(l)) : '<span class="mut">not linked (manual)</span>'}</td>
+      <td class="noprint" style="white-space:nowrap">
+        <button class="btn ghost sm" onclick="invLinkSearch(${p.id})">🔎 Find</button>
+        <button class="btn ghost sm" onclick="invLinkPasteAddress(${p.id})">📋 Address</button>
+        ${l? `<button class="btn ghost sm" title="Back to manual prices" onclick="invLinkClear(${p.id})">✕</button>` : ''}
+      </td></tr>${res? `<tr><td colspan="3" style="background:var(--chip)">${res}</td></tr>` : ''}`;
+  }).join('');
+  showModal(`
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">💹 Price links</h3><button class="x noprint" onclick="closeModal()">✕</button></div>
+    <div class="mut" style="font-size:12px;margin:6px 0 10px">Link each position to where its price comes from, once. Phantom / DEX tokens: paste the contract address (Phantom → token → copy address). Exchange coins: 🔎 Find and pick the right coin (many tickers are shared). US stocks: 🔎 Find uses the ticker. Unlinked positions keep manual prices. ${linked} of ${positions.length} linked.</div>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+      <div style="width:230px"><label class="fl">CoinGecko Demo API key</label><input id="invKeyCg" type="password" autocomplete="off" value="${esc(cfg.keys.cg||'')}" placeholder="CG-…"></div>
+      <div style="width:230px"><label class="fl">Finnhub API key (stocks)</label><input id="invKeyFh" type="password" autocomplete="off" value="${esc(cfg.keys.finnhub||'')}"></div>
+      <button class="btn ghost sm" onclick="saveInvPriceKeys()">Save keys</button>
+    </div>
+    <div class="mut" style="font-size:11px;margin:-4px 0 10px">Free keys: coingecko.com → Developer Dashboard (Demo plan); finnhub.io → Get free API key. Saved with your synced settings, so every device and the daily closing-price job use them.</div>
+    ${ui.error? `<div class="r" style="font-size:12px;margin-bottom:8px">${esc(ui.error)}</div>` : ''}
+    <div style="overflow:auto;max-height:52vh"><table id="invPriceLinksTable" style="min-width:560px"><thead><tr><th>Position</th><th>Price from</th><th class="noprint"></th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="empty">No open positions</td></tr>'}</tbody></table></div>
+    <div class="row noprint" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px">
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn pri sm" onclick="refreshInvPrices()">↻ Refresh prices now</button>
+        <button class="btn ghost sm" onclick="backfillInvCloses()" title="Daily closing prices from your first purchase date (up to a year)">🗓 Backfill daily closes</button>
+        <button class="btn ghost sm" onclick="runInvDailyCloseNow()" title="Runs the server job that saves yesterday's closing prices (deploy it first)">▶ Run the daily job now</button></div>
+      <button class="btn ghost" onclick="closeModal()">Done</button>
+    </div>
+    <div id="invBackfillStatus" class="mut" style="font-size:11.5px;margin-top:6px"></div>`, true);
+  renderInvBackfillProgress();
+}
+function invLinkResultsHTML(p){
+  const ui = window._invLinkUi;
+  if(ui.loading) return '<span class="mut" style="font-size:12px">Searching…</span>';
+  const r = ui.results||[];
+  if(!r.length) return '<span class="mut" style="font-size:12px">Nothing found. Paste the contract address instead (📋 Address).</span>';
+  return `<div style="font-size:12px"><div class="mut" style="margin-bottom:4px">Pick the right one:</div>${r.map((c,i)=>`<div class="row" style="justify-content:space-between;gap:8px;padding:3px 0;border-top:1px solid var(--line)">
+      <span>${esc(c.title)} <span class="mut">${esc(c.sub||'')}</span></span><button class="btn ghost sm" data-linkpick="${i}" onclick="invLinkPick(${p.id}, ${i})">Use</button></div>`).join('')}</div>`;
+}
+async function invLinkSearch(posId){
+  const p = invPositionById(posId); if(!p) return;
+  const q = String(p.ticker||p.name).trim();
+  window._invLinkUi = {posId, results:null, loading:true, error:''};
+  renderInvPriceLinks();
+  const results = [];
+  if(/stock|equit|etf/i.test(p.assetClass||'')){
+    results.push({title:q.toUpperCase()+' (US stock)', sub:'Finnhub quote', link:{kind:'stock', id:q.toUpperCase()}});
+  } else {
+    try{
+      const key = getInvPriceCfg().keys.cg||'';
+      const cg = await invFetchJson(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}${key? '&x_cg_demo_api_key='+encodeURIComponent(key) : ''}`);
+      ((cg||{}).coins||[]).filter(c=>String(c.symbol||'').toUpperCase()===q.toUpperCase()).slice(0,5).forEach(c=>{
+        results.push({title:`${c.name} (${String(c.symbol).toUpperCase()})`, sub:`CoinGecko${c.market_cap_rank? ' · rank #'+c.market_cap_rank : ''}`, link:{kind:'cg', id:c.id, label:c.name}});
+      });
+    }catch(e){}
+    try{
+      const ds = await invFetchJson(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`);
+      const seen = new Set();
+      ((ds||{}).pairs||[]).filter(pr=>INV_CHAINS[pr.chainId] && pr.baseToken && String(pr.baseToken.symbol||'').toUpperCase()===q.toUpperCase())
+        .sort((a,b)=>((b.liquidity||{}).usd||0)-((a.liquidity||{}).usd||0))
+        .forEach(pr=>{
+          const k = pr.chainId+':'+String(pr.baseToken.address).toLowerCase();
+          if(seen.has(k) || seen.size>=5) return; seen.add(k);
+          results.push({title:`${pr.baseToken.name} (${pr.baseToken.symbol}) on ${INV_CHAINS[pr.chainId].label}`,
+            sub:`${invShortAddr(pr.baseToken.address)} · liquidity $${fmt2((pr.liquidity||{}).usd||0)} · $${pr.priceUsd}`,
+            link:{kind:'dex', chain:pr.chainId, address:pr.baseToken.address, label:pr.baseToken.symbol}});
+        });
+    }catch(e){}
+  }
+  if(window._invLinkUi.posId!==posId) return;
+  window._invLinkUi = {posId, results, loading:false, error: results.length? '' : ''};
+  renderInvPriceLinks();
+}
+async function invLinkPick(posId, i){
+  const c = ((window._invLinkUi||{}).results||[])[i]; if(!c) return;
+  await setInvPriceLink(posId, c.link);
+  window._invLinkUi = {posId:null, results:null, loading:false, error:''};
+  renderInvPriceLinks();
+  toast('Linked ✓');
+}
+async function invLinkPasteAddress(posId){
+  const addr = (prompt('Paste the token contract address (Solana, Base or Ethereum):')||'').trim();
+  if(!addr) return;
+  const g = invGuessChain(addr);
+  let chain = g;
+  if(g==='evm'){
+    const ans = (prompt('Which chain? Type base or ethereum', 'base')||'').trim().toLowerCase();
+    chain = ans.startsWith('eth')? 'ethereum' : ans.startsWith('base')? 'base' : '';
+  }
+  if(!INV_CHAINS[chain]){ window._invLinkUi.error = 'That doesn\'t look like a Solana, Base or Ethereum address.'; renderInvPriceLinks(); return; }
+  await setInvPriceLink(posId, {kind:'dex', chain, address: addr});
+  window._invLinkUi = {posId:null, results:null, loading:false, error:''};
+  renderInvPriceLinks();
+  toast('Linked to '+INV_CHAINS[chain].label+' ✓');
+}
+async function invLinkClear(posId){ await setInvPriceLink(posId, null); renderInvPriceLinks(); }
+async function saveInvPriceKeys(){
+  const cg = ((document.getElementById('invKeyCg')||{}).value||'').trim();
+  const fh = ((document.getElementById('invKeyFh')||{}).value||'').trim();
+  await saveInvPriceCfg({keys:{cg, finnhub:fh}});
+  toast('Keys saved — synced to all devices ✓');
+}
+
+// ---------- wallet unit check (Reconcile) ----------
+function invPlatformWallets(platformId){ const w = getInvPriceCfg().wallets[platformId]; return Array.isArray(w)? w.filter(x=>x && INV_CHAINS[x.chain] && x.address) : []; }
+async function setInvPlatformWallets(platformId, list){
+  const wallets = Object.assign({}, getInvPriceCfg().wallets);
+  if(list && list.length) wallets[platformId] = list; else delete wallets[platformId];
+  await saveInvPriceCfg({wallets});
+}
+async function editInvPlatformWallet(platformId){
+  const cur = invPlatformWallets(platformId);
+  const txt = prompt('Wallet public address(es) for this platform, one per chain, as  chain:address  separated by commas.\nChains: solana, base, ethereum.  Example:  solana:7xKX…, base:0xAbc…',
+    cur.map(w=>w.chain+':'+w.address).join(', '));
+  if(txt===null) return;
+  const list = [];
+  for(const part of txt.split(',').map(s=>s.trim()).filter(Boolean)){
+    const m = part.match(/^(solana|base|ethereum|eth)\s*:\s*(\S+)$/i);
+    if(!m){ toast('Not understood: '+part+'  (use chain:address)', true); return; }
+    const chain = m[1].toLowerCase()==='eth'? 'ethereum' : m[1].toLowerCase();
+    const g = invGuessChain(m[2]);
+    if((chain==='solana')!==(g==='solana') || !g){ toast('That address doesn\'t match '+chain+': '+invShortAddr(m[2]), true); return; }
+    list.push({chain, address:m[2]});
+  }
+  await setInvPlatformWallets(platformId, list);
+  toast(list.length? 'Wallet saved ✓' : 'Wallet removed');
+  renderInvestmentsPage();
+}
+async function invRpc(url, body){
+  return invFetchJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+}
+// {address(lower-case for EVM, as-is for Solana): units} for the given token addresses in one wallet
+async function invWalletBalances(wallet, tokenAddrs){
+  const ch = INV_CHAINS[wallet.chain];
+  const rpc = (getInvPriceCfg().rpc||{})[wallet.chain] || ch.rpc;
+  const out = {};
+  if(wallet.chain==='solana'){
+    const programs = ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'];
+    for(const programId of programs){
+      const r = await invRpc(rpc, {jsonrpc:'2.0', id:1, method:'getTokenAccountsByOwner', params:[wallet.address, {programId}, {encoding:'jsonParsed'}]});
+      if(r && r.error) throw new Error('Solana RPC: '+(r.error.message||'error'));
+      (((r||{}).result||{}).value||[]).forEach(acc=>{
+        const info = ((((acc||{}).account||{}).data||{}).parsed||{}).info||{};
+        const amt = Number(((info.tokenAmount||{}).uiAmountString) || ((info.tokenAmount||{}).uiAmount) || 0);
+        if(info.mint) out[info.mint] = (out[info.mint]||0) + amt;
+      });
+    }
+    if(tokenAddrs.includes(INV_SOL_NATIVE_MINT)){
+      const b = await invRpc(rpc, {jsonrpc:'2.0', id:2, method:'getBalance', params:[wallet.address]});
+      out[INV_SOL_NATIVE_MINT] = (out[INV_SOL_NATIVE_MINT]||0) + (Number(((b||{}).result||{}).value)||0)/1e9;
+    }
+    return out;
+  }
+  // EVM: balanceOf + decimals for each token, in one batch; native coin via eth_getBalance
+  const owner = wallet.address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  const calls = [];
+  tokenAddrs.forEach((a,i)=>{
+    if(a.toLowerCase()===INV_EVM_NATIVE) calls.push({jsonrpc:'2.0', id:'n'+i, method:'eth_getBalance', params:[wallet.address, 'latest']});
+    else {
+      calls.push({jsonrpc:'2.0', id:'b'+i, method:'eth_call', params:[{to:a, data:'0x70a08231'+owner}, 'latest']});
+      calls.push({jsonrpc:'2.0', id:'d'+i, method:'eth_call', params:[{to:a, data:'0x313ce567'}, 'latest']});
+    }
+  });
+  if(!calls.length) return out;
+  const res = await invRpc(rpc, calls);
+  const byId = {}; (Array.isArray(res)? res : [res]).forEach(x=>{ if(x) byId[x.id] = x.result; });
+  const big = h => { try{ return h && h!=='0x'? BigInt(h) : 0n; }catch(e){ return 0n; } };
+  const toUnits = (raw, dec) => { const d = 10n ** BigInt(dec); return Number(raw / d) + Number(raw % d)/Number(d); };
+  tokenAddrs.forEach((a,i)=>{
+    if(a.toLowerCase()===INV_EVM_NATIVE){ out[a.toLowerCase()] = toUnits(big(byId['n'+i]), 18); return; }
+    const raw = big(byId['b'+i]), dec = Number(big(byId['d'+i])) || 18;
+    out[a.toLowerCase()] = toUnits(raw, dec);
+  });
+  return out;
+}
+let invWalletResults = {};   // platformId → {rows:[{pos, tracker, wallet}], untracked:n, error, at}
+async function checkInvPlatformWallet(platformId){
+  const wallets = invPlatformWallets(platformId);
+  if(!wallets.length){ editInvPlatformWallet(platformId); return; }
+  const cfg = getInvPriceCfg();
+  const positions = invPositionsForPlatform(platformId).filter(p=>p.status!=='Closed');
+  const rows = [], errors = [];
+  let untracked = 0;
+  toast('Reading wallet…');
+  for(const w of wallets){
+    const mine = positions.filter(p=>{ const l = cfg.links[p.id]; return l && l.kind==='dex' && l.chain===w.chain; });
+    try{
+      const bal = await invWalletBalances(w, mine.map(p=>cfg.links[p.id].address));
+      const key = a => w.chain==='solana'? a : String(a).toLowerCase();
+      mine.forEach(p=>{
+        const addr = key(cfg.links[p.id].address);
+        rows.push({pos:p, tracker: computePositionState(p.id).totalUnits, wallet: Number(bal[addr])||0});
+      });
+      if(w.chain==='solana'){
+        const known = new Set(mine.map(p=>cfg.links[p.id].address));
+        untracked += Object.keys(bal).filter(m=>!known.has(m) && bal[m]>0).length;
+      }
+    }catch(e){ errors.push(INV_CHAINS[w.chain].label+': '+(e && e.message || e)); }
+  }
+  invWalletResults[platformId] = {rows, untracked, error: errors.join(' · '), at: nowISO()};
+  if(!rows.length && !errors.length) invWalletResults[platformId].error = 'No positions on this platform are linked to a token address on that chain yet (⚙ Setup → 💹 Price links).';
+  invReconExpandedPlatforms.add(platformId);
+  renderInvestmentsPage();
+}
+async function saveInvWalletUnits(platformId){
+  const r = invWalletResults[platformId]; if(!r || !r.rows.length) return;
+  const date = todayStr();
+  const ops = r.rows.map(x=>{
+    x.pos.stmtUnits = Math.round(x.wallet*1e8)/1e8; x.pos.stmtDate = date;
+    const base = x.pos.updated_at||null; x.pos.updated_at = nowISO();
+    return {table:'pd_inv_positions', kind:'upsert', row:{id:x.pos.id, stmt_units:x.pos.stmtUnits, stmt_date:date}, base};
+  });
+  await syncWriteMany(ops); persistLocal();
+  delete invWalletResults[platformId];
+  toast('Wallet units saved as statement units ✓');
+  renderInvestmentsPage();
+}
+function invWalletPanelHTML(p){
+  const wallets = invPlatformWallets(p.id);
+  const r = invWalletResults[p.id];
+  const head = `<div class="row noprint inv-wallet" data-walletplat="${p.id}" style="gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 4px;font-size:12px">
+      <span class="mut">👛 ${wallets.length? wallets.map(w=>INV_CHAINS[w.chain].label+' '+esc(invShortAddr(w.address))).join(' · ') : 'No wallet set'}</span>
+      ${wallets.length? `<button class="btn ghost sm" onclick="checkInvPlatformWallet(${p.id})">Check wallet</button>` : ''}
+      <button class="btn ghost sm" onclick="editInvPlatformWallet(${p.id})">${wallets.length? '✎' : '+ Wallet address'}</button></div>`;
+  if(!r) return head;
+  const body = r.rows.length? `<table style="font-size:12px;margin-top:4px"><thead><tr><th>Token</th><th class="num">Tracker</th><th class="num">Wallet</th><th class="num">Difference</th></tr></thead><tbody>${r.rows.map(x=>{
+      const diff = x.wallet - x.tracker, ok = Math.abs(diff) <= Math.max(1e-6, Math.abs(x.tracker)*1e-6);
+      return `<tr data-walletpos="${x.pos.id}"><td>${esc(x.pos.ticker||x.pos.name)}</td><td class="num mono">${invFmtUnits(x.tracker)}</td><td class="num mono">${invFmtUnits(x.wallet)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : invFmtUnits(diff)}</td></tr>`;
+    }).join('')}</tbody></table>
+    <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">Save wallet units as statement units</button>
+      ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other token${r.untracked===1?'':'s'} in this wallet aren't in the tracker.</span>` : ''}</div>` : '';
+  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + body;
+}
+
+// ---------- platform boxes (👤 Mine) ----------
+function getInvBoxPrefs(){
+  const b = getUiDismissals().invBoxes;
+  const arr = x => Array.isArray(x)? x.map(Number).filter(n=>n>0) : [];
+  return {order: arr(b && b.order), hidden: arr(b && b.hidden), grouped: arr(b && b.grouped)};
+}
+async function saveInvBoxPrefs(p){
+  const d = Object.assign({}, getUiDismissals());
+  d.invBoxes = {order:p.order||[], hidden:p.hidden||[], grouped:p.grouped||[]};
+  await saveUiDismissals(d);
+}
+let invBoxEdit = false;
+let invPlatformPageId = null;
+function toggleInvBoxEdit(){ invBoxEdit = !invBoxEdit; renderInvestmentsPage(); }
+function openInvPlatformPage(platformId){ if(invBoxEdit) return; invPlatformPageId = platformId; renderInvestmentsPage(); window.scrollTo(0,0); }
+function closeInvPlatformPage(){ invPlatformPageId = null; renderInvestmentsPage(); }
+// Boxes in the saved order; platforms not in the saved order keep their alphabetical place at the end.
+function invOrderedHoldings(holdings){
+  const order = getInvBoxPrefs().order;
+  const pos = id => { const i = order.indexOf(id); return i<0? 1e9 : i; };
+  return holdings.slice().sort((a,b)=> pos(a.platform.id)-pos(b.platform.id) || a.platform.name.toLowerCase().localeCompare(b.platform.name.toLowerCase()));
+}
+async function moveInvBox(platformId, dir){
+  const self = invSelfOwnerId();
+  const ids = invOrderedHoldings(invOwnerHoldings(self, invCashState(null).state).filter(h=>h.hasAnything)).map(h=>h.platform.id);
+  const i = ids.indexOf(platformId), j = i + dir;
+  if(i<0 || j<0 || j>=ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  const p = getInvBoxPrefs(); p.order = ids;
+  await saveInvBoxPrefs(p); renderInvestmentsPage();
+}
+async function toggleInvBoxFlag(platformId, flag){
+  const p = getInvBoxPrefs();
+  const s = new Set(p[flag]);
+  if(s.has(platformId)) s.delete(platformId); else s.add(platformId);
+  p[flag] = Array.from(s);
+  await saveInvBoxPrefs(p); renderInvestmentsPage();
+}
+// All owners' value on a platform (positions at market or cost when unpriced, plus USD cash) — for the mine/family bar.
+function invPlatformTotalValueSar(platformId, cashState){
+  const fx = getInvFxRate();
+  let v = 0;
+  for(const pos of invPositionsForPlatform(platformId)){
+    const val = computePositionValuation(pos);
+    if(val.totalUnits<=1e-12) continue;
+    v += invIsStablecoin(pos)? val.totalUnits*fx : (val.hasValuation? val.marketSar : val.totalCostSar);
+  }
+  const st = (cashState||{})[platformId]||{};
+  Object.keys(st).forEach(k=>{ v += (Number((st[k]||{}).usd)||0)*fx; });
+  return v;
+}
+function invPlatformKind(platformId){
+  const cls = Array.from(new Set(invPositionsForPlatform(platformId).filter(p=>p.status!=='Closed').map(p=>p.assetClass||'Other')));
+  return cls.join(', ');
+}
+// "Prices: today" / "Prices 61 days old" for what this box holds, and how many have no price.
+function invBoxFreshness(h){
+  const held = h.positions.map(r=>r.pos);
+  const dates = held.map(p=>{ const v = invLatestValuation(p.id); return v? v.date : null; });
+  const missing = dates.filter(d=>!d).length + held.filter(p=>invPriceState.failed[p.id]).length;
+  const known = dates.filter(Boolean).sort();
+  const oldest = known[0]||null;
+  const age = oldest? invDaysSince(oldest) : null;
+  const plat = h.platform;
+  const checks = [plat.stmtDate, ...invPositionsForPlatform(plat.id).map(p=>p.stmtDate)].filter(Boolean).sort();
+  const checked = checks.length? checks[checks.length-1] : null;
+  return {age, oldest, missing, checked, stale: age!==null && age>INV_PRICE_STALE_DAYS};
+}
+function invBoxHTML(h, ctx){
+  const pid = h.platform.id;
+  const pl = h.valueSar - h.costSar;
+  const cashUsd = h.cashUsd + h.stableUsd;
+  const prefs = ctx.prefs;
+  const top = h.positions.slice().sort((a,b)=>b.valueSar-a.valueSar).slice(0,3);
+  const total = ctx.totalFor(pid);
+  const minePct = total>0.005? Math.max(0, Math.min(100, h.valueSar/total*100)) : 100;
+  const fr = invBoxFreshness(h);
+  const kind = h.robo? 'Robo portfolio' : invPlatformKind(pid);
+  const ageTxt = h.robo? (h.stats.valueDate? 'Value as of '+h.stats.valueDate : 'No value logged')
+    : (fr.age===null? 'No prices yet' : fr.age===0? 'Prices: today' : `Prices ${fr.age} day${fr.age===1?'':'s'} old`);
+  const actions = h.robo
+    ? `<button class="btn ghost sm" onclick="event.stopPropagation(); openInvEditPlatform(${pid})">✎ Update value</button>`
+    : `<button class="btn ghost sm" onclick="event.stopPropagation(); openInvTradePicker(${pid})">🔁 Buy / Sell</button>
+       <button class="btn ghost sm" onclick="event.stopPropagation(); openInvRepeatLastBuy(${pid})" ${invLastBuy(pid)? '' : 'disabled'} title="Same position, amount and split as the last buy here">↻ Repeat last buy</button>
+       <button class="btn ghost sm" onclick="event.stopPropagation(); INV_PLATFORM_ACTIONS.collect.open(${pid})">💰 Collect</button>
+       <button class="btn ghost sm" onclick="event.stopPropagation(); INV_PLATFORM_ACTIONS.deposit.open(${pid})">↓ Deposit</button>`;
+  const edit = invBoxEdit? `<div class="row noprint inv-box-edit" style="gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
+      <button class="btn ghost sm" title="Move earlier" onclick="moveInvBox(${pid}, -1)">◀</button>
+      <button class="btn ghost sm" title="Move later" onclick="moveInvBox(${pid}, 1)">▶</button>
+      <button class="btn ghost sm" onclick="toggleInvBoxFlag(${pid}, 'grouped')">${prefs.grouped.includes(pid)? '⧉ Ungroup' : '⧉ Into Other wallets'}</button>
+      <button class="btn ghost sm" onclick="toggleInvBoxFlag(${pid}, 'hidden')">🙈 Hide</button></div>` : '';
+  return `<div class="panel inv-box click" data-box="${pid}" tabindex="0" style="margin:0;cursor:pointer" onclick="openInvPlatformPage(${pid})">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+      <div><b style="font-size:15px">${h.robo?'🤖':'🏦'} ${esc(h.platform.name)}</b><div class="mut" style="font-size:11.5px">${esc(kind)}</div></div>
+      <span class="badge ${pl>=0?'pos':'neg'} mono">${invPlPct(h.costSar, h.valueSar)}</span>
+    </div>
+    <div class="mono" style="font-size:21px;font-weight:600;margin:8px 0">${invDisp(h.valueSar)}</div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;font-size:11.5px">
+      <div><div class="mut">Cost</div><div class="mono">${invDisp(h.costSar)}</div></div>
+      <div><div class="mut">Gain</div><div class="mono ${moneyClass(pl)}">${invDisp(pl)}</div></div>
+      <div><div class="mut">Cash</div><div class="mono">$${fmt2(cashUsd)}</div></div>
+    </div>
+    ${top.length? `<div class="inv-box-top" style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px">${top.map(r=>`<div class="row" style="justify-content:space-between;font-size:12px;padding:1px 0">
+        <span><b>${esc(r.pos.ticker||r.pos.name)}</b> <span class="mut">${invFmtUnits(r.units)}</span></span>
+        <span class="mono ${r.hasValuation? moneyClass(r.valueSar-r.costSar) : 'mut'}">${r.hasValuation? invPlPct(r.costSar, r.valueSar) : 'no price'}</span></div>`).join('')}
+      ${h.positions.length>3? `<div class="mut" style="font-size:11px">+ ${h.positions.length-3} more</div>` : ''}</div>` : ''}
+    ${h.robo? '' : `<div style="margin-top:10px"><div style="height:5px;border-radius:3px;background:var(--line);overflow:hidden"><div style="height:100%;width:${minePct.toFixed(1)}%;background:var(--accent)"></div></div>
+      <div class="row mut" style="justify-content:space-between;font-size:11px;margin-top:3px"><span>${Math.round(minePct)}% mine</span><span>${Math.round(100-minePct)}% family</span></div></div>`}
+    <div class="row inv-box-fresh" style="justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:11px;margin-top:8px">
+      <span class="${fr.stale || (h.robo && h.stats.valueDate && invDaysSince(h.stats.valueDate)>INV_ROBO_PROMPT_DAYS)? 'r' : 'mut'}">${ageTxt}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''}</span>
+      ${h.robo? '' : `<span class="mut">${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}</span>`}
+    </div>
+    <div class="row noprint inv-box-actions" style="gap:6px;flex-wrap:wrap;margin-top:10px">${actions}</div>
+    ${edit}
+  </div>`;
+}
+function invOtherWalletsBoxHTML(list, ctx){
+  if(!list.length) return '';
+  const t = invHoldingsTotals(list);
+  const pl = t.valueSar - t.costSar;
+  return `<div class="panel inv-box inv-box-group" data-box="other" style="margin:0">
+    <div class="row" style="justify-content:space-between;align-items:flex-start"><div><b style="font-size:15px">👛 Other wallets</b><div class="mut" style="font-size:11.5px">${list.length} platform${list.length===1?'':'s'}</div></div>
+      <span class="badge ${pl>=0?'pos':'neg'} mono">${invPlPct(t.costSar, t.valueSar)}</span></div>
+    <div class="mono" style="font-size:21px;font-weight:600;margin:8px 0">${invDisp(t.valueSar)}</div>
+    <div style="border-top:1px solid var(--line);padding-top:6px">${list.map(h=>`<div class="row click" data-groupplat="${h.platform.id}" style="justify-content:space-between;font-size:12.5px;padding:3px 0;cursor:pointer" onclick="openInvPlatformPage(${h.platform.id})">
+      <span>${esc(h.platform.name)}</span><span class="mono">${invDisp(h.valueSar)} <span class="${moneyClass(h.valueSar-h.costSar)}">${invPlPct(h.costSar, h.valueSar)}</span></span></div>${invBoxEdit? `<div class="row noprint" style="gap:6px;margin:2px 0 4px"><button class="btn ghost sm" onclick="toggleInvBoxFlag(${h.platform.id}, 'grouped')">⧉ Own box</button><button class="btn ghost sm" onclick="toggleInvBoxFlag(${h.platform.id}, 'hidden')">🙈 Hide</button></div>` : ''}`).join('')}</div>
+  </div>`;
+}
+function invPricesBarHTML(){
+  const last = invPriceState.lastAt || invLastRefreshAt();
+  const linked = (D.invPositions||[]).some(p=>invPriceLink(p.id));
+  const when = last? new Date(last) : null;
+  const txt = invPriceState.running? 'Fetching prices…'
+    : (when? 'Prices as of '+when.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})+(todayStr()!==when.toISOString().slice(0,10)? ' '+when.toISOString().slice(0,10) : '') : (linked? 'Prices not refreshed on this device yet' : 'Prices are manual — link them in ⚙ Setup → 💹 Price links'));
+  const errs = invPriceState.errors.length? ` · <span class="r">${esc(invPriceState.errors[0])}</span>` : '';
+  return `<div class="row noprint inv-prices-bar" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:-4px 0 10px;font-size:12px">
+    <span class="mut">${txt}${errs}</span>
+    <div class="row" style="gap:6px">${linked? `<button class="btn ghost sm" onclick="refreshInvPrices()" ${invPriceState.running?'disabled':''}>↻ Prices</button>` : ''}
+      <button class="btn ghost sm" onclick="openInvPriceLinks()">💹 Price links</button>
+      <button class="btn ghost sm ${invBoxEdit?'pri':''}" onclick="toggleInvBoxEdit()">${invBoxEdit? '✓ Done arranging' : '✎ Arrange boxes'}</button></div>
+  </div>`;
+}
+function invBoxesHTML(holdings){
+  const prefs = getInvBoxPrefs();
+  const state = invCashState(null).state;
+  const totals = {};
+  const ctx = {prefs, totalFor: pid => (totals[pid]!==undefined? totals[pid] : (totals[pid] = invPlatformTotalValueSar(pid, state)))};
+  const ordered = invOrderedHoldings(holdings);
+  const visible = ordered.filter(h=>!prefs.hidden.includes(h.platform.id));
+  const own = visible.filter(h=>!prefs.grouped.includes(h.platform.id));
+  const grouped = visible.filter(h=>prefs.grouped.includes(h.platform.id));
+  const hidden = ordered.filter(h=>prefs.hidden.includes(h.platform.id));
+  return `<div class="inv-boxes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:14px;align-items:start">
+      ${own.map(h=>invBoxHTML(h, ctx)).join('')}${invOtherWalletsBoxHTML(grouped, ctx)}</div>
+    ${hidden.length? `<div class="mut noprint" style="font-size:12px;margin-top:10px">Hidden: ${hidden.map(h=>`${esc(h.platform.name)} <button class="btn ghost sm" onclick="toggleInvBoxFlag(${h.platform.id}, 'hidden')">Show</button>`).join(' ')}</div>` : ''}`;
+}
+function renderInvPlatformPage(nav, holdings){
+  const h = holdings.find(x=>x.platform.id===invPlatformPageId);
+  const app = document.getElementById('app');
+  if(!h){ invPlatformPageId = null; renderInvMineView(nav); return; }
+  const fr = invBoxFreshness(h);
+  app.innerHTML = nav + `<div class="row noprint" style="gap:8px;align-items:center;margin-bottom:10px">
+      <button class="btn ghost sm" onclick="closeInvPlatformPage()">← All platforms</button>
+      <span class="mut" style="font-size:12px">${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}</span></div>`
+    + invHoldingCardHTML(h, 'mine', true);
+}
+
+// ---------- Needs you (top of Investments, count on the rail) ----------
+// Ledger money paid onto a platform's "Invested into platform" account with no matching tracker deposit.
+function invUnmatchedPlatformDeposits(){
+  const start = (D.invSettings||{}).reconStartDate || shiftDate(todayStr(), -90);
+  const fx = getInvFxRate();
+  const out = [];
+  invActionablePlatformsSorted().filter(p=>p.outAcc).forEach(p=>{
+    const deps = (D.invCashMovements||[]).filter(m=>m.kind==='deposit' && m.platformId===p.id)
+      .map(m=>({date:m.date, sar: (m.owners||[]).reduce((s,o)=>s+(Number(o.sar)||0),0) || (Number(m.usdAmount)||0)*fx, used:false}));
+    const lines = (D.ledger||[]).filter(l=>l.acc===p.outAcc && l.date>=start && Number(l.amt)>0).slice().sort((a,b)=>a.date<b.date?-1:1);
+    lines.forEach(l=>{
+      const amt = Number(l.amt);
+      const m = deps.find(d=>!d.used && Math.abs(daysBetweenDates(d.date, l.date))<=5 && Math.abs(d.sar-amt) <= Math.max(5, amt*0.02));
+      if(m){ m.used = true; return; }
+      out.push({platform:p, date:l.date, sar:amt, jv:l.jv});
+    });
+  });
+  return out;
+}
+function invNeedsYouItems(){
+  const items = [];
+  try{
+    const avail = invOwnersAvailableSar();
+    const waiting = (D.invOwners||[]).filter(o=>(avail[o.id]||0)>0.005);
+    if(waiting.length){
+      const sum = waiting.reduce((s,o)=>s+avail[o.id],0);
+      items.push({key:'collect', icon:'💰', text:`Contributions not collected yet: ${waiting.length} ${waiting.length===1?'person':'people'}, ${money(sum)} SAR in the ledger`, btn:'💰 Collect', act:"invStartPlatformAction('collect')"});
+    }
+    invUnmatchedPlatformDeposits().forEach(u=>{
+      items.push({key:'dep'+u.platform.id+u.date, icon:'↓', text:`${esc(u.platform.name)}: the ledger shows ${money(u.sar)} SAR paid in on ${esc(u.date)}, with no deposit recorded`, btn:'↓ Record deposit', act:`openInvDepositFromLedger(${u.platform.id}, '${u.date}', ${u.sar})`});
+    });
+    const fx = getInvFxRate();
+    const state = invCashState(null).state;
+    const cashUsd = Object.keys(state).reduce((s,pid)=>s+Object.values(state[pid]||{}).reduce((a,o)=>a+(Number((o||{}).usd)||0),0),0);
+    if(cashUsd>1) items.push({key:'cash', icon:'💵', text:`$${fmt2(cashUsd)} cash waiting on platforms (${money(cashUsd*fx)} SAR)`, btn:'🔁 Buy', act:"invStartPlatformAction('trade')"});
+    const pricable = invPricablePositions();
+    const stale = pricable.filter(p=>{ const v = invLatestValuation(p.id); return !v || invDaysSince(v.date)>INV_PRICE_STALE_DAYS; });
+    const linkedStale = stale.filter(p=>invPriceLink(p.id));
+    if(linkedStale.length) items.push({key:'prices', icon:'💹', text:`${linkedStale.length} linked price${linkedStale.length===1?' is':'s are'} older than ${INV_PRICE_STALE_DAYS} days`, btn:'↻ Refresh prices', act:'refreshInvPrices()'});
+    const manualStale = stale.filter(p=>!invPriceLink(p.id));
+    if(manualStale.length) items.push({key:'links', icon:'🔗', text:`${manualStale.length} position${manualStale.length===1?' has':'s have'} an old or no price and no price link`, btn:'💹 Price links', act:'openInvPriceLinks()'});
+    (D.invPlatforms||[]).filter(p=>p.isRobo).forEach(p=>{
+      const d = p.roboValueDate, age = d? invDaysSince(d) : null;
+      if(age===null || age>INV_ROBO_PROMPT_DAYS) items.push({key:'robo'+p.id, icon:'🤖', text:`${esc(p.name)}: value ${age===null? 'never logged' : 'last updated '+age+' days ago'} — log this month's value`, btn:'✎ Update value', act:`openInvEditPlatform(${p.id})`});
+    });
+    const recon = invReconIssueCount();
+    if(recon) items.push({key:'recon', icon:'✅', text:`${recon} ${recon===1?'person\'s':'people\'s'} ledger and tracker don't agree`, btn:'✅ Reconcile', act:"setInvView('recon')"});
+    invActionablePlatformsSorted().forEach(p=>{
+      if(!invPositionsForPlatform(p.id).some(x=>x.status!=='Closed' && computePositionState(x.id).totalUnits>1e-12)) return;
+      const dates = [p.stmtDate, ...invPositionsForPlatform(p.id).map(x=>x.stmtDate)].filter(Boolean).sort();
+      const last = dates[dates.length-1]||null;
+      if(!last || invDaysSince(last)>INV_CHECK_STALE_DAYS) items.push({key:'chk'+p.id, icon:'🔎', text:`${esc(p.name)}: units ${last? 'last checked '+invDaysSince(last)+' days ago' : 'never checked'} against the ${invPlatformWallets(p.id).length? 'wallet' : 'statement'}`, btn:invPlatformWallets(p.id).length? '👛 Check wallet' : '✅ Reconcile', act: invPlatformWallets(p.id).length? `setInvView('recon'); checkInvPlatformWallet(${p.id})` : "setInvView('recon')", minor:true});
+    });
+  }catch(e){ console.warn('Needs you list failed', e); }
+  return items;
+}
+function invNeedsYouCount(){ return invNeedsYouItems().filter(i=>!i.minor).length; }
+function invNavBadgeHTML(){
+  try{
+    if(!D || !(D.invPlatforms||[]).length) return '';
+    const n = invNeedsYouCount();
+    return n? `<span class="nav-badge inv-nav-badge" title="${n} investment item${n===1?'':'s'} need you" style="margin-left:auto;background:var(--red);color:#fff;border-radius:9px;padding:0 6px;font-size:11px;line-height:17px">${n}</span>` : '';
+  }catch(e){ return ''; }
+}
+function invNeedsYouHTML(){
+  const items = invNeedsYouItems();
+  if(!items.length) return '';
+  const main = items.filter(i=>!i.minor), minor = items.filter(i=>i.minor);
+  const row = i => `<div class="row inv-need" data-need="${esc(i.key)}" style="gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)">
+      <div style="width:22px;text-align:center">${i.icon}</div><div style="flex:1;font-size:12.5px">${i.text}</div>
+      <button class="btn ghost sm noprint" onclick="${i.act}">${i.btn}</button></div>`;
+  return `<div class="panel inv-needs" id="invNeedsYou"><h3 style="margin:0 0 4px">Needs you <span class="mut" style="font-weight:400;font-size:12px">${main.length} item${main.length===1?'':'s'}</span></h3>
+    ${main.map(row).join('')}
+    ${minor.length? `<details style="margin-top:4px"><summary class="mut" style="cursor:pointer;font-size:12px">${minor.length} check${minor.length===1?'':'s'} due</summary>${minor.map(row).join('')}</details>` : ''}</div>`;
+}
+function openInvDepositFromLedger(platformId, date, sar){
+  openInvCashModal(platformId, 'deposit');
+  const d = window._invCashDraft; if(!d) return;
+  d.date = date;
+  d.usdAmount = Math.round(sar/getInvFxRate()*100)/100;
+  if(d.owners && d.owners[0]) d.owners[0].usd = d.usdAmount;
+  d.note = d.note || 'From ledger';
+  renderInvCashModal();
+}
+
+// ---------- logging shortcuts: Invest it now, Repeat last buy ----------
+function invLastBuy(platformId){
+  const posIds = new Set(invPositionsForPlatform(platformId).map(p=>p.id));
+  const buys = (D.invTransactions||[]).filter(t=>t.kind==='buy' && posIds.has(t.positionId) && (t.cashSide==='bank' || t.cashSide==='cash'));
+  buys.sort((a,b)=> a.date===b.date? (b.id-a.id) : (a.date<b.date?1:-1));
+  return buys[0]||null;
+}
+// The next new trade opened from the tracker starts from these values (set by Invest it now / Repeat last buy).
+window._invTxPreset = null;
+function openInvRepeatLastBuy(platformId){
+  const t = invLastBuy(platformId);
+  if(!t){ toast('No earlier buy on this platform to repeat', true); return; }
+  const totalSar = Number(t.totalSar)||0, units = Number(t.units)||0;
+  const ownersSar = {};
+  (t.owners||[]).forEach(o=>{ ownersSar[o.ownerId] = invSarForUnits(units, totalSar, Number(o.units)||0); });
+  window._invTxPreset = {cashSide:t.cashSide, usdAmount:t.usdAmount||'', totalSar: totalSar||'', feePct:t.feePct||'',
+    note:t.note||'', splitMode: t.cashSide==='cash'? 'units' : 'sar', ownersSar, ownerIds:(t.owners||[]).map(o=>o.ownerId), repeated:true};
+  openInvTxModal(t.positionId, null);
+}
+function invOfferInvestNow(platformId, usd){
+  const p = invPlatformById(platformId);
+  showModal(`<h3 style="margin-top:0">Invest it now?</h3>
+    <div style="font-size:13px">$${fmt2(usd)} just landed on ${esc(p? p.name : 'the platform')}. Record the buy now: the trade opens as a cash-funded buy of $${fmt2(usd)}; enter the units, then ⚖ Split by platform cash shares it by each person's cash.</div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Later</button>
+      <button class="btn pri" data-investnow="1" onclick="closeModal(); window._invTxPreset={cashSide:'cash', usdAmount:${Math.round(usd*100)/100}}; openInvTradePicker(${platformId})">🔁 Buy now</button></div>`, true);
+}
+function invApplyTxPreset(d){
+  const p = window._invTxPreset;
+  window._invTxPreset = null;
+  if(!p || !d || d.id) return;
+  if(p.cashSide) d.cashSide = p.cashSide;
+  if(p.usdAmount!==undefined && p.usdAmount!=='') d.usdAmount = p.usdAmount;
+  if(p.totalSar) d.totalSar = p.totalSar;
+  if(p.feePct!==undefined && p.feePct!=='') d.feePct = p.feePct;
+  if(p.note) d.note = p.note;
+  if(p.splitMode==='sar' && p.ownersSar){
+    d.splitMode = 'sar';
+    d.ownersSar = Object.assign({}, p.ownersSar);
+    d.owners = (p.ownerIds||[]).map(id=>({ownerId:id, units:''}));
+  }
+  d.repeated = !!p.repeated;
+}
+
 function renderInvMineView(nav){
   const self = (D.invOwners||[]).find(o=>o.isSelf);
   const app = document.getElementById('app');
@@ -10641,10 +11493,12 @@ function renderInvMineView(nav){
     return;
   }
   const holdings = invOwnerHoldings(self.id, invCashState(null).state);
+  if(invPlatformPageId!==null){ renderInvPlatformPage(nav, holdings); return; }
   const t = invHoldingsTotals(holdings);
   const mine = holdings.filter(h=>h.hasAnything), empty = holdings.filter(h=>!h.hasAnything);
-  app.innerHTML = nav + invTotalsCardsHTML(t, {value:'My Value', cost:'My Cost', costSub:'what it cost you', cash:'My Cash'}) +
-    (mine.length? mine.map(h=>invHoldingCardHTML(h, 'mine')).join('') : `<div class="panel empty">You don't hold anything yet — use + Add.</div>`) +
+  app.innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'My Value', cost:'My Cost', costSub:'what it cost you', cash:'My Cash'}) +
+    invPricesBarHTML() +
+    (mine.length? invBoxesHTML(mine) : `<div class="panel empty">You don't hold anything yet — use + Add.</div>`) +
     (empty.length? `<div class="mut" style="font-size:12px;margin-top:4px">Platforms with nothing of yours: ${empty.map(h=>esc(h.platform.name)).join(', ')}</div>` : '');
 }
 // ---- Family view ----
@@ -10893,7 +11747,7 @@ function renderInvInsightsView(nav){
         <div style="flex:1;min-width:220px;height:240px"><canvas id="invAllocClassChart"></canvas></div>
         <div style="flex:1;min-width:220px;height:240px"><canvas id="invAllocPlatChart"></canvas></div>
       </div></div>`:'') +
-    `<div class="mut" style="font-size:12px">Per-person figures are in 👨‍👩‍👧 Family; the full all-owners tables are in 🗂 Classic.</div>`;
+    `<div class="mut" style="font-size:12px">Per-person figures are in 👨‍👩‍👧 Family. With daily closing prices (⚙ Setup → 💹 Price links → Backfill, plus the daily job) the Value vs Cost chart fills in day by day.</div>`;
   drawInvCharts(history, allocClass, allocPlat);
 }
 function renderInvSetupView(nav){
@@ -10912,6 +11766,7 @@ function renderInvSetupView(nav){
       <button class="btn ghost sm" onclick="openInvAddPlatform()">+ Platform</button>
       <button class="btn ghost sm" onclick="openInvCsvTools()">📁 CSV</button>
       <button class="btn ghost sm" onclick="openInvCoinImport()">📥 Import Coin Balances</button>
+      <button class="btn ghost sm" onclick="openInvPriceLinks()">💹 Price links</button>
     </div></div>
     <div class="panel"><h3 style="margin-top:0">Platforms</h3>
       <div style="overflow-x:auto"><table style="min-width:620px"><thead><tr><th>Platform</th><th>Invested into platform</th><th>Withdrawn from platform</th><th>Profit</th><th class="noprint"></th></tr></thead>
@@ -10946,6 +11801,7 @@ function openInvTradePicker(platformId){
 let invTab = 'portfolio';
 function setInvTab(t){ invTab = t; setInvView(t==='recon'? 'recon' : 'mine'); }
 function renderInvestmentsPage(){
+  invMaybeAutoRefresh();
   const nav = invNavHTML();
   if(invView==='recon'){ renderInvReconPage(nav + invOwnerReconPanelHTML()); return; }
   if(invView==='mine'){ renderInvMineView(nav); return; }
@@ -11272,6 +12128,7 @@ function renderInvReconPage(tabs){
           <button class="btn ghost sm" onclick="toggleInvReconPlatformExpanded(${p.id})">${expanded? '▾ Hide' : '▸ Expand'}</button>
         </div>
       </div>
+      ${invWalletPanelHTML(p)}
       ${tableHtml}
     </div>`;
   }).join('');
@@ -11903,6 +12760,7 @@ function openInvTxModal(posId, txId){
     }
   }
   const dr = window._invTxDraft;
+  if(!existing) invApplyTxPreset(dr);
   dr.fxRate = (existing && Number(dr.usdAmount)>0 && Number(dr.totalSar)>0)? Math.round(Number(dr.totalSar)/Number(dr.usdAmount)*10000)/10000 : getInvFxRate();
   renderInvTxModal();
 }
@@ -12720,6 +13578,7 @@ async function saveInvCollect(){
   await persistInvCashMovement(rec);
   closeModal(); renderInvestmentsPage();
   toast('Contributions recorded ✓ — $'+fmt2(rec.usdAmount)+' split across '+t.split.length+' '+(t.split.length===1?'person':'people'));
+  invOfferInvestNow(d.platformId, rec.usdAmount);
 }
 function openInvCashLog(platformId){
   const plat = invPlatformById(platformId);
