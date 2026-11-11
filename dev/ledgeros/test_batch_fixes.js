@@ -8024,6 +8024,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testSmsCreateOpensFirstDateDraftsRestAndPostingMarksDone();
   await testSmsDismissRestoreAndDoneList();
   await testSmsInboxLoadsFromTheCloud();
+  await testGlassRailScrollsOnShortScreens();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9253,4 +9254,16 @@ async function testSmsInboxLoadsFromTheCloud(){
   try{ await sb.fetchAllFromCloud(true); }catch(e){}
   inbox = vm.runInContext('D', sb).smsInbox;
   assert(inbox.length===1 && inbox[0].id===9, 'Before the schema script is run (no table yet), the load keeps what is on this device');
+}
+// v5.4.1 (#19): the Aurora & glass rail has overflow:hidden, so its buttons must scroll inside it.
+// JSDOM has no layout, so this checks the rules themselves (a real-browser check at 640px tall is in FEEDBACK #19).
+async function testGlassRailScrollsOnShortScreens(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const glass = (html.match(/@media\(min-width:761px\)\{\s*body\.bg-aurora \.aurora[\s\S]*?\n\}/)||[''])[0];
+  assert(/body\.bg-aurora #sidebar\{[^}]*overflow:hidden/.test(glass), 'The glass rail still clips its edges (rounded corners)');
+  const navRule = (glass.match(/body\.bg-aurora nav\{([^}]*)\}/)||['',''])[1];
+  assert(/overflow-y:auto/.test(navRule) && /min-height:0/.test(navRule) && /flex:1/.test(navRule), 'Inside it, the button list scrolls (flex item that may shrink below its content)');
+  assert(/body\.bg-aurora #sidebar \.brand,body\.bg-aurora \.sidebar-footer\{flex-shrink:0\}/.test(glass), 'The logo and the footer keep their size while the list scrolls');
+  const shortRule = (html.match(/@media\(min-width:761px\) and \(max-height:820px\)\{([^\n]*)\}/)||['',''])[1];
+  assert(/nav button\{min-height:44px/.test(shortRule), 'Short windows get more compact rail buttons');
 }
