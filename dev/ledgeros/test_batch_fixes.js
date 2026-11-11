@@ -8015,6 +8015,15 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testDriftComparesPerAccount();
   await testDriftIncomeExpenseOnlyAndExcludeList();
   await testDriftSettingsAreSyncedWithToggles();
+  await testSmsInboxTableIsInEveryTableList();
+  await testSmsGroupsByMappedAccount();
+  await testSmsBuildsOneJVPerDateWithOtherHalves();
+  await testSmsOwnTransferPairsBothBanks();
+  await testSmsExactReversalCancelsOut();
+  await testSmsFeeGetsItsOwnLine();
+  await testSmsCreateOpensFirstDateDraftsRestAndPostingMarksDone();
+  await testSmsDismissRestoreAndDoneList();
+  await testSmsInboxLoadsFromTheCloud();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9069,4 +9078,179 @@ async function testDriftSettingsAreSyncedWithToggles(){
   assert(sb.getDriftSettings().excluded.join()==='60504' && /removeDriftExclusion\(60504\)/.test(sb.document.getElementById('app').innerHTML), 'Excluding adds it to the list, with a way to remove it');
   sb.removeDriftExclusion(60504);
   assert(sb.getDriftSettings().excluded.length===0, 'And it can be removed');
+}
+
+// ---- v5.4: SMS inbox (feedback #18). All data invented. ----
+function smsSandbox(){
+  const sb = dashSandbox({today:'2026-11-11T10:00:00.000Z'});
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:10103, name:'Card', descr:'Card', category:'Bank Accounts', status:'Active', acc_type:'Individual Account', is_credit_card:true},
+    {id:60102, name:'Fuel', descr:'Fuel', category:'Living', status:'Active', acc_type:'Individual Account'});
+  sb.rebuildIndex();
+  const R = (id, o) => Object.assign({id, date:'2026-11-11', time:'10:00', source:'BANKA', acct:'1111', counter:'', kind:'POS purchase', descr:'SHOP '+id,
+    amt:100, side:'Cr', fee:null, currency:'SAR', fxAmt:null, remaining:'', loggedAt:null, status:'pending', jv:null, updated_at:null}, o||{});
+  sb.__R = R;
+  D.smsInbox = [];
+  sb.__set('jvDrafts', []);
+  sb.__set('jvDraft', {date:'2026-11-11', lines:[sb.freshLine(), sb.freshLine()]});
+  sb.__set('go', (s)=>{ sb.__went = s; });
+  sb.__set('blockIfSyncing', () => false);
+  sb.__set('logActivity', () => {});
+  sb.__set('saveJVDraftsList', () => {});
+  sb.__map = async (o) => { for(const [k,v] of Object.entries(o)) await sb.setSmsAccount(k, v); };
+  return sb;
+}
+async function testSmsInboxTableIsInEveryTableList(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const sb = makeSandbox();
+  const sql = vm.runInContext('DB_SCHEMA_CORE', sb);
+  assert(/create table if not exists pd_sms_inbox \(/.test(sql) && /'pd_sms_inbox',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_sms_inbox and gives it the same RLS policy as every table');
+  assert(/fetchAllRows\('pd_sms_inbox','id'\)/.test(html) && /TOTAL_SOURCES = 27/.test(html), 'The cloud load fetches it (and the splash progress counts it)');
+  assert(/SB\.from\('pd_sms_inbox'\)\.delete\(\)\.neq\('id',-1\); bump/.test(html) && /insertWithRetry\('pd_sms_inbox', D\.smsInbox\.map\(smsToRow\)\)/.test(html), 'Restore from backup clears and restores it');
+  assert((html.match(/SB\.from\('pd_sms_inbox'\)\.delete\(\)/g)||[]).length===2, 'Wipe-all clears it too');
+  const D = vm.runInContext('D', sb); delete D.smsInbox; sb.normalizeDataShape(D);
+  assert(Array.isArray(D.smsInbox), 'An old cache or backup without the inbox gets an empty one');
+  const row = {id:123, entry_date:'2026-11-10', entry_time:'09:50', source:'S', acct:'1111', counter_acct:'D360', kind:'Online purchase', descr:'X', amt:'7000.00', side:'Cr', fee:null, currency:'SAR', fx_amount:null, remaining:'', logged_at:null, status:'pending', jv:null};
+  const s = sb.smsFromRow(row);
+  assert(s.amt===7000 && s.counter==='D360' && s.fxAmt===null && s.side==='Cr', 'Rows from the phone are read with numbers as numbers and blanks as null');
+  const back = sb.smsToRow(s);
+  assert(back.amt===7000 && back.counter_acct==='D360' && back.entry_date==='2026-11-10' && back.status==='pending', 'And written back in the table’s column names');
+}
+async function testSmsGroupsByMappedAccount(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {acct:'1111'}), R(2, {acct:'BANKA debit', source:'BANKA'}), R(3, {acct:'9999', source:'BANKB'}));
+  let g = sb.smsGroups();
+  assert(g.length===3 && g.every(x=>!x.acc), 'Unmapped: one group per source and card/account');
+  await sb.__map({'1111':10101, 'BANKA debit':10101});
+  const prefs = sb.__prefs();
+  assert(prefs && Object.keys(prefs.row).sort().join()==='dismissals,id' && prefs.row.dismissals.smsMap['1111']===10101, 'The account map is saved in the synced settings (no new column)');
+  g = sb.smsGroups();
+  assert(g.length===2 && g[0].acc===10101 && g[0].rows.length===2, 'A card and its account mapped to one LedgerOS account become one group');
+  sb.openSmsInbox();
+  const modal = sb.document.getElementById('modalRoot');
+  const groups = [...modal.querySelectorAll('.sms-group')];
+  const mapped = groups.find(x=>x.dataset.group==='a:10101'), unmapped = groups.find(x=>x.dataset.group==='u:BANKB|9999');
+  assert(mapped && /Create JV/.test(mapped.innerHTML) && !mapped.querySelector('button.pri').disabled, 'A mapped group can create its JV');
+  assert(mapped && mapped.querySelector('.sms-aliases') && /1111, BANKA debit|BANKA debit, 1111/.test(mapped.querySelector('.sms-aliases').value), 'Its matches list shows every number/name mapped to it');
+  assert(unmapped && unmapped.querySelector('button.pri').disabled && unmapped.querySelector('.sms-acc-pick'), 'An unmapped group asks which account it is before it can create JVs');
+  await sb.setSmsAliases(10101, '1111');
+  assert(sb.smsAccFor('BANKA debit')===null && sb.smsAccFor('1111')===10101, 'Editing the matches list replaces that account’s list');
+}
+async function testSmsBuildsOneJVPerDateWithOtherHalves(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {date:'2026-11-11', amt:100}), R(2, {date:'2026-11-10', amt:40.5}), R(3, {date:'2026-11-11', amt:12, side:'Dr', kind:'Cashback', descr:'Cashback'}),
+    R(4, {date:'2026-11-10', amt:null, currency:'CAD', fxAmt:90.06, descr:'TAXI (CAD 90.06)'}));
+  await sb.__map({'1111':10101});
+  const {jvs} = sb.smsBuildJVs('a:10101');
+  assert(jvs.length===2 && jvs[0].date==='2026-11-10' && jvs[1].date==='2026-11-11', 'One JV per SMS date, earliest first');
+  const j11 = jvs[1];
+  assert(j11.lines.length===4, 'Each SMS is its own line plus its other half (2 SMS = 4 lines)');
+  const bank = j11.lines.filter(l=>l.acc==='10101'), other = j11.lines.filter(l=>l.acc==='');
+  assert(bank.map(l=>l.amt).join()==='-100,12' && other.map(l=>l.amt).join()==='100,-12', 'Money out is negative on the bank line, money in positive; the other half is the opposite, account left for him');
+  assert(bank[0].descr==='SHOP 1' && other[0].descr==='SHOP 1' && bank[0].smsId===1 && other[0].smsId===1, 'Both halves carry the SMS description and its link');
+  const total = j11.lines.reduce((s,l)=>s+Number(l.amt),0);
+  assert(Math.abs(total)<0.005, 'Each JV nets to zero once the accounts are picked');
+  const fx = jvs[0].lines.filter(l=>l.smsId===4);
+  assert(fx.length===2 && fx.every(l=>l.amt==='') && /CAD 90\.06/.test(fx[0].descr), 'A foreign amount with no SAR leaves both amounts for him to type');
+}
+async function testSmsOwnTransferPairsBothBanks(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  // Bank A sends 19000.50 (its fee inside the amount); bank B receives 19000. Each bank sends its own SMS.
+  D.smsInbox.push(R(1, {acct:'A debit', source:'BANKA', side:'Cr', amt:19000.5, counter:'2222', kind:'Outgoing transfer', descr:'TEST PERSON'}),
+    R(2, {acct:'2222', source:'BANKB', side:'Dr', amt:19000, counter:'0101', kind:'Incoming transfer', descr:'TEST PERSON (via BANKA)'}),
+    R(3, {acct:'3333', source:'WALLET', side:'Dr', amt:500, counter:'', kind:'Top-up', descr:'Top-up', date:'2026-11-09'}));
+  await sb.__map({'A debit':10101, '0101':10101, '2222':10102, 'W':10199});
+  const {jvs} = sb.smsBuildJVs('a:10101');
+  const lines = jvs[0].lines;
+  assert(lines.length===3, 'One JV: bank A line, bank B line and a fee line (no unknown half)');
+  const a = lines.find(l=>l.acc==='10101'), b = lines.find(l=>l.acc==='10102'), fee = lines.find(l=>l.acc==='');
+  assert(a && a.amt==='-19000.5' && b && b.amt==='19000' && fee && fee.amt==='0.5' && /Transfer fee/.test(fee.descr), 'Both sides as each bank reported them; the 0.50 difference goes on a Transfer fee line');
+  assert(a.smsId===1 && b.smsId===2, 'The JV carries both banks’ SMS');
+  await sb.smsCreateJVs('a:10101');
+  assert(!sb.smsGroups().some(g=>g.acc===10102), 'Bank B’s copy of the transfer is no longer waiting on its own');
+  // No partner (too far apart in amount): the other side is still filled from the map
+  D.smsInbox.push(R(4, {acct:'A debit', side:'Cr', amt:300, counter:'2222'}), R(5, {acct:'2222', source:'BANKB', side:'Dr', amt:298}));
+  const j2 = sb.smsBuildJVs('a:10101').jvs[0].lines.filter(l=>l.smsId===4 || l.smsId===5);
+  assert(j2.length===2 && j2.every(l=>l.smsId===4) && j2[1].acc==='10102' && j2[1].amt==='300', 'More than SAR 1 apart: not paired, but the other side still goes to his own account');
+}
+async function testSmsExactReversalCancelsOut(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {acct:'1111', amt:52, descr:'TAXI (AED 52)', kind:'Online purchase'}), R(2, {acct:'1111', amt:52, side:'Dr', descr:'TAXI (reversal) (AED 52)', kind:'Reversal/refund'}),
+    R(3, {acct:'1111', amt:54.7, descr:'TAXI (AED 54.7)'}), R(4, {acct:'1111', amt:4.24, side:'Dr', descr:'TAXI (reversal) (AED 4.24)', kind:'Reversal/refund'}));
+  await sb.__map({'1111':10103});
+  const {jvs, netted} = sb.smsBuildJVs('a:10103');
+  assert(netted.sort().join()==='1,2', 'A reversal that exactly matches a purchase cancels it out');
+  assert(jvs[0].lines.filter(l=>l.acc==='10103').map(l=>l.amt).join()==='-54.7,4.24', 'The other purchase and the partial reversal are still posted');
+  sb.openSmsInbox();
+  assert(/cancels out/.test(sb.document.getElementById('modalRoot').innerHTML), 'The inbox shows which SMS cancel out');
+  await sb.smsCreateJVs('a:10103');
+  const calls = sb.__calls.filter(c=>c.table==='pd_sms_inbox');
+  assert(calls.length===2 && calls.every(c=>c.row.status==='netted' && Object.keys(c.row).sort().join()==='id,jv,status'), 'Creating the JV marks the cancelled pair as done (only status is written)');
+}
+async function testSmsFeeGetsItsOwnLine(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {acct:'1111', amt:3982.43, fee:17.25, kind:'International transfer', descr:'TEST RECEIVER (MoneyGram)'}));
+  await sb.__map({'1111':10101});
+  const lines = sb.smsBuildJVs('a:10101').jvs[0].lines;
+  const feeLines = lines.filter(l=>/^Fee/.test(l.descr));
+  assert(lines.length===4 && feeLines.length===2 && feeLines.find(l=>l.acc==='10101').amt==='-17.25' && feeLines.find(l=>l.acc==='').amt==='17.25', 'The fee comes off the bank on its own line, with its other half for a bank-charges account');
+}
+async function testSmsCreateOpensFirstDateDraftsRestAndPostingMarksDone(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {date:'2026-11-10', amt:120}), R(2, {date:'2026-11-11', amt:125}), R(3, {date:'2026-11-11', amt:5, acct:'9999', source:'BANKB'}));
+  await sb.__map({'1111':10101});
+  assert(sb.smsPending().length===3, 'Three SMS waiting');
+  sb.renderNewJV();
+  assert(/📩 SMS \(3\)/.test(sb.document.getElementById('smsInboxBtn').textContent), 'New JV shows the SMS button with the waiting count');
+  const todo = sb.dashboardTodoItems();
+  assert(todo[0] && /3 bank SMS to post/.test(todo[0].title) && /openSmsInbox/.test(todo[0].onclick), 'The Dashboard lists the waiting SMS first, opening the inbox');
+  await sb.smsCreateJVs('a:10101');
+  const jvDraft = vm.runInContext('jvDraft', sb), drafts = vm.runInContext('jvDrafts', sb);
+  assert(jvDraft.date==='2026-11-10' && jvDraft.lines.length===2 && jvDraft.lines[0].smsId===1, 'The earliest date opens in New JV');
+  assert(drafts.length===1 && drafts[0].date==='2026-11-11' && drafts[0].lines.every(l=>l.smsId===2), 'The other date is saved as a draft, still linked to its SMS');
+  const draftWrite = sb.__calls.find(c=>c.table==='pd_drafts');
+  assert(draftWrite && draftWrite.row.lines[0].smsId===2, 'The draft syncs with the SMS link on its lines');
+  assert(sb.smsPending().map(s=>s.id).join()==='3', 'SMS in the open JV or a draft are no longer waiting');
+  jvDraft.lines[1].acc = '60102';
+  await sb.postJV();
+  const posted = sb.__calls.filter(c=>c.table==='pd_sms_inbox');
+  const jvNo = vm.runInContext('D', sb).ledger.filter(l=>l.descr==='SHOP 1').map(l=>l.jv)[0];
+  assert(posted.length===1 && posted[0].row.id===1 && posted[0].row.status==='posted' && posted[0].row.jv===jvNo && jvNo, 'Posting the JV moves its SMS to Done with the JV number');
+  sb.continueDraft(drafts[0].id);
+  const again = vm.runInContext('jvDraft', sb);
+  assert(again.lines.every(l=>l.smsId===2), 'Continuing the draft keeps the SMS link, so posting it marks that SMS too');
+  await sb.saveJVDraft();
+  const saved = vm.runInContext('jvDrafts', sb).slice(-1)[0];
+  assert(saved && saved.lines.every(l=>l.smsId===2), 'Saving it as a draft again keeps the link too');
+}
+async function testSmsDismissRestoreAndDoneList(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1), R(2, {status:'posted', jv:77}));
+  await sb.__map({'1111':10101});
+  await sb.smsDismiss(1);
+  assert(sb.smsPending().length===0 && D.smsInbox[0].status==='dismissed', 'Dismiss takes it out of the waiting list');
+  sb.__set('smsDoneOpen', true); sb.openSmsInbox();
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Done \(2\)/.test(html) && /JV #77/.test(html) && /smsRestore\(1\)/.test(html) && !/smsRestore\(2\)/.test(html), 'Done lists both: the posted one shows its JV, only the dismissed one can go back');
+  await sb.smsRestore(1);
+  assert(sb.smsPending().length===1, 'Back to inbox brings it back');
+}
+async function testSmsInboxLoadsFromTheCloud(){
+  const sb = makeSandbox();
+  const D = vm.runInContext('D', sb);
+  D.smsInbox = [{id:9, status:'pending', amt:1}];
+  sb.__set('getLedgerChangeMarker', async () => null);
+  sb.__set('setStatus', () => {});
+  sb.__set('updateSplashProgress', () => {});
+  const phoneRow = {id:42, entry_date:'2026-11-11', entry_time:'04:45', source:'S', acct:'1111', counter_acct:null, kind:'Online purchase', descr:'TEST', amt:'47.66', side:'Cr', fee:null, currency:'SAR', fx_amount:null, remaining:'9000', logged_at:null, status:'pending', jv:null};
+  let missing = false;
+  sb.__set('fetchAllRows', async (table) => (table==='pd_sms_inbox'? (missing? {data:null, error:{message:'relation does not exist'}} : {data:[phoneRow], error:null}) : {data:[], error:null}));
+  try{ await sb.fetchAllFromCloud(true); }catch(e){ /* later steps of the load may need more of the app; the inbox is read before them */ }
+  let inbox = vm.runInContext('D', sb).smsInbox;
+  assert(inbox.length===1 && inbox[0].id===42 && inbox[0].amt===47.66, 'Loading from the cloud fills the SMS inbox from pd_sms_inbox');
+  missing = true;
+  vm.runInContext('D', sb).smsInbox = [{id:9, status:'pending', amt:1}];
+  try{ await sb.fetchAllFromCloud(true); }catch(e){}
+  inbox = vm.runInContext('D', sb).smsInbox;
+  assert(inbox.length===1 && inbox[0].id===9, 'Before the schema script is run (no table yet), the load keeps what is on this device');
 }
