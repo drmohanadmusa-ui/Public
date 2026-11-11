@@ -49,7 +49,7 @@ Running the script by hand inside Scriptable uses whatever SMS is on the clipboa
 | `SNB CC` | SNB credit card | phrase `الصرف المتبقي` | done |
 | `SAIB` | SAIB main account, SAIB-2 account, mada card, travel card | last 4 of each (4 automations) | done |
 | `Al Rajhi` | Al Rajhi account, mada card, Visa card | last 4 of each (3 automations) | done |
-| `meem` | meem account, mada card | last 4 of each (2 automations) | done |
+| `meem` | meem account (+ its mada card) | account last 4 only (1 automation: every meem transaction SMS names the account, card purchases included) | done |
 | | SNB debit account | | waiting for samples |
 | | D360 | | waiting for samples |
 | | urpay | | waiting for samples |
