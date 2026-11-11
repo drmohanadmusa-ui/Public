@@ -71,6 +71,7 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
 - **Debit account** (Acct = `SNB debit`, because most debit SMS don't show your own account):
   - **Logged:** salary ("ايداع رواتب"), incoming transfers (internal, and local from another bank, with the bank name), outgoing internal, local and international transfers (with fee), mada purchases (local and international online), credit card payments (Counter Acct = the card, so it's a transfer between your own accounts), and finance instalments (personal and home, with the remaining loan balance).
   - **Local outgoing transfers include SNB's SAR 0.50 fee in the amount** (e.g. 19000.50, while the other bank receives 19000).
+- **Checked against real pasted text** (2026-11-11): 19 transactions all correct, plus the OTP, failed-transfer and activation messages skipped. The stored text has the number before "SAR" (`مبلغ 235.75 SAR`, `بـ400 SAR`), which the keyword-based reading handles.
 - **Ignored:** OTPs and activation codes (some contain amounts and merchants), failed transfers ("غير ناجحة"), card issue, activation, freeze and cancel notices, and PIN changes.
 - **Line order:** SNB's Arabic lines are stored in a different order from how they're shown. Every SNB field is found by keyword anywhere in its line, and labels are stripped only at the **start or end** of a line, because names like "عبدالمنعم" contain "من" and "ل".
 - **Dates:** usually `dd/mm/yy`, but international transfers use `yy/mm/dd` (`26/10/23`). `anyDate` tries both and keeps the valid one closest to today.
@@ -88,7 +89,7 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
 - Dates look like `17-5-2026 18:25` (day first).
 
 **D360 notes**
-- **Logged:** card POS purchases (the card's label, e.g. a name in brackets, is kept in the description), account funding via Apple Pay from another bank's card (Counter Acct = that card), outgoing local transfers (Counter Acct = the IBAN's last 4), international transfers (Amount SAR comes from the "(SAR …)" in brackets, with the foreign amount kept), and their reversals.
+- **Logged:** card POS purchases (the payment network in brackets after the card, e.g. a mada scheme name, is ignored), account funding via Apple Pay from another bank's card (Counter Acct = that card), outgoing local transfers (Counter Acct = the IBAN's last 4), international transfers (Amount SAR comes from the "(SAR …)" in brackets, with the foreign amount kept), and their reversals.
 - **Ignored:** OTPs, declined transactions, card blocked/unblocked notices, and beneficiary activation notices.
 - **Telling D360 apart:** a D360 heading **and** an `On:` date line.
 

@@ -555,11 +555,11 @@ const PARSERS = [
           currency: fx.cur === "SAR" ? "SAR" : fx.cur, fxAmount: fx.cur === "SAR" ? "" : fx.amt, side: reversal ? "Dr" : "Cr" };
       }
       // card purchases
-      const cardTxt = one("Card"), label = (cardTxt.match(/\(([^)]+)\)/) || [])[1] || "";
+      const cardTxt = one("Card");          // "(Atheer)" etc. after the card is the payment network: ignored
       const merchant = one("At");
       return { ...base, acct: masked4(cardTxt), counter: ownWallet(merchant),
         type: /POS/i.test(head) ? "POS purchase" : "Online purchase",
-        desc: label ? `${merchant} (card: ${label})` : merchant, amount: toSar(money(amtTxt)), side: "Cr" };
+        desc: merchant, amount: toSar(money(amtTxt)), side: "Cr" };
     },
   },
   // next banks get added here (see README.md, "Adding a bank")

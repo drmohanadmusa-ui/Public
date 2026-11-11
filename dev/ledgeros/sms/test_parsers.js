@@ -155,9 +155,9 @@ const CASES = [
   { name: "urpay verification code (has an amount) is ignored",
     sms: "Verification code: 1234\nService: International Transfer\nAmount: 19980 SAR", skip: true },
   // ---------- D360 (invented: account 6161, card 7171) ----------
-  { name: "D360 POS purchase keeps the card's label",
+  { name: "D360 POS purchase (the payment network in brackets is ignored)",
     sms: "Local POS Purchase\nAmount: SAR 125.00\nCard: *7171 - mada (TestName)\nAt: TEST FUEL\nOn: 2026-07-05 18:24",
-    expect: { source: "D360", acct: "7171", type: "POS purchase", desc: "TEST FUEL (card: TestName)", amount: "125.00", side: "Cr",
+    expect: { source: "D360", acct: "7171", type: "POS purchase", desc: "TEST FUEL", amount: "125.00", side: "Cr",
               date: "2026-07-05", time: "18:24" } },
   { name: "D360 funding from another bank's card (own transfer), date dd/mm/yyyy with seconds",
     sms: "Account Funding via Apple Pay\nAmount: SAR 5500\nCard: *3456 - mada\nTo: *6161\nOn: 29/07/2026 15:01:21",
