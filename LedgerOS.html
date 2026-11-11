@@ -324,6 +324,8 @@ nav .nav-ico{margin:0;width:auto;font-size:16px}
 .sidebar-footer a{color:var(--rail-text)!important;line-height:1.25}
 .sidebar-footer .themeBtn{background:transparent;border-color:color-mix(in srgb,var(--rail-text) 25%,transparent);color:var(--rail-text)}
 @media(min-width:761px){#sidebar{width:88px}}
+/* v5.4.1: short windows get a tighter rail so more buttons fit before any scrolling */
+@media(min-width:761px) and (max-height:820px){nav button{min-height:44px;padding:5px 4px;gap:2px}#sidebar .brand{padding:10px 8px 6px}}
 .main-col{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
 .aurora{display:none;position:absolute;top:0;left:0;right:0;height:520px;pointer-events:none;background-image:var(--aurora);background-size:140% 140%,140% 140%,160% 160%;animation:auroraDrift 22s ease-in-out infinite;-webkit-mask-image:linear-gradient(to bottom,#000 40%,transparent);mask-image:linear-gradient(to bottom,#000 40%,transparent)}
 body.bg-aurora .aurora{display:block}
@@ -481,6 +483,11 @@ tr.acc-on td{box-shadow:inset 0 0 0 9999px var(--accent-soft)}
   body.bg-aurora #sidebar::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
     background:linear-gradient(160deg,rgba(255,255,255,.55) 0%,rgba(255,255,255,.08) 38%,rgba(255,255,255,0) 60%,rgba(255,255,255,.18) 100%)}
   body.bg-aurora #sidebar>*{position:relative}
+  /* v5.4.1: the glass rail clips its overflow (rounded corners), so on a short window the
+     buttons scroll inside it instead of being cut off; logo and footer stay put. */
+  body.bg-aurora nav{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+    scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--text) 22%,transparent) transparent}
+  body.bg-aurora #sidebar .brand,body.bg-aurora .sidebar-footer{flex-shrink:0}
   body.bg-aurora nav button{color:var(--text);opacity:.8}
   body.bg-aurora nav button:hover{background:color-mix(in srgb,#fff 35%,transparent);color:var(--text);opacity:1}
   body.bg-aurora nav button.on{background:color-mix(in srgb,#fff 70%,transparent);color:var(--accent-text);opacity:1;box-shadow:0 4px 14px -4px rgba(15,20,40,.25),inset 0 1px 0 rgba(255,255,255,.9)}
@@ -568,12 +575,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.4.0';
+const APP_VERSION = '5.4.1';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.4.1', date:'2026-11-11', changes:[
+    'Dashboard: Open P&L on an \u201cover budget\u201d item now takes you straight to that category on this month\u2019s P&L and flashes it, instead of just opening the page.',
+    'Side rail on a short screen: with Aurora & glass on, the buttons that didn\u2019t fit (down to Settings) were cut off with no way to reach them. They now scroll inside the rail, while the logo and the bottom of the rail stay where they are. On short windows the buttons are also a little more compact, so more of them fit before you need to scroll.',
+  ]},
   {version:'5.4.0', date:'2026-11-11', changes:[
     'New: SMS inbox. Bank SMS logged by your iPhone wait behind the new SMS button in New JV, grouped by account. Pick each group\u2019s LedgerOS account once (a card and its account can share one), then Create JVs builds one JV per SMS date: every SMS on its own line, with the other half filled in except its account. You check it and post it; the app never posts for you.',
     'Transfers between your own accounts get both sides filled in, and the two banks\u2019 SMS for the same transfer become one JV (up to SAR 1 apart; the difference goes on a Transfer fee line). A reversal that exactly matches a purchase cancels it out. Bank fees get their own line.',
@@ -4537,10 +4548,19 @@ function dashboardExpenseBudgetLine(b){
 }
 // Jump from the dashboard straight to the P&L for the current month. go() runs the page render,
 // so the preset is set first and renderPnL is left to go() rather than being called twice.
-function goPnLThisMonth(){
+// v5.4.1 (#20): with a category (the Dashboard's "over budget" item), lands on that category's
+// subtotal row and flashes it, the same way coming back from a 📊 chart does.
+function goPnLThisMonth(cat){
   pnlPreset = 'month';
   [pnlFrom, pnlTo] = monthRange(todayStr().slice(0,7));
+  if(cat) pnlView = 'main';
   go('pnl');
+  if(cat) requestAnimationFrame(()=>{
+    const row = [...document.querySelectorAll('#app tr[data-pnl-cat]')].find(r=>r.getAttribute('data-pnl-cat')===cat);
+    if(!row) return;
+    if(row.scrollIntoView) row.scrollIntoView({block:'center', behavior:'smooth'});
+    flashEl(row);
+  });
 }
 function driftAlertsCard(){
   const flags = computeDriftFlags();
@@ -4896,7 +4916,7 @@ function dashboardTodoItems(){
     const over = roundCents(-c.variance), key = c.cat+'|'+ym;
     if(obDismissed[key]!==undefined && over <= Number(obDismissed[key])+0.005) return;
     dashOverBudgetKeys.push({key, over});
-    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:'goPnLThisMonth()', dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
+    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:`goPnLThisMonth(${esc(JSON.stringify(c.cat))})`, dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
   });
   computeDriftFlags().forEach(f=>{
     const label = f.kind==='provision'? accShort(f.acc)+' — '+f.groupName : f.ruleName+' ('+accShort(f.acc)+')';
@@ -7683,7 +7703,7 @@ function renderPnL(){
   // since expTotal isn't final until every category has been summed above.
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
-    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
+    return `<tr style="background:var(--chip)" data-pnl-cat="${esc(cat)}"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
       items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" data-pnl-key="acc:${i.a.id}" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
