@@ -5,6 +5,10 @@
 // Tests: node test_parsers.js
 
 const FILE = "Ledger Inbox.tsv";
+const QUEUE_FILE = "Ledger Upload Queue.json";      // rows waiting to reach LedgerOS (no signal, etc.)
+// LedgerOS's Supabase URL and key live in this phone's Keychain, never in this file:
+// run the script inside Scriptable with no SMS on the clipboard to set them.
+const KC_URL = "ledgeros_sb_url", KC_KEY = "ledgeros_sb_key";
 const NOTIFY = true;
 // SAR per 1 unit of a foreign currency. Only pegged currencies belong here; any other
 // currency is logged with its foreign amount and a blank SAR amount for you to type.
@@ -395,7 +399,7 @@ const PARSERS = [
           desc: nameOf("To"), side: "Cr", remaining: "" };
       }
       if (/^Credit Card\s*:\s*Payment/i.test(head)) {          // money loaded onto the Visa card
-        return { ...base, acct: cardNo(one("Card")), counter: "", type: "Card top-up",
+        return { ...base, acct: cardNo(one("Card")), counter: "Al Rajhi account", type: "Card top-up",
           desc: withFx("Card top-up"), side: "Dr", remaining };
       }
       if (/^Credit Card\s*:\s*transfer/i.test(head)) {         // card balance sent back to the account
@@ -565,6 +569,70 @@ const PARSERS = [
   // next banks get added here (see README.md, "Adding a bank")
 ];
 
+// ---------- LedgerOS upload (pd_sms_inbox) ----------
+// 53-bit hash of the row: the same transaction always gets the same id, so logging it twice
+// (two automations firing, or a re-run) can never make two inbox rows.
+function cyrb53(str, seed = 0) {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+const numOrNull = v => (v === "" || v === null || v === undefined || isNaN(parseFloat(v))) ? null : parseFloat(v);
+function inboxRow(core, source, r) {
+  return {
+    id: cyrb53(core), entry_date: r.date || null, entry_time: r.time || null, source, acct: r.acct || "",
+    counter_acct: r.counter || null, kind: r.type || "", descr: r.desc || "", amt: numOrNull(r.amount), side: r.side === "Dr" ? "Dr" : "Cr",
+    fee: numOrNull(r.fee), currency: r.currency || "SAR", fx_amount: numOrNull(r.fxAmount), remaining: r.remaining || null,
+    logged_at: new Date().toISOString(),
+  };
+}
+function haveKeys() { try { return Keychain.contains(KC_URL) && Keychain.contains(KC_KEY); } catch (e) { return false; } }
+// Sends everything waiting in the queue. Returns "" when done or nothing to send, else a short reason.
+async function flushQueue(fm, extra) {
+  const qPath = fm.joinPath(fm.documentsDirectory(), QUEUE_FILE);
+  let queue = [];
+  if (fm.fileExists(qPath)) { await fm.downloadFileFromiCloud(qPath); try { queue = JSON.parse(fm.readString(qPath) || "[]"); } catch (e) { queue = []; } }
+  if (extra && !queue.some(q => q.id === extra.id)) queue.push(extra);
+  if (!queue.length) return "";
+  if (!haveKeys()) { fm.writeString(qPath, JSON.stringify(queue)); return "not connected to LedgerOS yet"; }
+  try {
+    const url = Keychain.get(KC_URL).replace(/\/+$/, ""), key = Keychain.get(KC_KEY);
+    const req = new Request(`${url}/rest/v1/pd_sms_inbox?on_conflict=id`);
+    req.method = "POST";
+    req.headers = { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json",
+      Prefer: "resolution=ignore-duplicates,return=minimal" };
+    req.body = JSON.stringify(queue);
+    await req.loadString();
+    const code = (req.response || {}).statusCode;
+    if (code >= 200 && code < 300) { if (fm.fileExists(qPath)) fm.remove(qPath); return ""; }
+    fm.writeString(qPath, JSON.stringify(queue));
+    return `LedgerOS said ${code}, will retry`;
+  } catch (e) {
+    fm.writeString(qPath, JSON.stringify(queue));
+    return "no connection, will retry";
+  }
+}
+async function setupConnection() {
+  const a = new Alert();
+  a.title = "Connect to LedgerOS";
+  a.message = "Paste the same Project URL and anon key you use on LedgerOS's Connect screen. They are kept in this phone's Keychain.";
+  a.addTextField("https://xxxx.supabase.co", haveKeys() ? Keychain.get(KC_URL) : "");
+  a.addTextField("anon key", "");
+  a.addAction("Save");
+  a.addCancelAction("Cancel");
+  if (await a.present() === -1) return "Not changed";
+  const url = a.textFieldValue(0).trim(), key = a.textFieldValue(1).trim();
+  if (!/^https:\/\/.+/.test(url) || key.length < 20) return "Not saved: check the URL and key";
+  Keychain.set(KC_URL, url); Keychain.set(KC_KEY, key);
+  return "Connected to LedgerOS";
+}
+
 // ---------- main ----------
 async function main() {
   let input = args.shortcutParameter;
@@ -579,7 +647,12 @@ async function main() {
     r = x.parse(text);
     if (r) { p = x; break; }
   }
-  if (!r) return "Skipped: not a recognised transaction SMS";
+  if (!r) {
+    // run by hand with no SMS copied: offer to set up the LedgerOS connection
+    if (manual && config.runsInApp && !text.trim()) return await setupConnection();
+    const waiting = await flushQueue(FileManager.iCloud(), null);   // a quiet chance to retry
+    return "Skipped: not a recognised transaction SMS" + (waiting ? ` (queue: ${waiting})` : "");
+  }
   r = Object.assign({ counter: "", fee: "", currency: "SAR", fxAmount: "", remaining: "" }, r);
 
   const fm = FileManager.iCloud();
@@ -603,7 +676,10 @@ async function main() {
     existing = fm.readString(path) || "";
   }
   const shown = r.amount ? `SAR ${r.amount}` : `${r.currency} ${r.fxAmount}`;
-  if (existing.includes(core)) return `Duplicate, not logged: ${r.desc} ${shown}`;
+  if (existing.includes(core)) {
+    const waiting = await flushQueue(fm, null);
+    return `Duplicate, not logged: ${r.desc} ${shown}` + (waiting ? ` (queue: ${waiting})` : "");
+  }
 
   // a file from an older version (different columns) is kept aside, not mixed in
   if (existing && !existing.startsWith(HEADER)) {
@@ -612,8 +688,9 @@ async function main() {
   }
   const base = existing ? existing.replace(/\n*$/, "\n") : HEADER + "\n";
   fm.writeString(path, base + line + "\n");
+  const upload = await flushQueue(fm, inboxRow(core, source, r));
 
-  const msg = `${source} · ${shown} · ${r.desc}`;
+  const msg = `${source} · ${shown} · ${r.desc}` + (upload ? ` (LedgerOS: ${upload})` : "");
   if (NOTIFY) {
     const n = new Notification();
     n.title = "Logged to Ledger Inbox";

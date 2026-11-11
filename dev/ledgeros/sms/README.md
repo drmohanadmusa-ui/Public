@@ -1,7 +1,7 @@
 # Bank SMS logger: how it works and how to update it
 
 An iPhone automation that reads incoming bank SMS and logs each transaction, so it can be posted in LedgerOS without retyping.
-Planned next step: each row also goes to LedgerOS's SMS inbox (feedback item #18 in `../FEEDBACK.md`).
+Each row goes to the phone's own log file **and** to LedgerOS's SMS inbox (`pd_sms_inbox`, v5.4.0; feedback item #18 in `../FEEDBACK.md`), where New JV → 📩 SMS turns it into JVs.
 
 **Files in this folder**
 
@@ -23,12 +23,17 @@ Bank SMS arrives
   → "Get Text from Input" (Shortcut Input) → "Run Script" (Scriptable: Ledger SMS Logger, Run In App off)
   → script cleans the text, finds the matching parser, pulls out the fields
   → appends one row to  iCloud Drive / Scriptable / Ledger Inbox.tsv   (skips exact duplicates)
+  → sends it to LedgerOS (Supabase table pd_sms_inbox). If that fails (no signal, wrong key), the row
+    waits in "Ledger Upload Queue.json" and goes with the next SMS
   → notification "Logged to Ledger Inbox"
 ```
 
 Running the script by hand inside Scriptable uses whatever SMS is on the clipboard. That's how to test it, or to log an old message.
 
 ## 2. iPhone setup (one time)
+
+**Connecting to LedgerOS:** in Scriptable, run the script with **nothing on the clipboard**. It asks for the Project URL and anon key, the same two values as LedgerOS's Connect screen, and keeps them in the phone's **Keychain**. They're never in this file or this repo. To change them later, do the same again. Until it's connected, rows are logged on the phone and queued.
+
 
 1. Install **Scriptable** (free) and open it once.
 2. Save `ledger_sms_logger.js` as **Ledger SMS Logger.js** in **iCloud Drive → Scriptable**. Replace the old file whenever the script changes.
@@ -117,6 +122,7 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
   - Visa card: top-ups ("Credit Card:Payment"), purchases (online and international POS), reversals, and card balance sent back to the account ("Credit Card:transfer")
   - Drahim portfolio top-ups (bank side only; Counter Acct is left empty on purpose, and Muhannad adds the Drahim side himself)
 - **Message types ignored:** OTP codes, declined transactions, "You received a message from …" (personal messages are never logged).
+- **Visa top-ups ("Credit Card:Payment") don't say which account paid.** Muhannad has one Al Rajhi account, so Counter Acct is the name `Al Rajhi account`. Add that name to the Al Rajhi account's Matches list in LedgerOS.
 - **Two date styles in the same bank:** transfers use `26/10/1 11:36` (yy/m/d) and card messages use `3/10/26 22:12` (d/m/yy). `ymdOrDmy` tries both readings and keeps the valid one closest to today that isn't in the future.
 - **Riyals are written `SR`** (`SR 165`, `91.16 SR`). The script reads them as SAR.
 - **Telling Al Rajhi apart from other English-language banks:** the first line must be an Al Rajhi heading **and** the SMS must have an Al Rajhi marker (`SR`, `Card:7777 ;Visa`, `By:6666;mada`, or `To:`/`From:` followed directly by 4 digits). A test checks that a meem-style "Online Purchase" isn't taken as Al Rajhi.
@@ -152,6 +158,15 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
 | Logged At | When the phone logged it |
 
 If the columns ever change, the script moves the old file aside as *Ledger Inbox (old columns).tsv* instead of mixing layouts.
+
+**The same row in LedgerOS (`pd_sms_inbox`):** `entry_date`, `entry_time`, `source`, `acct`, `counter_acct`, `kind` (= Type), `descr`, `amt` (null when blank), `side`, `fee`, `currency`, `fx_amount`, `remaining` and `logged_at`. `status` starts as `pending`, and the app sets it to `posted` (with `jv`), `dismissed` or `netted`. The **id is a hash of the row** (`cyrb53`), so the same SMS logged twice, by two automations or a re-run, stays one inbox row. The upload uses `Prefer: resolution=ignore-duplicates`.
+
+**In LedgerOS** (New JV → 📩 SMS):
+- Rows are grouped by the LedgerOS account each Acct maps to. Each group's "Matches" list holds the tokens for that account (`4321, 3456, SNB debit`).
+- Create JV builds one JV per SMS date. Each SMS gets its own line, plus an other half whose account he picks, or which is filled in when Counter Acct is one of his mapped accounts.
+- The two banks' SMS for one transfer are paired if they're within SAR 1 and a day apart, with any difference on a fee line.
+- Exact reversals cancel out.
+- Posting marks the SMS done.
 
 ## 5. How the script reads a message
 

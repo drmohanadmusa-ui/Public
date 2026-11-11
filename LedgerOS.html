@@ -568,12 +568,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.3.0';
+const APP_VERSION = '5.4.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.4.0', date:'2026-11-11', changes:[
+    'New: SMS inbox. Bank SMS logged by your iPhone wait behind the new SMS button in New JV, grouped by account. Pick each group\u2019s LedgerOS account once (a card and its account can share one), then Create JVs builds one JV per SMS date: every SMS on its own line, with the other half filled in except its account. You check it and post it; the app never posts for you.',
+    'Transfers between your own accounts get both sides filled in, and the two banks\u2019 SMS for the same transfer become one JV (up to SAR 1 apart; the difference goes on a Transfer fee line). A reversal that exactly matches a purchase cancels it out. Bank fees get their own line.',
+    'Posting the JV moves its SMS to Done. Dismiss hides an SMS you won\u2019t post, and Back to inbox undoes that. The Dashboard shows how many SMS are waiting, and Refresh in the inbox picks up new ones.',
+    'DATABASE CHANGE: adds the new pd_sms_inbox table. Copy and run the script under Settings \u2192 Database Schema, then add pd_sms_inbox to your backup script\u2019s table list.',
+  ]},
   {version:'5.3.0', date:'2026-11-08', changes:[
     'Drift Detection (Settings) has three new switches for provisions, all on by default: Compare per account (every provision line on an account is added up for the month, across all groups, and compared with the account), Income and expense accounts only (pass-through accounts like This Month Payable, receivables and liabilities are no longer checked), and Use my exclude list (pick accounts that are never checked; their Drift badge disappears).',
     'Drift Detection settings, including the threshold and months, now sync across your devices. Smart rules are checked exactly as before.',
@@ -1226,7 +1232,7 @@ const CHANGELOG = [
     'Added an iPhone/iPad home-screen icon, so adding the site to your home screen shows a real icon instead of a blank screenshot.',
   ]},
 ];
-let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[]};
+let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[], smsInbox:[]};
 let jvDrafts = []; // local-only scratchpad of unfinished JVs — not synced to cloud
 function loadJVDrafts(){ try{ return JSON.parse(localStorage.getItem('jvDrafts_v1')||'[]'); }catch(e){ return []; } }
 function saveJVDraftsList(){ try{ safeSetItem('jvDrafts_v1', JSON.stringify(jvDrafts)); }catch(e){} }
@@ -1308,6 +1314,7 @@ function normalizeDataShape(D){
   if(!Array.isArray(D.customForecastCategories)) D.customForecastCategories = [];
   if(!Array.isArray(D.forecastSnapshots)) D.forecastSnapshots = [];
   if(!Array.isArray(D.invRoboValueLog)) D.invRoboValueLog = [];
+  if(!Array.isArray(D.smsInbox)) D.smsInbox = [];
   if(!D.forecastPlans || typeof D.forecastPlans!=='object') D.forecastPlans = {};
   if(!D.nameTranslations || typeof D.nameTranslations!=='object') D.nameTranslations = {};
   if(!D.descrTranslations || typeof D.descrTranslations!=='object') D.descrTranslations = {};
@@ -2206,12 +2213,12 @@ async function fetchAllFromCloud(forceFullLedger){
   // slowest of the 16) with zero visible movement. Ledger's own page-by-page fetch progress
   // (ledgerProgress below) is blended in as a fraction of its single slot, so the bar now advances
   // smoothly through that wait instead of appearing to hang.
-  const TOTAL_SOURCES = 26;
+  const TOTAL_SOURCES = 27;
   let completedSources = 0; // counts the 24 non-ledger sources only
   let ledgerFraction = 0; // 0..1, how far through Ledger's own paginated fetch we are
   const recomputeSplashProgress = () => updateSplashProgress((completedSources + ledgerFraction) / TOTAL_SOURCES * 100);
   const tp = (p, isLedger) => p.then(r=>{ if(isLedger) ledgerFraction = 1; else completedSources++; recomputeSplashProgress(); return r; });
-  const [acc,led,bud,tpl,cat,subcat,drafts,prov,accr,jam,fplans,nameTr,descrTr,reBuild,farules,customCats,invOwn,invPlat,invPos,invTx,invVal,invCash,invSet,uiPrefs,fcSnaps,roboLog] = await Promise.all([
+  const [acc,led,bud,tpl,cat,subcat,drafts,prov,accr,jam,fplans,nameTr,descrTr,reBuild,farules,customCats,invOwn,invPlat,invPos,invTx,invVal,invCash,invSet,uiPrefs,fcSnaps,roboLog,smsRows] = await Promise.all([
     tp(fetchAllRows('pd_accounts','id')),
     tp(canSkipLedger? Promise.resolve({data: D.ledger.map(l=>({id:l.id,jv:l.jv,entry_date:l.date,acc:l.acc,descr:l.descr,amt:l.amt,alloc:l.alloc,allocatable:l.allocatable,acc_name_snapshot:l.accNameSnapshot||null,updated_at:l.updated_at||null})), error:null}) : fetchAllRows('pd_ledger','id','*',ledgerProgress), true),
     tp(fetchAllRows('pd_budget','id')),
@@ -2238,6 +2245,7 @@ async function fetchAllFromCloud(forceFullLedger){
     tp(fetchAllRows('pd_ui_prefs','id')),
     tp(fetchAllRows('pd_forecast_snapshots','id')),
     tp(fetchAllRows('pd_inv_robo_value_log','id')),
+    tp(fetchAllRows('pd_sms_inbox','id')),
   ]);
   if(acc.error||led.error||bud.error||tpl.error){ toast('Cloud load error',true); return; }
   D.accounts = acc.data.map(a=>({id:a.id, descr:a.descr, balance:a.balance, direction:a.direction, acc_type:a.acc_type, name:a.name, cf_type:a.cf_type, category:a.category, status:a.status, is_savings:!!a.is_savings, is_allocatable:!!a.is_allocatable, is_credit_card:!!a.is_credit_card, credit_limit:a.credit_limit, stmt_balance:a.stmt_balance, stmt_available:a.stmt_available, stmt_date:a.stmt_date||null, forecast_category:a.forecast_category||null, updated_at:a.updated_at||null}));
@@ -2266,6 +2274,8 @@ async function fetchAllFromCloud(forceFullLedger){
   if(!uiPrefs.error && uiPrefs.data.length){ const u = uiPrefs.data[0]; D.uiPrefs = {pageOrder: Array.isArray(u.page_order)? u.page_order : null, balanceStaleDays: Number(u.balance_stale_days)||0, dashboardLayout: Array.isArray(u.dashboard_layout)? u.dashboard_layout : null, positionBoxes: Array.isArray(u.position_boxes)? u.position_boxes : null, dismissals: (u.dismissals && typeof u.dismissals==='object' && !Array.isArray(u.dismissals))? u.dismissals : {}, forecastNotes: (u.forecast_notes && typeof u.forecast_notes==='object' && !Array.isArray(u.forecast_notes))? u.forecast_notes : {}, updated_at: u.updated_at||null}; }
   if(!fcSnaps.error){ D.forecastSnapshots = fcSnaps.data.map(s=>({id:s.id, anchorMonth:s.anchor_month, takenAt:s.taken_at, kind:s.kind||'auto', months:Array.isArray(s.months)?s.months:[], signFlips:(s.sign_flips&&typeof s.sign_flips==='object')?s.sign_flips:{}, updated_at:s.updated_at||null})); }
   if(!roboLog.error){ D.invRoboValueLog = roboLog.data.map(r=>({id:r.id, platformId:r.platform_id, date:r.entry_date, value:Number(r.value)||0, updated_at:r.updated_at||null})); }
+  // v5.4: a database that hasn't had the schema script run yet has no pd_sms_inbox — keep what's on this device.
+  if(smsRows && !smsRows.error){ D.smsInbox = smsRows.data.map(smsFromRow); }
   syncCustomForecastCategories();
   if(serverLedgerMarker) safeSetItem('ledgerLastChanged', serverLedgerMarker);
 }
@@ -2913,6 +2923,31 @@ create table if not exists pd_inv_robo_value_log (
 );
 create index if not exists idx_inv_robo_log_platform on pd_inv_robo_value_log(platform_id);
 
+-- v5.4: bank SMS logged on the iPhone (dev/ledgeros/sms in the repo). The phone inserts rows; the
+-- app only changes status (pending / posted / dismissed / netted) and jv. The id is a hash of the
+-- transaction, so the same SMS logged twice stays one row.
+create table if not exists pd_sms_inbox (
+  id            bigint primary key,
+  entry_date    date,
+  entry_time    text,
+  source        text,
+  acct          text,
+  counter_acct  text,
+  kind          text,
+  descr         text,
+  amt           numeric,
+  side          text,
+  fee           numeric,
+  currency      text default 'SAR',
+  fx_amount     numeric,
+  remaining     text,
+  logged_at     timestamptz,
+  status        text default 'pending',
+  jv            integer,
+  updated_at    timestamptz default now()
+);
+create index if not exists idx_sms_inbox_status on pd_sms_inbox(status);
+
 create index if not exists idx_inv_positions_platform on pd_inv_positions(platform_id);
 create index if not exists idx_inv_tx_position        on pd_inv_transactions(position_id);
 create index if not exists idx_inv_val_position       on pd_inv_valuations(position_id);
@@ -2979,6 +3014,7 @@ begin
     'pd_inv_transactions','pd_inv_valuations','pd_inv_cash_movements','pd_inv_settings','pd_ui_prefs',
     'pd_forecast_snapshots',
     'pd_inv_robo_value_log',
+    'pd_sms_inbox',
     'pd_sync_meta'
   ]
   loop
@@ -4842,6 +4878,8 @@ function dashboardBudgetRows(ym){
 }
 function dashboardTodoItems(){
   const items = [];
+  const smsWaiting = smsPending().length;
+  if(smsWaiting) items.push({tone:'warn', title:smsWaiting+' bank SMS to post', sub:'Logged by your iPhone. Opens the SMS inbox in New JV', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
     const s = bankReconState(a);
     if(s.noLimit) return;
@@ -5117,6 +5155,7 @@ function renderNewJV(){
         </div>
         <div><label class="fl">&nbsp;</label><button class="btn ghost sm" onclick="goManageTemplates()">+ Manage templates</button></div>
         <div><label class="fl">&nbsp;</label><button class="btn ghost sm" onclick="openDraftsModal()">📝 Drafts${jvDrafts.length? ' ('+jvDrafts.length+')':''}</button></div>
+        <div><label class="fl">&nbsp;</label><button class="btn ${smsPending().length?'pri':'ghost'} sm" id="smsInboxBtn" onclick="openSmsInbox()">📩 SMS${smsPending().length? ' ('+smsPending().length+')':''}</button></div>
         <div><label class="fl">&nbsp;</label><button class="btn ${jvBalanceCheckMode?'pri':'ghost'} sm" onclick="toggleJvBalanceCheck()">🔍 Balance Check</button></div>
         <div><label class="fl">&nbsp;</label><button class="btn ghost sm" onclick="clearAllJVLines()">🗑 Clear All</button></div>
       </div>
@@ -5712,7 +5751,7 @@ async function saveJVDraft(){
   if(blockIfSyncing()) return;
   const lines = jvDraft.lines.filter(l=>l.acc || l.descr || l.amt!=='');
   if(!lines.length){ toast('Nothing to save yet', true); return; }
-  const draft = { id: nextDraftId(), date: jvDraft.date, lines: lines.map(l=>({acc:l.acc, descr:l.descr||'', amt:l.amt})), savedAt: nowISO() };
+  const draft = { id: nextDraftId(), date: jvDraft.date, lines: lines.map(l=>Object.assign({acc:l.acc, descr:l.descr||'', amt:l.amt}, l.smsId? {smsId:l.smsId} : {})), savedAt: nowISO() };
   jvDrafts.push(draft);
   saveJVDraftsList();
   toast('Saved as draft — find it under 📝 Drafts'+(syncQueue.length?' (queued for sync)':''));
@@ -5777,7 +5816,7 @@ async function continueDraft(id){
   const d = jvDrafts.find(x=>x.id===id);
   if(!d) return;
   const base = d.updated_at||null;
-  jvDraft = { date: d.date, lines: d.lines.map(l=>({key:Math.random().toString(36).slice(2), acc:l.acc, descr:l.descr, amt:l.amt, _matches:[], _hi:-1})) };
+  jvDraft = { date: d.date, lines: d.lines.map(l=>Object.assign({key:Math.random().toString(36).slice(2), acc:l.acc, descr:l.descr, amt:l.amt, _matches:[], _hi:-1}, l.smsId? {smsId:l.smsId} : {})) };
   jvDrafts = jvDrafts.filter(x=>x.id!==id);
   saveJVDraftsList();
   closeModal();
@@ -5793,6 +5832,220 @@ async function deleteDraft(id){
   saveJVDraftsList();
   openDraftsModal();
   await syncWrite('pd_drafts', 'delete', {id}, base);
+}
+
+/* ============================= SMS INBOX (v5.4) ============================= */
+// Bank SMS logged by Muhannad's iPhone (dev/ledgeros/sms) land in pd_sms_inbox, one row per
+// transaction: acct = the card/account it belongs to (last 4, or a name such as "Travel", "urpay",
+// "SNB debit"), counter = the other side's account when the SMS shows it, side = Dr/Cr on acct,
+// amt = SAR (null when only a foreign amount is known). The app never posts these: it builds JVs
+// (one per SMS date, every SMS on its own line) for him to check and post.
+function smsFromRow(r){
+  const n = v => (v===null||v===undefined||v==='')? null : Number(v);
+  return {id:Number(r.id), date:r.entry_date||'', time:r.entry_time||'', source:r.source||'', acct:String(r.acct||''), counter:String(r.counter_acct||''),
+    kind:r.kind||'', descr:r.descr||'', amt:n(r.amt), side:r.side==='Dr'?'Dr':'Cr', fee:n(r.fee), currency:r.currency||'SAR', fxAmt:n(r.fx_amount),
+    remaining:r.remaining||'', loggedAt:r.logged_at||null, status:r.status||'pending', jv:r.jv||null, updated_at:r.updated_at||null};
+}
+function smsToRow(s){
+  return {id:s.id, entry_date:s.date||null, entry_time:s.time||null, source:s.source, acct:s.acct, counter_acct:s.counter||null, kind:s.kind, descr:s.descr,
+    amt:s.amt, side:s.side, fee:s.fee, currency:s.currency, fx_amount:s.fxAmt, remaining:s.remaining||null, logged_at:s.loggedAt, status:s.status, jv:s.jv};
+}
+const smsR2 = n => Math.round(Number(n)*100)/100;
+const smsArg = v => esc(JSON.stringify(String(v)));   // a string argument inside onclick="..."
+// Which LedgerOS account each SMS token belongs to, synced in pd_ui_prefs.dismissals.smsMap as
+// {token: accountId} (no new column). Several tokens can point at one account: a mada card and
+// its account, or the SAIB travel card and the Al Rajhi Visa both on Travel Holding.
+function getSmsMap(){ const m = getUiDismissals().smsMap; return (m && typeof m==='object' && !Array.isArray(m))? m : {}; }
+function smsAccFor(token){ const id = getSmsMap()[String(token||'')]; return id? Number(id) : null; }
+async function setSmsAccount(token, accId){
+  const map = Object.assign({}, getSmsMap());
+  if(accId) map[String(token)] = Number(accId); else delete map[String(token)];
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {smsMap: map}));
+}
+// The full list of tokens for one account, typed as "4321, 3456, SNB debit". Replaces that
+// account's list; other accounts' tokens are untouched.
+async function setSmsAliases(accId, text){
+  accId = Number(accId);
+  const map = {};
+  Object.entries(getSmsMap()).forEach(([k,v])=>{ if(Number(v)!==accId) map[k] = v; });
+  String(text||'').split(',').map(t=>t.trim()).filter(Boolean).forEach(t=>{ map[t] = accId; });
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {smsMap: map}));
+}
+// SMS already sitting in the JV being typed or in a saved draft are not "waiting" any more.
+function smsIdsInJVs(){
+  const ids = new Set();
+  const add = l => { if(l && l.smsId) ids.add(Number(l.smsId)); };
+  ((jvDraft||{}).lines||[]).forEach(add);
+  (jvDrafts||[]).forEach(d=>(d.lines||[]).forEach(add));
+  return ids;
+}
+function smsPending(){ const busy = smsIdsInJVs(); return (D.smsInbox||[]).filter(s=>s.status==='pending' && !busy.has(s.id)); }
+function smsSigned(s){ return s.amt===null? null : (s.side==='Dr'? s.amt : -s.amt); }
+function smsGroups(){
+  const groups = {};
+  smsPending().forEach(s=>{
+    const acc = smsAccFor(s.acct);
+    const key = acc? 'a:'+acc : 'u:'+s.source+'|'+s.acct;
+    (groups[key] = groups[key] || {key, acc, rows:[]}).rows.push(s);
+  });
+  return Object.values(groups).map(g=>{
+    g.rows.sort((a,b)=>(a.date+' '+a.time).localeCompare(b.date+' '+b.time));
+    g.label = g.acc? g.acc+' · '+accShort(g.acc) : g.rows[0].source+' · '+g.rows[0].acct;
+    g.tokens = [...new Set(g.rows.map(r=>r.acct))];
+    return g;
+  }).sort((a,b)=> (a.acc?0:1)-(b.acc?0:1) || a.label.localeCompare(b.label));
+}
+// A reversal that exactly matches a purchase in the same group (same day, same merchant, same SAR
+// amount, or same foreign amount when neither has SAR) cancels it out: neither gets posted.
+function smsMerchantKey(s){ return String(s.descr||'').replace(/\([^)]*\)/g,'').replace(/\s+/g,' ').trim().toLowerCase(); }
+function smsNettedPairs(rows){
+  const used = new Set(), pairs = [];
+  rows.filter(r=>/reversal/i.test(r.kind)).forEach(rev=>{
+    const p = rows.find(x=> !used.has(x.id) && x.id!==rev.id && !/reversal/i.test(x.kind) && x.side!==rev.side && x.date===rev.date
+      && smsMerchantKey(x)===smsMerchantKey(rev)
+      && ((x.amt!==null && rev.amt!==null && Math.abs(x.amt-rev.amt)<0.005)
+          || (x.amt===null && rev.amt===null && x.fxAmt!==null && rev.fxAmt!==null && x.currency===rev.currency && Math.abs(x.fxAmt-rev.fxAmt)<0.005)));
+    if(p){ used.add(p.id); used.add(rev.id); pairs.push([p, rev]); }
+  });
+  return pairs;
+}
+function smsDaysApart(a, b){ return Math.abs((new Date(a+'T00:00:00') - new Date(b+'T00:00:00'))/86400000); }
+// The other bank's SMS for the same transfer between his own accounts: in account B, opposite
+// side, within SAR 1 (SNB adds its 0.50 fee into the amount) and a day, pointing back at A if it
+// names anything of his.
+function smsFindPartner(r, accA, accB, pool, taken){
+  return pool.find(s=> !taken.has(s.id) && s.id!==r.id && smsAccFor(s.acct)===accB && s.side!==r.side
+    && s.amt!==null && r.amt!==null && Math.abs(s.amt-r.amt)<=1.0001 && s.date && r.date && smsDaysApart(s.date, r.date)<=1
+    && (!s.counter || !smsAccFor(s.counter) || smsAccFor(s.counter)===accA)) || null;
+}
+// Builds (without changing anything) the JVs for one group: one per SMS date, each SMS on its own
+// line with its other half. The other half's account is filled only when it's one of his own
+// mapped accounts; otherwise he picks it. Fees get a line of their own.
+function smsBuildJVs(groupKey){
+  const g = smsGroups().find(x=>x.key===groupKey);
+  if(!g || !g.acc) return {jvs:[], netted:[], group:g||null};
+  const accA = g.acc, pool = smsPending();
+  const netted = new Set(smsNettedPairs(g.rows).flat().map(r=>r.id));
+  const taken = new Set(), byDate = {};
+  const L = (acc, descr, amt, smsId) => ({acc: acc? String(acc) : '', descr, amt: (amt===null||amt===undefined)? '' : String(smsR2(amt)), smsId});
+  g.rows.forEach(r=>{
+    if(netted.has(r.id) || taken.has(r.id)) return;
+    taken.add(r.id);
+    const d = r.date || todayStr();
+    const lines = (byDate[d] = byDate[d] || []);
+    const signed = smsSigned(r);
+    lines.push(L(accA, r.descr, signed, r.id));
+    const accB = smsAccFor(r.counter);
+    if(accB && accB!==accA){
+      const p = smsFindPartner(r, accA, accB, pool, taken);
+      if(p){
+        taken.add(p.id);
+        const pSigned = smsSigned(p);
+        lines.push(L(accB, p.descr || r.descr, pSigned, p.id));
+        const diff = smsR2(-(signed + pSigned));
+        if(Math.abs(diff)>=0.005) lines.push(L('', 'Transfer fee · '+r.descr, diff, r.id));
+      } else lines.push(L(accB, r.descr, signed===null? null : -signed, r.id));
+    } else lines.push(L('', r.descr, signed===null? null : -signed, r.id));
+    if(r.fee && r.fee>0){ lines.push(L(accA, 'Fee · '+r.descr, -r.fee, r.id)); lines.push(L('', 'Fee · '+r.descr, r.fee, r.id)); }
+  });
+  return {jvs: Object.keys(byDate).sort().map(d=>({date:d, lines:byDate[d]})), netted:[...netted], group:g};
+}
+async function smsSetStatus(ids, status, jv){
+  const set = new Set(ids.map(Number));
+  const changed = (D.smsInbox||[]).filter(s=>set.has(s.id));
+  const bases = changed.map(s=>s.updated_at||null);
+  changed.forEach(s=>{ s.status = status; s.jv = jv||null; s.updated_at = nowISO(); });
+  persistLocal();
+  for(let i=0;i<changed.length;i++) await syncWrite('pd_sms_inbox','upsert',{id:changed[i].id, status, jv:jv||null}, bases[i]);
+}
+// One click on a group: the earliest date opens in New JV, every other date is saved as a draft.
+async function smsCreateJVs(groupKey){
+  if(blockIfSyncing()) return;
+  const {jvs, netted, group} = smsBuildJVs(groupKey);
+  if(!group){ toast('That group is no longer waiting', true); return; }
+  if(!group.acc){ toast('Choose this group’s LedgerOS account first', true); return; }
+  const busy = (jvDraft.lines||[]).some(l=>!jvIsBlankLine(l));
+  if(jvs.length && busy && !confirm('The JV you are typing will be saved as a draft first. Continue?')) return;
+  if(jvs.length && busy) await saveJVDraft();
+  if(netted.length) await smsSetStatus(netted, 'netted');
+  const [first, ...rest] = jvs;
+  for(const j of rest){
+    const draft = {id: nextDraftId(), date: j.date, lines: j.lines.map(l=>({acc:l.acc, descr:l.descr, amt:l.amt, smsId:l.smsId})), savedAt: nowISO()};
+    jvDrafts.push(draft);
+    saveJVDraftsList();
+    await syncWrite('pd_drafts','upsert',{id:draft.id, entry_date:draft.date, lines:draft.lines, saved_at:draft.savedAt}, null);
+  }
+  if(first){ jvDraft = {date:first.date, lines:first.lines.map(l=>Object.assign(freshLine(), l))}; jvBalanceCheckSelected = new Set(); }
+  closeModal();
+  if(screen!=='newjv') go('newjv'); else renderNewJV();
+  const parts = [];
+  if(first) parts.push(fmtDateShort(first.date)+' is open');
+  if(rest.length) parts.push(rest.length+' more date'+(rest.length===1?'':'s')+' saved under Drafts');
+  if(netted.length) parts.push(netted.length+' SMS cancelled out');
+  toast(parts.join(' · ')+(first? '. Pick the missing accounts, check, then post.' : ''));
+}
+async function smsDismiss(id){ await smsSetStatus([id], 'dismissed'); openSmsInbox(); }
+async function smsRestore(id){ await smsSetStatus([id], 'pending'); openSmsInbox(); }
+function smsCopy(id){
+  const s = (D.smsInbox||[]).find(x=>x.id===id); if(!s) return;
+  const t = [s.date, s.time, s.source, s.acct, s.descr, s.amt===null? '' : smsSigned(s)].join('\t');
+  try{ navigator.clipboard.writeText(t).then(()=>toast('Copied'), ()=>toast('Copy not available here', true)); }catch(e){ toast('Copy not available here', true); }
+}
+async function refreshSmsInbox(){
+  if(!usingCloud || !SB){ toast('Connect cloud sync to receive SMS from your phone', true); return; }
+  const r = await fetchAllRows('pd_sms_inbox','id');
+  if(r.error){ toast('No SMS inbox in the database yet: run the script under Settings → Database Schema', true); return; }
+  D.smsInbox = r.data.map(smsFromRow);
+  persistLocal();
+  openSmsInbox();
+  toast('SMS inbox refreshed');
+}
+let smsDoneOpen = false;
+function smsRowHTML(s, actions){
+  const signed = smsSigned(s);
+  const amtTxt = signed===null? `<span class="mut">${esc(s.currency)} ${esc(s.fxAmt===null? '' : String(s.fxAmt))}</span><div class="mut" style="font-size:11px">type the SAR</div>`
+    : `<span class="${moneyClass(signed)}">${money(signed)}</span>`;
+  const other = s.counter? (smsAccFor(s.counter)? accShort(smsAccFor(s.counter)) : s.counter) : '';
+  const extra = [s.kind, s.fee? 'fee '+money(s.fee) : '', (s.currency!=='SAR' && signed!==null && s.fxAmt!==null)? s.currency+' '+s.fxAmt : '',
+    s.remaining? 'remaining '+s.remaining : '', other? '↔ '+other : ''].filter(Boolean).join(' · ');
+  return `<tr><td class="mono" style="white-space:nowrap">${esc(fmtDateShort(s.date))} <span class="mut">${esc(s.time)}</span></td>
+    <td>${esc(s.descr)}<div class="mut" style="font-size:11px">${esc(extra)}</div></td>
+    <td class="num mono">${amtTxt}</td><td style="white-space:nowrap;text-align:right">${actions}</td></tr>`;
+}
+function openSmsInbox(){
+  const groups = smsGroups();
+  const accOpts = () => D.accounts.filter(a=>[1,2].includes(firstDigit(a.id)) && a.status!=='Inactive')
+    .map(a=>`<option value="${a.id}">${a.id} · ${esc(accShort(a.id))}</option>`).join('');
+  const done = (D.smsInbox||[]).filter(s=>s.status!=='pending').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time));
+  const busy = smsIdsInJVs();
+  const inJVs = (D.smsInbox||[]).filter(s=>s.status==='pending' && busy.has(s.id)).length;
+  const waiting = groups.reduce((n,g)=>n+g.rows.length, 0);
+  const groupHTML = g => {
+    const netted = new Set(smsNettedPairs(g.rows).flat().map(r=>r.id));
+    const dates = new Set(g.rows.filter(r=>!netted.has(r.id)).map(r=>r.date)).size;
+    const tokens = Object.entries(getSmsMap()).filter(([,v])=>Number(v)===g.acc).map(([k])=>k).join(', ');
+    return `<div class="panel sms-group" style="margin:10px 0;padding:12px" data-group="${esc(g.key)}">
+      <div class="row" style="align-items:flex-end;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px"><b>${esc(g.label)}</b> <span class="mut">${g.rows.length} SMS</span>
+          ${g.acc? `<div class="mut" style="font-size:11px;margin-top:4px">Matches: <input class="sms-aliases" style="width:220px;padding:2px 6px;font-size:12px" value="${esc(tokens)}" title="Card and account numbers or names from the SMS that belong to this account, separated by commas" onchange="setSmsAliases(${g.acc}, this.value).then(openSmsInbox)"></div>`
+            : `<div style="margin-top:4px"><select class="sms-acc-pick" onchange="setSmsAccount(${smsArg(g.tokens[0])}, this.value).then(openSmsInbox)"><option value="">Which LedgerOS account is ${esc(g.tokens[0])}?</option>${accOpts()}</select></div>`}
+        </div>
+        <button class="btn pri sm" ${g.acc?'':'disabled'} onclick="smsCreateJVs(${smsArg(g.key)})">${dates>1? 'Create '+dates+' JVs' : 'Create JV'}</button>
+      </div>
+      <table style="margin-top:8px"><tbody>${g.rows.map(s=>smsRowHTML(s, netted.has(s.id)? '<span class="pill">cancels out</span>'
+        : `<button class="btn ghost sm" onclick="smsCopy(${s.id})">Copy</button> <button class="btn ghost sm" onclick="smsDismiss(${s.id})">Dismiss</button>`)).join('')}</tbody></table>
+    </div>`;
+  };
+  showModal(`
+    <h3>📩 SMS inbox</h3>
+    <p class="mut" style="font-size:12px">Bank SMS logged by your iPhone, grouped by account. Create JV builds one JV per SMS date, each SMS on its own line with the other half ready for you to pick its account. Nothing is posted until you post it.</p>
+    <div class="row" style="justify-content:space-between;align-items:center"><span class="mut">${waiting} waiting${inJVs? ' · '+inJVs+' already in a JV or draft' : ''}</span><button class="btn ghost sm" onclick="refreshSmsInbox()">↻ Refresh</button></div>
+    ${groups.map(groupHTML).join('') || '<div class="empty" style="padding:18px">No SMS waiting</div>'}
+    <div style="margin-top:12px"><button class="btn ghost sm" id="smsDoneToggle" onclick="smsDoneOpen=!smsDoneOpen; openSmsInbox()">${smsDoneOpen? '▾' : '▸'} Done (${done.length})</button>
+      ${smsDoneOpen? `<table style="margin-top:6px"><tbody>${done.map(s=>smsRowHTML(s, s.status==='posted'? `<span class="mut" style="font-size:11px">JV #${esc(String(s.jv||''))}</span>`
+        : `<span class="mut" style="font-size:11px">${s.status==='netted'? 'cancelled out' : 'dismissed'}</span> <button class="btn ghost sm" onclick="smsRestore(${s.id})">Back to inbox</button>`)).join('') || '<tr><td class="empty">Nothing yet</td></tr>'}</tbody></table>` : ''}
+    </div>
+    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`, true);
 }
 
 async function postJV(){
@@ -5827,7 +6080,9 @@ async function postJV(){
     for(const r of rows){
       await syncWrite('pd_ledger', 'upsert', {id:r.id, jv:r.jv, entry_date:r.date, acc:r.acc, descr:r.descr, amt:r.amt, alloc:r.alloc, allocatable:r.allocatable, acc_name_snapshot:r.accNameSnapshot}, null);
     }
-    toast('JV #'+jv+' posted ✓'+(syncQueue.length? ' (queued for sync)':''));
+    const smsIds = [...new Set(lines.map(l=>Number(l.smsId)).filter(Boolean))];
+    if(smsIds.length){ try{ await smsSetStatus(smsIds, 'posted', jv); }catch(e){ logActivity('error', 'Posted JV #'+jv+' but could not mark its SMS as posted: '+e); } }
+    toast('JV #'+jv+' posted ✓'+(smsIds.length? ' · '+smsIds.length+' SMS done' : '')+(syncQueue.length? ' (queued for sync)':''));
     logActivity('action', 'Posted JV #'+jv+' ('+lines.length+' lines, net '+money(total)+')');
     resetJVDraft();
     ledgerFilter = {acc:'', from:'', to:'', q:'', jv:'', preset:'', specificMonth:'', unallocOnly:false};
@@ -15298,7 +15553,7 @@ async function restoreFromBackup(parsed){
         customForecastCategories: parsed.customForecastCategories||[],
         invOwners: parsed.invOwners||[], invPlatforms: parsed.invPlatforms||[], invPositions: parsed.invPositions||[],
         invTransactions: parsed.invTransactions||[], invValuations: parsed.invValuations||[], invCashMovements: parsed.invCashMovements||[],
-        invSettings: parsed.invSettings||{}, uiPrefs: parsed.uiPrefs||{}, forecastSnapshots: parsed.forecastSnapshots||[], invRoboValueLog: parsed.invRoboValueLog||[] };
+        invSettings: parsed.invSettings||{}, uiPrefs: parsed.uiPrefs||{}, forecastSnapshots: parsed.forecastSnapshots||[], invRoboValueLog: parsed.invRoboValueLog||[], smsInbox: parsed.smsInbox||[] };
   // Backfills anything still missing (an older backup file predating a module, for instance) with
   // the same defaults the app boots with, rather than leaving it undefined — this is exactly the
   // normalization step that was missing here before, which crashed the cloud-restore path below
@@ -15344,6 +15599,7 @@ async function restoreFromBackup(parsed){
   await SB.from('pd_ui_prefs').delete().neq('id',-1); bump('Clearing old data');
   await SB.from('pd_forecast_snapshots').delete().neq('id',-1); bump('Clearing old data');
   await SB.from('pd_inv_robo_value_log').delete().neq('id',-1); bump('Clearing old data');
+  await SB.from('pd_sms_inbox').delete().neq('id',-1); bump('Clearing old data');
   if(D.accounts.length) await insertWithRetry('pd_accounts', D.accounts.map(a=>({id:a.id,descr:a.descr,balance:a.balance,direction:a.direction,acc_type:a.acc_type,name:a.name,cf_type:a.cf_type,category:a.category,status:a.status,is_savings:!!a.is_savings,is_allocatable:!!a.is_allocatable,is_credit_card:!!a.is_credit_card,credit_limit:a.credit_limit,stmt_balance:a.stmt_balance,stmt_available:a.stmt_available,stmt_date:a.stmt_date,forecast_category:a.forecast_category||null})));
   bump('Restoring accounts');
   if(D.templates.length) await insertWithRetry('pd_templates', D.templates.map(t=>({id:t.id,name:t.name,lines:t.lines})));
@@ -15375,6 +15631,7 @@ async function restoreFromBackup(parsed){
   if(D.uiPrefs && (D.uiPrefs.pageOrder || D.uiPrefs.balanceStaleDays || D.uiPrefs.dashboardLayout || D.uiPrefs.positionBoxes || Object.keys(D.uiPrefs.dismissals||{}).length || Object.keys(D.uiPrefs.forecastNotes||{}).length)) await insertWithRetry('pd_ui_prefs', [{id:1, page_order:D.uiPrefs.pageOrder||null, balance_stale_days:getBalanceStaleDays(), dashboard_layout:D.uiPrefs.dashboardLayout||null, position_boxes:D.uiPrefs.positionBoxes||null, dismissals:D.uiPrefs.dismissals||{}, forecast_notes:D.uiPrefs.forecastNotes||{}}]);
   if((D.forecastSnapshots||[]).length) await insertWithRetry('pd_forecast_snapshots', D.forecastSnapshots.map(s=>({id:s.id, anchor_month:s.anchorMonth, taken_at:s.takenAt, kind:s.kind||'auto', months:s.months||[], sign_flips:s.signFlips||{}})));
   if((D.invRoboValueLog||[]).length) await insertWithRetry('pd_inv_robo_value_log', D.invRoboValueLog.map(r=>({id:r.id, platform_id:r.platformId, entry_date:r.date, value:Number(r.value)||0})));
+  if((D.smsInbox||[]).length) await insertWithRetry('pd_sms_inbox', D.smsInbox.map(smsToRow));
   bump('Restoring Investments');
   bump('Restoring Custom Categories');
   if(Object.keys(D.forecastPlans).length) await insertWithRetry('pd_forecast_plans', [{id:1, plans:D.forecastPlans}]);
@@ -15989,6 +16246,7 @@ async function clearEverything(){
     await SB.from('pd_ui_prefs').delete().neq('id',-1);
     await SB.from('pd_forecast_snapshots').delete().neq('id',-1);
     await SB.from('pd_inv_robo_value_log').delete().neq('id',-1);
+    await SB.from('pd_sms_inbox').delete().neq('id',-1);
   }
   go('dashboard');
 }

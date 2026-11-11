@@ -6,9 +6,15 @@ const fs = require("fs");
 const path = require("path");
 const SRC = fs.readFileSync(path.join(__dirname, "ledger_sms_logger.js"), "utf8");
 
-function runScript(sms, store) {
+// net: {keys:bool, code:number|null (null = no connection), sent:[]} — fake Keychain + Request
+function runScript(sms, store, net) {
   const out = [];
+  net = net || { keys: false, code: 201, sent: [] };
   const ctx = {
+    Keychain: { contains: () => net.keys, get: k => (k === "ledgeros_sb_url" ? "https://test.example.co/" : "test-key-0123456789abcdef0123"), set() {} },
+    Request: class { constructor(u) { this.url = u; } async loadString() {
+      if (net.code === null) throw new Error("offline");
+      net.sent.push({ url: this.url, headers: this.headers, rows: JSON.parse(this.body) }); this.response = { statusCode: net.code }; return ""; } },
     __NOW__: "2026-11-11T12:00:00",          // pinned "today" (SAIB dates have no year)
     args: { shortcutParameter: sms },
     Pasteboard: { pasteString: () => "" },
@@ -20,7 +26,7 @@ function runScript(sms, store) {
     FileManager: { iCloud: () => ({
       documentsDirectory: () => "/d", joinPath: (a, b) => a + "/" + b,
       fileExists: p => p in store, downloadFileFromiCloud: async () => {},
-      readString: p => store[p], writeString: (p, c) => { store[p] = c; },
+      readString: p => store[p], writeString: (p, c) => { store[p] = c; }, remove: p => { delete store[p]; },
     }) },
   };
   const fn = new Function(...Object.keys(ctx), `return (async () => {${SRC}\n})()`);
@@ -236,7 +242,7 @@ const CASES = [
     expect: { acct: "5555", counter: "9103", type: "Outgoing transfer", desc: "TEST PAYEE", amount: "221", side: "Cr" } },
   { name: "Al Rajhi Visa card top-up in CAD (date d/m/yy)",
     sms: "Credit Card:Payment\nCard:Visa 7777\nAmount:CAD 2318\nBalance:2318 CAD\n3/10/26 22:12",
-    expect: { date: "2026-10-03", acct: "7777", type: "Card top-up", side: "Dr", amount: "", currency: "CAD", fxAmount: "2318", remaining: "CAD 2318" } },
+    expect: { date: "2026-10-03", acct: "7777", counter: "Al Rajhi account", type: "Card top-up", side: "Dr", amount: "", currency: "CAD", fxAmount: "2318", remaining: "CAD 2318" } },
   { name: "Al Rajhi Visa card purchase abroad",
     sms: "Online Purchase\nCard:7777 ;Visa-Apple Pay\nAmount:54.7 AED\nAt: TEST TAXI\nCountry:UAE\nBalance:433.8 AED\n12/10/26 13:03",
     expect: { acct: "7777", type: "Online purchase (Apple Pay)", desc: "TEST TAXI (AED 54.7)", side: "Cr", currency: "AED", remaining: "AED 433.8" } },
@@ -317,6 +323,40 @@ const CASES = [
     }
     if (problems.length) { fail++; console.log(`FAIL ${c.name}\n   ${problems.join("\n   ")}`); }
     else pass++;
+  }
+  // ---------- upload to LedgerOS (pd_sms_inbox) ----------
+  const check = (cond, name) => { if (cond) pass++; else { fail++; console.log("FAIL " + name); } };
+  const queued = st => { try { return JSON.parse(st["/d/Ledger Upload Queue.json"] || "[]").length; } catch (e) { return -1; } };
+  const SMS = CASES[0].sms;
+  {
+    const store = {}, net = { keys: true, code: 201, sent: [] };
+    await runScript(SMS, store, net);
+    const row = net.sent[0] && net.sent[0].rows[0];
+    check(row && net.sent[0].url === "https://test.example.co/rest/v1/pd_sms_inbox?on_conflict=id"
+      && /ignore-duplicates/.test(net.sent[0].headers.Prefer) && net.sent[0].headers.apikey, "upload: posts to pd_sms_inbox, ignoring duplicates");
+    check(row && row.amt === 47.66 && row.side === "Cr" && row.entry_date === "2026-11-11" && row.acct === "1234" && row.kind === "Online purchase (Apple Pay)"
+      && row.descr === "TEST MERCHANT" && row.fee === null && row.currency === "SAR" && row.counter_acct === null && Number.isInteger(row.id) && row.id > 0 && row.id < 2 ** 53,
+      "upload: the row uses the table's columns, numbers as numbers, blanks as null, a safe integer id");
+    const again = { keys: true, code: 201, sent: [] };
+    await runScript(SMS, {}, again);
+    check(again.sent[0] && again.sent[0].rows[0].id === row.id, "upload: the same SMS always gets the same id (one inbox row)");
+    check(!store["/d/Ledger Upload Queue.json"], "upload: nothing left in the queue after a good upload");
+  }
+  {
+    const store = {}, off = { keys: true, code: null, sent: [] };
+    const res = await runScript(SMS, store, off);
+    check(/no connection/.test(res) && queued(store) === 1, "upload: offline, the row waits in the queue (still logged on the phone)");
+    const on = { keys: true, code: 201, sent: [] };
+    await runScript(CASES[1].sms, store, on);
+    check(on.sent[0] && on.sent[0].rows.length === 2 && !store["/d/Ledger Upload Queue.json"], "upload: the next SMS sends the waiting row too, then the queue is empty");
+    const bad = { keys: true, code: 401, sent: [] };
+    const r401 = await runScript(CASES[2].sms, store, bad);
+    check(/401/.test(r401) && queued(store) === 1, "upload: a refused upload (wrong key) is kept for later and reported");
+  }
+  {
+    const store = {}, none = { keys: false, code: 201, sent: [] };
+    const res = await runScript(SMS, store, none);
+    check(/not connected/.test(res) && none.sent.length === 0 && /\t47\.66\t/.test(store["/d/Ledger Inbox.tsv"]), "upload: before setup, rows are still logged on the phone and queued");
   }
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
