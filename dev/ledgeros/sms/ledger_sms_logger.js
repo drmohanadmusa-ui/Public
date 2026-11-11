@@ -102,7 +102,7 @@ const anyDate = (t, order) => {
   let date = "";
   if (iso) date = `${iso[1]}-${iso[2]}-${iso[3]}`;
   else {
-    const m = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)/);
+    const m = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)/) || t.match(/(?<!\d)(\d{1,2})-(\d{1,2})-(\d{4})(?!\d)/);
     if (m) {
       const now = TODAY(), ampm = /\d:\d{2}\W*[AP]M/i.test(t);
       const read = (dd, mo, yy) => {
@@ -211,9 +211,14 @@ const PARSERS = [
           : /POS/i.test(head) ? "POS purchase" : "Online purchase";
         if (!refundish && /Apple Pay/i.test(t)) type += " (Apple Pay)";
         const pk = fxPack(m, rate);
+        let feeOut = fee && parseFloat(fee) > 0 ? fee : "";
+        if (feeOut && pk.amount) {            // his choice: the international (FX) fee is part of the purchase amount
+          pk.amount = (Math.round((parseFloat(pk.amount) + parseFloat(feeOut)) * 100) / 100).toFixed(2);
+          feeOut = "";
+        }
         return { ...base, source: "SNB CC", acct: card, type,
           desc: merchant ? (pk.currency === "SAR" ? merchant : `${merchant} (${pk.currency} ${pk.fxAmount})`) : type,
-          side: refundish ? "Dr" : "Cr", fee: fee && parseFloat(fee) > 0 ? fee : "", remaining: remainingOf(), ...pk };
+          side: refundish ? "Dr" : "Cr", fee: feeOut, remaining: remainingOf(), ...pk };
       }
 
       // ---------- debit account ----------
@@ -481,6 +486,80 @@ const PARSERS = [
       const acc = (one("Acc").match(/\d{4}/) || [""])[0];
       return { ...base, type: incoming ? "Incoming transfer" : "Outgoing transfer", desc: who, counter: acc,
         amount: sar(one("Amount")), side: incoming ? "Dr" : "Cr" };
+    },
+  },
+  {
+    source: "urpay",
+    // urpay wallet: one account, so acct = "urpay". Never copies the IBAN in "From:SA…" lines.
+    test: t => /^(Top Up via Apple Pay|Outgoing international transfer|Debit Intl\.?\s*Transfer|Credit via wallet)/i.test(linesOf(t)[0] || ""),
+    parse: t => {
+      const L = linesOf(t), head = L[0];
+      // exact label + colon: "To:" must not match "Total:"
+      const all = key => L.filter(l => new RegExp(`^${key}\\s*:`, "i").test(l)).map(l => l.replace(new RegExp(`^${key}\\s*:\\s*`, "i"), "").trim());
+      const one = key => all(key)[0] || "";
+      const { date, time } = anyDate(t, "dmy");
+      const base = { date, time, acct: "urpay", counter: "", fee: "", remaining: "", currency: "SAR", fxAmount: "" };
+      const sar = s => toSar(money(s));
+      if (/^Top Up/i.test(head)) {
+        const card = (one("Card").match(/\d{4}/) || [""])[0];
+        return { ...base, counter: card, type: "Top-up (Apple Pay)", desc: card ? `Top-up from card ${card}` : "Top-up",
+          amount: sar(one("Amount")), side: "Dr" };
+      }
+      if (/^Credit via wallet/i.test(head)) {
+        return { ...base, type: "Wallet credit", desc: `Credit from ${one("From") || "wallet"}`, amount: sar(one("Amount")), side: "Dr" };
+      }
+      // international transfers: new "Debit Intl.Transfer" (To:Name,1234) and old "Outgoing international transfer"
+      const tos = all("To");
+      const name = (tos.find(v => /[A-Za-z]/.test(v)) || "").replace(/,\s*\d+$/, "").trim();
+      const digits = (tos.join(" ").match(/(\d{4})(?!\d)/g) || []).pop() || "";
+      const provider = one("Service Provider") || one("Provider");
+      const country = one("Country");
+      const via = [/^MG$/i.test(provider) ? "MoneyGram" : provider, country].filter(Boolean).join(", ");
+      return { ...base, counter: digits, type: "International transfer", desc: via ? `${name} (${via})` : name,
+        amount: sar(one("Amount")), fee: sar(one("Fees") || one("Fee")), side: "Cr" };
+    },
+  },
+  {
+    source: "D360",
+    // D360 Bank: English, "Key: Value" lines and an "On:" date line
+    test: t => /^(Local POS Purchase|Account Funding via Apple Pay|Outgoing Local Transfer|International transfer|Reversal: International transfer)/i.test(linesOf(t)[0] || "")
+               && /(^|\n)\s*On:\s*\d/i.test(t),
+    parse: t => {
+      const L = linesOf(t), head = L[0];
+      const one = key => { const l = L.find(x => x.toLowerCase().startsWith(key.toLowerCase())); return l ? l.slice(key.length).replace(/^\s*:?\s*/, "").trim() : ""; };
+      const { date, time } = anyDate(t);
+      const base = { date, time, counter: "", fee: "", remaining: "", currency: "SAR", fxAmount: "" };
+      const amtTxt = one("Amount");
+      if (/^Account Funding/i.test(head)) {
+        const card = masked4(one("Card"));
+        return { ...base, acct: masked4(one("To")), counter: card, type: "Top-up (Apple Pay)",
+          desc: card ? `Top-up from card ${card}` : "Top-up", amount: toSar(money(amtTxt)), side: "Dr" };
+      }
+      if (/^Outgoing Local Transfer/i.test(head)) {
+        const iban = one("IBAN"), bank = iban.replace(/^[*\d\s]+-\s*/, "").trim();
+        const name = one("To").replace(/\*+$/, "").trim();
+        return { ...base, acct: masked4(one("From")), counter: masked4(iban), type: "Outgoing transfer (other bank)",
+          desc: bank ? `${name} (${bank})` : name, amount: toSar(money(amtTxt)), side: "Cr" };
+      }
+      if (/International transfer/i.test(head)) {
+        // "Amount: USD 100.00 (SAR 376.13)": the SAR in brackets is what left the account
+        const inSar = amtTxt.match(/SAR\s*([\d,]+(?:\.\d+)?)/);
+        const fx = money(amtTxt.replace(/\(.*\)/, ""));
+        const toName = one("To"), country = one("Country"), through = one("Through");
+        const acctLine = L.find(l => /^\d{8,}$/.test(l)) || "";
+        const reversal = /^Reversal/i.test(head);
+        const extra = [through, country].filter(Boolean).join(", ");
+        return { ...base, acct: "D360", counter: acctLine.slice(-4),
+          type: reversal ? "International transfer reversal" : "International transfer",
+          desc: extra ? `${toName} (${extra})` : toName, amount: inSar ? num(inSar[1]) : toSar(fx),
+          currency: fx.cur === "SAR" ? "SAR" : fx.cur, fxAmount: fx.cur === "SAR" ? "" : fx.amt, side: reversal ? "Dr" : "Cr" };
+      }
+      // card purchases
+      const cardTxt = one("Card"), label = (cardTxt.match(/\(([^)]+)\)/) || [])[1] || "";
+      const merchant = one("At");
+      return { ...base, acct: masked4(cardTxt), counter: ownWallet(merchant),
+        type: /POS/i.test(head) ? "POS purchase" : "Online purchase",
+        desc: label ? `${merchant} (card: ${label})` : merchant, amount: toSar(money(amtTxt)), side: "Cr" };
     },
   },
   // next banks get added here (see README.md, "Adding a bank")

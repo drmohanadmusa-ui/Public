@@ -33,18 +33,18 @@ Running the script by hand inside Scriptable uses whatever SMS is on the clipboa
 1. Install **Scriptable** (free) and open it once.
 2. Save `ledger_sms_logger.js` as **Ledger SMS Logger.js** in **iCloud Drive → Scriptable**. Replace the old file whenever the script changes.
 3. In Shortcuts, go to Automation → **+** → **Message**:
-   - **Message Contains:** the trigger (section 3). Usually the **last 4 digits of the account or card**.
+   - **Message Contains:** one of the 3 trigger words in section 3.
    - **Remove the Sender row.** Bank sender names such as "SNB-AlAhli" can't be saved as contacts, and one condition is enough.
    - Choose **Run Immediately**, then **New Blank Automation**.
    - Add **Get Text from Input** and set it to **Shortcut Input**. Don't leave it on the faded "Input" placeholder.
    - Add **Run Script** (Scriptable): Script = Ledger SMS Logger, Parameter = Text, **Run In App off**.
-4. **One automation per trigger.** Every automation runs the same script. Shortcuts allows only one phrase per automation.
+4. **Make 3 automations, one per trigger word.** All of them run the same script, because Shortcuts allows only one phrase per automation.
 
 ## 3. Banks and triggers
 
 **Triggers.** First agreed rule (2026-11-11): one automation per account or card, with *Message Contains* set to its last 4. That works for SAIB, Al Rajhi and meem, but **not** for SNB's debit account (most of its SMS never name your own account) or STC (no account digits at all).
 
-**Proposed instead (waiting for Muhannad's OK): 3 automations cover all 7 banks**, with Message Contains set to:
+**Agreed instead (2026-11-11): 3 automations cover all 7 banks**, with Message Contains set to:
 1. `Amount` (Al Rajhi, meem, STC, D360, urpay)
 2. `مبلغ` (SNB, SAIB, and SNB's annual-fee notice, which has no "SAR")
 3. `SAR` (SNB and SAIB "بSAR" purchases, which have neither of the above)
@@ -59,15 +59,15 @@ The script ignores anything it doesn't recognise, so OTPs and promos that contai
 | `Al Rajhi` | Al Rajhi account, mada card, Visa card | done |
 | `meem` | meem account (+ its mada card) | done |
 | `STC` | STC Bank wallet (Acct is always `STC`) | done |
-| | D360 | waiting for samples |
-| | urpay | waiting for samples |
+| `urpay` | urpay wallet (Acct is always `urpay`) | done |
+| `D360` | D360 account and card (also Acct `D360` on international transfers, which don't name the account) | done |
 
 The script ignores anything it doesn't recognise, so a trigger that's slightly too broad is harmless. For example, an OTP that happens to contain the digits is just skipped.
 
 **SNB notes** (one parser for both: rows come out as `SNB CC` or `SNB`)
 - **Credit card** (Acct = card last 4; a replacement card has a new number, so map it too):
   - **Logged:** purchases (online and POS), cashback, reversals ("حوالة عكسية"), refunds ("إسترداد مبلغ"), annual fee.
-  - **Foreign purchases:** SNB gives its own rate ("سعر الصرف 1.02"), so Amount SAR = foreign amount × that rate. The rate is rounded to 2 decimals, so the result can be a few halalas off. The international fee ("رسوم العمليات الدولية") goes in Fee SAR.
+  - **Foreign purchases:** SNB gives its own rate ("سعر الصرف 1.02"), so Amount SAR = foreign amount × that rate **plus the international fee** ("رسوم العمليات الدولية"). Muhannad's choice: one line, fee included, Fee SAR left empty. The rate is rounded to 2 decimals, so the result can be a few halalas off.
 - **Debit account** (Acct = `SNB debit`, because most debit SMS don't show your own account):
   - **Logged:** salary ("ايداع رواتب"), incoming transfers (internal, and local from another bank, with the bank name), outgoing internal, local and international transfers (with fee), mada purchases (local and international online), credit card payments (Counter Acct = the card, so it's a transfer between your own accounts), and finance instalments (personal and home, with the remaining loan balance).
   - **Local outgoing transfers include SNB's SAR 0.50 fee in the amount** (e.g. 19000.50, while the other bank receives 19000).
@@ -80,6 +80,17 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
 - **Ignored:** OTPs, security codes, beneficiary notices, and "Hello," announcements.
 - **Dates are always day first** (`anyDate(t, "dmy")`), except `3/10/2026 10:11 PM`: a 12-hour time means US month-first (10 March).
 - Amounts like `660.00SAR` and `50SR` are read as SAR.
+
+**urpay notes**
+- **Logged:** top-ups via Apple Pay (newer SMS name the paying card, and that card's last 4 goes in Counter Acct so LedgerOS can pair it with the bank's side), international transfers (old "Outgoing international transfer" and new "Debit Intl.Transfer", with fee), and wallet credits.
+- **Ignored:** verification codes, even though they contain amounts.
+- **The old format has a "From:SA…" IBAN line.** It's never copied. Labels must match exactly with a colon, because "Total:" starts with "To".
+- Dates look like `17-5-2026 18:25` (day first).
+
+**D360 notes**
+- **Logged:** card POS purchases (the card's label, e.g. a name in brackets, is kept in the description), account funding via Apple Pay from another bank's card (Counter Acct = that card), outgoing local transfers (Counter Acct = the IBAN's last 4), international transfers (Amount SAR comes from the "(SAR …)" in brackets, with the foreign amount kept), and their reversals.
+- **Ignored:** OTPs, declined transactions, card blocked/unblocked notices, and beneficiary activation notices.
+- **Telling D360 apart:** a D360 heading **and** an `On:` date line.
 
 **SAIB notes**
 - **Message types logged:**
