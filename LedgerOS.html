@@ -575,12 +575,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.4.1';
+const APP_VERSION = '5.5.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.5.0', date:'2026-11-11', changes:[
+    'Month End JV \u2013 Post Accrual: surplus above a category\u2019s cap is no longer dropped. Each category still accrues its own surplus up to its cap first; whatever is left over is pooled and shared among the other capped categories that still have room, in proportion to how much room each has left, and never past their cap. The JV gets a debit on each source\u2019s 99 account and a credit on each receiver\u2019s reserve, with descriptions naming where it came from (e.g. \u201cShopping Accrual overflow (from Self Improvement)\u201d).',
+    'Overspends are never covered by overflow: an over-budget category still draws down its own reserve in full, so you can see which categories overspent. Its reserve can then be topped up by its share of overflow like any other.',
+    'New catch-all reserve in Settings \u2192 Accrual Mappings: a liability account that takes any overflow left once every capped reserve is full. If none is set, that part is not accrued and the explanation says so.',
+    'The explanation table now shows each category\u2019s cap, reserve at month end, own accrual or drawdown, overflow out and overflow in, plus a summary line of the overflow pool and who received what.',
+    'Fix: drawdowns now use the reserve balance at the end of the month being accrued, not today\u2019s balance, so postings made after the month closed no longer count.',
+  ]},
   {version:'5.4.1', date:'2026-11-11', changes:[
     'Dashboard: Open P&L on an \u201cover budget\u201d item now takes you straight to that category on this month\u2019s P&L and flashes it, instead of just opening the page.',
     'Side rail on a short screen: with Aurora & glass on, the buttons that didn\u2019t fit (down to Settings) were cut off with no way to reach them. They now scroll inside the rail, while the logo and the bottom of the rail stay where they are. On short windows the buttons are also a little more compact, so more of them fit before you need to scroll.',
@@ -5602,24 +5609,64 @@ function renderAccrualPanel(){
         <button class="x noprint" onclick="accrualPanelOpen=false; renderNewJV()" title="Close">✕</button>
       </div>
       ${!getAccrualMappings().length? `<div class="mut" style="font-size:12px;margin-top:8px">No accrual mappings configured yet — go to Settings → Accrual Mappings to link each expense category to its liability and 99-account.</div>` : ''}
-      ${accrualExplanation.length? `<div style="margin-top:10px">
-        <table style="font-size:12.5px"><thead><tr><th>Category</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Variance</th><th>Action</th></tr></thead>
-        <tbody>${accrualExplanation.map(e=>`<tr><td>${esc(e.category)}</td><td class="num mono">${money(e.budget)}</td><td class="num mono">${money(e.actual)}</td><td class="num mono ${moneyClass(e.variance)}">${money(e.variance)}</td><td class="mut">${esc(e.action)}</td></tr>`).join('')}</tbody></table>
+      ${accrualExplanation.length? `<div class="accrual-expl" style="margin-top:10px;overflow-x:auto">
+        <table style="font-size:12.5px"><thead><tr><th>Category</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Variance</th><th class="num" title="Cap months × this month's budget">Cap</th><th class="num" title="Reserve (liability) balance at the end of the month, before this JV">Reserve at month end</th><th class="num" title="This category's own accrual (+) or drawdown (−)">Own</th><th class="num" title="Surplus over its cap, passed to other categories">Overflow out</th><th class="num" title="Overflow received from capped categories">Overflow in</th><th>Action</th></tr></thead>
+        <tbody>${accrualExplanation.map(e=>`<tr data-accr-cat="${esc(e.category)}"><td>${esc(e.category)}</td><td class="num mono">${money(e.budget)}</td><td class="num mono">${money(e.actual)}</td><td class="num mono ${moneyClass(e.variance)}">${money(e.variance)}</td><td class="num mono">${e.cap===null||e.cap===undefined? '<span class="mut">no cap</span>' : money(e.cap)+' <span class="mut">('+e.capMonths+'×)</span>'}</td><td class="num mono">${money(e.accrued||0)}</td><td class="num mono ${moneyClass(e.own||0)}">${e.own? money(e.own) : '—'}</td><td class="num mono">${e.overflowOut? money(e.overflowOut) : '—'}</td><td class="num mono">${e.overflowIn? money(e.overflowIn) : '—'}</td><td class="mut">${esc(e.action)}</td></tr>`).join('')}</tbody></table>
+        ${accrualOverflowSummary? (()=>{ const o = accrualOverflowSummary; const got = accrualExplanation.filter(e=>e.overflowIn>0);
+          return `<div class="accrual-overflow-sum" style="font-size:12.5px;margin-top:8px;line-height:1.6">
+            <b>Overflow pool:</b> <span class="mono">${money(o.pool)}</span> from ${esc(o.sources)}.
+            ${got.length? ` Shared by room left under each cap (${money(o.totalRoom)} room in total): ${got.map(e=>esc(e.category)+' <span class="mono">'+money(e.overflowIn)+'</span>').join(', ')}.` : ' No capped category had room left.'}
+            ${o.catchAmt>0? ` Catch-all reserve ${o.catchAcc} — ${esc(accShort(o.catchAcc))}: <span class="mono">${money(o.catchAmt)}</span>.` : ''}
+            ${o.unaccrued>0? ` <span style="color:var(--red,#c0392b)"><span class="mono">${money(o.unaccrued)}</span> was not accrued — every capped reserve is full and no catch-all reserve is set (Settings → Accrual Mappings).</span>` : ''}
+          </div>`; })() : ''}
+        <div class="mut" style="font-size:11.5px;margin-top:6px">How it works: each category first accrues its own surplus up to its cap, or draws down its own reserve when over budget (the drawdown is always booked in full, so overspends stay visible; overflow can only top a reserve back up afterwards). Surplus above a cap is pooled and shared among capped categories that still have room after their own entry, in proportion to that room. Anything left goes to the catch-all reserve. Reserves are measured at the end of the month being accrued.</div>
       </div>` : ''}
     </div>`;
 }
+// v5.5.0 accrual overflow (#21): split `total` cents across items in proportion to weight (cents),
+// never giving an item more than its weight. Leftover cents go to the largest remainders first.
+function accrualSplitCents(total, weights){
+  const sumW = weights.reduce((s,w)=>s+w,0);
+  if(total<=0 || sumW<=0) return weights.map(()=>0);
+  total = Math.min(total, sumW);
+  const raw = weights.map(w=>total*w/sumW);
+  const out = raw.map(Math.floor);
+  let left = total - out.reduce((s,x)=>s+x,0);
+  const order = raw.map((r,i)=>({i, frac:r-Math.floor(r)})).sort((a,b)=>b.frac-a.frac || weights[b.i]-weights[a.i]);
+  for(let k=0; left>0 && k<order.length*2; k++){ const i = order[k%order.length].i; if(out[i]<weights[i]){ out[i]++; left--; } }
+  return out;
+}
+// Catch-all reserve: a liability account that takes overflow nobody else has room for. Synced in
+// pd_ui_prefs.dismissals.accrualOverflowAcc; null when not set (the leftover is then not accrued).
+function getAccrualOverflowAcc(){ const v = Number(getUiDismissals().accrualOverflowAcc); return (v && D.accounts.some(a=>a.id===v))? v : null; }
+async function setAccrualOverflowAcc(accId){
+  accId = accId? Number(accId) : null;
+  if(accId && (D.accrualMappings||[]).some(m=>Number(m.liabilityAcc)===accId)){ toast('That account is already a category\'s accrual liability — pick a separate reserve account', true); return false; }
+  const d = Object.assign({}, getUiDismissals());
+  if(accId) d.accrualOverflowAcc = accId; else delete d.accrualOverflowAcc;
+  await saveUiDismissals(d);
+  toast(accId? 'Catch-all reserve set to '+accId+' ✓' : 'Catch-all reserve cleared');
+  renderSettings();
+  return true;
+}
+let accrualOverflowSummary = null;
 function computeAccrualJV(){
   const monthInput = document.getElementById('accrualMonthInput');
   accrualMonth = monthInput? monthInput.value : accrualMonth;
   const mappings = getAccrualMappings();
   if(!mappings.length){ toast('No accrual mappings configured — set them up in Settings first', true); return; }
   const [mFrom, mTo] = monthRange(accrualMonth);
+  const tag = monthTag(accrualMonth);
   const lines = [];
   const explanation = [];
+  const mkLine = (acc, descr, amt)=>({key:Math.random().toString(36).slice(2), acc, descr, amt: Math.round(amt*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
+  const c2 = v=>Math.round(v*100); // to cents
   // beginForecastFastPath/endForecastFastPath: computeForecastCell can be expensive per account
   // without it — see the earlier Closing Balance Watch fix for the same reasoning.
   try{
     beginForecastFastPath();
+    // Pass 1 — each category's own accrual or drawdown, exactly as before (v4.61.0 cap included).
+    // Anything a capped category can't keep is recorded as overflow for pass 2.
     mappings.forEach(map=>{
       const catAccObjs = D.accounts.filter(a=>a.category===map.category && firstDigit(a.id)===6);
       if(!catAccObjs.length){ return; }
@@ -5642,39 +5689,87 @@ function computeAccrualJV(){
       const budget = catAccObjs.reduce((s,a)=> s + (computeForecastCell(a, accrualMonth, accrualMonth).plan||0), 0);
       const actual = D.ledger.filter(l=>catAccs.includes(l.acc) && l.date>=mFrom && l.date<=mTo).reduce((s,l)=>s+Number(l.amt),0);
       const variance = budget - actual; // positive = under budget (surplus to accrue)
-      if(Math.abs(variance)<0.005){ explanation.push({category:map.category, budget, actual, variance:0, action:'On budget — no accrual needed'}); return; }
-      const tag = monthTag(accrualMonth);
-      if(variance>0){
+      // Reserve balance at the END of the month being accrued (liabilities are stored negative).
+      const accrued = -sumAcc(l=>l.acc===map.liabilityAcc, null, mTo);
+      const capMonths = accrualCapMonths(map);
+      const cap = capMonths===null? null : Math.max(0, capMonths*budget);
+      const e = {category:map.category, budget, actual, variance, cap, capMonths, accrued, own:0, overflowOut:0, overflowIn:0, overflowFrom:[], action:'', _map:map, _roomAfter:0};
+      explanation.push(e);
+      if(Math.abs(variance)<0.005){ e.variance = 0; e.action = 'On budget — no accrual needed'; }
+      else if(variance>0){
         // under budget: accrue the surplus — Dr the 99-account, Cr the liability. With a cap
         // (v4.61.0) only the part that keeps the liability within cap months × this month's budget
-        // is accrued, measured as of the end of the month being accrued; nothing once it's reached.
+        // is accrued, measured as of the end of the month being accrued; the rest is overflow (v5.5.0).
         let amount = variance, capNote = '';
-        const capMonths = accrualCapMonths(map);
-        if(capMonths!==null){
-          const cap = Math.max(0, capMonths*budget);
-          const accrued = -sumAcc(l=>l.acc===map.liabilityAcc, null, mTo);
+        if(cap!==null){
           const room = Math.max(0, cap - accrued);
-          if(room<0.005){ explanation.push({category:map.category, budget, actual, variance, action:'Under budget, but already at the cap ('+money(accrued)+' accrued, cap '+money(cap)+' = '+capMonths+' × budget) — no accrual'}); return; }
-          if(room < variance-0.005){ amount = room; capNote = ' (capped — '+money(variance)+' surplus, but only '+money(room)+' left under the '+money(cap)+' cap)'; }
+          if(room<0.005){ amount = 0; e.overflowOut = variance; e.action = 'Under budget, but already at the cap ('+money(accrued)+' accrued, cap '+money(cap)+' = '+capMonths+' × budget) — no accrual of its own; the '+money(variance)+' surplus is overflow'; }
+          else if(room < variance-0.005){ amount = room; e.overflowOut = variance - room; capNote = ' (capped — '+money(variance)+' surplus, but only '+money(room)+' left under the '+money(cap)+' cap; the other '+money(variance-room)+' is overflow)'; }
         }
-        lines.push({key:Math.random().toString(36).slice(2), acc:map.expenseAcc, descr:map.category+' Accrual - '+tag, amt: Math.round(amount*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
-        lines.push({key:Math.random().toString(36).slice(2), acc:map.liabilityAcc, descr:map.category+' Accrual - '+tag, amt: -Math.round(amount*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
-        explanation.push({category:map.category, budget, actual, variance, action:'Under budget — accrued '+money(amount)+' to liability'+capNote});
+        if(amount>0){
+          lines.push(mkLine(map.expenseAcc, map.category+' Accrual - '+tag, amount));
+          lines.push(mkLine(map.liabilityAcc, map.category+' Accrual - '+tag, -amount));
+          e.own = Math.round(amount*100)/100;
+          e.action = 'Under budget — accrued '+money(amount)+' to liability'+capNote;
+        }
       } else {
+        // over budget: draw down this category's OWN reserve, never anyone's overflow, so overspends
+        // stay visible per sub category. Uses the reserve as of the END of the month (v5.5.0; it used
+        // to read today's balance, which counted postings made after the month closed).
         const overage = -variance;
-        const liabBalance = accountBalance(map.liabilityAcc); // negative number
-        const available = Math.abs(Math.min(liabBalance,0));
+        const available = Math.max(0, accrued);
         const draw = Math.min(overage, available);
-        if(draw<0.005){ explanation.push({category:map.category, budget, actual, variance, action:'Over budget by '+money(overage)+' but no liability balance available to draw from'}); return; }
-        lines.push({key:Math.random().toString(36).slice(2), acc:map.liabilityAcc, descr:map.category+' Accrual Drawdown - '+tag, amt: Math.round(draw*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
-        lines.push({key:Math.random().toString(36).slice(2), acc:map.expenseAcc, descr:map.category+' Accrual Drawdown - '+tag, amt: -Math.round(draw*100)/100, _matches:[], _hi:-1, _descrMatches:[], _descrHi:-1});
-        const note = draw<overage-0.005? ' (capped — only '+money(available)+' was available)' : '';
-        explanation.push({category:map.category, budget, actual, variance, action:'Over budget — drew '+money(draw)+' from liability'+note});
+        if(draw<0.005){ e.action = 'Over budget by '+money(overage)+' but no liability balance available to draw from'; }
+        else {
+          lines.push(mkLine(map.liabilityAcc, map.category+' Accrual Drawdown - '+tag, draw));
+          lines.push(mkLine(map.expenseAcc, map.category+' Accrual Drawdown - '+tag, -draw));
+          e.own = -Math.round(draw*100)/100;
+          const note = draw<overage-0.005? ' (capped — only '+money(available)+' was available at month end)' : '';
+          e.action = 'Over budget — drew '+money(draw)+' from liability'+note;
+        }
       }
+      e._roomAfter = cap===null? 0 : Math.max(0, c2(cap) - c2(accrued) - c2(e.own));
     });
   } finally { endForecastFastPath(); }
+
+  // Pass 2 — overflow. Surplus that capped categories couldn't keep is pooled and shared among
+  // every capped category that still has room after its own accrual or drawdown above, in
+  // proportion to that room (never past its cap). What nobody has room for goes to the catch-all
+  // reserve, or is left unaccrued when none is set.
+  const sources = explanation.filter(e=>c2(e.overflowOut)>0);
+  const pool = sources.reduce((s,e)=>s+c2(e.overflowOut),0);
+  accrualOverflowSummary = null;
+  if(pool>0){
+    const receivers = explanation.filter(e=>e._roomAfter>0 && !sources.includes(e)); // uncapped categories have no room (_roomAfter 0)
+    const rooms = receivers.map(e=>e._roomAfter);
+    const totalRoom = rooms.reduce((s,x)=>s+x,0);
+    const gets = accrualSplitCents(pool, rooms);
+    const toReceivers = gets.reduce((s,x)=>s+x,0);
+    const catchAcc = getAccrualOverflowAcc();
+    const catchAmt = catchAcc? pool - toReceivers : 0;
+    const placed = toReceivers + catchAmt;
+    // Each source gives up its share of what was actually placed (all of it, unless some was left unaccrued).
+    const gives = accrualSplitCents(placed, sources.map(e=>c2(e.overflowOut)));
+    const srcNames = sources.map(e=>e.category).join(', ');
+    sources.forEach((e,i)=>{
+      if(gives[i]>0) lines.push(mkLine(e._map.expenseAcc, e.category+' Accrual overflow - '+tag, gives[i]/100));
+      e.overflowGiven = gives[i]/100;
+      const kept = c2(e.overflowOut) - gives[i];
+      e.action += '; '+money(gives[i]/100)+' overflow passed on'+(kept>0? ', '+money(kept/100)+' not accrued (no room left anywhere)' : '');
+    });
+    receivers.forEach((e,i)=>{
+      if(gets[i]<=0) return;
+      lines.push(mkLine(e._map.liabilityAcc, e.category+' Accrual overflow (from '+srcNames+') - '+tag, -gets[i]/100));
+      e.overflowIn = gets[i]/100; e.overflowFrom = sources.map(s=>s.category);
+      const full = gets[i]>=e._roomAfter;
+      e.action = (e.action? e.action+'; ' : '')+'received '+money(gets[i]/100)+' overflow from '+srcNames+(full? ' (now at its cap)' : '');
+    });
+    if(catchAmt>0) lines.push(mkLine(catchAcc, 'Accrual overflow reserve (from '+srcNames+') - '+tag, -catchAmt/100));
+    accrualOverflowSummary = {pool:pool/100, totalRoom:totalRoom/100, toReceivers:toReceivers/100, catchAcc, catchAmt:catchAmt/100, unaccrued:(pool-placed)/100, sources:srcNames};
+  }
+  explanation.forEach(e=>{ delete e._map; delete e._roomAfter; });
   accrualExplanation = explanation;
-  if(!lines.length){ toast('Nothing to accrue for '+monthLabel(accrualMonth)+' — every mapped category is on budget', true); renderNewJV(); return; }
+  if(!lines.length){ toast(pool>0? 'Nothing to accrue for '+monthLabel(accrualMonth)+' — every capped reserve is full and no catch-all reserve is set (Settings → Accrual Mappings)' : 'Nothing to accrue for '+monthLabel(accrualMonth)+' — every mapped category is on budget', true); renderNewJV(); return; }
   jvDraft.date = mTo;
   jvDraft.lines = lines;
   renderNewJV();
@@ -15466,7 +15561,23 @@ function renderSettings(){
             <td><button class="btn ghost sm" onclick="saveAccrualMappingFromForm('${cid}')">Save</button>${m? ` <button class="x" onclick="deleteAccrualMapping('${cid}')">✕</button>`:''}</td>
           </tr>`;
         }).join('') || '<tr><td colspan="5" class="empty">No expense categories found</td></tr>'}</tbody></table>
-        <div class="mut" style="font-size:11.5px;margin-top:8px">Cap (months): the accrual stops once the liability reaches this many months of the sub category's budget for the month being accrued (e.g. 3 × 1,350 = 4,050). Blank = no cap. Needs the Database Schema script run once in Supabase.</div>
+        <div class="mut" style="font-size:11.5px;margin-top:8px">Cap (months): the category's own accrual stops once the liability reaches this many months of the sub category's budget for the month being accrued (e.g. 3 × 1,350 = 4,050). Blank = no cap. Needs the Database Schema script run once in Supabase.</div>
+        <div class="mut" style="font-size:11.5px;margin-top:4px">Overflow: surplus a capped category can't keep is shared among the other capped categories that still have room, in proportion to their room. Overspends are never covered by it.</div>
+        ${(()=>{ const oa = getAccrualOverflowAcc(); const used = new Set((D.accrualMappings||[]).map(m=>Number(m.liabilityAcc)));
+          return `<div class="row accr-overflow-row" style="margin-top:12px;align-items:center;gap:8px;flex-wrap:wrap">
+            <b style="font-size:13px">Catch-all reserve</b>
+            <div style="position:relative;min-width:240px;flex:1">
+              <input id="acpin_accrOverflow" value="${oa? oa+' — '+esc(accShort(oa)) : ''}" placeholder="— none: leftover overflow is not accrued —"
+                oninput="acpInput('accrOverflow', this.value)"
+                onfocus="acpOpen('accrOverflow', postableAccounts().filter(a=>firstDigit(a.id)===2 && !${JSON.stringify([...used])}.includes(a.id)), function(id){ document.getElementById('acpin_accrOverflow').dataset.acc=id; document.getElementById('acpin_accrOverflow').value=id+' — '+accShort(id); }); acpInput('accrOverflow','')"
+                onkeydown="acpKey(event,'accrOverflow')"
+                onblur="setTimeout(function(){ acpClose('accrOverflow'); },150)" data-acc="${oa||''}">
+              <div class="acdrop" id="acpdrop_accrOverflow"></div>
+            </div>
+            <button class="btn ghost sm" onclick="setAccrualOverflowAcc(document.getElementById('acpin_accrOverflow').dataset.acc||null)">Save</button>
+            ${oa? `<button class="x" title="Clear" onclick="setAccrualOverflowAcc(null)">✕</button>` : ''}
+          </div>
+          <div class="mut" style="font-size:11.5px;margin-top:4px">A liability account (not one of the category liabilities above) that takes whatever overflow is left once every capped reserve is full. Synced across your devices.</div>`; })()}
       </div>`},
     templates: {label:'📋 Prebuilt JV Templates', html: `
       <div class="panel">
