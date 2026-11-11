@@ -9,7 +9,9 @@ const QUEUE_FILE = "Ledger Upload Queue.json";      // rows waiting to reach Led
 // LedgerOS's Supabase URL and key live in this phone's Keychain, never in this file:
 // run the script inside Scriptable with no SMS on the clipboard to set them.
 const KC_URL = "ledgeros_sb_url", KC_KEY = "ledgeros_sb_key";
-const NOTIFY = true;
+const NOTIFY = true;            // "Logged to Ledger Inbox" after each logged transaction
+const NOTIFY_FAILURES = true;   // a notice when something fails (upload refused, error), even if NOTIFY is off
+const RUN_LOG = "Ledger Run Log.txt", RUN_LOG_KEEP = 100;   // last 100 runs, to see whether an SMS started the script
 // SAR per 1 unit of a foreign currency. Only pegged currencies belong here; any other
 // currency is logged with its foreign amount and a blank SAR amount for you to type.
 const FX_TO_SAR = { USD: 3.75 };
@@ -181,7 +183,9 @@ const PARSERS = [
     test: t => {
       const h = linesOf(t)[0] || "";
       if (/غير ناجح|لا تشارك|الرقم السري|رمز التفعيل|تم تغيير|تم إصدار|تم تفعيل|مبروك|إيقاف|إلغاء|تجميد|ايقاف/.test(h)) return false;
-      return /الصرف المتبقي|الرصيد المتبقي|حوالة عكسية|إسترداد مبلغ|استرداد مبلغ|الرسوم السنوية|حوالة واردة|حوالة صادرة|ايداع رواتب|إيداع رواتب|سداد بطاقة|قسط تمويل|مدى/.test(t)
+      return (/الصرف المتبقي|الرصيد المتبقي|حوالة عكسية|إسترداد مبلغ|استرداد مبلغ|الرسوم السنوية|حوالة واردة|حوالة صادرة|ايداع رواتب|إيداع رواتب|سداد بطاقة|قسط تمويل|مدى/.test(t)
+              // newer credit card wording (Nov 2026): "الرصيد 1,234SAR" instead of "الصرف المتبقي"
+              || (/ائتمان|إئتمان|إتمان/.test(t) && /الرصيد/.test(t)))
              && !/X{1,3}\s*\d{4}|بطاقة السفر/.test(t);   // SAIB writes accounts as XXX1234
     },
     parse: t => {
@@ -195,7 +199,7 @@ const PARSERS = [
         return { amount: r ? (Math.round(parseFloat(m.amt) * r * 100) / 100).toFixed(2) : toSar(m), currency: m.cur, fxAmount: m.amt };
       };
       const isCC = /ائتمان|إئتمان|إتمان/.test(t);
-      const remainingOf = () => { const l = lineWith(L, ["المتبقي", "المتبقى"]); return l ? money(l).amt : ""; };
+      const remainingOf = () => { const l = lineWith(L, ["المتبقي", "المتبقى"]) || lineWithNum(L, ["الرصيد"]); return l ? money(l).amt : ""; };
 
       // ---------- credit card ----------
       if (/الرسوم السنوية/.test(t)) {
@@ -209,7 +213,8 @@ const PARSERS = [
         const m = amtOf(amtLine);
         const rate = (lineWith(L, ["سعر الصرف"]).match(/\d+(?:\.\d+)?/) || [""])[0];
         const fee = money(lineWith(L, ["رسوم العمليات الدولية"])).amt;
-        const merchLine = lineWith(L, ["من ", "لدى"], ["بطاقة", "ائتمان", "إئتمان"]);
+        const merchLine = lineWith(L, ["من ", "لدى"], ["بطاقة", "ائتمان", "إئتمان"])
+          || L.find(l => /^من(?=[A-Za-z0-9])/.test(l)) || "";   // "منTEST SHOP" (no space)
         const merchant = without(merchLine, "لدى", "من");
         let type = /استرجاع/.test(t) ? "Cashback" : /حوالة عكسية/.test(t) ? "Reversal/refund" : /إسترداد|استرداد/.test(t) ? "Refund"
           : /POS/i.test(head) ? "POS purchase" : "Online purchase";
@@ -594,13 +599,23 @@ function inboxRow(core, source, r) {
 }
 function haveKeys() { try { return Keychain.contains(KC_URL) && Keychain.contains(KC_KEY); } catch (e) { return false; } }
 // Sends everything waiting in the queue. Returns "" when done or nothing to send, else a short reason.
+// File trouble (e.g. iCloud unreadable while the phone is locked) never stops this row from being sent.
 async function flushQueue(fm, extra) {
   const qPath = fm.joinPath(fm.documentsDirectory(), QUEUE_FILE);
-  let queue = [];
-  if (fm.fileExists(qPath)) { await fm.downloadFileFromiCloud(qPath); try { queue = JSON.parse(fm.readString(qPath) || "[]"); } catch (e) { queue = []; } }
+  let queue = [], queueRead = true;
+  try {
+    if (fm.fileExists(qPath)) {
+      await fm.downloadFileFromiCloud(qPath);
+      try { queue = JSON.parse(fm.readString(qPath) || "[]"); } catch (e) { queue = []; }
+    }
+  } catch (e) { queue = []; queueRead = false; }
   if (extra && !queue.some(q => q.id === extra.id)) queue.push(extra);
   if (!queue.length) return "";
-  if (!haveKeys()) { fm.writeString(qPath, JSON.stringify(queue)); return "not connected to LedgerOS yet"; }
+  const keep = why => {
+    try { fm.writeString(qPath, JSON.stringify(queue)); return why; }
+    catch (e) { return `${why}; could not save it on the phone for a retry (${errText(e)})`; }
+  };
+  if (!haveKeys()) return keep("not connected to LedgerOS yet");
   try {
     const url = Keychain.get(KC_URL).replace(/\/+$/, ""), key = Keychain.get(KC_KEY);
     const req = new Request(`${url}/rest/v1/pd_sms_inbox?on_conflict=id`);
@@ -610,12 +625,13 @@ async function flushQueue(fm, extra) {
     req.body = JSON.stringify(queue);
     await req.loadString();
     const code = (req.response || {}).statusCode;
-    if (code >= 200 && code < 300) { if (fm.fileExists(qPath)) fm.remove(qPath); return ""; }
-    fm.writeString(qPath, JSON.stringify(queue));
-    return `LedgerOS said ${code}, will retry`;
+    if (code >= 200 && code < 300) {
+      if (queueRead) { try { if (fm.fileExists(qPath)) fm.remove(qPath); } catch (e) {} }
+      return "";
+    }
+    return keep(`LedgerOS said ${code}, will retry`);
   } catch (e) {
-    fm.writeString(qPath, JSON.stringify(queue));
-    return "no connection, will retry";
+    return keep("no connection, will retry");
   }
 }
 async function setupConnection() {
@@ -633,13 +649,74 @@ async function setupConnection() {
   return "Connected to LedgerOS";
 }
 
+// ---------- run log, test mode, menu ----------
+const errText = e => String((e && e.message) || e || "unknown error").slice(0, 160);
+// One line per run (also skipped SMS), newest last, so you can see whether an SMS started the script.
+// iCloud Drive / Scriptable / Ledger Run Log.txt
+async function logRun(line) {
+  try {
+    const fm = FileManager.iCloud(), p = fm.joinPath(fm.documentsDirectory(), RUN_LOG);
+    let old = "";
+    if (fm.fileExists(p)) { await fm.downloadFileFromiCloud(p); old = fm.readString(p) || ""; }
+    const lines = old.split("\n").filter(Boolean).slice(-(RUN_LOG_KEEP - 1));
+    lines.push(line);
+    fm.writeString(p, lines.join("\n") + "\n");
+  } catch (e) { /* the log is a help, never a reason to fail */ }
+}
+async function readRunLog(n) {
+  try {
+    const fm = FileManager.iCloud(), p = fm.joinPath(fm.documentsDirectory(), RUN_LOG);
+    if (!fm.fileExists(p)) return "";
+    await fm.downloadFileFromiCloud(p);
+    return (fm.readString(p) || "").split("\n").filter(Boolean).slice(-n).reverse().join("\n");
+  } catch (e) { return `Could not read the log: ${errText(e)}`; }
+}
+// The row as it would be logged, for the test window
+function describeRow(source, r) {
+  const amt = r.amount ? `SAR ${r.amount}` : (r.fxAmount ? `${r.currency} ${r.fxAmount} (SAR blank)` : "(no amount)");
+  return [
+    `Bank: ${source}   Acct: ${r.acct || "—"}${r.counter ? `   Other acct: ${r.counter}` : ""}`,
+    `Type: ${r.type || "—"}`,
+    `Description: ${r.desc || "—"}`,
+    `Amount: ${amt}   ${r.side === "Dr" ? "money in (Dr)" : "money out (Cr)"}`,
+    r.fee ? `Fee: SAR ${r.fee}` : "",
+    r.currency && r.currency !== "SAR" ? `Currency: ${r.currency} ${r.fxAmount}` : "",
+    `Date: ${r.date || "—"} ${r.time || ""}`,
+    r.remaining ? `Remaining: ${r.remaining}` : "",
+  ].filter(Boolean).join("\n");
+}
+async function ask(title, message, actions) {
+  const a = new Alert();
+  a.title = title; a.message = message;
+  actions.forEach(x => a.addAction(x));
+  a.addCancelAction("Cancel");
+  return await a.present();   // index of the action, -1 = Cancel
+}
+// Run inside Scriptable with nothing copied: the menu
+async function appMenu() {
+  const pick = await ask("Ledger SMS Logger",
+    "To test a message: copy the bank SMS (long-press it → Copy), then run this script again.",
+    ["Connect to LedgerOS", "Show run log"]);
+  if (pick === 0) return await setupConnection();
+  if (pick === 1) {
+    const log = await readRunLog(25);
+    await ask("Last runs (newest first)", log || "No runs logged yet.", []);
+    return "Run log shown";
+  }
+  return "Closed";
+}
+
 // ---------- main ----------
+let problem = "";   // set when something needs your attention (sent as a notification even if NOTIFY is off)
 async function main() {
   let input = args.shortcutParameter;
   if (input && typeof input !== "string") input = input.content || input.text || String(input);
   const manual = !input;
   if (manual) input = Pasteboard.pasteString() || "";
+  const testing = manual && config.runsInApp;   // run by hand in Scriptable: show the result before logging
   const text = normalise(input);
+
+  if (testing && !text.trim()) return await appMenu();
 
   let p = null, r = null;
   for (const x of PARSERS) {
@@ -648,50 +725,63 @@ async function main() {
     if (r) { p = x; break; }
   }
   if (!r) {
-    // run by hand with no SMS copied: offer to set up the LedgerOS connection
-    if (manual && config.runsInApp && !text.trim()) return await setupConnection();
+    if (testing) {
+      await ask("Test: not recognised",
+        `This message would be SKIPPED (no transaction found).\n\nFirst line:\n${(linesOf(text)[0] || "").slice(0, 80)}\n\nIf it is a real transaction, send it to Claude so the parser can be fixed.`, []);
+      return "Test: skipped";
+    }
     const waiting = await flushQueue(FileManager.iCloud(), null);   // a quiet chance to retry
     return "Skipped: not a recognised transaction SMS" + (waiting ? ` (queue: ${waiting})` : "");
   }
   r = Object.assign({ counter: "", fee: "", currency: "SAR", fxAmount: "", remaining: "" }, r);
+  const source = r.source || p.source;
+
+  if (testing) {
+    const pick = await ask("Test result", describeRow(source, r), ["Test only (don't log)", "Log it to LedgerOS"]);
+    if (pick !== 1) return "Test only: " + (r.desc || r.type) + " " + (r.amount || r.fxAmount);
+  }
 
   const fm = FileManager.iCloud();
   if (!r.amount && !r.fxAmount) {   // nothing usable: save the raw text so the parser can be fixed
-    const dbg = fm.joinPath(fm.documentsDirectory(), "Ledger Debug.txt");
-    fm.writeString(dbg, JSON.stringify(input) + "\n" +
-      [...input].map(c => c.charCodeAt(0).toString(16)).join(" "));
+    try {
+      fm.writeString(fm.joinPath(fm.documentsDirectory(), "Ledger Debug.txt"), JSON.stringify(input) + "\n" +
+        [...input].map(c => c.charCodeAt(0).toString(16)).join(" "));
+    } catch (e) {}
   }
 
   const df = new DateFormatter();
   df.dateFormat = "yyyy-MM-dd HH:mm";
-  const source = r.source || p.source;
   const core = [r.date, r.time, source, r.acct, r.counter, r.type, r.desc, r.amount, r.side,
     r.fee, r.currency, r.fxAmount, r.remaining].join("\t");
   const line = core + "\t" + df.string(new Date());
-
-  const path = fm.joinPath(fm.documentsDirectory(), FILE);
-  let existing = "";
-  if (fm.fileExists(path)) {
-    await fm.downloadFileFromiCloud(path);
-    existing = fm.readString(path) || "";
-  }
   const shown = r.amount ? `SAR ${r.amount}` : `${r.currency} ${r.fxAmount}`;
-  if (existing.includes(core)) {
+
+  // the phone's own copy (Ledger Inbox.tsv); if iCloud can't be read (e.g. phone locked), skip it and still upload
+  const path = fm.joinPath(fm.documentsDirectory(), FILE);
+  let existing = "", fileOk = true;
+  try {
+    if (fm.fileExists(path)) { await fm.downloadFileFromiCloud(path); existing = fm.readString(path) || ""; }
+  } catch (e) { fileOk = false; }
+  if (fileOk && existing.includes(core)) {
     const waiting = await flushQueue(fm, null);
     return `Duplicate, not logged: ${r.desc} ${shown}` + (waiting ? ` (queue: ${waiting})` : "");
   }
-
-  // a file from an older version (different columns) is kept aside, not mixed in
-  if (existing && !existing.startsWith(HEADER)) {
-    fm.writeString(fm.joinPath(fm.documentsDirectory(), "Ledger Inbox (old columns).tsv"), existing);
-    existing = "";
+  if (fileOk) {
+    try {
+      // a file from an older version (different columns) is kept aside, not mixed in
+      if (existing && !existing.startsWith(HEADER)) {
+        fm.writeString(fm.joinPath(fm.documentsDirectory(), "Ledger Inbox (old columns).tsv"), existing);
+        existing = "";
+      }
+      const base = existing ? existing.replace(/\n*$/, "\n") : HEADER + "\n";
+      fm.writeString(path, base + line + "\n");
+    } catch (e) { fileOk = false; }
   }
-  const base = existing ? existing.replace(/\n*$/, "\n") : HEADER + "\n";
-  fm.writeString(path, base + line + "\n");
   const upload = await flushQueue(fm, inboxRow(core, source, r));
+  if (upload) problem = `LedgerOS: ${upload}`;
 
-  const msg = `${source} · ${shown} · ${r.desc}` + (upload ? ` (LedgerOS: ${upload})` : "");
-  if (NOTIFY) {
+  const msg = `${source} · ${shown} · ${r.desc}` + (upload ? ` (LedgerOS: ${upload})` : "") + (fileOk ? "" : " (phone file not updated)");
+  if (NOTIFY && !problem) {
     const n = new Notification();
     n.title = "Logged to Ledger Inbox";
     n.body = msg;
@@ -700,7 +790,21 @@ async function main() {
   return "Logged: " + msg;
 }
 
-const result = await main();
-if (config.runsInApp) { const a = new Alert(); a.message = result; a.addAction("OK"); await a.present(); }
+let result;
+try { result = await main(); }
+catch (e) { problem = errText(e); result = "Failed: " + problem; }
+if (problem && NOTIFY_FAILURES) {
+  try { const n = new Notification(); n.title = "Ledger SMS Logger needs a look"; n.body = result; await n.schedule(); } catch (e) {}
+}
+{
+  let stamp = "";
+  try { const d = new DateFormatter(); d.dateFormat = "yyyy-MM-dd HH:mm:ss"; stamp = d.string(new Date()); } catch (e) {}
+  let first = "";
+  try { const s = args.shortcutParameter; first = linesOf(normalise(typeof s === "string" ? s : ((s && (s.content || s.text)) || ""))) [0] || ""; } catch (e) {}
+  await logRun(`${stamp} | ${args.shortcutParameter ? "SMS" : "by hand"} | ${first.slice(0, 40)} | ${result}`);
+}
+if (config.runsInApp && !/^(Test|Run log|Closed|Not changed|Connected|Not saved)/.test(result)) {
+  const a = new Alert(); a.message = result; a.addAction("OK"); await a.present();
+}
 Script.setShortcutOutput(result);
 Script.complete();
