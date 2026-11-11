@@ -6298,7 +6298,8 @@ async function testPnLShowsAccruedNextToMappedCategoryAndItsAccrualAccountOnly()
   assert(chips.every(c=>c.includes('1,600.00')), 'The chip should show the balance as of the period end (1,600.00), got ' + chips.join(' | '));
   assert(!/Government &amp; Banks - Accrual[^<]*<span[^>]*accrued-chip/.test(html), 'The accrual account line must not carry its own Accrued chip');
   assert(!/data-accrued-cat="Transportation"/.test(html), 'An unmapped category must not show an Accrued chip');
-  const catRow = html.match(/<tr style="background:var\(--chip\)"><td style="font-weight:700;color:var\(--accent\)">Government &amp; Banks[^<]*<span[^>]*accrued-chip/);
+  // v5.4.1: the row may carry other attributes (data-pnl-cat for the Dashboard jump)
+  const catRow = html.match(/<tr style="background:var\(--chip\)"[^>]*><td style="font-weight:700;color:var\(--accent\)">Government &amp; Banks[^<]*<span[^>]*accrued-chip/);
   assert(catRow, 'The chip must sit right next to the sub category name on its header row');
 }
 async function testPnLAccruedFollowsThePeriodEndNotToday(){
@@ -8025,6 +8026,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testSmsDismissRestoreAndDoneList();
   await testSmsInboxLoadsFromTheCloud();
   await testGlassRailScrollsOnShortScreens();
+  await testOverBudgetOpenPnLGoesToTheCategory();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9266,4 +9268,25 @@ async function testGlassRailScrollsOnShortScreens(){
   assert(/body\.bg-aurora #sidebar \.brand,body\.bg-aurora \.sidebar-footer\{flex-shrink:0\}/.test(glass), 'The logo and the footer keep their size while the list scrolls');
   const shortRule = (html.match(/@media\(min-width:761px\) and \(max-height:820px\)\{([^\n]*)\}/)||['',''])[1];
   assert(/nav button\{min-height:44px/.test(shortRule), 'Short windows get more compact rail buttons');
+}
+// v5.4.1 (#20): the Dashboard's "over budget" item opens P&L on that category, flashed.
+async function testOverBudgetOpenPnLGoesToTheCategory(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.ledger.push({id:50, jv:50, date:'2026-11-03', acc:60101, amt:1300, descr:'food'});
+  sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 1000 : 0);
+  sb.__set('computeDriftFlags', ()=>[]);
+  const item = sb.dashboardTodoItems().find(i=>/Living is over budget/.test(i.title));
+  assert(item && item.onclick==='goPnLThisMonth(&quot;Living&quot;)', 'Open P&L carries the category (got '+(item&&item.onclick)+')');
+  sb.__set('pnlView', 'acctchart');
+  sb.goPnLThisMonth('Living');
+  await new Promise(r=>setTimeout(r, 30));
+  assert(vm.runInContext('screen', sb)==='pnl' && vm.runInContext('pnlPreset', sb)==='month' && vm.runInContext('pnlView', sb)==='main', 'It opens the P&L itself on this month (not a chart left open before)');
+  const row = sb.document.querySelector('#app tr[data-pnl-cat="Living"]');
+  assert(row && row.classList.contains('flash') && /Living/.test(row.textContent), 'The Living subtotal row is marked and flashed');
+  assert(![...sb.document.querySelectorAll('#app tr[data-pnl-cat]')].some(r=>r!==row && r.classList.contains('flash')), 'Only that category flashes');
+  const other = dashSandbox();
+  let went = null; other.__set('go', s=>{ went = s; });
+  other.goPnLThisMonth();
+  assert(went==='pnl', 'Without a category it still just opens the P&L');
 }

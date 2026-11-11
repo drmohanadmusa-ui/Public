@@ -582,6 +582,7 @@ const APP_VERSION = '5.4.1';
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
   {version:'5.4.1', date:'2026-11-11', changes:[
+    'Dashboard: Open P&L on an \u201cover budget\u201d item now takes you straight to that category on this month\u2019s P&L and flashes it, instead of just opening the page.',
     'Side rail on a short screen: with Aurora & glass on, the buttons that didn\u2019t fit (down to Settings) were cut off with no way to reach them. They now scroll inside the rail, while the logo and the bottom of the rail stay where they are. On short windows the buttons are also a little more compact, so more of them fit before you need to scroll.',
   ]},
   {version:'5.4.0', date:'2026-11-11', changes:[
@@ -4547,10 +4548,19 @@ function dashboardExpenseBudgetLine(b){
 }
 // Jump from the dashboard straight to the P&L for the current month. go() runs the page render,
 // so the preset is set first and renderPnL is left to go() rather than being called twice.
-function goPnLThisMonth(){
+// v5.4.1 (#20): with a category (the Dashboard's "over budget" item), lands on that category's
+// subtotal row and flashes it, the same way coming back from a 📊 chart does.
+function goPnLThisMonth(cat){
   pnlPreset = 'month';
   [pnlFrom, pnlTo] = monthRange(todayStr().slice(0,7));
+  if(cat) pnlView = 'main';
   go('pnl');
+  if(cat) requestAnimationFrame(()=>{
+    const row = [...document.querySelectorAll('#app tr[data-pnl-cat]')].find(r=>r.getAttribute('data-pnl-cat')===cat);
+    if(!row) return;
+    if(row.scrollIntoView) row.scrollIntoView({block:'center', behavior:'smooth'});
+    flashEl(row);
+  });
 }
 function driftAlertsCard(){
   const flags = computeDriftFlags();
@@ -4906,7 +4916,7 @@ function dashboardTodoItems(){
     const over = roundCents(-c.variance), key = c.cat+'|'+ym;
     if(obDismissed[key]!==undefined && over <= Number(obDismissed[key])+0.005) return;
     dashOverBudgetKeys.push({key, over});
-    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:'goPnLThisMonth()', dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
+    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:`goPnLThisMonth(${esc(JSON.stringify(c.cat))})`, dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
   });
   computeDriftFlags().forEach(f=>{
     const label = f.kind==='provision'? accShort(f.acc)+' — '+f.groupName : f.ruleName+' ('+accShort(f.acc)+')';
@@ -7693,7 +7703,7 @@ function renderPnL(){
   // since expTotal isn't final until every category has been summed above.
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
-    return `<tr style="background:var(--chip)"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
+    return `<tr style="background:var(--chip)" data-pnl-cat="${esc(cat)}"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
       items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" data-pnl-key="acc:${i.a.id}" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
