@@ -48,8 +48,8 @@ Running the script by hand inside Scriptable uses whatever SMS is on the clipboa
 |---|---|---|---|
 | `SNB CC` | SNB credit card | phrase `الصرف المتبقي` | done |
 | `SAIB` | SAIB main account, SAIB-2 account, mada card, travel card | last 4 of each (4 automations) | done |
+| `Al Rajhi` | Al Rajhi account, mada card, Visa card | last 4 of each (3 automations) | done |
 | | SNB debit account | | waiting for samples |
-| | Al Rajhi | | waiting for samples |
 | | D360 | | waiting for samples |
 | | meem | | waiting for samples |
 | | urpay | | waiting for samples |
@@ -73,6 +73,20 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
 - **Foreign currencies:** the SMS gives only the foreign amount. USD is converted at 3.75 (`FX_TO_SAR`). Any other currency gets a blank SAR amount for you to type in New JV, with the original amount kept in Currency / FX Amount and in the description.
 - **Arabic names** (billers, MOI agencies) are translated through the `TRANSLATE` list in the script. Add new ones there; anything not listed stays as written.
 
+**Al Rajhi notes**
+- **Message types logged:**
+  - incoming transfers: internal, and local from another bank (with the bank name)
+  - outgoing internal transfers
+  - mada purchases and ATM withdrawals
+  - Visa card: top-ups ("Credit Card:Payment"), purchases (online and international POS), reversals, and card balance sent back to the account ("Credit Card:transfer")
+  - Drahim portfolio top-ups
+- **Message types ignored:** OTP codes, declined transactions, "You received a message from …" (personal messages are never logged).
+- **Two date styles in the same bank:** transfers use `26/10/1 11:36` (yy/m/d) and card messages use `3/10/26 22:12` (d/m/yy). `ymdOrDmy` tries both readings and keeps the valid one closest to today that isn't in the future.
+- **Riyals are written `SR`** (`SR 165`, `91.16 SR`). The script reads them as SAR.
+- **Telling Al Rajhi apart from other English-language banks:** the first line must be an Al Rajhi heading **and** the SMS must have an Al Rajhi marker (`SR`, `Card:7777 ;Visa`, `By:6666;mada`, or `To:`/`From:` followed directly by 4 digits). A test checks that a meem-style "Online Purchase" isn't taken as Al Rajhi.
+
+**Own wallets bought as "merchants":** a mada purchase at URPAY or MYSR/D360 is really a top-up of your own wallet. `OWN_WALLETS` puts the wallet's name (`urpay`, `D360`) in Counter Acct, so LedgerOS can treat it as a transfer between your own accounts.
+
 ## 4. The output row (tab-separated)
 
 | Column | Meaning |
@@ -80,7 +94,7 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
 | Date / Time | From the SMS (`yyyy-mm-dd`, `hh:mm`) |
 | Source | Which parser matched, such as `SNB CC` or `SAIB` |
 | Acct | Last 4 of the account or card this row belongs to, or `Travel`. LedgerOS groups by Source + Acct and maps each one to a LedgerOS account. |
-| Counter Acct | Your **other** account when money moves between your own accounts (e.g. a top-up 1111 → `Travel`), otherwise empty. LedgerOS fills both sides of the JV for these. |
+| Counter Acct | The **other side's** account as shown in the SMS: last 4 digits (`9103`), or a name for wallets and cards without digits (`Travel`, `urpay`, `D360`, `Drahim`). Empty if the SMS doesn't say. When it matches one of **your** accounts mapped in LedgerOS, LedgerOS treats the row as a transfer between your own accounts and fills both sides of the JV. Otherwise it's just information. |
 | Type | Online purchase, POS purchase, Incoming transfer, Bill payment (SADAD), … |
 | Description | Merchant, person or biller. Foreign amounts are added in brackets. |
 | Amount SAR | Positive, no thousands commas. Blank only for a foreign currency with no fixed rate. |
@@ -106,6 +120,8 @@ If the columns ever change, the script moves the old file aside as *Ledger Inbox
    - `linesOf(text)` + `field(lines, "label", …)`: text after a label at the start of a line. It works with and without a colon or space (`مبلغ: SAR 5`, `مبلغ:SAR 5`, `المبلغSAR 5`).
    - `money(s)`: `{cur, amt}` from `SAR 1,475`, `40 MYR`, … `toSar(m)` converts using `FX_TO_SAR`, or leaves it blank.
    - `mdNoYear(text)`: `mm-dd hh:mm` with no year (SAIB).
+   - `ymdOrDmy(text)`: `yy/m/d` or `d/m/yy`, whichever reading is valid and closest to today (Al Rajhi).
+   - `ownWallet(merchant)`: `urpay` / `D360` when a "merchant" is really your own wallet (`OWN_WALLETS`).
    - `xAcct(s)` / `stripAcct(s)`: pull out or remove `XXX1234`.
    - `tr(s)`: Arabic → English using `TRANSLATE`.
 
@@ -160,3 +176,4 @@ Then add tests (section 6, step 3), add the trigger phrase to the table in secti
 5. **This repo is public.** Tests use invented card numbers, amounts and names only.
 6. **An OTP can look like a transaction:** SAIB's OTP mentions "حوالة صادرة" and an amount. Parsers decide by the message's **first line**, not by words anywhere in it.
 7. **Check a parser against a real batch, privately.** When Muhannad pastes a bank's history, run every message through the script outside the repo, read every logged row, and only commit invented copies as tests. SAIB's first run caught the card line "بطاقة:XXX…" being read as the amount.
+8. **One bank can use two date orders** (Al Rajhi). Never pick a date order per bank by assumption: let `ymdOrDmy` choose the reading closest to today.

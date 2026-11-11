@@ -69,6 +69,26 @@ const mdNoYear = t => {
   if (asDate(y) - now > 86400000) y -= 1;  // a December SMS read in January belongs to last year
   return { date: `${y}-${m[1]}-${m[2]}`, time: m[3] };
 };
+// "26/10/1 11:36" (yy/m/d) or "3/10/26 22:12" (d/m/yy): Al Rajhi uses both. Try both readings and
+// keep the valid one closest to today that isn't in the future (+1 day slack).
+const ymdOrDmy = t => {
+  const m = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  if (!m) return { date: "", time: "" };
+  const now = TODAY(), pad = n => String(n).padStart(2, "0");
+  const time = `${pad(m[4])}:${m[5]}`;
+  const cands = [[m[1], m[2], m[3]], [m[3], m[2], m[1]]].map(([yy, mo, dd]) => {
+    const y = 2000 + parseInt(yy, 10), mm = parseInt(mo, 10), d = parseInt(dd, 10);
+    const dt = new Date(y, mm - 1, d);
+    const ok = mm >= 1 && mm <= 12 && dt.getDate() === d && dt - now <= 86400000;
+    return ok ? { date: `${y}-${pad(mm)}-${pad(d)}`, gap: Math.abs(now - dt) } : null;
+  }).filter(Boolean).sort((a, b) => a.gap - b.gap);
+  return { date: cands.length ? cands[0].date : "", time };
+};
+// merchants that are really your own wallets: a purchase there is a transfer to that wallet.
+// LedgerOS maps these names to accounts like any other Acct/Counter value.
+const OWN_WALLETS = [[/URPAY/i, "urpay"], [/MYSR|D360|D36\)/i, "D360"]];
+const ownWallet = merchant => { const w = OWN_WALLETS.find(([re]) => re.test(merchant || "")); return w ? w[1] : ""; };
+
 // Arabic names that appear in bank SMS -> English (anything not listed stays as written)
 const TRANSLATE = {
   "السعودية للطاقة": "Saudi Electricity",
@@ -150,6 +170,7 @@ const PARSERS = [
         const merchant = online ? field(L, "لدى") : field(L.filter(l => !/^من\s*[:]?\s*(X|\d|[A-Z]{3}$)/.test(l)), "من");
         const acctLine = L.find(l => /^من\d{4}$/.test(l));
         return { ...base, acct: acctLine ? acctLine.slice(2) : xAcct((t.match(/X\d{4}/) || [""])[0]),
+          counter: ownWallet(merchant),
           type: (online ? "Online purchase" : "POS purchase") + (/ابل/.test(t) ? " (Apple Pay)" : ""),
           desc: merchant, amount: toSar(amt), side: "Cr", ...fx(amt) };
       }
@@ -161,18 +182,20 @@ const PARSERS = [
           amount: toSar(amt), side: "Cr", ...fx(amt) };
       }
       if (head.startsWith("حوالة صادرة")) {
-        return { ...base, acct: xAcct(field(L, "من")), type: "Outgoing transfer",
-          desc: stripAcct(field(L, "الى")), amount: toSar(amt), side: "Cr", ...fx(amt) };
+        return { ...base, acct: xAcct(field(L, "من")), counter: xAcct((field(L, "الى").match(/X+\s*\d{4}/) || [""])[0]),
+          type: "Outgoing transfer", desc: stripAcct(field(L, "الى")), amount: toSar(amt), side: "Cr", ...fx(amt) };
       }
       if (head.startsWith("حوالة واردة")) {
-        return { ...base, acct: xAcct(field(L, "الى")), type: "Incoming transfer",
-          desc: stripAcct(field(L, "من")), amount: toSar(amt), side: "Dr", ...fx(amt) };
+        return { ...base, acct: xAcct(field(L, "الى")), counter: xAcct((field(L, "من").match(/X+\s*\d{4}/) || [""])[0]),
+          type: "Incoming transfer", desc: stripAcct(field(L, "من")), amount: toSar(amt), side: "Dr", ...fx(amt) };
       }
       if (head.startsWith("حوالة محلية")) {
         const names = L.filter(l => l.startsWith("الى")).map(l => l.slice(3).replace(/^\s*:?\s*/, ""));
         const name = names.find(n => !/^X+\d{4}$/.test(n)) || "";
         const bank = field(L, "المصرف");
-        return { ...base, acct: xAcct(field(L, "من")), type: "Local transfer (other bank)",
+        const toAcct = L.find(l => /^الى\s*:?\s*X+\d{4}$/.test(l));
+        return { ...base, acct: xAcct(field(L, "من")), counter: toAcct ? xAcct(toAcct.replace(/^الى\s*:?\s*/, "")) : "",
+          type: "Local transfer (other bank)",
           desc: bank ? `${name} (${bank})` : name, amount: toSar(amt), side: "Cr",
           fee: money(field(L, "الرسوم")).amt, ...fx(amt) };
       }
@@ -191,6 +214,67 @@ const PARSERS = [
           desc: biller, amount: toSar(amt), side: "Cr", ...fx(amt) };
       }
       return null;   // a SAIB message type we don't log
+    },
+  },
+  {
+    source: "Al Rajhi",
+    // English "Key:Value" lines; told apart from other English banks by Al Rajhi's own markers:
+    // "SR" for riyals, "Card:7777 ;Visa", "By:6666;mada", "To:5555"/"From:5555" (digits right after the colon)
+    test: t => /^(Credit Transfer|Debit Internal Transfer|Credit Card\s*:\s*(Payment|transfer)|Online Purchase|PoS|POS|Reverse Transaction|Withdrawal\s*:\s*ATM|Drahim portfolio)/i.test(linesOf(t)[0] || "")
+               && /\bSR\b|Card:\s?(Visa\s)?\d{4}|By:\d{4}|(To|From)( Account| card)?:\d{4}\b/.test(t),
+    parse: t => {
+      const L = linesOf(t), head = L[0];
+      const all = key => L.filter(l => l.toLowerCase().startsWith(key.toLowerCase() + ":")).map(l => l.slice(key.length + 1).trim());
+      const one = key => all(key)[0] || "";
+      const acctOf = key => (all(key).find(v => /^\d{4}$/.test(v)) || "");
+      const nameOf = key => (all(key).find(v => !/^\d{4}$/.test(v)) || "");
+      const cardNo = s => ((s || "").match(/\d{4}/) || [""])[0];
+      const amt = money(one("Amount").replace(/\bSR\b/, "SAR"));
+      const fx = amt.cur === "SAR" ? { currency: "SAR", fxAmount: "" } : { currency: amt.cur, fxAmount: amt.amt };
+      const withFx = d => amt.cur === "SAR" ? d : `${d} (${amt.cur} ${amt.amt})`;
+      const bal = money(one("Balance").replace(/\bSR\b/, "SAR"));
+      const remaining = bal.amt ? (bal.cur === "SAR" ? bal.amt : `${bal.cur} ${bal.amt}`) : "";
+      const base = { ...ymdOrDmy(t), amount: toSar(amt), fee: "", ...fx };
+      const applePay = /Apple Pay/i.test(t) ? " (Apple Pay)" : "";
+
+      if (/^Credit Transfer/i.test(head)) {
+        const via = one("Via");
+        return { ...base, acct: acctOf("To"), counter: acctOf("From"),
+          type: /Local/i.test(head) ? "Incoming transfer (other bank)" : "Incoming transfer",
+          desc: via ? `${nameOf("From")} (via ${via})` : nameOf("From"), side: "Dr", remaining: "" };
+      }
+      if (/^Debit Internal Transfer/i.test(head)) {
+        return { ...base, acct: acctOf("From"), counter: acctOf("To"), type: "Outgoing transfer",
+          desc: nameOf("To"), side: "Cr", remaining: "" };
+      }
+      if (/^Credit Card\s*:\s*Payment/i.test(head)) {          // money loaded onto the Visa card
+        return { ...base, acct: cardNo(one("Card")), counter: "", type: "Card top-up",
+          desc: withFx("Card top-up"), side: "Dr", remaining };
+      }
+      if (/^Credit Card\s*:\s*transfer/i.test(head)) {         // card balance sent back to the account
+        return { ...base, acct: cardNo(one("From card")), counter: cardNo(one("To Account")),
+          type: "Card balance to account", desc: withFx("Card balance to account"), side: "Cr", remaining };
+      }
+      if (/^Drahim portfolio/i.test(head)) {
+        const to = one("To");
+        return { ...base, acct: acctOf("From"), counter: "Drahim", type: "Drahim portfolio top-up",
+          desc: to ? `Drahim portfolio top-up (${to})` : "Drahim portfolio top-up", side: "Cr", remaining: "" };
+      }
+      if (/^Reverse Transaction/i.test(head)) {
+        return { ...base, acct: cardNo(one("By")), counter: "", type: "Reversal/refund" + applePay,
+          desc: withFx(`${one("At")} (reversal)`), side: "Dr", remaining };
+      }
+      if (/^Withdrawal\s*:\s*ATM/i.test(head)) {
+        const place = one("Place");
+        return { ...base, acct: cardNo(one("By")), counter: "", type: "ATM withdrawal",
+          desc: withFx(place ? `ATM withdrawal (${place})` : "ATM withdrawal"), side: "Cr", remaining: "" };
+      }
+      // purchases: "Card:7777 ;Visa" (card only) or "By:6666;mada" + "From:5555" (card and account)
+      const merchant = one("At");
+      const acct = acctOf("From") || cardNo(one("Card") || one("By"));
+      return { ...base, acct, counter: ownWallet(merchant),
+        type: (/^PoS|^POS/i.test(head) ? (/International/i.test(head) ? "International POS purchase" : "POS purchase") : "Online purchase") + applePay,
+        desc: withFx(merchant), side: "Cr", remaining };
     },
   },
   // next banks get added here (see README.md, "Adding a bank")
