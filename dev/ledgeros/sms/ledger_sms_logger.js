@@ -243,7 +243,7 @@ const PARSERS = [
         return { ...deb, counter: masked4(lineWith(L, ["من "], ["مرسل"])), type: "Incoming transfer (other bank)",
           desc: bank ? `${sender} (via ${bank})` : sender, side: "Dr", ...fxPack(amtOf(lineWithNum(L, ["مبلغ"]))) };
       }
-      if (/حوالة واردة/.test(head)) {          // internal: amount on the heading, "من0101* name" below
+      if (/حوالة واردة/.test(head)) {          // internal: amount on the heading, "من9302* name" below
         const who = L[1] || "";
         return { ...deb, counter: masked4(who), type: "Incoming transfer",
           desc: without(who.replace(/\*?\d{4}\*?/, ""), "من"), side: "Dr", ...fxPack(amtOf(head)) };
@@ -257,7 +257,7 @@ const PARSERS = [
           desc: extra ? `${ben} (${extra})` : ben, side: "Cr",
           fee: money(lineWith(L, ["رسوم"])).amt, ...fxPack(amtOf(lineWithNum(L, ["مبلغ"], ["رسوم"]))) };
       }
-      if (/حوالة صادرة/.test(head)) {          // internal or local: amount on the heading, "ل0101* name" below
+      if (/حوالة صادرة/.test(head)) {          // internal or local: amount on the heading, "ل9302* name" below
         const who = L[1] || "";
         return { ...deb, counter: masked4(who), type: /محلية/.test(head) ? "Outgoing transfer (other bank)" : "Outgoing transfer",
           desc: without(who.replace(/\*?\d{4}\*?/, "").replace(/\*/g, ""), "ل"), side: "Cr", ...fxPack(amtOf(head)) };
