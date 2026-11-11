@@ -76,7 +76,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - `accrualExplanation` rows carry cap, accrued, own, overflowOut, overflowIn; `accrualOverflowSummary` feeds the pool line. Tests: `capSandbox` (v4.61) and `ovfSandbox` (v5.5).
 
 **SMS inbox (v5.4)**
-- iPhone side: Shortcuts Message automations → Scriptable `dev/ledgeros/sms/ledger_sms_logger.js` (7 banks) → upload to `pd_sms_inbox` (dedupe by hashed id; failed uploads queue in iCloud). Its `README.md` is the explainer; parser tests: `node dev/ledgeros/sms/test_parsers.js` (93 passed).
+- iPhone side: Shortcuts Message automations → Scriptable `dev/ledgeros/sms/ledger_sms_logger.js` (7 banks) → upload to `pd_sms_inbox` (dedupe by hashed id; failed uploads queue in iCloud). Its `README.md` is the explainer; parser tests: `node dev/ledgeros/sms/test_parsers.js` (110 passed). Every run writes a line to `Ledger Run Log.txt` on the phone (tells "automation never started" from "script skipped/failed"); run by hand in Scriptable with an SMS copied = test mode (shows the parsed row, Test only / Log it); iCloud file errors are non-fatal so the row still uploads.
 - App side: New JV → 📩 SMS. Groups by mapped account (`dismissals.smsMap`), one JV per SMS date, own-bank transfers paired within SAR 1 (difference = fee line), exact reversals cancel. Posting marks the SMS done (`smsId` on lines).
 
 ## 3. Tests

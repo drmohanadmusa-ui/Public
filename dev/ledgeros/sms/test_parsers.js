@@ -7,9 +7,12 @@ const path = require("path");
 const SRC = fs.readFileSync(path.join(__dirname, "ledger_sms_logger.js"), "utf8");
 
 // net: {keys:bool, code:number|null (null = no connection), sent:[]} — fake Keychain + Request
-function runScript(sms, store, net) {
+// opt: {inApp, clipboard, pick (Alert button index), alerts:[], notes:[], locked (iCloud reads/writes throw), noICloud}
+function runScript(sms, store, net, opt) {
   const out = [];
   net = net || { keys: false, code: 201, sent: [] };
+  opt = opt || {};
+  const lockedErr = () => { if (opt.locked) throw new Error("The file couldn't be opened (device locked)"); };
   const ctx = {
     Keychain: { contains: () => net.keys, get: k => (k === "ledgeros_sb_url" ? "https://test.example.co/" : "test-key-0123456789abcdef0123"), set() {} },
     Request: class { constructor(u) { this.url = u; } async loadString() {
@@ -17,17 +20,18 @@ function runScript(sms, store, net) {
       net.sent.push({ url: this.url, headers: this.headers, rows: JSON.parse(this.body) }); this.response = { statusCode: net.code }; return ""; } },
     __NOW__: "2026-11-11T12:00:00",          // pinned "today" (SAIB dates have no year)
     args: { shortcutParameter: sms },
-    Pasteboard: { pasteString: () => "" },
-    config: { runsInApp: false },
+    Pasteboard: { pasteString: () => opt.clipboard || "" },
+    config: { runsInApp: !!opt.inApp },
     DateFormatter: class { string() { return "2026-01-01 00:00"; } },
-    Notification: class { async schedule() {} },
-    Alert: class {},
+    Notification: class { async schedule() { (opt.notes || []).push({ title: this.title, body: this.body }); } },
+    Alert: class { constructor() { this.actions = []; } addAction(a) { this.actions.push(a); } addCancelAction() {} addTextField() {}
+      async present() { (opt.alerts || []).push({ title: this.title, message: this.message, actions: this.actions }); return opt.pick === undefined ? -1 : opt.pick; } },
     Script: { setShortcutOutput: o => out.push(o), complete() {} },
-    FileManager: { iCloud: () => ({
+    FileManager: { iCloud: () => { if (opt.noICloud) throw new Error("iCloud unavailable"); return {
       documentsDirectory: () => "/d", joinPath: (a, b) => a + "/" + b,
-      fileExists: p => p in store, downloadFileFromiCloud: async () => {},
-      readString: p => store[p], writeString: (p, c) => { store[p] = c; }, remove: p => { delete store[p]; },
-    }) },
+      fileExists: p => p in store, downloadFileFromiCloud: async () => { lockedErr(); },
+      readString: p => { lockedErr(); return store[p]; }, writeString: (p, c) => { lockedErr(); store[p] = c; }, remove: p => { lockedErr(); delete store[p]; },
+    }; } },
   };
   const fn = new Function(...Object.keys(ctx), `return (async () => {${SRC}\n})()`);
   return fn(...Object.values(ctx)).then(() => out[0]);
@@ -76,6 +80,15 @@ const CASES = [
   { name: "SNB CC annual fee",
     sms: "تم خصم الرسوم السنوية لبطاقتك الإئتمانية **2345 بمبلغ 230.00. للمزيد من المعلومات الرجاء زيارة الأهلي موبايل",
     expect: { source: "SNB CC", acct: "2345", type: "Annual card fee", amount: "230.00", side: "Cr" } },
+  { name: "SNB CC purchase, Nov 2026 wording: 'الرصيد' balance, amount glued to SAR, 'منMERCHANT' with no space",
+    sms: "شراء إنترنت\nب88.10SAR\nمنTEST POWER CO\nبطاقة ائتمانية**2345(Apple Pay)\nالرصيد 9100.25SAR\n12/11/26 00:43",
+    expect: { date: "2026-11-12", time: "00:43", source: "SNB CC", acct: "2345", type: "Online purchase (Apple Pay)",
+              desc: "TEST POWER CO", amount: "88.10", side: "Cr", currency: "SAR", remaining: "9100.25" } },
+  { name: "SNB CC cashback, Nov 2026 (same night as the purchase above)",
+    sms: "بطاقة ائتمانية استرجاع نقدي\nفي بطاقة **2345\nمبلغ 0.62 SAR\nفي 12/11/26 00:43\nالصرف المتبقي 9100.25 SAR",
+    expect: { date: "2026-11-12", acct: "2345", type: "Cashback", desc: "Cashback", amount: "0.62", side: "Dr", remaining: "9100.25" } },
+  { name: "SNB CC one-time password that mentions 'الرصيد' is still ignored",
+    sms: "الرقم السري لمره واحده لعملية الشراء 4321\nب88.10SAR\nمنTEST POWER CO\nبطاقة ائتمانية**2345\nالرصيد 9100.25SAR", skip: true },
   // ---------- SNB debit (invented account 4321, mada card 3456) ----------
   { name: "SNB credit card payment from the account (own transfer to the card)",
     sms: "سداد بطاقة ائتمانية\nمن حساب *4321\nالى بطاقة **2345\nمبلغ SAR 2424.38\nفي 07/11/26 17:13\nالصرف المتبقي SAR 15000.00",
@@ -357,6 +370,79 @@ const CASES = [
     const store = {}, none = { keys: false, code: 201, sent: [] };
     const res = await runScript(SMS, store, none);
     check(/not connected/.test(res) && none.sent.length === 0 && /\t47\.66\t/.test(store["/d/Ledger Inbox.tsv"]), "upload: before setup, rows are still logged on the phone and queued");
+  }
+  // ---------- test mode, run log, failures, locked phone ----------
+  const PURCHASE = CASES.find(c => /Nov 2026 wording/.test(c.name)).sms;
+  {
+    const store = {}, net = { keys: true, code: 201, sent: [] }, opt = { inApp: true, clipboard: PURCHASE, pick: 0, alerts: [], notes: [] };
+    const res = await runScript(undefined, store, net, opt);
+    const a = opt.alerts[0] || {};
+    check(a.title === "Test result" && /TEST POWER CO/.test(a.message) && /SAR 88\.10/.test(a.message) && /Acct: 2345/.test(a.message)
+      && /2026-11-12 00:43/.test(a.message) && /Remaining: 9100\.25/.test(a.message), "test mode: the pop-up shows what would be logged");
+    check(/^Test only/.test(res) && !store["/d/Ledger Inbox.tsv"] && net.sent.length === 0 && opt.notes.length === 0,
+      "test mode: 'Test only' logs nothing and uploads nothing");
+    check(opt.alerts.length === 1, "test mode: no second 'result' pop-up after Test only");
+  }
+  {
+    const store = {}, net = { keys: true, code: 201, sent: [] }, opt = { inApp: true, clipboard: PURCHASE, pick: 1, alerts: [], notes: [] };
+    const res = await runScript(undefined, store, net, opt);
+    check(/^Logged/.test(res) && /\t88\.10\t/.test(store["/d/Ledger Inbox.tsv"] || "") && net.sent.length === 1, "test mode: 'Log it' logs and uploads as usual");
+  }
+  {
+    const store = {}, opt = { inApp: true, clipboard: "Your code is 1234. Do not share it.", alerts: [], notes: [] };
+    const res = await runScript(undefined, store, { keys: true, code: 201, sent: [] }, opt);
+    check(res === "Test: skipped" && opt.alerts[0] && opt.alerts[0].title === "Test: not recognised" && /SKIPPED/.test(opt.alerts[0].message)
+      && !store["/d/Ledger Inbox.tsv"], "test mode: an unrecognised message says it would be skipped");
+  }
+  {
+    const opt = { inApp: true, clipboard: "", pick: -1, alerts: [], notes: [] };
+    const res = await runScript(undefined, {}, null, opt);
+    check(opt.alerts[0] && opt.alerts[0].title === "Ledger SMS Logger" && opt.alerts[0].actions.join("|") === "Connect to LedgerOS|Show run log" && res === "Closed",
+      "menu: run with nothing copied offers Connect and the run log");
+  }
+  {
+    const store = {};
+    await runScript(PURCHASE, store, { keys: true, code: 201, sent: [] });
+    await runScript("Your code is 1234", store, { keys: true, code: 201, sent: [] });
+    const log = (store["/d/Ledger Run Log.txt"] || "").trim().split("\n");
+    check(log.length === 2 && /\| SMS \| شراء إنترنت \| Logged: SNB CC/.test(log[0]) && /\| SMS \| Your code is 1234 \| Skipped/.test(log[1]),
+      "run log: one line per run, skipped SMS included");
+    const opt = { inApp: true, clipboard: "", pick: 1, alerts: [], notes: [] };
+    await runScript(undefined, store, null, opt);
+    check(opt.alerts[1] && opt.alerts[1].title === "Last runs (newest first)" && /^.*Skipped/.test(opt.alerts[1].message.split("\n")[0]),
+      "run log: 'Show run log' lists the newest run first");
+    const big = {}; big["/d/Ledger Run Log.txt"] = Array.from({ length: 150 }, (_, i) => "old " + i).join("\n") + "\n";
+    await runScript("Your code is 1234", big, { keys: true, code: 201, sent: [] });
+    const kept = big["/d/Ledger Run Log.txt"].trim().split("\n");
+    check(kept.length === 100 && kept[0] === "old 51" && /Skipped/.test(kept[99]), "run log: keeps only the last 100 runs");
+  }
+  {
+    // a real phone already has the inbox file and a queue file; while locked iOS refuses to open them
+    const store = { "/d/Ledger Inbox.tsv": "earlier rows\n", "/d/Ledger Upload Queue.json": "[]" }, net = { keys: true, code: 201, sent: [] }, opt = { locked: true, notes: [] };
+    const res = await runScript(PURCHASE, store, net, opt);
+    check(/^Logged/.test(res) && net.sent.length === 1 && net.sent[0].rows[0].amt === 88.1 && /phone file not updated/.test(res) && !/^Failed/.test(res),
+      "locked phone: iCloud files unreadable, the row still goes to LedgerOS");
+  }
+  {
+    const store = { "/d/Ledger Inbox.tsv": "earlier rows\n", "/d/Ledger Upload Queue.json": "[]" }, net = { keys: true, code: null, sent: [] }, opt = { locked: true, notes: [] };
+    const res = await runScript(PURCHASE, store, net, opt);
+    check(/no connection/.test(res) && /could not save it on the phone/.test(res) && opt.notes.length === 1 && opt.notes[0].title === "Ledger SMS Logger needs a look",
+      "locked phone + offline: says the row could not be kept for a retry, and notifies");
+  }
+  {
+    const opt = { notes: [] };
+    await runScript(PURCHASE, {}, { keys: true, code: 401, sent: [] }, opt);
+    check(opt.notes.length === 1 && opt.notes[0].title === "Ledger SMS Logger needs a look" && /401/.test(opt.notes[0].body),
+      "failure notice: a refused upload notifies (not the usual 'Logged' notice)");
+    const ok = { notes: [] };
+    await runScript(PURCHASE, {}, { keys: true, code: 201, sent: [] }, ok);
+    check(ok.notes.length === 1 && ok.notes[0].title === "Logged to Ledger Inbox", "notice: a good run sends the usual 'Logged' notice only");
+  }
+  {
+    const opt = { noICloud: true, notes: [] };
+    const res = await runScript(PURCHASE, {}, { keys: true, code: 201, sent: [] }, opt);
+    check(/^Failed: iCloud unavailable/.test(res) && opt.notes.length === 1 && opt.notes[0].title === "Ledger SMS Logger needs a look",
+      "failure: an unexpected error is reported and notified instead of stopping silently");
   }
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

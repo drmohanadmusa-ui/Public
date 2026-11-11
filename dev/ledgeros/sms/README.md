@@ -25,10 +25,19 @@ Bank SMS arrives
   → appends one row to  iCloud Drive / Scriptable / Ledger Inbox.tsv   (skips exact duplicates)
   → sends it to LedgerOS (Supabase table pd_sms_inbox). If that fails (no signal, wrong key), the row
     waits in "Ledger Upload Queue.json" and goes with the next SMS
-  → notification "Logged to Ledger Inbox"
+  → notification "Logged to Ledger Inbox" (or "Ledger SMS Logger needs a look" if something failed)
+  → one line in iCloud Drive / Scriptable / Ledger Run Log.txt (every run, skipped SMS too)
 ```
 
-Running the script by hand inside Scriptable uses whatever SMS is on the clipboard. That's how to test it, or to log an old message.
+If iCloud Drive can't be opened (for example while the phone is locked), the script skips the phone's own copy and still sends the row to LedgerOS.
+
+**Testing a message (no logging):** long-press the bank SMS → **Copy**, open Scriptable and tap **Ledger SMS Logger**. A pop-up shows exactly what would be logged (bank, account, type, description, amount, date, remaining), or says the message would be skipped. Tap **Test only** to log nothing, or **Log it to LedgerOS** to log it for real (also the way to log an old message).
+
+**Menu:** run it in Scriptable with nothing copied → **Connect to LedgerOS** or **Show run log** (the last 25 runs, newest first).
+
+**Did an SMS start the script?** Check the run log. A line marked `SMS` means the automation ran; its result says what happened. No line at all means the automation never started (trigger word, Run Immediately, or the automation is off).
+
+**Notifications:** `NOTIFY` at the top of the script controls the "Logged" notice; `NOTIFY_FAILURES` controls the "needs a look" notice (on by default). The separate "Running your automation" banner comes from Shortcuts, not the script: turn off **Notify When Run** in each automation to stop it.
 
 ## 2. iPhone setup (one time)
 
@@ -77,6 +86,7 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
   - **Logged:** salary ("ايداع رواتب"), incoming transfers (internal, and local from another bank, with the bank name), outgoing internal, local and international transfers (with fee), mada purchases (local and international online), credit card payments (Counter Acct = the card, so it's a transfer between your own accounts), and finance instalments (personal and home, with the remaining loan balance).
   - **Local outgoing transfers include SNB's SAR 0.50 fee in the amount** (e.g. 19000.50, while the other bank receives 19000).
 - **Checked against real pasted text** (2026-11-11): 19 transactions all correct, plus the OTP, failed-transfer and activation messages skipped. The stored text has the number before "SAR" (`مبلغ 235.75 SAR`, `بـ400 SAR`), which the keyword-based reading handles.
+- **Credit card wording seen from Nov 2026:** purchases can show the balance as `الرصيد 1,234SAR` (no `الصرف المتبقي`), the amount glued to SAR (`ب88.10SAR`) and the merchant glued to "من" (`منMERCHANT`). All three are handled; `الرصيد` is read as Remaining.
 - **Ignored:** OTPs and activation codes (some contain amounts and merchants), failed transfers ("غير ناجحة"), card issue, activation, freeze and cancel notices, and PIN changes.
 - **Line order:** SNB's Arabic lines are stored in a different order from how they're shown. Every SNB field is found by keyword anywhere in its line, and labels are stripped only at the **start or end** of a line, because names like "عبدالمنعم" contain "من" and "ل".
 - **Dates:** usually `dd/mm/yy`, but international transfers use `yy/mm/dd` (`26/10/23`). `anyDate` tries both and keeps the valid one closest to today.
@@ -228,7 +238,8 @@ Then add tests (section 6, step 3), add the trigger phrase to the table in secti
 | Pop-up says "Logged" but the amount is blank | The SMS's internal text differs from what's on screen. A **Ledger Debug.txt** file appears in iCloud Drive → Scriptable with the raw characters. Give it to Claude. |
 | "Skipped: not a recognised transaction SMS" | No parser's `test()` matched. A new message type: see section 6. |
 | "Duplicate, not logged" | That exact transaction is already in the file. This is expected if the same SMS is run twice. |
-| Nothing happens when a real SMS arrives | Automation is off, not set to Run Immediately, or the trigger phrase isn't in the message. |
+| Nothing happens when a real SMS arrives | Look at the run log (section 1). No line: the automation is off, not set to Run Immediately, or the trigger phrase isn't in the message. A line that says Skipped: copy the SMS and test it (section 1), then send it to Claude. |
+| "Ledger SMS Logger needs a look" | The row didn't reach LedgerOS (no signal, wrong key) or the script hit an error. The notice and the run log give the reason. Rows that couldn't be sent wait in the queue and go with the next SMS. |
 | Row logged with every field blank, but manual runs work | "Get Text from Input" is still on the faded placeholder. Set it to **Shortcut Input**. |
 | Grey "Configure Sender" banner | Remove the Sender row (section 2, step 3). |
 
@@ -245,3 +256,4 @@ Then add tests (section 6, step 3), add the trigger phrase to the table in secti
 9. **Banks share headings.** "Online Purchase" is used by Al Rajhi, meem and probably others. Every parser's `test()` needs a heading **and** a marker only that bank uses, and every new bank gets a test proving it doesn't steal another bank's message.
 10. **Never strip a word from the middle of an Arabic line.** "من", "ل" and "في" are also letters inside names. Labels come off only at the edges (`without`).
 11. **A "guard" test only counts if removing the guard turns it red.** Two first-draft guard tests (meem's label check and SNB's failed-transfer skip) passed with or without the guard and had to be rewritten.
+12. **"It didn't work" has two causes that look the same:** the automation never started, or the script started and skipped/failed. The run log tells them apart; check it before changing parsers. (Nov 2026: of two SNB messages, the purchase was skipped by the parser because of new wording; the cashback parsed fine yet never arrived.)
