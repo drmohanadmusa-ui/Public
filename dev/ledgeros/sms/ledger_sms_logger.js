@@ -40,8 +40,8 @@ const field = (lines, ...labels) => {
 // "SAR 1,475" / "40 MYR" / "MYR 52.35" -> {cur, amt}
 const money = s => {
   const cur = ((s || "").match(/\b([A-Z]{3})\b/) || [])[1] || "SAR";
-  const m = (s || "").match(/\d[\d,]*(?:\.\d+)?/);
-  return { cur, amt: m ? num(m[0]) : "" };
+  const m = (s || "").match(/\d[\d,]*(?:\.\d+)?|\.\d+/);
+  return { cur, amt: m ? num(m[0]).replace(/^\./, "0.") : "" };
 };
 // a foreign amount converted to SAR when the rate is fixed, otherwise blank (you type it)
 const toSar = ({ cur, amt }) => {
@@ -84,6 +84,14 @@ const ymdOrDmy = t => {
   }).filter(Boolean).sort((a, b) => a.gap - b.gap);
   return { date: cands.length ? cands[0].date : "", time };
 };
+// "23/02/2026 10:09" or "12/08/26 09:10" (day first), or "2026-02-23" with a separate "Time: 10:58:08"
+const dmyAny = t => {
+  const m = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})\s+(\d{1,2}):(\d{2})/);
+  const pad = n => String(n).padStart(2, "0");
+  if (m) return { date: `${m[3].length === 2 ? "20" + m[3] : m[3]}-${pad(m[2])}-${pad(m[1])}`, time: `${pad(m[4])}:${m[5]}` };
+  const iso = t.match(/(\d{4})-(\d{2})-(\d{2})/), tm = t.match(/Time:\s*(\d{1,2}):(\d{2})/i);
+  return { date: iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : "", time: tm ? `${pad(tm[1])}:${tm[2]}` : "" };
+};
 // merchants that are really your own wallets: a purchase there is a transfer to that wallet.
 // LedgerOS maps these names to accounts like any other Acct/Counter value.
 const OWN_WALLETS = [[/URPAY/i, "urpay"], [/MYSR|D360|D36\)/i, "D360"]];
@@ -96,6 +104,7 @@ const TRANSLATE = {
   "المخالفات المرورية": "Traffic fines",
   "الجوازات السعودية": "Passports (Jawazat)",
   "تجديد جواز سفر": "Passport renewal",
+  "منصة ايجار": "Ejar platform",
 };
 const tr = s => { const k = (s || "").trim(); return TRANSLATE[k] || k; };
 
@@ -257,7 +266,7 @@ const PARSERS = [
       }
       if (/^Drahim portfolio/i.test(head)) {
         const to = one("To");
-        return { ...base, acct: acctOf("From"), counter: "Drahim", type: "Drahim portfolio top-up",
+        return { ...base, acct: acctOf("From"), counter: "", type: "Drahim portfolio top-up",
           desc: to ? `Drahim portfolio top-up (${to})` : "Drahim portfolio top-up", side: "Cr", remaining: "" };
       }
       if (/^Reverse Transaction/i.test(head)) {
@@ -275,6 +284,40 @@ const PARSERS = [
       return { ...base, acct, counter: ownWallet(merchant),
         type: (/^PoS|^POS/i.test(head) ? (/International/i.test(head) ? "International POS purchase" : "POS purchase") : "Online purchase") + applePay,
         desc: withFx(merchant), side: "Cr", remaining };
+    },
+  },
+  {
+    source: "meem",
+    // English "Key: Value" lines with masked numbers (***8888); told apart by meem's own labels
+    test: t => /^(Local Credit transfer|Fund Transfer Approved|Online Purchase|Credit Transaction)/i.test(linesOf(t)[0] || "")
+               && /Account Number:|Sender account number:|Sender Name:|^Credit Transaction:/im.test(t),
+    parse: t => {
+      const L = linesOf(t), head = L[0];
+      const one = key => { const l = L.find(x => x.toLowerCase().startsWith(key.toLowerCase())); return l ? l.slice(key.length).replace(/^\s*:\s*/, "").trim() : ""; };
+      const masked = s => ((s || "").match(/\*+\s*(\d{4})/) || [])[1] || "";
+      const amt = money(one("Amount"));
+      const fx = amt.cur === "SAR" ? { currency: "SAR", fxAmount: "" } : { currency: amt.cur, fxAmount: amt.amt };
+      const feeOf = s => { const f = money(s).amt; return f && parseFloat(f) > 0 ? f : ""; };
+      const base = { ...dmyAny(t), amount: toSar(amt), remaining: "", ...fx };
+
+      if (/^Local Credit transfer/i.test(head)) {
+        const name = tr(one("Sender Name")), via = one("Via");
+        return { ...base, acct: masked(one("To")), counter: masked(one("From")), type: "Incoming transfer (other bank)",
+          desc: via ? `${name} (via ${via})` : name, side: "Dr", fee: feeOf(one("Fees")) };
+      }
+      if (/^Fund Transfer Approved/i.test(head)) {
+        const name = one("Beneficiary Name").replace(/\*+$/, "").trim(), bank = one("Name of beneficiary participant");
+        return { ...base, acct: masked(one("Sender account number")), counter: masked(one("Beneficiary account number")),
+          type: "Outgoing transfer (other bank)", desc: bank ? `${name} (${bank})` : name, side: "Cr", fee: feeOf(one("Fee")) };
+      }
+      if (/^Credit Transaction/i.test(head)) {
+        const what = head.replace(/^Credit Transaction\s*:\s*/i, "").trim() || "Credit";
+        return { ...base, acct: masked(one("To")), counter: "", type: what, desc: what, side: "Dr", fee: "" };
+      }
+      // Online Purchase: mada card + account
+      const merchant = one("At").replace(/,\s*$/, "");
+      return { ...base, acct: masked(one("Account Number")) || masked(one("mada Card")), counter: ownWallet(merchant),
+        type: "Online purchase" + (/Apple Pay/i.test(t) ? " (Apple Pay)" : ""), desc: merchant, side: "Cr", fee: "" };
     },
   },
   // next banks get added here (see README.md, "Adding a bank")

@@ -49,9 +49,9 @@ Running the script by hand inside Scriptable uses whatever SMS is on the clipboa
 | `SNB CC` | SNB credit card | phrase `الصرف المتبقي` | done |
 | `SAIB` | SAIB main account, SAIB-2 account, mada card, travel card | last 4 of each (4 automations) | done |
 | `Al Rajhi` | Al Rajhi account, mada card, Visa card | last 4 of each (3 automations) | done |
+| `meem` | meem account, mada card | last 4 of each (2 automations) | done |
 | | SNB debit account | | waiting for samples |
 | | D360 | | waiting for samples |
-| | meem | | waiting for samples |
 | | urpay | | waiting for samples |
 | | STC Pay | | waiting for samples |
 
@@ -79,11 +79,22 @@ The script ignores anything it doesn't recognise, so a trigger that's slightly t
   - outgoing internal transfers
   - mada purchases and ATM withdrawals
   - Visa card: top-ups ("Credit Card:Payment"), purchases (online and international POS), reversals, and card balance sent back to the account ("Credit Card:transfer")
-  - Drahim portfolio top-ups
+  - Drahim portfolio top-ups (bank side only; Counter Acct is left empty on purpose, and Muhannad adds the Drahim side himself)
 - **Message types ignored:** OTP codes, declined transactions, "You received a message from …" (personal messages are never logged).
 - **Two date styles in the same bank:** transfers use `26/10/1 11:36` (yy/m/d) and card messages use `3/10/26 22:12` (d/m/yy). `ymdOrDmy` tries both readings and keeps the valid one closest to today that isn't in the future.
 - **Riyals are written `SR`** (`SR 165`, `91.16 SR`). The script reads them as SAR.
 - **Telling Al Rajhi apart from other English-language banks:** the first line must be an Al Rajhi heading **and** the SMS must have an Al Rajhi marker (`SR`, `Card:7777 ;Visa`, `By:6666;mada`, or `To:`/`From:` followed directly by 4 digits). A test checks that a meem-style "Online Purchase" isn't taken as Al Rajhi.
+
+**meem notes**
+- **Message types logged:**
+  - incoming transfers from other banks ("Local Credit transfer", e.g. rent from the Ejar platform)
+  - outgoing transfers to other banks ("Fund Transfer Approved", with its SAR 1.15 fee)
+  - mada online purchases
+  - credits such as "Savings Account Profit"
+- **Message types ignored:** OTPs, beneficiary creation/activation, card activation (it shows a full account number), Apple Pay notices, e-statements, and maintenance or rate notices.
+- **Dates:** `23/02/2026 10:09` or `12/08/26 09:10` (day first, 2- or 4-digit year), or `Date: 2026-05-10` with a separate `Time: 09:53:00` line (`dmyAny`).
+- **Amounts like `SAR .16`** (no leading zero) are read as `0.16`.
+- **Telling meem apart:** its headings are shared with other banks ("Online Purchase"), so it also needs one of meem's labels (`Account Number:`, `Sender account number:`, `Sender Name:`, or a `Credit Transaction:` heading). A test checks that another bank's "Online Purchase" isn't taken as meem.
 
 **Own wallets bought as "merchants":** a mada purchase at URPAY or MYSR/D360 is really a top-up of your own wallet. `OWN_WALLETS` puts the wallet's name (`urpay`, `D360`) in Counter Acct, so LedgerOS can treat it as a transfer between your own accounts.
 
@@ -121,6 +132,7 @@ If the columns ever change, the script moves the old file aside as *Ledger Inbox
    - `money(s)`: `{cur, amt}` from `SAR 1,475`, `40 MYR`, … `toSar(m)` converts using `FX_TO_SAR`, or leaves it blank.
    - `mdNoYear(text)`: `mm-dd hh:mm` with no year (SAIB).
    - `ymdOrDmy(text)`: `yy/m/d` or `d/m/yy`, whichever reading is valid and closest to today (Al Rajhi).
+   - `dmyAny(text)`: `dd/mm/yyyy`, `dd/mm/yy`, or ISO date plus a `Time:` line (meem).
    - `ownWallet(merchant)`: `urpay` / `D360` when a "merchant" is really your own wallet (`OWN_WALLETS`).
    - `xAcct(s)` / `stripAcct(s)`: pull out or remove `XXX1234`.
    - `tr(s)`: Arabic → English using `TRANSLATE`.
@@ -177,3 +189,4 @@ Then add tests (section 6, step 3), add the trigger phrase to the table in secti
 6. **An OTP can look like a transaction:** SAIB's OTP mentions "حوالة صادرة" and an amount. Parsers decide by the message's **first line**, not by words anywhere in it.
 7. **Check a parser against a real batch, privately.** When Muhannad pastes a bank's history, run every message through the script outside the repo, read every logged row, and only commit invented copies as tests. SAIB's first run caught the card line "بطاقة:XXX…" being read as the amount.
 8. **One bank can use two date orders** (Al Rajhi). Never pick a date order per bank by assumption: let `ymdOrDmy` choose the reading closest to today.
+9. **Banks share headings.** "Online Purchase" is used by Al Rajhi, meem and probably others. Every parser's `test()` needs a heading **and** a marker only that bank uses, and every new bank gets a test proving it doesn't steal another bank's message.
