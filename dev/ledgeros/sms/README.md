@@ -62,7 +62,7 @@ If iCloud Drive can't be opened (for example while the phone is locked), the scr
 1. `Amount` (Al Rajhi, meem, STC, D360, urpay)
 2. `مبلغ` (SNB, SAIB, and SNB's annual-fee notice, which has no "SAR")
 3. `SAR` (SNB and SAIB "بSAR" purchases, which have neither of the above)
-4. `ائتمان` (added 2026-11-12, a safety net: every SNB credit card SMS has it, including the Nov 2026 wording where "SAR" is glued to the number, `ب143.89SAR`, which iOS may not count as containing "SAR")
+4. `ائتمان` (added 2026-11-12, a safety net: every SNB credit card SMS has it, including the Nov 2026 wording where "SAR" is glued to the number, `ب88.10SAR`, which iOS may not count as containing "SAR")
 
 In every automation turn **Notify When Run off** (it's the "Running your automation" banner that also shows for OTPs).
 
