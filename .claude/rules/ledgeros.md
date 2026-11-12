@@ -123,12 +123,12 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 ## 6. Open items and future features (ask before starting any of them)
 
-**Where the last session stopped (2026-11-12, v5.8.0 built and tested, 2297 tests; SMS parser tests 122):**
+**Where the last session stopped (2026-11-12, v5.8.0 live, 2297 tests; SMS parser tests 122; SMS script `SCRIPT_VERSION` 2026-11-12 sent to him):**
 - The tracker (`dev/ledgeros/FEEDBACK.md`) is the source of truth: #1–#40, everything shipped or closed except the items below.
 - **Still open:**
-  - **#24 SMS on a locked phone:** fix A (keys, queue and run log in Scriptable's on-phone storage) is installed. A check-in with him is scheduled for 2026-11-13 09:30 Riyadh: did overnight (locked) SMS reach `pd_sms_inbox`? If any were missed, propose fix B (the Shortcut posts the raw SMS with Get Contents of URL; LedgerOS parses it). He prefers the robust option.
+  - **#24 SMS on a locked phone:** fix A (keys, queue and run log in Scriptable's on-phone storage) is installed. A check-in was scheduled for 2026-11-13 09:30 Riyadh in the previous session; if he raises it here instead, check read-only whether overnight (locked) SMS reached `pd_sms_inbox` and ask him for his run log (Scriptable → script menu → Copy run log; every line ends with the script version). If any were missed, propose fix B (the Shortcut posts the raw SMS with Get Contents of URL; LedgerOS parses it). He prefers the robust option.
   - **#38 investment price setup (his side):** Finnhub key, link the rest of the positions, DEX wallet addresses, Backfill, deploy and schedule the daily-close Edge Function. Keep open until he confirms. His work PC blocks the price sites; another PC works.
-  - **#40 GitHub branches:** he deletes old `claude/*` branches on GitHub (the session proxy refuses deletion). The v5.8 branch can go too once merged.
+  - **#40 GitHub branches:** he deletes old `claude/*` branches on GitHub (the session proxy refuses deletion); all of them are merged or replaced, including `claude/v580` and `claude/handover-58`.
   - **#5 (error half) parked** since v5.1.
 - **Process notes:**
   - `gh pr create` fails (GraphQL blocked). Use REST: `gh api repos/drmohanadmusa-ui/Public/pulls -f title=... -f head=<branch> -f base=main -F body=@file`, then `gh api -X PUT repos/drmohanadmusa-ui/Public/pulls/<n>/merge -f merge_method=squash`.
