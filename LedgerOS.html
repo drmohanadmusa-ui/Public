@@ -55,6 +55,8 @@ button{cursor:pointer}
 .brand h1{font-size:15.5px;font-weight:650;white-space:nowrap}
 .cloud{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:5px 11px;cursor:pointer;white-space:nowrap}
 .cloud.cloud-static{cursor:default}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.sync-icon{display:inline-flex;line-height:0} .sync-icon.ok{color:var(--green)} .sync-icon.busy{color:var(--yellow)} .sync-icon.err{color:var(--red)} .sync-icon.local{color:var(--muted)}
 /* The browser's up/down arrows on number fields sat on top of the digits, making a value like
    50000 look struck through. Amounts are typed, not nudged one at a time, so the arrows are
    removed rather than given room. */
@@ -231,6 +233,7 @@ main{padding:22px;max-width:var(--content-max-width);margin:0;min-height:100vh;f
     var(--bg);
 }
 @media print{#sidebar,.noprint{display:none!important} body{background:#fff;color:#000} main{max-width:none}}
+@media print{body.print-modal>*:not(#modalRoot){display:none!important} body.print-modal .modal-bg{position:static;background:none;padding:0;display:block} body.print-modal .modal{max-width:none;max-height:none;overflow:visible;box-shadow:none;border:none}}
 .mobile-topbar{display:none}
 .mobile-nav-toggle{display:none}
 .mobile-nav-close{display:none}
@@ -565,7 +568,7 @@ body.still *,body.still *::before,body.still *::after{animation:none!important;t
     <header id="topbar" class="noprint">
       <h1><span id="topbarTitle">Dashboard</span> <span class="mut" id="topbarDate"></span></h1>
       <button class="tb-search" onclick="openCmdPalette()" aria-label="Search accounts, JVs and pages (Ctrl+K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><span class="tb-search-ph">Search accounts, JVs, pages</span><span class="tb-kbd">Ctrl+K</span></button>
-      <div class="cloud cloud-static" id="cloudBtn" title="Sync status"><span class="dot" id="dot"></span><span id="statusTxt">Local only</span></div>
+      <div class="cloud cloud-static" id="cloudBtn" title="Local only" aria-label="Local only"><span id="syncIcon" class="sync-icon local" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 12.5 8 5h8l2.5 7.5"/><rect x="3" y="12.5" width="18" height="7" rx="2"/><path d="M16.5 16h.01M13.5 16h.01"/></svg></span><span class="dot" id="dot" hidden></span><span id="statusTxt" class="sr-only">Local only</span></div>
       <div class="tb-seg" role="group" aria-label="Theme">
         <button id="themeLightBtn" aria-pressed="true" onclick="applyTheme('light')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6L4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>Light</button>
         <button id="themeDarkBtn" aria-pressed="false" onclick="applyTheme('dark')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>Dark</button>
@@ -587,12 +590,21 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.9.0';
+const APP_VERSION = '5.10.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.10.0', date:'2026-11-12', changes:[
+    'Investments → Activity: with one person picked, every column shows only their share (their units, USD, SAR, rate and name), and Export CSV exports just their figures.',
+    'Editing a deposit: each person\'s SAR shows next to their USD. Changing someone\'s USD keeps the rate logged for them and recalculates their SAR (before, the SAR stayed and the rate changed).',
+    'Reconcile → Solana wallet check: uses a free public Solana server that accepts calls from the browser (the old one answered 403). 💹 Price links has a box for your own Solana RPC address if you ever need one.',
+    'Fixed: robo platforms (Tamra, Drahim) said “No value logged” even after Update value; the box and the platform page now show “Value as of” the date you entered.',
+    'Family: a person\'s ▸ Holdings opens in a wide window with cost, price and realised for every holding.',
+    'Family → 📄 Statement: ⬇ PDF (print window, Save as PDF) and ⬇ Excel (CSV), both named with the person and today\'s date.',
+    'Top bar: the sync words are now an icon: a cloud that is green when synced, yellow while syncing, red on a problem; a drive when this device is local only. Hover to read the status.',
+  ]},
   {version:'5.9.0', date:'2026-11-12', changes:[
     'SMS → Create JV for a bank account (one in the Dashboard\'s Bank accounts table) first asks for the balance now from your bank app (credit cards: the available limit), with Skip. Then New JV opens in reconcile mode: what is still needed to reconcile the account, and its last 3 JVs.',
     'Dashboard Bank accounts: the statement boxes take sums with + and − (+500-150 saves and shows 350). The same works in the SMS balance window.',
@@ -1890,9 +1902,24 @@ async function gateConnect(){
 }
 
 /* ============================= CLOUD (Supabase) ============================= */
+// #54: the top bar shows an icon, not words: cloud green = synced, yellow = working, red = a problem; a drive = local only. The words are the tooltip.
+const SYNC_ICONS = {
+  cloud:'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18.5h10.5a4 4 0 0 0 .4-7.98A6 6 0 0 0 6.3 9.2 4.7 4.7 0 0 0 7 18.5z"/></svg>',
+  drive:'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 12.5 8 5h8l2.5 7.5"/><rect x="3" y="12.5" width="18" height="7" rx="2"/><path d="M16.5 16h.01M13.5 16h.01"/></svg>'
+};
+function syncIconState(text, kind){
+  if(kind==='ok') return 'ok';
+  if(kind==='err') return 'err';
+  return /^Local only/.test(String(text||''))? 'local' : 'busy';
+}
 function setStatus(text, kind){
   document.getElementById('statusTxt').textContent=text;
   const dot=document.getElementById('dot'); dot.className='dot'+(kind?(' '+kind):'');
+  const st = syncIconState(text, kind);
+  const ico = document.getElementById('syncIcon');
+  if(ico){ ico.className = 'sync-icon '+st; ico.innerHTML = st==='local'? SYNC_ICONS.drive : SYNC_ICONS.cloud; }
+  const btn = document.getElementById('cloudBtn');
+  if(btn){ btn.title = text; btn.setAttribute('aria-label', text); }
 }
 async function connectCloud(url,key,silent){
   setStatus('Connecting…');
@@ -10736,7 +10763,7 @@ function invTotalsCardsHTML(t, labels){
 }
 // One platform as a compact card: a single summary line, expanding to a simple table.
 // scope 'mine' gets the action buttons; a family member's card is read-only.
-function invHoldingCardHTML(h, scope, forceOpen){
+function invHoldingCardHTML(h, scope, forceOpen, allCols){
   const key = scope+':'+h.platform.id;
   const open = !!forceOpen || invCardsExpanded.has(key);
   const pl = h.valueSar - h.costSar;
@@ -10760,7 +10787,7 @@ function invHoldingCardHTML(h, scope, forceOpen){
       ${scope==='mine'? `<div class="row noprint" style="gap:6px;margin-top:10px"><button class="btn ghost sm" onclick="openInvRoboValueModal(${pid})">✎ Update value</button></div>` : ''}
     </div>`;
   }
-  const det = invShowDetails;
+  const det = !!allCols || invShowDetails;   // #53: the Family pop-out always shows cost, price, realised
   const cols = 5 + (det? 3 : 0);
   const posRows = h.positions.map(r=>{
     const rpl = r.valueSar - r.costSar;
@@ -10798,7 +10825,7 @@ function invHoldingCardHTML(h, scope, forceOpen){
       ${det? '<th class="num">Cost</th><th class="num">Price</th><th class="num">Realised</th>' : ''}
     </tr></thead><tbody>${posRows || (cashRows? '' : `<tr><td colspan="${cols}" class="empty">Nothing held here right now</td></tr>`)}${cashRows}</tbody></table></div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px;flex-wrap:wrap;gap:6px">
-      <button class="btn ghost sm noprint" onclick="toggleInvDetails()">${det? 'Hide details' : 'Show cost, price, realised'}</button>
+      ${allCols? '' : `<button class="btn ghost sm noprint" onclick="toggleInvDetails()">${det? 'Hide details' : 'Show cost, price, realised'}</button>`}
     </div>
     ${closed}${actions}
   </div>`;
@@ -10815,7 +10842,7 @@ const INV_PRICE_AUTO_HOURS = 6;      // open Investments: refresh automatically 
 const INV_ROBO_PROMPT_DAYS = 30;     // robo value older than this → "Needs you"
 const INV_CHECK_STALE_DAYS = 30;     // statement / wallet not checked for this long → "Needs you"
 const INV_CHAINS = {
-  solana:   {label:'Solana',   dex:'solana',   gt:'solana', rpc:'https://api.mainnet-beta.solana.com'},
+  solana:   {label:'Solana',   dex:'solana',   gt:'solana', rpc:'https://solana-rpc.publicnode.com'},   // #51: api.mainnet-beta refuses browser calls (403)
   base:     {label:'Base',     dex:'base',     gt:'base',   rpc:'https://mainnet.base.org'},
   ethereum: {label:'Ethereum', dex:'ethereum', gt:'eth',    rpc:'https://ethereum-rpc.publicnode.com'},
 };
@@ -11132,6 +11159,7 @@ function renderInvPriceLinks(){
     <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
       <div style="width:230px"><label class="fl">CoinGecko Demo API key</label><input id="invKeyCg" type="password" autocomplete="off" value="${esc(cfg.keys.cg||'')}" placeholder="CG-…"></div>
       <div style="width:230px"><label class="fl">Finnhub API key (stocks)</label><input id="invKeyFh" type="password" autocomplete="off" value="${esc(cfg.keys.finnhub||'')}"></div>
+      <div style="width:300px"><label class="fl">Your own Solana RPC address (optional)</label><input id="invRpcSol" type="text" autocomplete="off" value="${esc((cfg.rpc||{}).solana||'')}" placeholder="https://…  (blank = free public one)"></div>
       <button class="btn ghost sm" onclick="saveInvPriceKeys()">Save keys</button>
     </div>
     <div class="mut" style="font-size:11px;margin:-4px 0 10px">Free keys: coingecko.com → Developer Dashboard (Demo plan); finnhub.io → Get free API key. Saved with your synced settings, so every device and the daily closing-price job use them.</div>
@@ -11271,7 +11299,11 @@ async function invLinkClear(posId){ await setInvPriceLink(posId, null); renderIn
 async function saveInvPriceKeys(){
   const cg = ((document.getElementById('invKeyCg')||{}).value||'').trim();
   const fh = ((document.getElementById('invKeyFh')||{}).value||'').trim();
-  await saveInvPriceCfg({keys:{cg, finnhub:fh}});
+  const sol = ((document.getElementById('invRpcSol')||{}).value||'').trim();
+  if(sol && !/^https:\/\/[^\s]+$/.test(sol)){ toast('The Solana RPC address must start with https://', true); return; }
+  const rpc = Object.assign({}, getInvPriceCfg().rpc);
+  if(sol) rpc.solana = sol; else delete rpc.solana;
+  await saveInvPriceCfg({keys:{cg, finnhub:fh}, rpc});
   toast('Keys saved — synced to all devices ✓');
 }
 
@@ -11569,7 +11601,7 @@ function renderInvPlatformPage(nav, holdings){
   const fr = invBoxFreshness(h);
   app.innerHTML = nav + `<div class="row noprint" style="gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn ghost sm" onclick="closeInvPlatformPage()">← All platforms</button>
-      <span class="mut" style="font-size:12px">${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}</span></div>`
+      <span class="mut" style="font-size:12px">${h.robo? (h.stats.valueDate? 'Value as of '+esc(h.stats.valueDate) : 'No value logged') : `${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}`}</span></div>`
     + invHoldingCardHTML(h, 'mine', true);
 }
 
@@ -11758,8 +11790,6 @@ function invFamilyMonthHTML(people){
 function invPersonCardHTML(p){
   const t = p.totals, o = p.owner;
   const pl = t.valueSar - t.costSar;
-  const key = 'fam'+o.id;
-  const open = invCardsExpanded.has(key);
   const line = (l, v, cls) => `<tr><td class="mut">${l}</td><td class="num mono ${cls||''}">${v}</td></tr>`;
   return `<div class="panel inv-person" data-owner="${o.id}" style="margin:0">
     <div class="row" style="justify-content:space-between;align-items:baseline"><b style="font-size:15px">${esc(o.name)}</b><span class="mono ${moneyClass(pl)}">${invPlPct(t.costSar, t.valueSar)}</span></div>
@@ -11773,10 +11803,18 @@ function invPersonCardHTML(p){
     </tbody></table>
     <div class="row noprint" style="gap:6px;flex-wrap:wrap;margin-top:8px">
       <button class="btn ghost sm" onclick="openInvOwnerStatement(${o.id})">📄 Statement</button>
-      <button class="btn ghost sm" onclick="toggleInvCard('${key}')">${open? '▾ Hide holdings' : '▸ Holdings'}</button>
+      <button class="btn ghost sm" onclick="openInvFamilyHoldings(${o.id})">\u25b8 Holdings</button>
     </div>
-    ${open? `<div style="margin-top:8px">${p.holdings.filter(h=>h.hasAnything).map(h=>invHoldingCardHTML(h, 'f'+o.id)).join('') || '<div class="mut" style="font-size:12px">Nothing held yet.</div>'}</div>` : ''}
   </div>`;
+}
+// #53: a person's holdings open in a wide window (the card was too narrow for cost, price and realised).
+function openInvFamilyHoldings(ownerId){
+  const p = invFamilyPeople().find(x=>x.owner.id===Number(ownerId)); if(!p) return;
+  const cards = p.holdings.filter(h=>h.hasAnything).map(h=>invHoldingCardHTML(h, 'f'+p.owner.id, true, true)).join('');
+  showModal(`
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">${esc(p.owner.name)}: holdings</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
+    <div id="invFamHoldings" style="margin-top:10px">${cards || '<div class="mut" style="font-size:12px">Nothing held yet.</div>'}</div>
+    <div class="row noprint" style="justify-content:flex-end;margin-top:12px"><button class="btn pri" onclick="closeModal()">Done</button></div>`, true);
 }
 function renderInvFamilyView(nav){
   const app = document.getElementById('app');
@@ -11886,12 +11924,42 @@ function invActivityOwnerAmounts(r){
   Object.values(out).forEach(o=>{ o.rate = (o.usd>0 && o.sar)? Math.abs(o.sar)/o.usd : null; });
   return out;
 }
+// #49: filtered to one person, a row shows only that person's share in every column (units, USD, SAR, rate, People).
+function invActivityForOwner(r, ownerId){
+  ownerId = Number(ownerId);
+  const nm = (invOwnerById(ownerId)||{}).name||'';
+  if(r.kind==='coinmove'){
+    const mine = (r.perOwner||{})[ownerId]; if(!mine) return r;
+    return Object.assign({}, r, {detail: r.assetName+' · '+nm+': '+invFmtUnits(mine.sent)+' sent → '+invFmtUnits(mine.received)+' received, fee '+invFmtUnits(Math.max(0, mine.sent-mine.received)),
+      people: nm, usd:0, sar: mine.sar||null});
+  }
+  const own = invActivityOwnerAmounts(r)[ownerId] || {sar:0, usd:0, rate:null};
+  if(r.kind==='tx'){
+    const t = (D.invTransactions||[]).find(x=>x.id===r.id); if(!t) return r;
+    const pos = invPositionById(t.positionId);
+    const units = (t.owners||[]).filter(o=>o.ownerId===ownerId).reduce((a,o)=>a+(Number(o.units)||0), 0);
+    const share = (Number(t.units)||0)>0? units/Number(t.units) : 0;
+    const usd = own.usd>0? own.usd : (Number(t.usdAmount)||0)*share;
+    return Object.assign({}, r, {detail:(pos? pos.name : '?')+' · '+invFmtUnits(units)+' units', people:nm, usd, sar: own.sar||null});
+  }
+  const m = (D.invCashMovements||[]).find(x=>x.id===r.id); if(!m) return r;
+  if(m.kind==='costadj'){
+    const pos = invPositionById(((m.owners||[])[0]||{}).positionId);
+    const o = (m.owners||[]).find(x=>x.ownerId===ownerId);
+    return Object.assign({}, r, {detail:(pos? pos.name : '?')+' · '+(o? nm+' '+money(o.before)+' → '+money(o.after) : 'no change'), people:nm, usd:0, sar: Math.abs(own.sar)>0.005? own.sar : null});
+  }
+  const other = m.kind==='transfer'? invPlatformById(m.toPlatformId) : null;
+  return Object.assign({}, r, {detail:(m.kind==='transfer'? 'to '+(other? other.name : '?') : (m.note||'')) + (own.rate? ' · rate '+own.rate.toFixed(4) : ''),
+    people:nm, usd: own.usd, sar: own.sar>0? own.sar : null});
+}
 function invActivityCsv(){
-  const owners = (D.invOwners||[]).slice().sort((a,b)=>a.id-b.id);
+  const f = invActivityFilter;
+  const owners = (D.invOwners||[]).filter(o=>!f.ownerId || o.id===Number(f.ownerId)).sort((a,b)=>a.id-b.id);
   const head = ['Date','Type','Platform','Detail','People','USD','SAR'].concat(...owners.map(o=>[o.name+' SAR', o.name+' USD', o.name+' rate']));
   const lines = [head.map(csvEscape).join(',')];
-  invActivityFiltered().forEach(r=>{
-    const p = invPlatformById(r.platformId), own = invActivityOwnerAmounts(r);
+  invActivityFiltered().forEach(r0=>{
+    const r = f.ownerId? invActivityForOwner(r0, f.ownerId) : r0;
+    const p = invPlatformById(r.platformId), own = invActivityOwnerAmounts(r0);
     const cells = [r.date, r.label, r.platformText || (p? p.name : ''), r.detail + (r.note? ' ('+r.note+')' : ''), r.people, r.usd>0? r.usd.toFixed(2) : '', r.sar? Number(r.sar).toFixed(2) : ''];
     owners.forEach(o=>{ const x = own[o.id]; cells.push(x? x.sar.toFixed(2) : '', x && x.usd? x.usd.toFixed(2) : '', x && x.rate? x.rate.toFixed(4) : ''); });
     lines.push(cells.map(csvEscape).join(','));
@@ -11936,11 +12004,7 @@ function renderInvActivityView(nav){
     <div style="overflow-x:auto"><table id="invActivityTable" style="min-width:760px"><thead><tr>
       <th>Date</th><th>Type</th><th>Platform</th><th>Detail</th><th>People</th><th class="num">USD</th><th class="num">SAR</th><th class="noprint"></th>
     </tr></thead><tbody>${rows.map(r=>{ const p = invPlatformById(r.platformId);
-      // Filtered to one person: a move shows that person's own units sent, fee and received.
-      const mine = r.perOwner && f.ownerId? r.perOwner[Number(f.ownerId)] : null;
-      if(mine){ const nm = (invOwnerById(Number(f.ownerId))||{}).name||''; r = Object.assign({}, r, {
-        detail: r.assetName+' · '+nm+': '+invFmtUnits(mine.sent)+' sent → '+invFmtUnits(mine.received)+' received, fee '+invFmtUnits(Math.max(0, mine.sent-mine.received)),
-        people: nm, sar: mine.sar||null}); }
+      if(f.ownerId) r = invActivityForOwner(r, f.ownerId);   // #49: that person's share in every column
       return `<tr data-act="${r.key}">
       <td class="mono">${esc(r.date)}</td><td>${esc(r.label)}</td><td>${esc(r.platformText || (p? p.name : '—'))}</td>
       <td style="font-size:12px"${r.note? ` title="${esc(r.note)}"` : ''}>${esc(r.detail)}${r.note? `<div class="mut" style="font-size:10.5px">${esc(r.note)}</div>` : ''}</td><td class="mut" style="font-size:12px">${esc(r.people)}</td>
@@ -12524,7 +12588,7 @@ function invRoboPlatformStats(p){
   // silently normalizing away what might be a genuine account-assignment mistake.
   const costBasisFlagged = costBasis<0;
   const gain = value!==null? value-Math.abs(costBasis) : null;
-  return {costBasis, costBasisFlagged, value, gain, hasValue: value!==null};
+  return {costBasis, costBasisFlagged, value, gain, hasValue: value!==null, valueDate: p.roboValueDate||null};   // #52: the box read valueDate, which was never set
 }
 // v5.8 (#32): the robo value window. The only value box used to be in the 🗂 Classic tab, dropped in v5.6,
 // so "Update value" opened Edit platform (no value field). Saves today's value with saveInvRoboValue.
@@ -13479,17 +13543,28 @@ function invCashOwnerRows(d){
   return owners.map(o=>{
     const row = (d.owners||[]).find(x=>x.ownerId===o.id);
     return `<tr><td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}</td>
-      <td class="num"><input type="number" step="0.01" style="width:130px;text-align:right" value="${row&&row.usd!==''&&row.usd!==null&&row.usd!==undefined? esc(row.usd):''}" oninput="setInvCashOwnerUsd(${o.id}, this.value)"></td></tr>`;
+      <td class="num"><input type="number" step="0.01" style="width:130px;text-align:right" value="${row&&row.usd!==''&&row.usd!==null&&row.usd!==undefined? esc(row.usd):''}" oninput="setInvCashOwnerUsd(${o.id}, this.value)"></td>${d.kind==='deposit'? `<td class="num mono" id="invCashSar_${o.id}">${row && row.sar!==undefined && row.sar!==null && row.sar!==''? money(row.sar) : '\u2014'}</td>` : ''}</tr>`;
   }).join('') || '<tr><td colspan="2" class="empty">Add owners first (Investments → Owners)</td></tr>';
 }
 function setInvCashOwnerUsd(ownerId, val){
   const d = window._invCashDraft;
   if(!d) return;
   const prev = (d.owners||[]).find(o=>o.ownerId===ownerId);
+  // v5.10 (#50): a deposit keeps each person's logged rate; correcting their USD recalculates their SAR
+  // (USD × that rate). A person with no SAR on record uses the deposit's overall rate. Rates are fixed on first edit.
+  if(d.kind==='deposit'){
+    d._rates = d._rates || {};
+    if(d._baseRate===undefined) d._baseRate = invMovementRate(d);
+    if(d._rates[ownerId]===undefined){
+      const hasSar = prev && prev.sar!==undefined && prev.sar!==null && prev.sar!=='' && Number(prev.usd)>0;
+      d._rates[ownerId] = hasSar? Number(prev.sar)/Number(prev.usd) : d._baseRate;
+    }
+  }
   d.owners = (d.owners||[]).filter(o=>o.ownerId!==ownerId);
-  // Keep the SAR a person contributed (Collect Contributions) when only their USD is corrected —
-  // the rate is then worked out from the new USD, exactly as at collection.
-  if(String(val).trim()!=='') d.owners.push(Object.assign({ownerId, usd:Number(val)||0}, (prev && prev.sar!==undefined && prev.sar!==null && prev.sar!=='')? {sar:prev.sar} : {}));
+  const rate = d.kind==='deposit'? d._rates[ownerId] : null;
+  if(String(val).trim()!=='') d.owners.push(Object.assign({ownerId, usd:Number(val)||0}, rate? {sar:roundCents((Number(val)||0)*rate)} : {}));
+  const cell = document.getElementById('invCashSar_'+ownerId);
+  if(cell){ const o = d.owners.find(x=>x.ownerId===ownerId); cell.textContent = o && o.sar!==undefined? money(o.sar) : '\u2014'; }
   invCashRefreshDerived();
 }
 function invCashAllocTotal(d){ return (d.owners||[]).reduce((s,o)=>s+(Number(o.usd)||0),0); }
@@ -13592,9 +13667,9 @@ function renderInvCashModal(){
     </div>
     <div class="row" style="gap:10px;margin-top:10px"><div style="flex:1"><label class="fl">SAR received in the bank (optional \u2014 shows the rate and how to book it)</label><input type="number" step="0.01" value="${esc(d.sarReceived||'')}" oninput="window._invCashDraft.sarReceived=this.value; invCashRefreshDerived()"></div></div>
     <div class="mut" id="invCashSplitNote" style="font-size:11.5px;margin-top:6px"></div>`:''}
-    ${d.kind==='deposit' && invMovementRate(d)? `<div class="mut" style="font-size:11.5px;margin-top:6px">Rate ${invMovementRate(d).toFixed(4)} SAR/USD (for information) \u2014 worked out from the SAR each person contributed; correcting the USD keeps their SAR and updates the rate.</div>` : ''}
+    ${d.kind==='deposit' && invMovementRate(d)? `<div class="mut" style="font-size:11.5px;margin-top:6px">Rate ${invMovementRate(d).toFixed(4)} SAR/USD (for information) \u2014 worked out from the SAR each person contributed; correcting a person's USD keeps their rate and recalculates their SAR.</div>` : ''}
     <h3 style="font-size:13.5px;margin:16px 0 6px">Whose money?</h3>
-    <table><thead><tr><th>Owner</th><th class="num">USD</th></tr></thead><tbody>${invCashOwnerRows(d)}</tbody></table>
+    <table><thead><tr><th>Owner</th><th class="num">USD</th>${d.kind==='deposit'? '<th class="num">SAR</th>' : ''}</tr></thead><tbody>${invCashOwnerRows(d)}</tbody></table>
     <div class="mut" id="invCashAllocSummary" style="font-size:11.5px;margin-top:6px">${invCashAllocText(d)}</div>
     <label class="fl" style="margin-top:12px">Note</label><input value="${esc(d.note||'')}" oninput="window._invCashDraft.note=this.value">
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
@@ -14090,8 +14165,9 @@ function renderInvManualPriceTable(){
 }
 
 /* ---- Investments: per-owner Arabic statement ---- */
-function openInvOwnerStatement(ownerId){
-  const o = invOwnerById(ownerId); if(!o) return;
+// #55: the statement's rows, shared by the window and its exports.
+function invOwnerStatementData(ownerId){
+  const o = invOwnerById(ownerId); if(!o) return null;
   const rows = [];
   for(const pos of (D.invPositions||[])){
     const s = ownerSliceOfPosition(pos, ownerId);
@@ -14116,6 +14192,37 @@ function openInvOwnerStatement(ownerId){
     ((a.pos? a.pos.name : '').toLowerCase().localeCompare((b.pos? b.pos.name : '').toLowerCase())));
   const totCost = rows.reduce((a,r)=>a+r.cost,0);
   const totMarket = rows.reduce((a,r)=>a+r.market,0);
+  return {o, rows, totCost, totMarket};
+}
+function invOwnerStatementFileName(o){ return String(o.name||'Statement').replace(/[\\/:*?"<>|]+/g,' ').trim()+' statement '+todayStr(); }
+function invOwnerStatementCsv(ownerId){
+  const x = invOwnerStatementData(ownerId); if(!x) return '';
+  const lines = [['Asset','Ticker','Platform','Units','Share %','Cost SAR','Value SAR','Change SAR'].map(csvEscape).join(',')];
+  x.rows.forEach(r=> lines.push((r.kind==='cash'
+    ? ['Cash ('+(r.label||'USD')+')', '', r.plat? r.plat.name : '', 'USD '+r.usd.toFixed(2), '', r.cost.toFixed(2), r.market.toFixed(2), (r.market-r.cost).toFixed(2)]
+    : [r.pos.name, r.pos.ticker||'', r.plat? r.plat.name : '', String(r.s.units), r.s.pctOfPosition.toFixed(1), r.s.costSar.toFixed(2),
+       r.s.hasValuation? r.s.marketSar.toFixed(2) : '', r.s.hasValuation? r.s.unrealizedSar.toFixed(2) : '']).map(csvEscape).join(',')));
+  lines.push(['Total','','','','', x.totCost.toFixed(2), x.totMarket.toFixed(2), (x.totMarket-x.totCost).toFixed(2)].map(csvEscape).join(','));
+  return lines.join('\n');
+}
+function exportInvOwnerStatementCSV(ownerId){
+  const o = invOwnerById(ownerId); if(!o) return;
+  const blob = new Blob(['\ufeff'+invOwnerStatementCsv(ownerId)], {type:'text/csv'});   // BOM so Excel reads the Arabic/UTF-8 text
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = invOwnerStatementFileName(o)+'.csv'; a.click();
+}
+// PDF: print only the statement window; the browser's Save as PDF suggests the page title as the file name.
+function printInvOwnerStatement(ownerId){
+  const o = invOwnerById(ownerId); if(!o) return;
+  const title = document.title;
+  document.title = invOwnerStatementFileName(o);
+  document.body.classList.add('print-modal');
+  const done = () => { document.title = title; document.body.classList.remove('print-modal'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  try{ window.print(); }catch(e){ done(); }
+}
+function openInvOwnerStatement(ownerId){
+  const x = invOwnerStatementData(ownerId); if(!x) return;
+  const {o, rows, totCost, totMarket} = x;
   const displayName = o.nameAr || applyNameTranslations(o.name);
   showModal(`
     <div class="row" style="justify-content:space-between;align-items:baseline">
@@ -14149,7 +14256,10 @@ function openInvOwnerStatement(ownerId){
         <td class="num mono ${moneyClass(totMarket-totCost)}">${money(totMarket-totCost)}</td>
       </tr></tfoot>
     </table></div>
-    <div class="row noprint" style="justify-content:flex-end;margin-top:14px"><button class="btn pri" onclick="closeModal()">تم — Done</button></div>
+    <div class="row noprint" style="justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn ghost" onclick="printInvOwnerStatement(${o.id})">\u2b07 PDF</button>
+      <button class="btn ghost" onclick="exportInvOwnerStatementCSV(${o.id})">\u2b07 Excel (CSV)</button>
+      <button class="btn pri" onclick="closeModal()">تم — Done</button></div>
   `, true);
 }
 
