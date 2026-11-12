@@ -6527,7 +6527,7 @@ async function testWithdrawalAtABetterRateSendsTheGainToProfit(){
   const bk = sb.invWithdrawalBooking(d);
   assert(bk && Math.abs(bk.capitalSar-400)<0.01 && Math.abs(bk.profitSar-10)<0.01, 'Capital back at cost (400) and the 10 SAR rate gain to Profit, got ' + JSON.stringify(bk));
 }
-async function testEditingADepositsUsdKeepsTheSarAndUpdatesTheRate(){
+async function testEditingADepositsUsdKeepsTheRateAndRecalculatesTheSar(){
   const sb = fxSandbox();
   await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
   const m = sb._D.invCashMovements[0];
@@ -6537,8 +6537,9 @@ async function testEditingADepositsUsdKeepsTheSarAndUpdatesTheRate(){
   sb.setInvCashOwnerUsd(1, '105');
   await sb.saveInvCashMovement();
   const row = sb._D.invCashMovements[0].owners.find(o=>o.ownerId===1);
-  assert(row && row.sar===400 && row.usd===105, 'Correcting the USD must keep the 400 SAR contributed, got ' + JSON.stringify(row));
-  assert(Math.abs(fxCell(sb,1,1).sar-400)<1e-9, 'Cash stays at its 400 SAR cost');
+  // v5.10 (#50, his rule): the logged rate stays fixed and the SAR follows the USD (was: SAR kept, rate changed).
+  assert(row && row.sar===420 && row.usd===105, 'Correcting the USD keeps the 4.0000 rate: 105 USD = 420 SAR, got ' + JSON.stringify(row));
+  assert(Math.abs(fxCell(sb,1,1).sar-420)<1e-9, 'Cash cost follows: 420 SAR');
 }
 async function testTransferCarriesTheAverageRate(){
   const sb = fxSandbox();
@@ -7866,7 +7867,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testUserExampleDeposit400SellAndWithdraw150At375();
   await testWithdrawalTakesCashOutAtItsAverageCost();
   await testWithdrawalAtABetterRateSendsTheGainToProfit();
-  await testEditingADepositsUsdKeepsTheSarAndUpdatesTheRate();
+  await testEditingADepositsUsdKeepsTheRateAndRecalculatesTheSar();
   await testTransferCarriesTheAverageRate();
   await testCashLogShowsTheDepositRate();
   await testPlatformTableShowsAUsdCashRowWithPerPersonSplit();
@@ -8068,6 +8069,13 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV59PositionBoxAccountShowsItsTransactions();
   await testV59PriceLinksExactTokenAndGreenWhenPicked();
   await testV59PastedAddressIsLookedUpAndConfirmed();
+  await testV510ActivityForOnePersonShowsOnlyTheirShare();
+  await testV510DepositEditKeepsEachPersonsRate();
+  await testV510SolanaRpcDefaultAndOwnAddress();
+  await testV510RoboShowsItsValueDate();
+  await testV510FamilyHoldingsOpenInAWindow();
+  await testV510SyncIconReplacesTheWords();
+  await testV510StatementExportsPdfAndCsv();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9738,7 +9746,7 @@ async function testV56NeedsYouIsOnMineAndOpensAPrefilledDeposit(){
 }
 async function testV56WalletCheckReadsSolanaTokenBalances(){
   const sb = v56Sandbox({}, [
-    [/api\.mainnet-beta\.solana\.com/, (url, opts)=>{
+    [/solana-rpc\.publicnode\.com/, (url, opts)=>{
       const b = JSON.parse(opts.body);
       if(b.params[1].programId.startsWith('Tokenkeg')) return {result:{value:[
         {account:{data:{parsed:{info:{mint:FROG, tokenAmount:{uiAmountString:'990.5'}}}}}},
@@ -9753,7 +9761,7 @@ async function testV56WalletCheckReadsSolanaTokenBalances(){
   const frog = r && r.rows.find(x=>x.pos.id===3);
   assert(frog && frog.wallet===990.5 && frog.tracker===1000, 'The wallet\'s FROG balance is read next to the tracker\'s, got ' + JSON.stringify(r && r.rows.map(x=>[x.pos.id, x.tracker, x.wallet])));
   assert(r.untracked===1, 'Tokens in the wallet that the tracker doesn\'t have are counted');
-  assert(sb._calls.filter(c=>/solana\.com/.test(c.url)).length===2, 'Both Solana token programs are read');
+  assert(sb._calls.filter(c=>/solana-rpc\.publicnode\.com/.test(c.url)).length===2, 'Both Solana token programs are read');
   sb.__set('invView', 'recon');
   const html = v56Html(sb);
   assert(/data-walletplat="2"/.test(html) && /Save wallet units as statement units/.test(html) && /data-walletpos="3"/.test(html), 'Reconcile shows the wallet result for that platform');
@@ -10251,4 +10259,121 @@ async function testV59PastedAddressIsLookedUpAndConfirmed(){
   sb.prompt = ()=>FROG.replace('Frog','Toad');
   await sb.invLinkPasteAddress(4);
   assert(sb.invPriceLink(4) && !sb.invLinkPicked(sb.invPriceLink(4)), 'An address that can\'t be looked up is saved, not picked');
+}
+// ================= v5.10.0: #49–#55 =================
+function v510ActSandbox(){
+  const sb = v56Sandbox({invCashMovements:[{id:9, platformId:1, date:'2026-09-01', kind:'deposit', usdAmount:150, note:'Contributions',
+    owners:[{ownerId:1, usd:100, sar:375}, {ownerId:2, usd:50, sar:190}]}]});
+  sb.__set('invView', 'activity');
+  vm.runInContext("invActivityFilter.ownerId = '2'", sb);
+  return sb;
+}
+async function testV510ActivityForOnePersonShowsOnlyTheirShare(){
+  const sb = v510ActSandbox();
+  v56Html(sb);
+  const cells = key => { const tr = sb.document.querySelector(`#invActivityTable tr[data-act="${key}"]`); return tr? [...tr.querySelectorAll('td')].map(td=>td.textContent.trim()) : []; };
+  const dep = cells('m9');
+  assert(dep[4]==='B' && dep[5]==='$50.00' && dep[6]==='190.00' && /rate 3\.8000/.test(dep[3] || ''), 'A pooled deposit shows only B: people, USD, SAR and B\'s own rate, got ' + JSON.stringify(dep));
+  const buy = cells('t1');
+  const own = sb.invActivityOwnerAmounts(sb.invActivityRows().find(r=>r.key==='t1'))[2];
+  assert(own && buy[4]==='B' && buy[3]==='Ethereum · '+sb.invFmtUnits(0.4)+' units' && buy[6]===sb.money(own.sar), 'A shared buy shows B\'s units and SAR, got ' + JSON.stringify(buy));
+  const csv = sb.invActivityCsv().split('\n');
+  assert(/B SAR/.test(csv[0]) && !/A SAR/.test(csv[0]), 'Export CSV keeps only that person\'s columns');
+  const depLine = csv.find(l=>/Deposit/.test(l)) || '';
+  assert(/,B,50\.00,190\.00,190\.00,50\.00,3\.8000$/.test(depLine), 'And their figures in the main columns, got ' + depLine);
+  vm.runInContext("invActivityFilter.ownerId = ''", sb);
+  v56Html(sb);
+  assert(cells('m9')[5]==='$150.00', 'Everyone: the whole line as before');
+}
+async function testV510DepositEditKeepsEachPersonsRate(){
+  const sb = fxSandbox();
+  await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
+  const m = sb._D.invCashMovements[0];
+  sb.openInvCashModal(1, 'deposit', m.id);
+  const cell = () => (sb.document.getElementById('invCashSar_1')||{}).textContent;
+  assert(cell()==='400.00', 'The window shows each person\'s SAR, got ' + cell());
+  sb.setInvCashOwnerUsd(1, '50');
+  assert(cell()==='200.00', 'Lower USD: SAR recalculated at the logged rate, got ' + cell());
+  sb.setInvCashOwnerUsd(1, '');
+  sb.setInvCashOwnerUsd(1, '105');
+  assert(cell()==='420.00', 'The rate stays fixed through several edits, got ' + cell());
+  sb.setInvCashOwnerUsd(2, '10');
+  const b = sb._invCashDraft.owners.find(o=>o.ownerId===2);
+  assert(b && b.sar===40, 'Someone with no SAR on record uses the deposit\'s rate, got ' + JSON.stringify(b));
+  sb.openInvCashModal(1, 'withdrawal', null);
+  sb.setInvCashOwnerUsd(1, '30');
+  assert(sb._invCashDraft.owners[0].sar===undefined, 'Withdrawals are unchanged');
+}
+async function testV510SolanaRpcDefaultAndOwnAddress(){
+  const sb = v56Sandbox();
+  assert(vm.runInContext('INV_CHAINS.solana.rpc', sb)==='https://solana-rpc.publicnode.com', 'Default Solana server is one that accepts browser calls');
+  sb.openInvPriceLinks();
+  const toasts = []; sb.__set('toast', (t, bad)=>toasts.push([t, bad]));
+  const inp = () => sb.document.getElementById('invRpcSol');
+  assert(inp(), 'Price links has a box for his own Solana RPC address');
+  if(inp()) inp().value = 'http://not-secure';
+  await sb.saveInvPriceKeys();
+  assert(!sb.getInvPriceCfg().rpc.solana && toasts.some(([t,bad])=>bad && /https/.test(t)), 'Only https addresses are accepted');
+  if(inp()) inp().value = 'https://my-rpc.example/k';
+  await sb.saveInvPriceKeys();
+  assert(sb.getInvPriceCfg().rpc.solana==='https://my-rpc.example/k', 'Saved in the synced settings');
+  await sb.setInvPlatformWallets(2, [{chain:'solana', address:'Wallet1111111111111111111111111111111111111'}]);
+  sb._calls.length = 0;
+  await sb.checkInvPlatformWallet(2);
+  assert(sb._calls.length && sb._calls.every(c=>/my-rpc\.example/.test(c.url)), 'The wallet check then uses it');
+  sb.openInvPriceLinks();
+  if(inp()) inp().value = '';
+  await sb.saveInvPriceKeys();
+  assert(!sb.getInvPriceCfg().rpc.solana, 'Blank goes back to the free public one');
+}
+async function testV510RoboShowsItsValueDate(){
+  const sb = v56Sandbox();
+  const html = v56Html(sb);
+  assert(/Value as of 2026-11-01/.test(html) && !/No value logged/.test(html), 'The robo box shows the date of the logged value');
+  vm.runInContext("invPlatformPageId = 3", sb);
+  const page = v56Html(sb);
+  assert(/Value as of 2026-11-01/.test(page) && !/Never checked/.test(page), 'And the robo platform page');
+}
+async function testV510FamilyHoldingsOpenInAWindow(){
+  const sb = v56Sandbox();
+  sb.__set('invView', 'family');
+  const html = v56Html(sb);
+  assert(/openInvFamilyHoldings\(2\)/.test(html) && !/Hide holdings/.test(html), 'Holdings opens a window instead of growing the card');
+  sb.openInvFamilyHoldings(2);   // B holds 0.4 ETH (owner 1 is "you", not on Family)
+  const box = sb.document.querySelector('#modalRoot #invFamHoldings');
+  const heads = box? [...box.querySelectorAll('th')].map(t=>t.textContent) : [];
+  assert(heads.includes('Cost') && heads.includes('Price') && heads.includes('Realised') && !/Show cost, price, realised/.test(box.innerHTML), 'The window shows cost, price and realised, got ' + JSON.stringify(heads));
+}
+async function testV510SyncIconReplacesTheWords(){
+  const sb = dashSandbox();
+  const pill = (fs.readFileSync(APP_HTML, 'utf8').match(/<div class="cloud cloud-static" id="cloudBtn"[\s\S]*?<\/span><\/div>/)||[])[0];
+  if(pill) sb.document.body.insertAdjacentHTML('afterbegin', pill);
+  const ico = () => sb.document.getElementById('syncIcon'), btn = () => sb.document.getElementById('cloudBtn');
+  assert(ico() && btn() && /<rect/.test(ico().innerHTML), 'The top bar has the icon, a drive until connected');
+  if(!ico() || !btn()) return;
+  const states = [['Cloud synced','ok','ok'], ['Syncing…', undefined, 'busy'], ['3 changes pending sync', '', 'busy'], ['Connect failed','err','err'], ['Local only', undefined, 'local']];
+  for(const [text, kind, want] of states){
+    sb.setStatus(text, kind);
+    assert(ico().className==='sync-icon '+want && btn().title===text && sb.document.getElementById('statusTxt').textContent===text, text+' → '+want+', got ' + ico().className);
+  }
+  assert(/<rect/.test(ico().innerHTML), 'Local only shows a drive');
+  sb.setStatus('Cloud synced','ok');
+  assert(!/<rect/.test(ico().innerHTML) && /<path/.test(ico().innerHTML), 'Cloud states show a cloud');
+  assert(/sr-only/.test(sb.document.getElementById('statusTxt').className), 'The words stay for screen readers and the tooltip, not on screen');
+}
+async function testV510StatementExportsPdfAndCsv(){
+  const sb = v56Sandbox();
+  sb.openInvOwnerStatement(1);
+  const m = sb.document.getElementById('modalRoot');
+  assert(/printInvOwnerStatement\(1\)/.test(m.innerHTML) && /exportInvOwnerStatementCSV\(1\)/.test(m.innerHTML), 'Two export buttons: PDF and Excel');
+  assert(sb.invOwnerStatementFileName({name:'A'})==='A statement 2026-11-12' && sb.invOwnerStatementFileName({name:'X/Y'})==='X Y statement 2026-11-12', 'Named with the person and today\'s date');
+  const csv = sb.invOwnerStatementCsv(1).split('\n');
+  assert(csv[0]==='Asset,Ticker,Platform,Units,Share %,Cost SAR,Value SAR,Change SAR' && csv.some(l=>/^Ethereum,ETH,Binance,0\.6,60\.0,/.test(l)) && /^Total,/.test(csv[csv.length-1]), 'CSV has the statement rows and a total, got ' + JSON.stringify(csv));
+  let during = null;
+  sb.print = () => { during = [sb.document.title, sb.document.body.classList.contains('print-modal')]; };
+  const before = sb.document.title;
+  sb.printInvOwnerStatement(1);
+  assert(during && during[0]==='A statement 2026-11-12' && during[1], 'Printing uses the file name as the title and prints only the window, got ' + JSON.stringify(during));
+  sb.dispatchEvent(new sb.Event('afterprint'));
+  assert(sb.document.title===before && !sb.document.body.classList.contains('print-modal'), 'Afterwards the page is back to normal');
 }
