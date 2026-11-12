@@ -30,7 +30,7 @@ He uses LedgerOS every day for real family money, so **treat it as production so
 7. **Be honest about mistakes**, including mistakes in first-draft tests. Say what was wrong and what you changed.
 8. **After shipping, give a short summary:** what changed, the test count, and any mistakes. **Don't send him the built HTML.**
 9. **He sends numbered checklists.** Say which items are already done rather than redoing them.
-10. **Question first, ship only when asked** (his standing practice, restated 2026-11-12). This covers your own extras too: a bug you find or a fix you'd like to add goes in the tracker as a question, not into the build, until he says yes.
+10. **Question first, ship only when asked** (his standing practice, restated 2026-11-12). This covers your own extras too: a bug you find or a fix you'd like to add goes in the tracker as a question, not into the build, until he says yes. Restated 2026-11-12 (#41): log every change or request in the tracker, ask only questions that clarify what he asked for, then log the answer and wait for more or for "ship".
 
 ## 2. Architecture essentials (read before changing anything)
 
@@ -96,7 +96,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 ## 3. Tests
 
 - **Run:** `bash dev/ledgeros/run_tests.sh`. It extracts the app's JS to `dev/ledgeros/.build/`, installs `jsdom` and `fake-indexeddb` on first run, prints any `FAIL` lines, then `N passed, 0 failed`.
-  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0; **2288 passed** at v5.7.0; **2297 passed** at v5.8.0.
+  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0; **2288 passed** at v5.7.0; **2297 passed** at v5.8.0; **2332 passed** at v5.9.0.
   - Console noise about `QuotaExceededError` or "Not implemented: scrollTo" is expected.
 - **Harness basics:**
   - `makeSandbox()` gives a fresh app context in a vm.
@@ -123,8 +123,8 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 ## 6. Open items and future features (ask before starting any of them)
 
-**Where the last session stopped (2026-11-12, v5.8.0 live, 2297 tests; SMS parser tests 122; SMS script `SCRIPT_VERSION` 2026-11-12 sent to him):**
-- The tracker (`dev/ledgeros/FEEDBACK.md`) is the source of truth: #1–#40, everything shipped or closed except the items below.
+**Where the last session stopped (2026-11-12, v5.9.0 built (PR for him to merge), 2332 tests; SMS parser tests 122; SMS script `SCRIPT_VERSION` 2026-11-12 sent to him):**
+- The tracker (`dev/ledgeros/FEEDBACK.md`) is the source of truth: #1–#48, everything shipped or closed except the items below.
 - **Still open:**
   - **#24 SMS on a locked phone:** fix A (keys, queue and run log in Scriptable's on-phone storage) is installed. A check-in was scheduled for 2026-11-13 09:30 Riyadh in the previous session; if he raises it here instead, check read-only whether overnight (locked) SMS reached `pd_sms_inbox` and ask him for his run log (Scriptable → script menu → Copy run log; every line ends with the script version). If any were missed, propose fix B (the Shortcut posts the raw SMS with Get Contents of URL; LedgerOS parses it). He prefers the robust option.
   - **#38 investment price setup (his side):** Finnhub key, link the rest of the positions, DEX wallet addresses, Backfill, deploy and schedule the daily-close Edge Function. Keep open until he confirms. His work PC blocks the price sites; another PC works.
@@ -167,6 +167,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 | 5.3 | Drift Detection for provisions: compare per account, income/expense accounts only, exclude list (toggles, synced in `pd_ui_prefs.dismissals.driftSettings`) |
 | 5.4 | SMS inbox: new table `pd_sms_inbox` filled by the iPhone logger (`dev/ledgeros/sms`, its own README and `node test_parsers.js`); New JV → 📩 SMS groups by mapped account (`dismissals.smsMap`), Create JV builds one JV per date with other halves, pairs own transfers across banks, cancels exact reversals; posting marks SMS done (`smsId` on JV/draft lines) |
 | 5.4.1 | Aurora & glass rail: the button list scrolls inside the floating rail on short windows (it was clipped by `overflow:hidden`); compact buttons up to 820px tall; Dashboard over-budget Open P&L lands on and flashes that category (`goPnLThisMonth(cat)`, `data-pnl-cat`) |
+| 5.9 | #42–#48: price links green when picked (`invLinkPicked`), Find on a saved address = exact token (`invLookupAddress`), CoinGecko hits with chain/price (`invCgCoinDetail`), Address looks up + confirms; SMS Create JV asks the bank balance (`openSmsStmtPrompt`, Skip) then reconcile mode; statement boxes take +/− (`parseAmountSum`); budget bars animate on arrival only; position box account → transactions window (`openPosAccTx`, unallocated only for allocatable accounts); Investments rail badge top-right |
 | 5.8 | Robo ✎ Update value opens a value window (`openInvRoboValueModal`, #32); SMS script `SCRIPT_VERSION` 2026-11-12: run log names empty automation runs, by-hand first line, version on every line, Copy run log; empty automation runs no longer read the clipboard (#28); cap tests use invented figures (#37) |
 | 5.7 | Budget & P&L merged into one page with two tabs (#30); over-budget covered by accrual (#31); per-month historical averages incl. rolling day windows and every year (#29); SMS Numbers & accounts (#26) and line order (#27); Price links Find keeps its place and explains failures; `shiftDate` UTC fix; `setForecastStatSetting` added |
 | 5.6 | Investments (#22): platform boxes (hover actions, arrange/hide/group), Needs you + rail badge, automatic prices (price links, synced keys, refresh, auto after 6 h), daily closes (backfill + Edge Function), wallet unit check, Repeat last buy, Invest it now; Classic tab dropped. Ships with the SMS fix (#25) |

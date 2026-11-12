@@ -8060,6 +8060,14 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV57PartlyCoveredStaysRedWithANote();
   await testV57FindShowsWhyItFailedAndKeepsItsPlace();
   await testV58UpdateValueOpensAValueBoxAndSaves();
+  await testV59SmsAsksForTheBankBalanceThenReconciles();
+  await testV59SmsOnlyAsksForDashboardBankAccounts();
+  await testV59StatementBoxAcceptsPlusAndMinus();
+  await testV59BudgetBarsAnimateOnlyOnTheFirstDraw();
+  await testV59InvestmentsBadgeSitsTopRight();
+  await testV59PositionBoxAccountShowsItsTransactions();
+  await testV59PriceLinksExactTokenAndGreenWhenPicked();
+  await testV59PastedAddressIsLookedUpAndConfirmed();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9199,7 +9207,7 @@ async function testSmsOwnTransferPairsBothBanks(){
   const a = lines.find(l=>l.acc==='10101'), b = lines.find(l=>l.acc==='10102'), fee = lines.find(l=>l.acc==='');
   assert(a && a.amt==='-19000.5' && b && b.amt==='19000' && fee && fee.amt==='0.5' && /Transfer fee/.test(fee.descr), 'Both sides as each bank reported them; the 0.50 difference goes on a Transfer fee line');
   assert(a.smsId===1 && b.smsId===2, 'The JV carries both banks’ SMS');
-  await sb.smsCreateJVs('a:10101');
+  await sb.smsCreateJVs('a:10101', true);
   assert(!sb.smsGroups().some(g=>g.acc===10102), 'Bank B’s copy of the transfer is no longer waiting on its own');
   // No partner (too far apart in amount): the other side is still filled from the map
   D.smsInbox.push(R(4, {acct:'A debit', side:'Cr', amt:300, counter:'2222'}), R(5, {acct:'2222', source:'BANKB', side:'Dr', amt:298}));
@@ -9237,7 +9245,7 @@ async function testSmsCreateOpensFirstDateDraftsRestAndPostingMarksDone(){
   assert(/📩 SMS \(3\)/.test(sb.document.getElementById('smsInboxBtn').textContent), 'New JV shows the SMS button with the waiting count');
   const todo = sb.dashboardTodoItems();
   assert(todo[0] && /3 bank SMS to post/.test(todo[0].title) && /openSmsInbox/.test(todo[0].onclick), 'The Dashboard lists the waiting SMS first, opening the inbox');
-  await sb.smsCreateJVs('a:10101');
+  await sb.smsCreateJVs('a:10101', true);
   const jvDraft = vm.runInContext('jvDraft', sb), drafts = vm.runInContext('jvDrafts', sb);
   assert(jvDraft.date==='2026-11-10' && jvDraft.lines.length===2 && jvDraft.lines[0].smsId===1, 'The earliest date opens in New JV');
   assert(drafts.length===1 && drafts[0].date==='2026-11-11' && drafts[0].lines.every(l=>l.smsId===2), 'The other date is saved as a draft, still linked to its SMS');
@@ -10099,4 +10107,148 @@ async function testV58UpdateValueOpensAValueBoxAndSaves(){
   assert(!sb.invNeedsYouItems().some(i=>i.key==='robo3'), 'Needs you no longer asks for it');
   vm.runInContext("invPlatformPageId = 3", sb);
   assert(/openInvRoboValueModal\(3\)/.test(v56Html(sb)), 'The robo platform page has Update value too');
+}
+// ================= v5.9.0: #42–#48 =================
+async function testV59SmsAsksForTheBankBalanceThenReconciles(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {date:'2026-11-11', amt:100}));
+  await sb.__map({'1111':10101});
+  let dashDraws = 0; sb.__set('renderDashboard', ()=>{ dashDraws++; });
+  sb.__set('screen', 'newjv');
+  await sb.smsCreateJVs('a:10101');
+  const m = sb.document.getElementById('modalRoot');
+  const inp = m.querySelector('#smsStmtBal');
+  assert(inp && /Statement balance/.test(m.innerHTML) && /Skip/.test(m.innerHTML), 'A bank account group first asks for the balance now, with Skip');
+  assert(!vm.runInContext('jvDraft', sb).lines.some(l=>l.smsId===1), 'The JV is not opened yet');
+  const toasts = []; sb.__set('toast', (t, bad)=>toasts.push([t, bad]));
+  if(inp) inp.value = '12x';
+  await sb.smsStmtSave('a:10101', 10101);
+  assert(D.accounts.find(a=>a.id===10101).stmt_balance==null && toasts.some(([t,bad])=>bad && /\+ or/.test(t)) && !vm.runInContext('jvDraft', sb).lines.some(l=>l.smsId===1), 'Something that isn\'t a sum is refused and nothing opens');
+  const inp2 = sb.document.getElementById('smsStmtBal'); if(inp2) inp2.value = '+500-150';
+  await sb.smsStmtSave('a:10101', 10101);
+  const a = D.accounts.find(x=>x.id===10101);
+  assert(a.stmt_balance===350 && a.stmt_date==='2026-11-11', 'The sum is saved as today\'s statement balance, got ' + a.stmt_balance);
+  assert(vm.runInContext('jvDraft', sb).lines.some(l=>l.smsId===1) && vm.runInContext('reconcileAcc', sb)===10101, 'Then the JV opens in reconcile mode for that bank');
+  assert(dashDraws===0, 'Saving from another page doesn\'t draw the Dashboard over it');
+  // Skip: straight to the JV, still reconciling (a balance exists)
+  vm.runInContext('reconcileAcc = null', sb);
+  D.smsInbox.push(R(2, {date:'2026-11-11', amt:7}));
+  await sb.smsCreateJVs('a:10101', true);
+  assert(vm.runInContext('reconcileAcc', sb)===10101 && vm.runInContext('jvDraft', sb).lines.some(l=>l.smsId===2) && a.stmt_balance===350, 'Skip opens the JV without changing the balance');
+}
+async function testV59SmsOnlyAsksForDashboardBankAccounts(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {acct:'7777', amt:20}));
+  await sb.__map({'7777':10103});   // credit card with no limit: no statement box on the Dashboard
+  await sb.smsCreateJVs('a:10103');
+  assert(!sb.document.getElementById('smsStmtBal') && vm.runInContext('jvDraft', sb).lines.some(l=>l.smsId===1) && vm.runInContext('reconcileAcc', sb)==null, 'No balance question: the JV opens as before');
+  D.accounts.find(x=>x.id===10103).credit_limit = 5000;
+  D.smsInbox.push(R(2, {acct:'7777', amt:30}));
+  await sb.smsCreateJVs('a:10103');
+  const m = sb.document.getElementById('modalRoot');
+  assert(m.querySelector('#smsStmtBal') && /Available limit/.test(m.innerHTML), 'A credit card with a limit asks for the available limit');
+  assert(sb.smsReconcileAcc(60102)===null, 'A non-bank account is never asked');
+}
+async function testV59StatementBoxAcceptsPlusAndMinus(){
+  const sb = dashSandbox();
+  const P = v => sb.parseAmountSum(v);
+  assert(P('+500-150')===350 && P('1,000.50')===1000.5 && P('-20')===-20 && P(' 12 − 2 ')===10 && P('0.1+0.2')===0.3, 'Sums of numbers with + and - work');
+  assert(P('')==='' && P('5*2')===null && P('500-')===null && P('abc')===null && P('1..2')===null, 'Empty stays empty; anything else is refused');
+  sb.__set('screen', 'dashboard');
+  await sb.saveStmtBalance(10101, '+500-150');
+  const a = vm.runInContext('D', sb).accounts.find(x=>x.id===10101);
+  assert(a.stmt_balance===350, 'The Dashboard box saves the result');
+  sb.__set('screen', 'dashboard'); sb.renderDashboard();
+  const el = sb.document.getElementById('stmtBal_10101');
+  assert(el && el.value==='350.00', 'And shows it, got ' + (el && el.value));
+  assert(await sb.saveStmtBalance(10101, '5*2')===false && a.stmt_balance===350, 'A refused entry leaves the saved balance alone');
+}
+async function testV59BudgetBarsAnimateOnlyOnTheFirstDraw(){
+  const sb = v57CoverSandbox(0);
+  sb.__set('screen', 'dashboard');
+  sb.__set('dashboardNeedsCountUp', true);
+  sb.renderDashboard();
+  const first = sb.document.querySelectorAll('#app .bud-fill.grow-x').length;
+  sb.renderDashboard();   // what any Dashboard button does
+  const fills = sb.document.querySelectorAll('#app .bud-fill');
+  assert(first>0 && fills.length>0 && sb.document.querySelectorAll('#app .bud-fill.grow-x').length===0, 'Bars grow in on arrival only, not on every redraw (first ' + first + ')');
+}
+async function testV59InvestmentsBadgeSitsTopRight(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/nav button\{position:relative\}\nnav \.inv-nav-badge\{position:absolute;top:3px;left:calc\(50% \+ 3px\)/.test(html), 'The badge sits on the icon\'s top-right corner of the rail button');
+  assert(/nav \.inv-nav-badge\{top:2px;left:22px\}/.test(html) && /body\.sidebar-pinned nav \.inv-nav-badge\{top:3px;left:calc\(50% \+ 3px\)\}/.test(html), 'Phone layout: next to the icon; pinned narrow rail: top-right again');
+  const sb = v56Sandbox();
+  const b = sb.invNavBadgeHTML();
+  assert(/inv-nav-badge/.test(b) && !/margin-left:auto/.test(b), 'The badge no longer pushes to the end of the button');
+}
+async function testV59PositionBoxAccountShowsItsTransactions(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.find(a=>a.id===21511).is_allocatable = true;
+  D.ledger.push({id:40, jv:40, date:'2026-10-05', acc:21511, amt:-1000, descr:'loan out', alloc:'7'},
+    {id:41, jv:41, date:'2026-10-20', acc:21511, amt:1000, descr:'loan back', alloc:'7'},
+    {id:42, jv:42, date:'2026-11-03', acc:21511, amt:250, descr:'part paid'},
+    {id:43, jv:43, date:'2026-12-01', acc:21511, amt:-99, descr:'future'});
+  sb.rebuildIndex();
+  const x = sb.posAccTxRows(21511, 1);
+  assert(x.alloc && x.rows.length===2 && x.rows[0].l.id===42 && x.rows[1].l.id===7, 'Unallocated lines up to today, newest first');
+  assert(x.rows[0].bal===-8650 && x.total===-8650 && x.allocNet===0, 'Running balance; the total is the box number (allocated pairs net to 0), got ' + x.total);
+  const neg = sb.posAccTxRows(10102, -1);
+  assert(neg.total===-126400 && !neg.alloc && neg.rows.length===1, 'A minus line (Savings) shows the same sign as the box');
+  sb.openPosAccTx(21511, 1);
+  const m = sb.document.getElementById('modalRoot');
+  const tot = m.querySelector('#posAccTxTotal');
+  assert(tot && tot.textContent==='-8,650.00' && m.querySelectorAll('#posAccTxTable tbody tr').length===2 && /Unallocated transactions only/.test(m.innerHTML), 'The window lists them with the total');
+  assert(/posAccTxToLedger\(21511, true\)/.test(m.innerHTML) && /viewJV\(42\)/.test(m.innerHTML), 'Open in Ledger (unallocated only) and each line opens its JV');
+  const box = {id:'t', title:'T', rows:[{type:'line', label:'STL', accs:'21511'}, {type:'account', label:'Bank', accs:'10101'}]};
+  sb.__set('posBoxOpen', {'t:0':true});
+  const h = sb.positionBoxHTML(box);
+  assert(/event\.stopPropagation\(\);openPosAccTx\(21511,1\)/.test(h), 'Each account in an opened line is clickable');
+  assert(/onclick="openPosAccTx\(10101,1\)"/.test(h), 'A single-account line opens it too');
+}
+async function testV59PriceLinksExactTokenAndGreenWhenPicked(){
+  const routes = [
+    [/coins\/solana\/contract\/Frog/, {id:'test-frog', name:'Test Frog', symbol:'frog', market_data:{current_price:{usd:0.00213}}}],
+    [/latest\/dex\/tokens\/Frog/, {pairs:[{chainId:'solana', baseToken:{address:FROG, symbol:'FROG', name:'Test Frog'}, priceUsd:'0.0021', liquidity:{usd:5000}},
+      {chainId:'bsc', baseToken:{address:FROG, symbol:'FROG', name:'Other'}, priceUsd:'9', liquidity:{usd:1e6}}]}],
+    [/api\/v3\/search\?query=ETH/, {coins:[{id:'ethereum', name:'Ethereum', symbol:'eth', market_cap_rank:2}]}],
+    [/api\/v3\/coins\/ethereum\?/, {platforms:{'':''}, market_data:{current_price:{usd:3000}}}],
+  ];
+  const sb = v56Sandbox({}, routes);
+  await v56Link(sb, {3:{kind:'dex', chain:'solana', address:FROG}});
+  sb.openInvPriceLinks();
+  const green = () => [...sb.document.querySelectorAll('#invPriceLinksTable tr[data-linkpos="3"] b.inv-link-picked')].length;
+  assert(green()===0, 'An address alone is not green');
+  sb._calls.length = 0;
+  await sb.invLinkSearch(3);
+  const res = vm.runInContext('window._invLinkUi.results', sb);
+  assert(res && res.length===1 && res[0].title==='Test Frog (FROG) on Solana' && /\$0\.00213/.test(res[0].sub) && /✓ matches your address/.test(res[0].sub) && /liquidity \$5,000\.00/.test(res[0].sub),
+    'Find on a saved address shows only that exact token, got ' + JSON.stringify(res));
+  assert(!sb._calls.some(c=>/search/.test(c.url)), 'No ticker search when an address is saved');
+  await sb.invLinkPick(3, 0);
+  assert(sb.invPriceLink(3).label==='FROG' && sb.invPriceLink(3).address===FROG && green()===1, 'Use keeps the address, marks it picked, and the name turns green');
+  // Unknown address: says so
+  await v56Link(sb, {4:{kind:'dex', chain:'base', address:BCAT}});
+  await sb.invLinkSearch(4);
+  assert(/Neither CoinGecko nor DexScreener knows this address/.test(vm.runInContext('window._invLinkUi.searchErrors.join(" ")', sb)), 'An address nobody knows says so');
+  // CoinGecko hits get chain and price
+  await sb.invLinkSearch(1);
+  const eth = vm.runInContext('window._invLinkUi.results', sb).find(r=>r.link.kind==='cg');
+  assert(eth && /rank #2/.test(eth.sub) && /its own chain/.test(eth.sub) && /\$3,000\.00/.test(eth.sub), 'A CoinGecko result shows its chain and price, got ' + (eth && eth.sub));
+}
+async function testV59PastedAddressIsLookedUpAndConfirmed(){
+  const routes = [[/coins\/solana\/contract\/Frog/, {id:'test-frog', name:'Test Frog', symbol:'frog', market_data:{current_price:{usd:0.00213}}}]];
+  const sb = v56Sandbox({}, routes);
+  sb.__set('showModal', ()=>{});
+  sb.prompt = ()=>FROG;
+  let asked = '';
+  sb.confirm = q => { asked = q; return false; };
+  await sb.invLinkPasteAddress(3);
+  assert(/Is this Test Frog \(FROG\) on Solana, \$0\.00213\?/.test(asked) && !sb.invPriceLink(3), 'It asks which token it is; No saves nothing, got ' + asked);
+  sb.confirm = () => true;
+  await sb.invLinkPasteAddress(3);
+  assert(sb.invPriceLink(3) && sb.invPriceLink(3).label==='FROG' && sb.invLinkPicked(sb.invPriceLink(3)), 'Yes saves it as picked (green)');
+  sb.prompt = ()=>FROG.replace('Frog','Toad');
+  await sb.invLinkPasteAddress(4);
+  assert(sb.invPriceLink(4) && !sb.invLinkPicked(sb.invPriceLink(4)), 'An address that can\'t be looked up is saved, not picked');
 }

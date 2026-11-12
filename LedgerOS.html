@@ -320,6 +320,8 @@ nav button:focus-visible{outline:2px solid var(--rail-on-bg);outline-offset:2px}
 .nav-svg{width:18px;height:18px;flex:none}
 nav .nav-ico{margin:0;width:auto;font-size:16px}
 .nav-lbl{line-height:1.15}
+nav button{position:relative}
+nav .inv-nav-badge{position:absolute;top:3px;left:calc(50% + 3px);margin:0!important}
 .sidebar-footer{border-top:1px solid color-mix(in srgb,var(--rail-text) 18%,transparent);padding:10px 8px 14px;align-items:center}
 .sidebar-footer a{color:var(--rail-text)!important;line-height:1.25}
 .sidebar-footer .themeBtn{background:transparent;border-color:color-mix(in srgb,var(--rail-text) 25%,transparent);color:var(--rail-text)}
@@ -508,6 +510,8 @@ body.still *,body.still *::before,body.still *::after{animation:none!important;t
 @media(max-width:760px){
   nav button{flex-direction:row;justify-content:flex-start;gap:10px;min-height:42px;padding:8px 12px;font-size:13.5px;text-align:left}
   nav button:hover{padding-left:12px}
+  nav .inv-nav-badge{top:2px;left:22px}
+  body.sidebar-pinned nav .inv-nav-badge{top:3px;left:calc(50% + 3px)}
   #sidebar .brand{flex-direction:row;justify-content:flex-start;padding:10px 14px}
   #sidebar .brand h1{display:block;color:var(--rail-on-bg)}
   .sidebar-footer{align-items:stretch}
@@ -583,12 +587,20 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.8.0';
+const APP_VERSION = '5.9.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.9.0', date:'2026-11-12', changes:[
+    'SMS → Create JV for a bank account (one in the Dashboard\'s Bank accounts table) first asks for the balance now from your bank app (credit cards: the available limit), with Skip. Then New JV opens in reconcile mode: what is still needed to reconcile the account, and its last 3 JVs.',
+    'Dashboard Bank accounts: the statement boxes take sums with + and − (+500-150 saves and shows 350). The same works in the SMS balance window.',
+    'Dashboard: clicking buttons no longer replays the Budget this month bars; they grow in only when you arrive on the Dashboard.',
+    'Dashboard position boxes: click an account in an opened line, or a single-account line, to see the transactions that make up its number (allocatable accounts: unallocated ones only), newest first with a running balance, plus Open in Ledger.',
+    'Side rail: the Investments count sits on the top-right corner of its icon.',
+    'Price links: a coin you have picked shows its name in green. 🔎 Find on a position with a saved contract address shows only the exact token for that address (name, price, liquidity, “✓ matches your address”). CoinGecko results also show their chain, contract and price. 📋 Address looks the token up and asks “Is this …?” before saving.',
+  ]},
   {version:'5.8.0', date:'2026-11-12', changes:[
     'Investments: \u270e Update value on a robo platform (Tamra, Drahim) now opens a small window with the last value and a box for today\'s value. Before, it opened Edit platform, which has no value field (the value box was on the Classic tab, removed in 5.6).',
     'SMS logger on the iPhone (new script, version 2026-11-12): the run log now says plainly when an automation passed no message text, shows the first line of a message you test by hand, and ends every line with the script version; the menu has Copy run log to paste into a chat. Fixed: an automation run with no text used to read whatever was on the clipboard.',
@@ -4746,13 +4758,44 @@ function positionBoxHTML(box){
       const isTot = r.kind==='total', final = r.type==='total';
       const canOpen = r.type==='line' && (r.ids||[]).length>0;
       const open = canOpen && posBoxOpen[box.id+':'+r.i];
-      return `<div class="posbox-row${isTot?(final?' is-total':' is-sub'):''}${canOpen?' can-open':''}"${canOpen?` role="button" tabindex="0" aria-expanded="${!!open}" onclick="togglePosBoxRow('${bid}',${r.i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePosBoxRow('${bid}',${r.i})}"`:''}>
+      const accTx = r.type==='account' && (r.ids||[])[0]? `openPosAccTx(${r.ids[0]},${r.sign})` : '';   // #48
+      return `<div class="posbox-row${isTot?(final?' is-total':' is-sub'):''}${canOpen||accTx?' can-open':''}"${accTx? ` role="button" tabindex="0" title="Show its transactions" onclick="${accTx}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${accTx}}"` : ''}${canOpen?` role="button" tabindex="0" aria-expanded="${!!open}" onclick="togglePosBoxRow('${bid}',${r.i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePosBoxRow('${bid}',${r.i})}"`:''}>
         <span class="posbox-label">${canOpen?`<span class="chev${open?' open':''}" aria-hidden="true">›</span>`:''}${esc(r.label||'')}${r.type==='account'&&r.ids[0]?` <span class="mono mut" style="font-size:11px">${r.ids[0]}</span>`:''}</span>
         <span class="mono posbox-val ${!isTot && r.value<0? 'r':''}">${money0(r.value)}</span>
-        ${open? `<div class="posbox-peek rise">${r.parts.map(p=>`<div><span><span class="mono">${p.id}</span> ${esc(accShort(p.id))}</span><span class="mono">${money0(p.value)}</span></div>`).join('')}</div>`:''}
+        ${open? `<div class="posbox-peek rise">${r.parts.map(p=>`<div role="button" tabindex="0" title="Show its transactions" style="cursor:pointer" onclick="event.stopPropagation();openPosAccTx(${p.id},${r.sign})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPosAccTx(${p.id},${r.sign})}"><span><span class="mono">${p.id}</span> ${esc(accShort(p.id))}</span><span class="mono">${money0(p.value)}</span></div>`).join('')}</div>`:''}
       </div>`;
     }).join('')}</div>
   </div>`;
+}
+// #48: the transactions behind one account's number in a position box (balance as of today, the box's sign).
+// Allocatable accounts show unallocated lines only; the allocated ones are summed in a note.
+function posAccTxRows(accId, sign){
+  sign = Number(sign)===-1? -1 : 1;
+  const a = ACC_BY_ID[accId], alloc = !!(a && a.is_allocatable), asOf = todayStr();
+  const all = D.ledger.filter(l=>l.acc===accId && !(l.date && l.date>asOf));
+  const lines = all.filter(l=>!(alloc && l.alloc)).sort((x,y)=>(x.date||'').localeCompare(y.date||'') || (Number(x.id)-Number(y.id)));
+  let run = 0;
+  const rows = lines.map(l=>{ run += (Number(l.amt)||0)*sign; return {l, amt:(Number(l.amt)||0)*sign, bal:run}; }).reverse();
+  const allocNet = alloc? all.filter(l=>l.alloc).reduce((t,l)=>t+(Number(l.amt)||0)*sign, 0) : 0;
+  return {rows, total:run, alloc, allocNet};
+}
+function openPosAccTx(accId, sign){
+  const {rows, total, alloc, allocNet} = posAccTxRows(accId, sign);
+  const note = alloc? 'Unallocated transactions only'+(Math.abs(allocNet)>=0.005? ` (allocated ones not shown: ${money(allocNet)})` : '')+'. ' : '';
+  showModal(`
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0"><span class="mono">${accId}</span> ${esc(accShort(accId))}</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
+    <div class="mut" style="font-size:12px;margin:6px 0 10px">${note}Newest first, balance as of today. Click a line to open its JV.</div>
+    <div style="overflow:auto;max-height:60vh"><table id="posAccTxTable"><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th><th class="num">Balance</th></tr></thead>
+      <tbody>${rows.map(x=>`<tr class="click" onclick="viewJV(${x.l.jv})"><td class="mono">${esc(x.l.date||'')}</td><td class="mono">${esc(String(x.l.jv||''))}</td><td>${esc(x.l.descr||'')}</td><td class="num mono ${x.amt<0?'r':''}">${money(x.amt)}</td><td class="num mono">${money(x.bal)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No transactions</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="4">Total</td><td class="num mono" id="posAccTxTotal">${money(total)}</td></tr></tfoot></table></div>
+    <div class="row noprint" style="justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn ghost" onclick="posAccTxToLedger(${accId}, ${alloc})">Open in Ledger</button>
+      <button class="btn pri" onclick="closeModal()">Close</button>
+    </div>`, true);
+}
+function posAccTxToLedger(accId, unallocOnly){
+  jumpToLedgerForAccount(accId);
+  if(unallocOnly){ ledgerFilter.unallocOnly = true; renderLedger(); }
 }
 function togglePosBoxRow(boxId, i){ const k = boxId+':'+i; posBoxOpen[k] = !posBoxOpen[k]; renderDashboard(); }
 function openPosBoxEditor(boxId){
@@ -5092,7 +5135,7 @@ function dashBudgetHTML(){
       const cv = over? overspendCover(c.cat, roundCents(-c.variance)) : null, covered = !!(cv && cv.full);
       const col = covered? 'var(--yellow)' : over? 'var(--red)' : (pct>=90? 'var(--yellow)' : 'var(--accent)');
       return `<div class="bud-row"><div class="bud-top"><span>${esc(c.cat)}</span><span class="mono"><b>${money0(spent)}</b> <span class="mut">of ${money0(cap)}</span></span></div>
-        <div class="bud-track"><div class="bud-fill grow-x" style="width:${Math.min(100,pct).toFixed(1)}%;background:${col};animation-delay:${i*80}ms"></div></div>
+        <div class="bud-track"><div class="bud-fill${dashboardNeedsCountUp?' grow-x':''}" style="width:${Math.min(100,pct).toFixed(1)}%;background:${col};animation-delay:${i*80}ms"></div></div>
         <div class="bud-note${covered?' bud-covered':''}" ${cv? `data-accrual-cover="${covered?'full':'part'}"` : ''} style="color:${covered?'var(--text)':over?'var(--red)':(pct>=90?'var(--yellow)':'var(--muted)')}">${over? (covered? '<b>Over by '+money0(-c.variance)+'</b>' : 'Over by '+money0(-c.variance))+(overspendCoverText(cv, money0)? ' \u00B7 '+overspendCoverText(cv, money0) : '') : (Math.abs(c.variance)<0.005? 'Fully used' : money0(c.variance)+' left')}</div></div>`; }).join('')
     : '<div class="mut" style="font-size:13px">No budget set for this month.</div>'}</div>`;
 }
@@ -6166,11 +6209,39 @@ async function smsSetStatus(ids, status, jv){
   for(let i=0;i<changed.length;i++) await syncWrite('pd_sms_inbox','upsert',{id:changed[i].id, status, jv:jv||null}, bases[i]);
 }
 // One click on a group: the earliest date opens in New JV, every other date is saved as a draft.
-async function smsCreateJVs(groupKey){
+// #44: SMS for a Dashboard bank account first ask for the statement balance (Skip allowed), then New JV opens in reconcile mode.
+function smsReconcileAcc(accId){
+  const a = dashboardBankAccounts().active.find(x=>x.id===Number(accId));
+  return a && !bankReconState(a).noLimit? a : null;
+}
+function openSmsStmtPrompt(groupKey, accId){
+  const a = ACC_BY_ID[accId]; if(!a) return;
+  const s = bankReconState(a);
+  showModal(`
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">\ud83c\udfe6 ${esc(accShort(a.id))}: balance now</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
+    <div class="mut" style="font-size:12.5px;margin:8px 0 10px">Before the JV opens, type ${s.isCC? 'the card\'s <b>available limit</b>' : 'the account\'s balance'} from the bank app. Sums work too (500-150 saves 350).</div>
+    <label class="fl">${s.isCC? 'Available limit' : 'Statement balance'}</label>
+    <input id="smsStmtBal" type="text" inputmode="decimal" class="num" style="width:180px" value="${s.hasStmt? s.typedVal : ''}"
+      onkeydown="if(event.key==='Enter'){ event.preventDefault(); smsStmtSave(${smsArg(groupKey)}, ${a.id}); }">
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn ghost" onclick="smsCreateJVs(${smsArg(groupKey)}, true)">Skip</button>
+      <button class="btn pri" onclick="smsStmtSave(${smsArg(groupKey)}, ${a.id})">Save and open the JV</button>
+    </div>`);
+  const el = document.getElementById('smsStmtBal'); if(el){ el.focus(); el.select(); }
+}
+async function smsStmtSave(groupKey, accId){
+  const el = document.getElementById('smsStmtBal');
+  const ok = await saveStmtBalance(accId, el? el.value : '');
+  if(ok===false) return;
+  await smsCreateJVs(groupKey, true);
+}
+async function smsCreateJVs(groupKey, balanceAsked){
   if(blockIfSyncing()) return;
   const {jvs, netted, group} = smsBuildJVs(groupKey);
   if(!group){ toast('That group is no longer waiting', true); return; }
   if(!group.acc){ toast('Choose this group’s LedgerOS account first', true); return; }
+  const bank = jvs.length? smsReconcileAcc(group.acc) : null;
+  if(bank && !balanceAsked){ openSmsStmtPrompt(groupKey, bank.id); return; }
   const busy = (jvDraft.lines||[]).some(l=>!jvIsBlankLine(l));
   if(jvs.length && busy && !confirm('The JV you are typing will be saved as a draft first. Continue?')) return;
   if(jvs.length && busy) await saveJVDraft();
@@ -6183,6 +6254,7 @@ async function smsCreateJVs(groupKey){
     await syncWrite('pd_drafts','upsert',{id:draft.id, entry_date:draft.date, lines:draft.lines, saved_at:draft.savedAt}, null);
   }
   if(first){ jvDraft = {date:first.date, lines:first.lines.map(l=>Object.assign(freshLine(), l))}; jvBalanceCheckSelected = new Set(); }
+  if(first && bank) reconcileAcc = bank.id;
   closeModal();
   if(screen!=='newjv') go('newjv'); else renderNewJV();
   const parts = [];
@@ -7112,9 +7184,11 @@ function jumpToLedgerForAccount(accId){
 }
 async function saveStmtBalance(accId, val, focusNextId){
   if(blockIfSyncing()) return;
-  const a = D.accounts.find(x=>x.id===accId); if(!a) return;
+  const a = D.accounts.find(x=>x.id===accId); if(!a) return false;
   const base = a.updated_at||null;
-  const clean = String(val).replace(/,/g,'').trim();
+  const sum = parseAmountSum(val);   // #46: "+500-150" saves 350
+  if(sum===null){ toast('Use numbers with + or \u2212 only, e.g. 500-150', true); return false; }
+  const clean = String(sum);
   if(a.is_credit_card){
     a.stmt_available = clean===''? null : Number(clean);
     a.stmt_balance = clean===''? null : (Number(clean) - Number(a.credit_limit||0));
@@ -7122,10 +7196,18 @@ async function saveStmtBalance(accId, val, focusNextId){
     a.stmt_balance = clean===''? null : Number(clean);
   }
   a.stmt_date = clean===''? null : todayStr();
-  persistLocal(); renderDashboard();
+  persistLocal(); if(screen==='dashboard') renderDashboard();
   if(focusNextId){ const el = document.getElementById('stmtBal_'+focusNextId); if(el){ el.focus(); el.select(); } }
   toast('Statement balance saved');
   await syncWrite('pd_accounts', 'upsert', {...a}, base);
+}
+// #46: a typed sum of numbers ("+500-150" -> 350). '' when empty, null when it isn't only numbers with + and -.
+function parseAmountSum(v){
+  const t = String(v==null? '' : v).replace(/[,\s]/g,'').replace(/\u2212/g,'-');
+  if(t==='') return '';
+  const num = '(?:\\d+\\.?\\d*|\\.\\d+)';
+  if(!new RegExp('^[+-]?'+num+'(?:[+-]'+num+')*$').test(t)) return null;
+  return roundCents(t.match(new RegExp('[+-]?'+num,'g')).reduce((a,x)=>a+Number(x),0));
 }
 function startReconcile(accId){
   reconcileAcc = accId;
@@ -10770,6 +10852,8 @@ function invLinkLabel(l){
   if(l.kind==='dex') return (INV_CHAINS[l.chain]? INV_CHAINS[l.chain].label : l.chain)+' · '+invShortAddr(l.address)+(l.label? ' · '+l.label : '');
   return '';
 }
+// #42: a link counts as picked when the coin was chosen (Find → Use, or confirmed after pasting an address); a bare address doesn't.
+function invLinkPicked(l){ return !!(l && (l.kind==='cg' || l.kind==='stock' || (l.kind==='dex' && l.label))); }
 function invShortAddr(a){ a = String(a||''); return a.length>12? a.slice(0,5)+'…'+a.slice(-4) : a; }
 function invGuessChain(addr){
   addr = String(addr||'').trim();
@@ -11034,7 +11118,7 @@ function renderInvPriceLinks(){
     const l = cfg.links[p.id];
     const plat = invPlatformById(p.platformId);
     const res = ui.posId===p.id? invLinkResultsHTML(p) : '';
-    return `<tr data-linkpos="${p.id}"><td><b>${esc(p.ticker||p.name)}</b> <span class="mut" style="font-size:11px">${esc(p.name!==p.ticker? p.name : '')}</span><div class="mut" style="font-size:11px">${esc(plat? plat.name : '')}</div></td>
+    return `<tr data-linkpos="${p.id}"><td><b${invLinkPicked(l)? ' class="g inv-link-picked" title="Coin picked"' : ''}>${esc(p.ticker||p.name)}</b> <span class="mut" style="font-size:11px">${esc(p.name!==p.ticker? p.name : '')}</span><div class="mut" style="font-size:11px">${esc(plat? plat.name : '')}</div></td>
       <td style="font-size:12px">${l? esc(invLinkLabel(l)) : '<span class="mut">not linked (manual)</span>'}</td>
       <td class="noprint" style="white-space:nowrap">
         <button class="btn ghost sm" onclick="invLinkSearch(${p.id})">🔎 Find</button>
@@ -11078,21 +11162,66 @@ function invLinkResultsHTML(p){
   return `<div style="font-size:12px">${why}<div class="mut" style="margin-bottom:4px">Pick the right one:</div>${r.map((c,i)=>`<div class="row" style="justify-content:space-between;gap:8px;padding:3px 0;border-top:1px solid var(--line)">
       <span>${esc(c.title)} <span class="mut">${esc(c.sub||'')}</span></span><button class="btn ghost sm" data-linkpick="${i}" onclick="invLinkPick(${p.id}, ${i})">Use</button></div>`).join('')}</div>`;
 }
+// #43: the exact token behind a contract address (CoinGecko by contract + DexScreener), as one Find result.
+const INV_CG_PLATFORMS = {solana:'solana', base:'base', ethereum:'ethereum'};
+const invNotFound = e => / said 404$/.test(String((e && e.message) || ''));
+function invPriceText(v){ const n = Number(v); return Number.isFinite(n) && n>0? '$'+(n>=1? fmt2(n) : String(Number(n.toPrecision(4)))) : ''; }
+async function invLookupAddress(chain, address){
+  const errors = [], key = getInvPriceCfg().keys.cg||'';
+  let cg = null, pair = null;
+  try{
+    const c = await invFetchJson(`https://api.coingecko.com/api/v3/coins/${INV_CG_PLATFORMS[chain]}/contract/${encodeURIComponent(address)}${key? '?x_cg_demo_api_key='+encodeURIComponent(key) : ''}`);
+    if(c && c.id) cg = c;
+  }catch(e){ if(!invNotFound(e)) errors.push('CoinGecko: '+invErrText(e)); }
+  try{
+    const ds = await invFetchJson(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`);
+    const same = a => chain==='solana'? String(a)===address : String(a).toLowerCase()===address.toLowerCase();
+    pair = ((ds||{}).pairs||[]).filter(pr=>pr.chainId===INV_CHAINS[chain].dex && pr.baseToken && same(pr.baseToken.address))
+      .sort((a,b)=>((b.liquidity||{}).usd||0)-((a.liquidity||{}).usd||0))[0] || null;
+  }catch(e){ if(!invNotFound(e)) errors.push('DexScreener: '+invErrText(e)); }
+  if(!cg && !pair) return {result:null, errors};
+  const name = cg? cg.name : pair.baseToken.name;
+  const symbol = String(cg? cg.symbol : pair.baseToken.symbol).toUpperCase();
+  const price = invPriceText(cg && cg.market_data && cg.market_data.current_price? cg.market_data.current_price.usd : pair && pair.priceUsd);
+  const bits = [invShortAddr(address), price, pair? 'liquidity $'+fmt2((pair.liquidity||{}).usd||0) : '', cg? 'on CoinGecko' : 'not on CoinGecko', pair? 'on DexScreener' : 'not on DexScreener', '\u2713 matches your address'].filter(Boolean);
+  return {result:{title:`${name} (${symbol}) on ${INV_CHAINS[chain].label}`, sub:bits.join(' \u00b7 '), name, symbol, price, link:{kind:'dex', chain, address, label:symbol}}, errors};
+}
+// #43: chain, short contract and price for a CoinGecko search hit (one extra call per hit).
+async function invCgCoinDetail(id, key){
+  const c = await invFetchJson(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false${key? '&x_cg_demo_api_key='+encodeURIComponent(key) : ''}`);
+  const plats = Object.entries((c||{}).platforms||{}).filter(([k,v])=>k && v);
+  const known = plats.find(([k])=>INV_CHAINS[k]) || plats[0];
+  const where = known? (INV_CHAINS[known[0]]? INV_CHAINS[known[0]].label : known[0])+' \u00b7 '+invShortAddr(known[1]) : 'its own chain';
+  const md = (c||{}).market_data||{};
+  return {where, price: invPriceText(md.current_price && md.current_price.usd), addrs: plats.map(([,v])=>String(v))};
+}
 async function invLinkSearch(posId){
   const p = invPositionById(posId); if(!p) return;
   const q = String(p.ticker||p.name).trim();
   window._invLinkUi = {posId, results:null, loading:true, error:''};
   renderInvPriceLinks();
   const results = [], errors = [];
-  if(/stock|equit|etf/i.test(p.assetClass||'')){
+  const cur = invPriceLink(posId);
+  if(cur && cur.kind==='dex' && cur.address && INV_CHAINS[cur.chain]){
+    // #43: a saved address → only the exact token for it.
+    const x = await invLookupAddress(cur.chain, cur.address);
+    if(x.result) results.push(x.result);
+    errors.push(...x.errors);
+    if(!x.result && !x.errors.length) errors.push('Neither CoinGecko nor DexScreener knows this address ('+invShortAddr(cur.address)+'). Check it in Phantom, or \u2715 and paste it again.');
+  } else if(/stock|equit|etf/i.test(p.assetClass||'')){
     results.push({title:q.toUpperCase()+' (US stock)', sub:'Finnhub quote', link:{kind:'stock', id:q.toUpperCase()}});
   } else {
     try{
       const key = getInvPriceCfg().keys.cg||'';
       const cg = await invFetchJson(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}${key? '&x_cg_demo_api_key='+encodeURIComponent(key) : ''}`);
-      ((cg||{}).coins||[]).filter(c=>String(c.symbol||'').toUpperCase()===q.toUpperCase()).slice(0,5).forEach(c=>{
-        results.push({title:`${c.name} (${String(c.symbol).toUpperCase()})`, sub:`CoinGecko${c.market_cap_rank? ' · rank #'+c.market_cap_rank : ''}`, link:{kind:'cg', id:c.id, label:c.name}});
-      });
+      const hits = ((cg||{}).coins||[]).filter(c=>String(c.symbol||'').toUpperCase()===q.toUpperCase()).slice(0,5);
+      for(const c of hits){
+        let d = null;
+        try{ d = await invCgCoinDetail(c.id, key); }catch(e){ d = null; }
+        const mine = cur && cur.address && d && d.addrs.some(a=>a.toLowerCase()===String(cur.address).toLowerCase());
+        const sub = ['CoinGecko'+(c.market_cap_rank? ' \u00b7 rank #'+c.market_cap_rank : ''), d? d.where : '', d? d.price : '', mine? '\u2713 matches your address' : ''].filter(Boolean).join(' \u00b7 ');
+        results.push({title:`${c.name} (${String(c.symbol).toUpperCase()})`, sub, link:{kind:'cg', id:c.id, label:c.name}});
+      }
     }catch(e){ errors.push('CoinGecko: '+invErrText(e)); }
     try{
       const ds = await invFetchJson(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`);
@@ -11129,10 +11258,14 @@ async function invLinkPasteAddress(posId){
     chain = ans.startsWith('eth')? 'ethereum' : ans.startsWith('base')? 'base' : '';
   }
   if(!INV_CHAINS[chain]){ window._invLinkUi.error = 'That doesn\'t look like a Solana, Base or Ethereum address.'; renderInvPriceLinks(); return; }
-  await setInvPriceLink(posId, {kind:'dex', chain, address: addr});
+  // #43: look the token up and ask before saving; a yes marks the coin as picked (green, #42).
+  const x = await invLookupAddress(chain, addr);
+  if(x.result && !confirm(`Is this ${x.result.title}${x.result.price? ', '+x.result.price : ''}?`)){ toast('Not saved'); return; }
+  await setInvPriceLink(posId, x.result? x.result.link : {kind:'dex', chain, address: addr});
   window._invLinkUi = {posId:null, results:null, loading:false, error:''};
   renderInvPriceLinks();
-  toast('Linked to '+INV_CHAINS[chain].label+' ✓');
+  if(x.result) toast('Linked to '+x.result.symbol+' on '+INV_CHAINS[chain].label+' \u2713');
+  else toast('Saved, but the token couldn\'t be looked up'+(x.errors.length? ' ('+x.errors.join('; ')+')' : '')+'. Not confirmed yet: \ud83d\udd0e Find later to confirm it.', true);
 }
 async function invLinkClear(posId){ await setInvPriceLink(posId, null); renderInvPriceLinks(); }
 async function saveInvPriceKeys(){
@@ -11501,7 +11634,7 @@ function invNavBadgeHTML(){
   try{
     if(!D || !(D.invPlatforms||[]).length) return '';
     const n = invNeedsYouCount();
-    return n? `<span class="nav-badge inv-nav-badge" title="${n} investment item${n===1?'':'s'} need you" style="margin-left:auto;background:var(--red);color:#fff;border-radius:9px;padding:0 6px;font-size:11px;line-height:17px">${n}</span>` : '';
+    return n? `<span class="nav-badge inv-nav-badge" title="${n} investment item${n===1?'':'s'} need you" style="background:var(--red);color:#fff;border-radius:9px;padding:0 6px;font-size:11px;line-height:17px">${n}</span>` : '';
   }catch(e){ return ''; }
 }
 function invNeedsYouHTML(){
