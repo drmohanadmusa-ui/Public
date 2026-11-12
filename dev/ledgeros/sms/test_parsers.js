@@ -23,7 +23,7 @@ function runScript(sms, store, net, opt) {
       net.sent.push({ url: this.url, headers: this.headers, rows: JSON.parse(this.body) }); this.response = { statusCode: net.code }; return ""; } },
     __NOW__: "2026-11-11T12:00:00",          // pinned "today" (SAIB dates have no year)
     args: { shortcutParameter: sms },
-    Pasteboard: { pasteString: () => opt.clipboard || "" },
+    Pasteboard: { pasteString: () => opt.clipboard || "", copyString: t => { opt.copied = t; } },
     config: { runsInApp: !!opt.inApp },
     DateFormatter: class { string() { return "2026-01-01 00:00"; } },
     Notification: class { async schedule() { (opt.notes || []).push({ title: this.title, body: this.body }); } },
@@ -405,7 +405,7 @@ const CASES = [
   {
     const opt = { inApp: true, clipboard: "", pick: -1, alerts: [], notes: [] };
     const res = await runScript(undefined, {}, null, opt);
-    check(opt.alerts[0] && opt.alerts[0].title === "Ledger SMS Logger" && opt.alerts[0].actions.join("|") === "Connect to LedgerOS|Show run log" && res === "Closed",
+    check(opt.alerts[0] && opt.alerts[0].title === "Ledger SMS Logger" && opt.alerts[0].actions.join("|") === "Connect to LedgerOS|Show run log|Copy run log" && res === "Closed",
       "menu: run with nothing copied offers Connect and the run log");
   }
   {
@@ -483,6 +483,26 @@ const CASES = [
     const k = JSON.parse(store["/l/ledger_sms_keys.json"] || "{}");
     check(res === "Connected to LedgerOS" && k.url === "https://new.example.co" && opt.kcSet && opt.kcSet.ledgeros_sb_url === "https://new.example.co",
       "Connect saves the keys on the phone and in the Keychain, got " + res);
+  }
+  // ---------- run log for diagnosis (#28, v5.8) ----------
+  {
+    const store = {}, net = { keys: true, code: 201, sent: [] };
+    const opt = { clipboard: PURCHASE };   // a bank SMS sitting on the clipboard must NOT be used by an automation run
+    const res = await runScript("", store, net, opt);
+    check(res === "No message text received from the automation (it passed empty text)" && net.sent.length === 0 && !store["/d/Ledger Inbox.tsv"],
+      "empty text from an automation: said plainly, and the clipboard is not read, got " + res);
+    const res2 = await runScript([], store, net, {});
+    check(/it passed an empty list/.test(res2), "an empty list is described too, got " + res2);
+    const log = (store["/l/Ledger Run Log.txt"] || "").trim().split("\n");
+    check(/\| SMS \|  \| No message text received from the automation \(it passed empty text\) \| 2026-11-12$/.test(log[0] || ""), "the run log line says so and ends with the script version, got " + log[0]);
+  }
+  {
+    const store = {}, opt = { inApp: true, clipboard: PURCHASE, pick: 0, alerts: [], notes: [] };
+    await runScript(undefined, store, { keys: true, code: 201, sent: [] }, opt);
+    check(/\| by hand \| شراء إنترنت \| Test only/.test(store["/l/Ledger Run Log.txt"] || ""), "a run by hand logs the first line of the copied message");
+    const o2 = { inApp: true, clipboard: "", pick: 2, alerts: [], notes: [] };
+    const res = await runScript(undefined, store, null, o2);
+    check(res === "Run log copied" && /^Ledger SMS Logger 2026-11-12, last runs \(newest first\):\n.*by hand/.test(o2.copied || ""), "Copy run log puts the log on the clipboard to paste to Claude, got " + (o2.copied || "").slice(0, 80));
   }
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

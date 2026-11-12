@@ -33,7 +33,9 @@ Bank SMS arrives
 
 **Testing a message (no logging):** long-press the bank SMS → **Copy**, open Scriptable and tap **Ledger SMS Logger**. A pop-up shows exactly what would be logged (bank, account, type, description, amount, date, remaining), or says the message would be skipped. Tap **Test only** to log nothing, or **Log it to LedgerOS** to log it for real (also the way to log an old message).
 
-**Menu:** run it in Scriptable with nothing copied → **Connect to LedgerOS** or **Show run log** (the last 25 runs, newest first).
+**Menu:** run it in Scriptable with nothing copied → **Connect to LedgerOS**, **Show run log** (the last 25 runs, newest first) or **Copy run log** (the last 100, ready to paste into a chat with Claude). The menu shows the script version (`SCRIPT_VERSION`, also at the end of every run-log line).
+
+**Empty runs (v5.8, #28):** when an automation passes no message text (e.g. ▶ in Shortcuts), the run log says "No message text received from the automation (it passed …)". The clipboard is only read when the script is run by hand (before v5.8 an empty automation run read the clipboard).
 
 **Did an SMS start the script?** Check the run log. A line marked `SMS` means the automation ran; its result says what happened. No line at all means the automation never started (trigger word, Run Immediately, or the automation is off).
 
