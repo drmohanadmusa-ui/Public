@@ -590,12 +590,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.10.0';
+const APP_VERSION = '5.11.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.11.0', date:'2026-11-12', changes:[
+    'Bank SMS now go from the iPhone straight to a small LedgerOS service on Supabase (“sms-ingest”), which reads them with the same rules as the Scriptable script: about a second per message, works on a locked phone, one “Logged” notice per SMS and no notice for duplicate runs. Setup steps: dev/ledgeros/edge/README.md.',
+    '📩 SMS → Needs review: a message that wasn’t recognised but looks like money (an amount with a currency, not a code) is kept with its full text. “Not a bank: ignore similar” teaches the reader to ignore messages like it (e.g. Tabby); the ignore list shows under the paste box, each with ✕ to undo.',
+    '📩 SMS → Possibly missing SMS: the balance or remaining limit in each bank SMS is checked against the logged ones; when it moved more than they explain, the inbox (and the Dashboard) shows where and by how much. “It’s fine” clears one.',
+    '📩 SMS → Paste an SMS: add a missed message, or test the reader, without Scriptable.',
+  ]},
   {version:'5.10.0', date:'2026-11-12', changes:[
     'Investments → Activity: with one person picked, every column shows only their share (their units, USD, SAR, rate and name), and Export CSV exports just their figures.',
     'Editing a deposit: each person\'s SAR shows next to their USD. Changing someone\'s USD keeps the rate logged for them and recalculates their SAR (before, the SAR stayed and the rate changed).',
@@ -5049,6 +5055,8 @@ function dashboardTodoItems(){
   const items = [];
   const smsWaiting = smsPending().length;
   if(smsWaiting) items.push({tone:'warn', title:smsWaiting+' bank SMS to post', sub:'Logged by your iPhone. Opens the SMS inbox in New JV', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
+  const smsLook = smsNeedsLookCount();   // #59
+  if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
     const s = bankReconState(a);
     if(s.noLimit) return;
@@ -6291,7 +6299,7 @@ async function smsCreateJVs(groupKey, balanceAsked){
   toast(parts.join(' · ')+(first? '. Pick the missing accounts, check, then post.' : ''));
 }
 async function smsDismiss(id){ await smsSetStatus([id], 'dismissed'); openSmsInbox(); }
-async function smsRestore(id){ await smsSetStatus([id], 'pending'); openSmsInbox(); }
+async function smsRestore(id){ const s = (D.smsInbox||[]).find(x=>x.id===id); await smsSetStatus([id], s && s.kind==='Needs review'? 'review' : 'pending'); openSmsInbox(); }
 function smsCopy(id){
   const s = (D.smsInbox||[]).find(x=>x.id===id); if(!s) return;
   const t = [s.date, s.time, s.source, s.acct, s.descr, s.amt===null? '' : smsSigned(s)].join('\t');
@@ -6324,6 +6332,115 @@ function smsMapHTML(){
       <td><select class="sms-map-pick" onchange="smsChangeMapping(${smsArg(t)}, this.value)">${opts(acc)}</select></td>
       <td style="width:1%;white-space:nowrap"><button class="btn ghost sm" onclick="smsChangeMapping(${smsArg(t)}, '')">Remove</button></td></tr>`).join('')}</tbody></table>`;
 }
+// ===== v5.11 (#59): SMS that need a look =====
+// "Needs review" rows: messages the server-side parser (Edge Function sms-ingest) skipped but that look like money.
+function smsReviewRows(){ return (D.smsInbox||[]).filter(s=>s.status==='review').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time)); }
+// Balance-gap check: SMS carry the balance / remaining limit. Per card or account, each step's change must be
+// explained by the logged SMS (a bank may not have applied some yet, e.g. a cashback, so those carry forward).
+// SMS naming the same minute, arriving one after another, are one block. A change no combination explains = probably a missing SMS.
+const smsRem = s => parseFloat(String(s.remaining).replace(/,/g,''));
+function smsBalanceGaps(){
+  const ok = getUiDismissals().smsGapOk || {};
+  const rows = (D.smsInbox||[]).filter(s=>s.status!=='dismissed' && s.status!=='review' && s.amt!==null && (s.currency||'SAR')==='SAR'
+    && s.remaining!==null && s.remaining!=='' && isFinite(smsRem(s)));
+  const by = {};
+  rows.forEach(s=>{ (by[s.source+'|'+s.acct] = by[s.source+'|'+s.acct] || []).push(s); });
+  const out = [];
+  Object.values(by).forEach(list=>{
+    // Arrival order (logged_at): a bank can send an SMS hours after the purchase it names, with the balance as of sending.
+    list.sort((a,b)=>String(a.loggedAt||'').localeCompare(String(b.loggedAt||'')) || (a.date+' '+a.time).localeCompare(b.date+' '+b.time) || a.id-b.id);
+    const blocks = [];
+    list.forEach(r=>{ const b = blocks[blocks.length-1];
+      const own = smsSigned(r) - (Number(r.fee)||0);
+      if(b && b.at===r.date+' '+r.time) { b.amts.push(own); b.last = r; } else blocks.push({at:r.date+' '+r.time, amts:[own], first:r, last:r}); });
+    let pending = [];
+    for(let i=1;i<blocks.length;i++){
+      const prev = blocks[i-1], cur = blocks[i];
+      const delta = smsRem(cur.last) - smsRem(prev.last);
+      const items = pending.concat(cur.amts).slice(-10);
+      let best = null;
+      for(let m=0;m<(1<<items.length);m++){
+        let sum = 0; items.forEach((v,k)=>{ if(m&(1<<k)) sum += v; });
+        const d = delta - sum;
+        if(!best || Math.abs(d)<Math.abs(best.d)) best = {d, m};
+        if(Math.abs(d)<0.995) break;
+      }
+      pending = items.filter((v,k)=>!(best.m&(1<<k)));
+      if(Math.abs(best.d)<0.995) continue;
+      const key = prev.last.id+'>'+cur.first.id;
+      if(ok[key]) continue;
+      out.push({key, source:cur.first.source, acct:cur.first.acct, from:prev.last, to:cur.first, gap:smsR2(best.d)});
+    }
+  });
+  return out;
+}
+function smsNeedsLookCount(){ return smsReviewRows().length + smsBalanceGaps().length; }
+function smsIgnoreGuess(text){
+  const host = (String(text||'').match(/https?:\/\/([^\/\s]+)/i)||[])[1];
+  if(host){ const part = host.split('.').filter(w=>!/^(s|www|m|app|com|sa|net|org|co|io)$/i.test(w)).sort((a,b)=>b.length-a.length)[0]; if(part) return part; }
+  return (String(text||'').split('\n')[0]||'').trim().slice(0, 30);
+}
+async function smsIgnoreSimilar(id){
+  const s = (D.smsInbox||[]).find(x=>x.id===id); if(!s) return;
+  const phrase = (prompt('Not a bank: ignore future messages that contain this text (you can shorten it):', smsIgnoreGuess(s.descr))||'').trim();
+  if(!phrase) return;
+  const d = Object.assign({}, getUiDismissals());
+  const list = Array.isArray(d.smsIgnore)? d.smsIgnore.slice() : [];
+  if(!list.some(w=>String(w).toLowerCase()===phrase.toLowerCase())) list.push(phrase);
+  d.smsIgnore = list;
+  await saveUiDismissals(d);
+  const ids = smsReviewRows().filter(r=>String(r.descr).toLowerCase().includes(phrase.toLowerCase())).map(r=>r.id);
+  await smsSetStatus(ids, 'dismissed');
+  toast(`Messages containing \u201c${phrase}\u201d will be ignored from now on`+(ids.length>1? ` (${ids.length} cleared)` : ''));
+  openSmsInbox();
+}
+async function smsUnignore(phrase){
+  const d = Object.assign({}, getUiDismissals());
+  d.smsIgnore = (Array.isArray(d.smsIgnore)? d.smsIgnore : []).filter(w=>w!==phrase);
+  await saveUiDismissals(d);
+  openSmsInbox();
+}
+async function smsGapIsFine(key){
+  const d = Object.assign({}, getUiDismissals());
+  d.smsGapOk = Object.assign({}, d.smsGapOk||{}, {[key]:true});
+  await saveUiDismissals(d);
+  openSmsInbox();
+}
+// Paste SMS: sends a copied message through the same Edge Function the iPhone uses (replaces Scriptable's by-hand run).
+async function smsPasteSubmit(){
+  const el = document.getElementById('smsPasteBox');
+  const text = el? el.value.trim() : '';
+  if(!text){ toast('Paste an SMS first', true); return; }
+  let url = '', key = '';
+  try{ url = (localStorage.getItem('sb_url')||'').replace(/\/+$/, ''); key = localStorage.getItem('sb_key')||''; }catch(e){}
+  if(!url || !key){ toast('Not connected to Supabase on this device', true); return; }
+  try{
+    const r = await fetch(url+'/functions/v1/sms-ingest', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key}, body:JSON.stringify({text})});
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok && !j.result) throw new Error('said '+r.status);
+    toast(j.result || 'Sent', /^Failed/.test(j.result||''));
+    if(/^(Logged|Needs review)/.test(j.result||'')) await refreshSmsInbox(); else openSmsInbox();
+  }catch(e){
+    toast('The SMS service didn\'t answer ('+(e && e.message || e)+'). Is sms-ingest deployed? See dev/ledgeros/edge/README.md', true);
+  }
+}
+function smsNeedsLookHTML(){
+  const rev = smsReviewRows(), gaps = smsBalanceGaps();
+  const ign = getUiDismissals().smsIgnore;
+  const ignList = Array.isArray(ign)? ign : [];
+  const revHTML = rev.length? `<div class="panel" id="smsReview" style="margin:10px 0;padding:12px;border-color:var(--yellow)"><b>\u26a0 Needs review (${rev.length})</b>
+      <div class="mut" style="font-size:11.5px;margin:2px 0 6px">Skipped messages that look like money. A bank message here means the reader needs a fix: tell Claude. Not a bank (e.g. Tabby)? Ignore similar, and they won't come back.</div>
+      <table><tbody>${rev.map(s=>`<tr data-review="${s.id}"><td class="mono" style="white-space:nowrap;vertical-align:top">${esc(fmtDateShort(s.date))} <span class="mut">${esc(s.time||'')}</span></td>
+        <td style="white-space:pre-wrap;font-size:12px">${esc(s.descr)}</td>
+        <td style="white-space:nowrap;text-align:right;vertical-align:top"><button class="btn ghost sm" onclick="smsIgnoreSimilar(${s.id})">Not a bank: ignore similar</button> <button class="btn ghost sm" onclick="smsDismiss(${s.id})">Dismiss</button></td></tr>`).join('')}</tbody></table></div>` : '';
+  const gapHTML = gaps.length? `<div class="panel" id="smsGaps" style="margin:10px 0;padding:12px;border-color:var(--red)"><b>\u26a0 Possibly missing SMS (${gaps.length})</b>
+      <div class="mut" style="font-size:11.5px;margin:2px 0 6px">The balance in the bank's own SMS moved more than the logged SMS explain. If you find the missing message, paste it below.</div>
+      <table><tbody>${gaps.map(g=>`<tr data-gap="${esc(g.key)}"><td><b>${esc(g.source)}${g.acct? ' '+esc(g.acct) : ''}</b>: between ${esc(fmtDateShort(g.from.date))} ${esc(g.from.time)} and ${esc(fmtDateShort(g.to.date))} ${esc(g.to.time)},
+        <span class="${moneyClass(g.gap)}">${money(g.gap)}</span> not explained</td><td style="text-align:right"><button class="btn ghost sm" onclick="smsGapIsFine(${smsArg(g.key)})">It's fine</button></td></tr>`).join('')}</tbody></table></div>` : '';
+  return revHTML + gapHTML + `<div style="margin:10px 0"><label class="fl">\ud83d\udccb Paste an SMS (a missed one, or to test the reader)</label>
+      <div class="row" style="gap:8px;align-items:flex-start"><textarea id="smsPasteBox" rows="3" style="flex:1;min-width:220px" placeholder="Paste the whole message here"></textarea><button class="btn ghost sm" onclick="smsPasteSubmit()">Add</button></div>
+      ${ignList.length? `<div class="mut" style="font-size:11px;margin-top:4px">Ignored (not banks): ${ignList.map(w=>`${esc(w)} <a href="#" onclick="smsUnignore(${smsArg(w)});return false" title="Stop ignoring">\u2715</a>`).join(' \u00b7 ')}</div>` : ''}</div>`;
+}
 function smsRowHTML(s, actions){
   const signed = smsSigned(s);
   const amtTxt = signed===null? `<span class="mut">${esc(s.currency)} ${esc(s.fxAmt===null? '' : String(s.fxAmt))}</span><div class="mut" style="font-size:11px">type the SAR</div>`
@@ -6339,7 +6456,7 @@ function openSmsInbox(){
   const groups = smsGroups();
   const accOpts = () => D.accounts.filter(a=>[1,2].includes(firstDigit(a.id)) && a.status!=='Inactive')
     .map(a=>`<option value="${a.id}">${a.id} · ${esc(accShort(a.id))}</option>`).join('');
-  const done = (D.smsInbox||[]).filter(s=>s.status!=='pending').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time));
+  const done = (D.smsInbox||[]).filter(s=>s.status!=='pending' && s.status!=='review').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time));
   const busy = smsIdsInJVs();
   const inJVs = (D.smsInbox||[]).filter(s=>s.status==='pending' && busy.has(s.id)).length;
   const waiting = groups.reduce((n,g)=>n+g.rows.length, 0);
@@ -6364,6 +6481,7 @@ function openSmsInbox(){
     <h3>📩 SMS inbox</h3>
     <p class="mut" style="font-size:12px">Bank SMS logged by your iPhone, grouped by account. Create JV builds one JV per SMS date, each SMS on its own line with the other half ready for you to pick its account. Nothing is posted until you post it.</p>
     <div class="row" style="justify-content:space-between;align-items:center"><span class="mut">${waiting} waiting${inJVs? ' · '+inJVs+' already in a JV or draft' : ''}</span><button class="btn ghost sm" onclick="refreshSmsInbox()">↻ Refresh</button></div>
+    ${smsNeedsLookHTML()}
     ${groups.map(groupHTML).join('') || '<div class="empty" style="padding:18px">No SMS waiting</div>'}
     <div style="margin-top:12px"><button class="btn ghost sm" id="smsMapToggle" onclick="smsMapOpen=!smsMapOpen; openSmsInbox()">${smsMapOpen? '▾' : '▸'} 🔗 Numbers & accounts (${Object.keys(getSmsMap()).length})</button>
       ${smsMapOpen? smsMapHTML() : ''}</div>

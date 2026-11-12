@@ -1,6 +1,8 @@
 # Bank SMS logger: how it works and how to update it
 
 An iPhone automation that reads incoming bank SMS and logs each transaction, so it can be posted in LedgerOS without retyping.
+
+> **v5.11 (2026-11-12, tracker #59): logging moved to the Supabase Edge Function `sms-ingest`.** The Shortcut posts the raw SMS; the function runs this file's parser (copied in by `edge/sms-ingest/build.js`). This script stays the source of the parser and its tests, and works as a backup. Setup: `dev/ledgeros/edge/README.md`, section "LedgerOS SMS ingest".
 Each row goes to the phone's own log file **and** to LedgerOS's SMS inbox (`pd_sms_inbox`, v5.4.0; feedback item #18 in `../FEEDBACK.md`), where New JV → 📩 SMS turns it into JVs.
 
 **Files in this folder**

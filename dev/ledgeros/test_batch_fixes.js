@@ -8076,6 +8076,12 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV510FamilyHoldingsOpenInAWindow();
   await testV510SyncIconReplacesTheWords();
   await testV510StatementExportsPdfAndCsv();
+  await testV511EdgeSmsIngestIsBuiltFromThePhoneParser();
+  await testV511EdgeLogsOnceAndStaysQuietOnDuplicates();
+  await testV511EdgeKeepsMoneyLookingSkipsForReview();
+  await testV511NeedsReviewAndIgnoreSimilar();
+  await testV511MissingSmsCheckFollowsTheBalance();
+  await testV511PasteSmsUsesTheEdgeFunction();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -10376,4 +10382,122 @@ async function testV510StatementExportsPdfAndCsv(){
   assert(during && during[0]==='A statement 2026-11-12' && during[1], 'Printing uses the file name as the title and prints only the window, got ' + JSON.stringify(during));
   sb.dispatchEvent(new sb.Event('afterprint'));
   assert(sb.document.title===before && !sb.document.body.classList.contains('print-modal'), 'Afterwards the page is back to normal');
+}
+// ================= v5.11.0: #59 SMS through the Edge Function, Needs review, missing-SMS check =================
+function loadSmsIngest(){
+  const src = fs.readFileSync(path.join(__dirname, 'edge', 'sms-ingest', 'index.ts'), 'utf8');
+  const ctx = {console, Date, Response: class { constructor(b, o){ this.body = b; this.status = (o&&o.status)||200; } }};
+  vm.createContext(ctx);
+  vm.runInContext(src + '\nthis.ingestSms = ingestSms; this.cyrb53 = cyrb53;', ctx);
+  ctx.__inserted = []; ctx.__dup = false; ctx.__ignore = [];
+  ctx.fetch = async (url, opts)=>{
+    const j = (b, st) => ({ok:(st||200)<300, status:st||200, json: async()=>b, text: async()=>JSON.stringify(b)});
+    if(/pd_ui_prefs/.test(url)) return j([{dismissals:{smsIgnore: ctx.__ignore}}]);
+    if(/pd_sms_inbox/.test(url)){ if(ctx.__fail) return j({message:'denied'}, 401); const rows = JSON.parse(opts.body); ctx.__inserted.push(...rows); return j(ctx.__dup? [] : rows, 201); }
+    return j({}, 404);
+  };
+  return ctx;
+}
+const SMS_OPT = {supabaseUrl:'https://test.example.co/', serviceKey:'svc', now:new Date('2026-11-12T12:24:00Z')};
+const SMS_SNB_BUY = "شراء إنترنت\nب88.10SAR\nمنTEST POWER CO\nبطاقة ائتمانية**2345(Apple Pay)\nالرصيد 9100.25SAR\n12/11/26 00:43";
+async function testV511EdgeSmsIngestIsBuiltFromThePhoneParser(){
+  const {build} = require('./edge/sms-ingest/build.js');
+  const file = fs.readFileSync(path.join(__dirname, 'edge', 'sms-ingest', 'index.ts'), 'utf8');
+  assert(build()===file, 'edge/sms-ingest/index.ts is up to date with the phone parser (run node dev/ledgeros/edge/sms-ingest/build.js)');
+  assert(/const PARSERS = \[/.test(file) && /function inboxRow\(/.test(file) && !/FileManager|Keychain|Pasteboard/.test(file), 'It carries the parser and the row builder, none of the phone-only code');
+}
+async function testV511EdgeLogsOnceAndStaysQuietOnDuplicates(){
+  const ctx = loadSmsIngest();
+  const r = await ctx.ingestSms(SMS_SNB_BUY, SMS_OPT);
+  const row = ctx.__inserted[0];
+  assert(/^Logged: SNB CC · SAR 88\.10 · TEST POWER CO$/.test(r.result) && /^Logged to Ledger Inbox: /.test(r.notify), 'A bank SMS is logged with one notice, got ' + JSON.stringify(r));
+  assert(row && row.status==='pending' && row.amt===88.1 && row.side==='Cr' && row.acct==='2345' && row.remaining==='9100.25' && row.logged_at==='2026-11-12T12:24:00.000Z', 'The row is the same shape as the phone script\'s, got ' + JSON.stringify(row));
+  const core = [row.entry_date, row.entry_time, 'SNB CC', '2345', '', row.kind, 'TEST POWER CO', '88.10', 'Cr', '', 'SAR', '', '9100.25'].join('\t');
+  assert(row.id===ctx.cyrb53(core), 'Same id as the Scriptable script, so both ways never log it twice');
+  ctx.__dup = true;
+  const d = await ctx.ingestSms(SMS_SNB_BUY, SMS_OPT);
+  assert(/^Duplicate/.test(d.result) && d.notify==='', 'A second run of the same SMS is silent');
+  ctx.__fail = true;
+  let threw = null; try{ await ctx.ingestSms(SMS_SNB_BUY, SMS_OPT); }catch(e){ threw = e; }
+  assert(threw && /Saving to LedgerOS failed: 401/.test(threw.message), 'A refused save is an error (the Shortcut shows it), not a silent loss');
+}
+async function testV511EdgeKeepsMoneyLookingSkipsForReview(){
+  const ctx = loadSmsIngest();
+  const otp = await ctx.ingestSms('1234 is the verification code for your SAR 10.00 payment', SMS_OPT);
+  assert(/^Skipped/.test(otp.result) && otp.notify==='' && !ctx.__inserted.length, 'Codes are skipped quietly, even with an amount');
+  const promo = await ctx.ingestSms('Enjoy our weekend offers!', SMS_OPT);
+  assert(/^Skipped/.test(promo.result) && !ctx.__inserted.length, 'No money: skipped');
+  const msg = 'Your SAR 120.00 purchase at Test Shop is confirmed. Track it in the app: https://s.paylater.sa/abc';
+  const r = await ctx.ingestSms(msg, SMS_OPT);
+  const row = ctx.__inserted[0];
+  assert(/^Needs review: Your SAR 120\.00/.test(r.result) && /needs a look/.test(r.notify), 'A skipped message that looks like money is kept for review, with a notice, got ' + JSON.stringify(r));
+  assert(row && row.status==='review' && row.amt===120 && row.descr===msg && row.entry_date==='2026-11-12' && row.entry_time==='15:24', 'Saved with its full text, amount and Saudi time, got ' + JSON.stringify(row));
+  ctx.__inserted.length = 0; ctx.__ignore = ['PAYLATER'];
+  const ig = await ctx.ingestSms(msg, SMS_OPT);
+  assert(/^Ignored: contains "PAYLATER"/.test(ig.result) && ig.notify==='' && !ctx.__inserted.length, 'Once marked not a bank, similar messages are ignored (any letter case)');
+}
+function v511Sandbox(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb);
+  sb.__set('smsIdsInJVs', ()=>new Set());
+  return {sb, D, R: sb.__R};
+}
+async function testV511NeedsReviewAndIgnoreSimilar(){
+  const {sb, D, R} = v511Sandbox();
+  const text = 'Your SAR 120.00 purchase at Test Shop is confirmed. Track it: https://s.paylater.sa/abc';
+  D.smsInbox.push(R(1, {source:'Needs review', kind:'Needs review', descr:text, status:'review', amt:120}), R(2, {source:'Needs review', kind:'Needs review', descr:'Paylater: SAR 5.00 due', status:'review', amt:5}), R(3, {}));
+  sb.openSmsInbox();
+  const m = sb.document.getElementById('modalRoot');
+  assert(m.querySelectorAll('#smsReview tr[data-review]').length===2 && /Not a bank: ignore similar/.test(m.innerHTML), 'Needs review lists them with the full text');
+  assert(!sb.smsGroups().some(g=>g.rows.some(r=>r.status==='review')), 'They are not mixed into the groups to post');
+  assert(/Done \(0\)/.test(m.innerHTML), 'Nor counted under Done while they wait for review');
+  assert(sb.smsIgnoreGuess(text)==='paylater', 'The phrase to ignore is guessed from the link, got ' + sb.smsIgnoreGuess(text));
+  let asked = ''; sb.prompt = (q, def)=>{ asked = def; return 'paylater'; };
+  await sb.smsIgnoreSimilar(1);
+  assert(asked==='paylater' && JSON.stringify(sb.getUiDismissals().smsIgnore)==='["paylater"]', 'Ignore similar saves the phrase in the synced settings');
+  assert(D.smsInbox.find(s=>s.id===1).status==='dismissed' && D.smsInbox.find(s=>s.id===2).status==='dismissed', 'And clears every review row with it (any letter case)');
+  assert(/Ignored \(not banks\): paylater/.test(sb.document.getElementById('modalRoot').innerHTML), 'The ignore list shows, each with a way back');
+  await sb.smsRestore(1);
+  assert(D.smsInbox.find(s=>s.id===1).status==='review', 'Back to inbox puts a review row back under Needs review');
+  await sb.smsUnignore('paylater');
+  assert(sb.getUiDismissals().smsIgnore.length===0, 'Unignore removes it');
+}
+async function testV511MissingSmsCheckFollowsTheBalance(){
+  const {sb, D, R} = v511Sandbox();
+  const at = h => '2026-11-12T'+h+':00.000Z';
+  // Invented card chain. Arrival order is what counts: the 10:48 pair arrives after the 11:20 SMS.
+  D.smsInbox.push(
+    R(1, {source:'BANKA CC', acct:'2345', time:'00:43', amt:10, side:'Cr', remaining:'1000.00', loggedAt:at('00:44')}),
+    R(2, {source:'BANKA CC', acct:'2345', time:'11:20', amt:100, side:'Cr', remaining:'900.00', loggedAt:at('11:21')}),
+    R(3, {source:'BANKA CC', acct:'2345', time:'10:48', amt:50, side:'Cr', remaining:'855.00', loggedAt:at('13:49')}),
+    R(4, {source:'BANKA CC', acct:'2345', time:'10:48', amt:5, side:'Dr', remaining:'855.00', loggedAt:at('13:49')}),
+    R(5, {source:'BANKA CC', acct:'2345', time:'15:23', amt:1, side:'Dr', remaining:'806.00', loggedAt:at('15:24')}),
+    R(6, {source:'BANKB', acct:'1111', amt:30, remaining:null, loggedAt:at('15:30')}));
+  const gaps = sb.smsBalanceGaps();
+  assert(gaps.length===1 && gaps[0].gap===-49 && gaps[0].from.id===4 && gaps[0].to.id===5, 'Only the missing 50 purchase (less the 1 cashback) is flagged, got ' + JSON.stringify(gaps.map(g=>[g.key, g.gap])));
+  // A cashback the bank hasn't applied yet carries forward instead of raising a flag
+  D.smsInbox.push(R(7, {source:'BANKA CC', acct:'2345', time:'16:00', amt:20, side:'Cr', remaining:'786.00', loggedAt:at('16:01')}),
+    R(8, {source:'BANKA CC', acct:'2345', time:'16:00', amt:2, side:'Dr', remaining:'786.00', loggedAt:at('16:01')}),
+    R(9, {source:'BANKA CC', acct:'2345', time:'17:00', amt:7, side:'Cr', remaining:'781.00', loggedAt:at('17:01')}));
+  assert(sb.smsBalanceGaps().length===1, 'A cashback applied later is not a gap');
+  assert(sb.dashboardTodoItems().some(i=>/^1 SMS needs a look/.test(i.title)), 'The Dashboard lists it');
+  sb.openSmsInbox();
+  assert(sb.document.querySelector('#modalRoot #smsGaps tr[data-gap="4>5"]'), 'The inbox shows it');
+  await sb.smsGapIsFine('4>5');
+  assert(sb.smsBalanceGaps().length===0 && sb.getUiDismissals().smsGapOk['4>5']===true, 'It\'s fine clears it (synced)');
+}
+async function testV511PasteSmsUsesTheEdgeFunction(){
+  const {sb} = v511Sandbox();
+  sb.localStorage.setItem('sb_url', 'https://test.example.co/'); sb.localStorage.setItem('sb_key', 'anon-test');
+  const calls = []; let refreshed = 0;
+  sb.fetch = async (url, opts)=>{ calls.push({url, opts}); return {ok:true, status:200, json: async()=>({result:'Logged: BANKA · SAR 5.00 · SHOP', notify:'x'})}; };
+  sb.__set('refreshSmsInbox', async ()=>{ refreshed++; });
+  const toasts = []; sb.__set('toast', (t, bad)=>toasts.push([t, bad]));
+  sb.openSmsInbox();
+  sb.document.getElementById('smsPasteBox').value = '  some SMS text ';
+  await sb.smsPasteSubmit();
+  assert(calls.length===1 && calls[0].url==='https://test.example.co/functions/v1/sms-ingest' && JSON.parse(calls[0].opts.body).text==='some SMS text' && calls[0].opts.headers.Authorization==='Bearer anon-test', 'Paste SMS posts to the Edge Function');
+  assert(refreshed===1 && toasts.some(([t])=>/^Logged/.test(t)), 'Shows the result and refreshes the inbox');
+  sb.fetch = async ()=>{ throw new TypeError('Failed to fetch'); };
+  await sb.smsPasteSubmit();
+  assert(toasts.some(([t, bad])=>bad && /Is sms-ingest deployed/.test(t)), 'If the function is not there, it says so');
 }
