@@ -7177,10 +7177,10 @@ function capSandbox(opts){
       {id:60199, name:'Self Improvement - Accrual', category:'Self Improvement', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
     ],
     ledger: [
-      {id:1, jv:1, date:'2026-09-30', acc:20301, amt:-3930.01, descr:'accrued so far'},
+      {id:1, jv:1, date:'2026-09-30', acc:20301, amt:-2880.5, descr:'accrued so far'},   // invented figures (v5.8, #37)
       {id:2, jv:2, date:'2026-11-03', acc:20301, amt:-5000, descr:'after the month — must not count'},
     ].concat(opts.ledger||[]),
-    budget: [{id:1, acc:60100, date:'2026-10-01', amt:1350}],
+    budget: [{id:1, acc:60100, date:'2026-10-01', amt:1000}],
     provisionGroups: [], forecastAccountRules: [], forecastPlans:{},
     accrualMappings: [{category:'Self Improvement', liabilityAcc:20301, expenseAcc:60199, capMonths: opts.cap===undefined? 3 : opts.cap}],
   };
@@ -7196,32 +7196,32 @@ function capRun(sb){
 async function testAccrualStopsAtTheCapAndAccruesOnlyTheRemainder(){
   const sb = capSandbox();
   const {lines, expl} = capRun(sb);
-  // Surplus 1,350; accrued 3,930.01 by 31 Oct; cap 3 × 1,350 = 4,050 → only 119.99 left.
+  // Surplus 1,000; accrued 2,880.50 by 31 Oct; cap 3 × 1,000 = 3,000 → only 119.50 left.
   const liab = lines.find(l=>l.acc===20301), exp = lines.find(l=>l.acc===60199);
-  assert(liab && Math.abs(liab.amt+119.99)<0.005 && exp && Math.abs(exp.amt-119.99)<0.005, 'Accrues only the 119.99 left under the cap, got ' + JSON.stringify(lines.map(l=>[l.acc,l.amt])));
-  assert(expl[0] && /capped — 1,350\.00 surplus, but only 119\.99 left under the 4,050\.00 cap/.test(expl[0].action), 'The explanation says it was capped, got ' + (expl[0]&&expl[0].action));
+  assert(liab && Math.abs(liab.amt+119.5)<0.005 && exp && Math.abs(exp.amt-119.5)<0.005, 'Accrues only the 119.50 left under the cap, got ' + JSON.stringify(lines.map(l=>[l.acc,l.amt])));
+  assert(expl[0] && /capped — 1,000\.00 surplus, but only 119\.50 left under the 3,000\.00 cap/.test(expl[0].action), 'The explanation says it was capped, got ' + (expl[0]&&expl[0].action));
 }
 async function testAccrualAtTheCapAddsNothing(){
-  const sb = capSandbox({ledger:[{id:3, jv:3, date:'2026-10-15', acc:20301, amt:-200, descr:'more'}]}); // now 4,130.01 > 4,050
+  const sb = capSandbox({ledger:[{id:3, jv:3, date:'2026-10-15', acc:20301, amt:-200, descr:'more'}]}); // now 3,080.50 > 3,000
   const {lines, expl} = capRun(sb);
   assert(!lines.some(l=>l.acc===20301), 'Once the cap is reached nothing more is accrued (and nothing is released), got ' + JSON.stringify(lines.map(l=>[l.acc,l.amt])));
-  assert(expl[0] && /already at the cap \(4,130\.01 accrued, cap 4,050\.00 = 3 × budget\)/.test(expl[0].action), 'Explains it is at the cap, got ' + (expl[0]&&expl[0].action));
+  assert(expl[0] && /already at the cap \(3,080\.50 accrued, cap 3,000\.00 = 3 × budget\)/.test(expl[0].action), 'Explains it is at the cap, got ' + (expl[0]&&expl[0].action));
 }
 async function testAccrualWithoutACapIsUnchanged(){
   const sb = capSandbox({cap:null});
   const {lines} = capRun(sb);
   const liab = lines.find(l=>l.acc===20301);
-  assert(liab && Math.abs(liab.amt+1350)<0.005, 'With no cap the whole 1,350 surplus is accrued as before, got ' + (liab&&liab.amt));
+  assert(liab && Math.abs(liab.amt+1000)<0.005, 'With no cap the whole 1,000 surplus is accrued as before, got ' + (liab&&liab.amt));
 }
 async function testAccrualCapUsesThatMonthsBudgetAndMonthEndBalance(){
   const sb = capSandbox({cap:4});
   const {lines} = capRun(sb);
-  // 4 × 1,350 = 5,400 cap; 3,930.01 accrued by 31 Oct (the 5,000 posted in November is ignored) → room 1,469.99 > surplus.
+  // 4 × 1,000 = 4,000 cap; 2,880.50 accrued by 31 Oct (the 5,000 posted in November is ignored) → room 1,119.50 > surplus.
   const liab = lines.find(l=>l.acc===20301);
-  assert(liab && Math.abs(liab.amt+1350)<0.005, 'With a 4-month cap there is room, so the full surplus is accrued; a later posting must not count, got ' + (liab&&liab.amt));
+  assert(liab && Math.abs(liab.amt+1000)<0.005, 'With a 4-month cap there is room, so the full surplus is accrued; a later posting must not count, got ' + (liab&&liab.amt));
 }
 async function testOverBudgetDrawdownIgnoresTheCap(){
-  const sb = capSandbox({ledger:[{id:4, jv:4, date:'2026-10-10', acc:60100, amt:2000, descr:'big course'}]});
+  const sb = capSandbox({ledger:[{id:4, jv:4, date:'2026-10-10', acc:60100, amt:1650, descr:'big course'}]});   // budget 1,000 → 650 over
   const {lines, expl} = capRun(sb);
   const liab = lines.find(l=>l.acc===20301);
   assert(liab && Math.abs(liab.amt-650)<0.005, 'Over budget by 650 → draws 650 from the liability, as before, got ' + (liab&&liab.amt));
@@ -7230,7 +7230,7 @@ async function testOverBudgetDrawdownIgnoresTheCap(){
 async function testAccruedChipShowsTheCap(){
   const sb = capSandbox();
   const chip = sb.accruedChipHTML('Self Improvement', '2026-10-31');
-  assert(/Accrued: <b class="mono">3,930\.01<\/b> of <span class="mono">4,050\.00<\/span>/.test(chip), 'The chip reads "Accrued: 3,930.01 of 4,050.00", got ' + chip);
+  assert(/Accrued: <b class="mono">2,880\.50<\/b> of <span class="mono">3,000\.00<\/span>/.test(chip), 'The chip reads "Accrued: 2,880.50 of 3,000.00", got ' + chip);
   const sb2 = capSandbox({cap:null});
   assert(!/<\/b> of <span/.test(sb2.accruedChipHTML('Self Improvement', '2026-10-31')), 'Without a cap the chip shows just the balance');
 }
@@ -8059,6 +8059,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV57OverspendCoveredByAccrualTurnsYellowAndLeavesNeedsYou();
   await testV57PartlyCoveredStaysRedWithANote();
   await testV57FindShowsWhyItFailedAndKeepsItsPlace();
+  await testV58UpdateValueOpensAValueBoxAndSaves();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9344,8 +9345,9 @@ function ovfSandbox(opts){
       {id:60599, name:'Hobbies - Accrual', category:'Hobbies', acc_type:'Accrual Account', status:'Active', forecast_category:'expense'},
     ],
     ledger: [
-      // Self Improvement: 3,800 reserved, cap 3 × 1,350 = 4,050 → own 250, overflow 1,100
-      {id:1, jv:1, date:'2026-09-30', acc:20301, amt:-3800, descr:'reserve'},
+      // Self Improvement: budget 1,500, spent 150 → surplus 1,350; 4,250 reserved, cap 3 × 1,500 = 4,500 → own 250, overflow 1,100
+      {id:1, jv:1, date:'2026-09-30', acc:20301, amt:-4250, descr:'reserve'},
+      {id:10, jv:10, date:'2026-10-04', acc:60100, amt:150, descr:'course'},
       // Shopping: budget 1,000, spent 1,000 (on budget), reserve 2,000 of 3,000 → room 1,000
       {id:2, jv:2, date:'2026-09-30', acc:20302, amt:-(opts.shopReserve===undefined? 2000 : opts.shopReserve), descr:'reserve'},
       {id:3, jv:3, date:'2026-10-05', acc:60200, amt:opts.shopSpend===undefined? 1000 : opts.shopSpend, descr:'shop'},
@@ -9360,7 +9362,7 @@ function ovfSandbox(opts){
       {id:9, jv:9, date:'2026-10-08', acc:60500, amt:400, descr:'hobby'},
     ],
     budget: [
-      {id:1, acc:60100, date:'2026-10-01', amt:1350},
+      {id:1, acc:60100, date:'2026-10-01', amt:1500},
       {id:2, acc:60200, date:'2026-10-01', amt:1000},
       {id:3, acc:60300, date:'2026-10-01', amt:500},
       {id:4, acc:60400, date:'2026-10-01', amt:1000},
@@ -9394,7 +9396,7 @@ function ovfRun(sb){
 const near = (a,b)=>Math.abs(a-b)<0.005;
 async function testOverflowIsSharedByRoomLeft(){
   const r = ovfRun(ovfSandbox());
-  // Own accrual unchanged: 119.99 to the reserve.
+  // Own accrual: 250 up to the cap.
   assert(near(r.amt(20301, /Accrual - /), -250), 'Self Improvement still accrues its own 250 up to the cap, got ' + r.amt(20301));
   // Pool 1,100 shared 1,000 : 1,500 → 440 and 660.
   assert(near(r.amt(20302), -440), 'Shopping (room 1,000) gets 440.00, got ' + r.amt(20302));
@@ -9657,7 +9659,7 @@ async function testV56BoxesShowValueHoldingsShareAndFreshness(){
   assert(/without a price/.test(t) && /Never checked/.test(t), 'Unpriced holdings and never-checked units are shown');
   assert(/openInvTradePicker\(1\)/.test(box.innerHTML) && /openInvRepeatLastBuy\(1\)/.test(box.innerHTML) && /INV_PLATFORM_ACTIONS\.collect\.open\(1\)/.test(box.innerHTML), 'The box has Buy, Repeat last buy and Collect');
   const robo = sb.document.querySelector('.inv-box[data-box="3"]');
-  assert(robo && /openInvEditPlatform\(3\)/.test(robo.innerHTML), 'A robo platform box offers Update value');
+  assert(robo && /openInvRoboValueModal\(3\)/.test(robo.innerHTML), 'A robo platform box offers Update value (the value window since v5.8)');
 }
 async function testV56TopHoldingsAreSortedByValue(){
   const sb = v56Sandbox();
@@ -10073,4 +10075,28 @@ async function testV57FindShowsWhyItFailedAndKeepsItsPlace(){
   assert(!/Nothing found/.test(m.innerHTML), 'No misleading "Nothing found"');
   assert(sb.document.getElementById('invPriceLinksScroll').scrollTop===120, 'The list stays where it was scrolled to');
   assert(sb.invErrText(new Error('api.coingecko.com said 401'))==='api.coingecko.com said 401', 'Other errors are shown as they are');
+}
+// ================= v5.8.0: #32 robo Update value =================
+async function testV58UpdateValueOpensAValueBoxAndSaves(){
+  const sb = v56Sandbox({invPlatforms:[{id:3, name:'Robo Fund', isRobo:true, roboValue:1000, roboValueDate:'2026-08-30'}], invRoboValueLog:[]});
+  const html = v56Html(sb);
+  assert(/openInvRoboValueModal\(3\)/.test(html) && !/openInvEditPlatform\(3\)">✎ Update value/.test(html), 'Every Update value button (box, Needs you) opens the value window, not Edit platform');
+  assert(sb.invNeedsYouItems().some(i=>i.act==='openInvRoboValueModal(3)'), 'Needs you → Update value opens the value window');
+  sb.openInvRoboValueModal(3);
+  const m = sb.document.getElementById('modalRoot');
+  assert(m.querySelector('#invRoboValueInput') && /Last value: <b class="mono">1,000\.00<\/b> on 2026-08-30/.test(m.innerHTML), 'The window shows the last value and has a box for today\'s');
+  m.querySelector('#invRoboValueInput').value = '0';
+  const toasts = []; sb.__set('toast', (t, bad)=>toasts.push([t, bad]));
+  await sb.saveInvRoboValueFromModal(3);
+  assert(sb._D.invPlatforms[0].roboValue===1000 && toasts.some(([t, bad])=>bad && /Enter the value/.test(t)), 'Zero or empty is refused, with a message saying why');
+  sb.openInvRoboValueModal(3);
+  sb.document.getElementById('invRoboValueInput').value = '1234.5';
+  await sb.saveInvRoboValueFromModal(3);
+  const p = sb._D.invPlatforms[0];
+  assert(p.roboValue===1234.5 && p.roboValueDate==='2026-11-12', 'Save stores today\'s value, got ' + p.roboValue + ' ' + p.roboValueDate);
+  assert(sb._D.invRoboValueLog.length===1 && sb._D.invRoboValueLog[0].value===1234.5, 'And logs it in the value history');
+  assert(sb._writes.some(w=>w.t==='pd_inv_platforms' && w.row.robo_value===1234.5) && sb._writes.some(w=>w.t==='pd_inv_robo_value_log'), 'Both are saved to the database');
+  assert(!sb.invNeedsYouItems().some(i=>i.key==='robo3'), 'Needs you no longer asks for it');
+  vm.runInContext("invPlatformPageId = 3", sb);
+  assert(/openInvRoboValueModal\(3\)/.test(v56Html(sb)), 'The robo platform page has Update value too');
 }

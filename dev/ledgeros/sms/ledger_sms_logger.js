@@ -5,6 +5,7 @@
 // Tests: node test_parsers.js
 
 const FILE = "Ledger Inbox.tsv";
+const SCRIPT_VERSION = "2026-11-12";   // shown in the run log and menu, so we know which copy is on the phone
 const QUEUE_FILE = "Ledger Upload Queue.json";      // rows waiting to reach LedgerOS (no signal, etc.)
 // LedgerOS's Supabase URL and key live in this phone's Keychain, never in this file:
 // run the script inside Scriptable with no SMS on the clipboard to set them.
@@ -711,6 +712,13 @@ async function readRunLog(n) {
     return (fm.readString(p) || "").split("\n").filter(Boolean).slice(-n).reverse().join("\n");
   } catch (e) { return `Could not read the log: ${errText(e)}`; }
 }
+// What Shortcuts handed over, in a few words, for the run log.
+function describeInput(x) {
+  if (x === undefined || x === null) return "nothing";
+  if (typeof x === "string") return x.length ? `text, ${x.length} characters` : "empty text";
+  if (Array.isArray(x)) return x.length ? `a list of ${x.length}` : "an empty list";
+  try { const k = Object.keys(x); return k.length ? `an item with ${k.slice(0, 4).join(", ")}` : "an empty item"; } catch (e) { return typeof x; }
+}
 // The row as it would be logged, for the test window
 function describeRow(source, r) {
   const amt = r.amount ? `SAR ${r.amount}` : (r.fxAmount ? `${r.currency} ${r.fxAmount} (SAR blank)` : "(no amount)");
@@ -735,9 +743,15 @@ async function ask(title, message, actions) {
 // Run inside Scriptable with nothing copied: the menu
 async function appMenu() {
   const pick = await ask("Ledger SMS Logger",
-    "To test a message: copy the bank SMS (long-press it → Copy), then run this script again.",
-    ["Connect to LedgerOS", "Show run log"]);
+    `Version ${SCRIPT_VERSION}. To test a message: copy the bank SMS (long-press it → Copy), then run this script again.`,
+    ["Connect to LedgerOS", "Show run log", "Copy run log"]);
   if (pick === 0) return await setupConnection();
+  if (pick === 2) {
+    const log = await readRunLog(RUN_LOG_KEEP);
+    try { Pasteboard.copyString(`Ledger SMS Logger ${SCRIPT_VERSION}, last runs (newest first):\n${log || "(empty)"}`); } catch (e) {}
+    await ask("Run log copied", "Paste it into the chat with Claude.", []);
+    return "Run log copied";
+  }
   if (pick === 1) {
     const log = await readRunLog(25);
     await ask("Last runs (newest first)", log || "No runs logged yet.", []);
@@ -750,15 +764,19 @@ async function appMenu() {
 let stage = "start";   // the step the script had reached, named in a failure ("Failed at <step>: …")
 let problem = "";   // set when something needs your attention (sent as a notification even if NOTIFY is off)
 async function main() {
+  // From an automation when Shortcuts passed anything at all (even empty); by hand only when it passed
+  // nothing. (Before v5.8 an empty automation run was treated as "by hand" and read the clipboard.)
+  const fromShortcut = args.shortcutParameter !== undefined && args.shortcutParameter !== null;
   let input = args.shortcutParameter;
-  if (input && typeof input !== "string") input = input.content || input.text || String(input);
-  const manual = !input;
+  if (input && typeof input !== "string") input = input.content || input.text || (Array.isArray(input) ? input.join("\n") : String(input));
+  const manual = !fromShortcut;
   if (manual) input = Pasteboard.pasteString() || "";
   const testing = manual && config.runsInApp;   // run by hand in Scriptable: show the result before logging
   stage = "reading the SMS";
   const text = normalise(input);
 
   if (testing && !text.trim()) return await appMenu();
+  if (fromShortcut && !text.trim()) return `No message text received from the automation (it passed ${describeInput(args.shortcutParameter)})`;
 
   let p = null, r = null;
   for (const x of PARSERS) {
@@ -842,9 +860,13 @@ if (problem && NOTIFY_FAILURES) {
 {
   let stamp = "";
   try { const d = new DateFormatter(); d.dateFormat = "yyyy-MM-dd HH:mm:ss"; stamp = d.string(new Date()); } catch (e) {}
+  const viaShortcut = args.shortcutParameter !== undefined && args.shortcutParameter !== null;
   let first = "";
-  try { const s = args.shortcutParameter; first = linesOf(normalise(typeof s === "string" ? s : ((s && (s.content || s.text)) || ""))) [0] || ""; } catch (e) {}
-  await logRun(`${stamp} | ${args.shortcutParameter ? "SMS" : "by hand"} | ${first.slice(0, 40)} | ${result}`);
+  try {
+    const s = viaShortcut ? args.shortcutParameter : (Pasteboard.pasteString() || "");   // by hand: the copied message
+    first = linesOf(normalise(typeof s === "string" ? s : ((s && (s.content || s.text)) || (Array.isArray(s) ? s.join("\n") : "")))) [0] || "";
+  } catch (e) {}
+  await logRun(`${stamp} | ${viaShortcut ? "SMS" : "by hand"} | ${first.slice(0, 40)} | ${result} | ${SCRIPT_VERSION}`);
 }
 if (config.runsInApp && !/^(Test|Run log|Closed|Not changed|Connected|Not saved)/.test(result)) {
   const a = new Alert(); a.message = result; a.addAction("OK"); await a.present();

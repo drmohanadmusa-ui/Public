@@ -583,12 +583,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.7.0';
+const APP_VERSION = '5.8.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.8.0', date:'2026-11-12', changes:[
+    'Investments: \u270e Update value on a robo platform (Tamra, Drahim) now opens a small window with the last value and a box for today\'s value. Before, it opened Edit platform, which has no value field (the value box was on the Classic tab, removed in 5.6).',
+    'SMS logger on the iPhone (new script, version 2026-11-12): the run log now says plainly when an automation passed no message text, shows the first line of a message you test by hand, and ends every line with the script version; the menu has Copy run log to paste into a chat. Fixed: an automation run with no text used to read whatever was on the clipboard.',
+  ]},
   {version:'5.7.0', date:'2026-11-12', changes:[
     'Budget and P&L are now one page, Budget & P&L, with two tabs. Overview has the period picker (this month, last month, year to date, a month, a year or any range), Income / Expenses / Net Result, and the Budget vs Actual and Spending Trend charts, which now follow the period you pick. Plan grid is the editable budget grid, open straight away. Budget\'s old month table is gone (the Expenses table on Overview has the same figures and more). Links from the Dashboard still land on the right spot.',
     'Over budget but covered by accrual: when a category\'s accrual reserve covers what it is over, its Dashboard bar turns yellow with a black note (\u201cOver by \u2026 \u00b7 covered by accrual\u201d), it drops out of the Dashboard\'s to-do list, and its row on Budget & P&L is highlighted the same way. Partly covered stays red, with how much of it the reserve covers.',
@@ -10671,7 +10675,7 @@ function invHoldingCardHTML(h, scope, forceOpen){
         <tr><td>Current value${h.stats.valueDate? ` <span class="mut" style="font-size:11px">as of ${esc(h.stats.valueDate)}</span>`:''}</td><td class="num mono">${invDisp(h.valueSar)}</td></tr>
         <tr><td>P/L</td><td class="num mono ${moneyClass(pl)}">${invDisp(pl)}</td></tr>
       </tbody></table>
-      ${scope==='mine'? `<div class="row noprint" style="gap:6px;margin-top:10px"><button class="btn ghost sm" onclick="openInvEditPlatform(${pid})">✎ Update value</button></div>` : ''}
+      ${scope==='mine'? `<div class="row noprint" style="gap:6px;margin-top:10px"><button class="btn ghost sm" onclick="openInvRoboValueModal(${pid})">✎ Update value</button></div>` : ''}
     </div>`;
   }
   const det = invShowDetails;
@@ -11350,7 +11354,7 @@ function invBoxHTML(h, ctx){
   const ageTxt = h.robo? (h.stats.valueDate? 'Value as of '+h.stats.valueDate : 'No value logged')
     : (fr.age===null? 'No prices yet' : fr.age===0? 'Prices: today' : `Prices ${fr.age} day${fr.age===1?'':'s'} old`);
   const actions = h.robo
-    ? `<button class="btn ghost sm" onclick="event.stopPropagation(); openInvEditPlatform(${pid})">✎ Update value</button>`
+    ? `<button class="btn ghost sm" onclick="event.stopPropagation(); openInvRoboValueModal(${pid})">✎ Update value</button>`
     : `<button class="btn ghost sm" onclick="event.stopPropagation(); openInvTradePicker(${pid})">🔁 Buy / Sell</button>
        <button class="btn ghost sm" onclick="event.stopPropagation(); openInvRepeatLastBuy(${pid})" ${invLastBuy(pid)? '' : 'disabled'} title="Same position, amount and split as the last buy here">↻ Repeat last buy</button>
        <button class="btn ghost sm" onclick="event.stopPropagation(); INV_PLATFORM_ACTIONS.collect.open(${pid})">💰 Collect</button>
@@ -11479,7 +11483,7 @@ function invNeedsYouItems(){
     if(manualStale.length) items.push({key:'links', icon:'🔗', text:`${manualStale.length} position${manualStale.length===1?' has':'s have'} an old or no price and no price link`, btn:'💹 Price links', act:'openInvPriceLinks()'});
     (D.invPlatforms||[]).filter(p=>p.isRobo).forEach(p=>{
       const d = p.roboValueDate, age = d? invDaysSince(d) : null;
-      if(age===null || age>INV_ROBO_PROMPT_DAYS) items.push({key:'robo'+p.id, icon:'🤖', text:`${esc(p.name)}: value ${age===null? 'never logged' : 'last updated '+age+' days ago'} — log this month's value`, btn:'✎ Update value', act:`openInvEditPlatform(${p.id})`});
+      if(age===null || age>INV_ROBO_PROMPT_DAYS) items.push({key:'robo'+p.id, icon:'🤖', text:`${esc(p.name)}: value ${age===null? 'never logged' : 'last updated '+age+' days ago'} — log this month's value`, btn:'✎ Update value', act:`openInvRoboValueModal(${p.id})`});
     });
     const recon = invReconIssueCount();
     if(recon) items.push({key:'recon', icon:'✅', text:`${recon} ${recon===1?'person\'s':'people\'s'} ledger and tracker don't agree`, btn:'✅ Reconcile', act:"setInvView('recon')"});
@@ -12388,6 +12392,25 @@ function invRoboPlatformStats(p){
   const costBasisFlagged = costBasis<0;
   const gain = value!==null? value-Math.abs(costBasis) : null;
   return {costBasis, costBasisFlagged, value, gain, hasValue: value!==null};
+}
+// v5.8 (#32): the robo value window. The only value box used to be in the 🗂 Classic tab, dropped in v5.6,
+// so "Update value" opened Edit platform (no value field). Saves today's value with saveInvRoboValue.
+function openInvRoboValueModal(platformId){
+  const p = invPlatformById(platformId); if(!p) return;
+  const last = (p.roboValue===null||p.roboValue===undefined)? null : Number(p.roboValue);
+  showModal(`<div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">🤖 ${esc(p.name)}: portfolio value</h3><button class="x noprint" onclick="closeModal()">✕</button></div>
+    <div class="mut" style="font-size:12.5px;margin:8px 0 12px">${last!==null? `Last value: <b class="mono">${money(last)}</b> on ${esc(p.roboValueDate||'?')}` : 'No value logged yet.'} Enter today's value from the platform's app (in SAR).</div>
+    <label class="fl">Value today (${esc(todayStr())})</label>
+    <input id="invRoboValueInput" type="number" step="0.01" min="0" style="text-align:right" placeholder="${last!==null? money(last) : '0.00'}" onkeydown="if(event.key==='Enter') saveInvRoboValueFromModal(${p.id})">
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn pri" data-robosave="1" onclick="saveInvRoboValueFromModal(${p.id})">Save</button></div>`, true);
+  const el = document.getElementById('invRoboValueInput'); if(el && el.focus) el.focus();
+}
+async function saveInvRoboValueFromModal(platformId){
+  const v = Number(((document.getElementById('invRoboValueInput')||{}).value||'').replace(/,/g,''));
+  if(!(v>0)){ toast('Enter the value (more than 0)', true); return; }
+  closeModal();
+  await saveInvRoboValue(platformId, v);
 }
 async function saveInvRoboValue(platformId, val){
   const price = Number(val);

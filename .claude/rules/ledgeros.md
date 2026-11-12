@@ -90,13 +90,13 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - `accrualExplanation` rows carry cap, accrued, own, overflowOut, overflowIn; `accrualOverflowSummary` feeds the pool line. Tests: `capSandbox` (v4.61) and `ovfSandbox` (v5.5).
 
 **SMS inbox (v5.4)**
-- iPhone side: Shortcuts Message automations → Scriptable `dev/ledgeros/sms/ledger_sms_logger.js` (7 banks) → upload to `pd_sms_inbox` (dedupe by hashed id; failed uploads queue in iCloud). Its `README.md` is the explainer; parser tests: `node dev/ledgeros/sms/test_parsers.js` (117 passed). Every run writes a line to `Ledger Run Log.txt` on the phone (tells "automation never started" from "script skipped/failed"); run by hand in Scriptable with an SMS copied = test mode (shows the parsed row, Test only / Log it); iCloud file errors are non-fatal so the row still uploads. Locked phone (#24, fix A): keys (`ledger_sms_keys.json`, copied from the Keychain), upload queue and run log are in `FileManager.local()`; failures say `Failed at <stage>`. If a locked test still fails, fix B is agreed in principle: the Shortcut posts the raw SMS with Get Contents of URL and LedgerOS parses it.
+- iPhone side: Shortcuts Message automations → Scriptable `dev/ledgeros/sms/ledger_sms_logger.js` (7 banks) → upload to `pd_sms_inbox` (dedupe by hashed id; failed uploads queue in iCloud). Its `README.md` is the explainer; parser tests: `node dev/ledgeros/sms/test_parsers.js` (122 passed). Every run writes a line to `Ledger Run Log.txt` on the phone (tells "automation never started" from "script skipped/failed"); run by hand in Scriptable with an SMS copied = test mode (shows the parsed row, Test only / Log it); iCloud file errors are non-fatal so the row still uploads. Locked phone (#24, fix A): keys (`ledger_sms_keys.json`, copied from the Keychain), upload queue and run log are in `FileManager.local()`; failures say `Failed at <stage>`. If a locked test still fails, fix B is agreed in principle: the Shortcut posts the raw SMS with Get Contents of URL and LedgerOS parses it.
 - App side (v5.7: 🔗 Numbers & accounts lists every mapping, `smsChangeMapping`; JV lines = own account block, then other halves, then fees): New JV → 📩 SMS. Groups by mapped account (`dismissals.smsMap`), one JV per SMS date, own-bank transfers paired within SAR 1 (difference = fee line), exact reversals cancel. Posting marks the SMS done (`smsId` on lines).
 
 ## 3. Tests
 
 - **Run:** `bash dev/ledgeros/run_tests.sh`. It extracts the app's JS to `dev/ledgeros/.build/`, installs `jsdom` and `fake-indexeddb` on first run, prints any `FAIL` lines, then `N passed, 0 failed`.
-  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0; **2288 passed** at v5.7.0.
+  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0; **2288 passed** at v5.7.0; **2297 passed** at v5.8.0.
   - Console noise about `QuotaExceededError` or "Not implemented: scrollTo" is expected.
 - **Harness basics:**
   - `makeSandbox()` gives a fresh app context in a vm.
@@ -123,22 +123,20 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 ## 6. Open items and future features (ask before starting any of them)
 
-**Where the last session stopped (2026-11-12, v5.6.0 built and tested, 2244 tests; SMS parser tests 110):**
-- **Waiting on Muhannad (v5.6 / SMS):**
-  - Merge the PR (this session's safety check refused `gh api .../merge` as "merge without review", despite the standing permission). PR #12 (SMS only) is included in the v5.6 PR; close #12 if the v5.6 PR is merged.
-  - His Shortcuts automations showed **"Automation is turned off"** (screenshot of the 4th one, 2026-11-12); likely why the SMS inbox got nothing after its first row. Told him to switch all 4 on (Run Immediately, Notify When Run off).
-  - Get the free CoinGecko Demo and Finnhub keys, link prices (⚙ Setup → 💹 Price links), add DEX wallet addresses (Reconcile), run Backfill, deploy the Edge Function and schedule it (`dev/ledgeros/edge/README.md`). Then confirm the first refresh worked from his PCs (CORS unverified; his work PC may block these sites).
-- **Waiting on Muhannad (older):**
-  - #21 follow-up: an over-budget category can currently be topped back up by overflow after its full drawdown. He may veto that ("over-budget categories get no overflow that month"), a one-line change in the receivers filter of `computeAccrualJV`.
-  - The older v4.61 cap tests (`capSandbox`) use one of his real reserve figures. Offered to swap it for an invented number; not answered yet.
-  - Offered an SMS logger version that only notifies on failure; not answered yet.
-  - He still needs to set the catch-all reserve account in Settings → Accrual Mappings.
-- **Reminders for him:** run the backup workflow manually once (it last ran before his v4 backup script update) and ask Claude to check the result; delete the merged branches `claude/sms-inbox` and `claude/accrual-overflow` on GitHub (the session proxy can't delete branches).
+**Where the last session stopped (2026-11-12, v5.8.0 built and tested, 2297 tests; SMS parser tests 122):**
+- The tracker (`dev/ledgeros/FEEDBACK.md`) is the source of truth: #1–#40, everything shipped or closed except the items below.
+- **Still open:**
+  - **#24 SMS on a locked phone:** fix A (keys, queue and run log in Scriptable's on-phone storage) is installed. A check-in with him is scheduled for 2026-11-13 09:30 Riyadh: did overnight (locked) SMS reach `pd_sms_inbox`? If any were missed, propose fix B (the Shortcut posts the raw SMS with Get Contents of URL; LedgerOS parses it). He prefers the robust option.
+  - **#38 investment price setup (his side):** Finnhub key, link the rest of the positions, DEX wallet addresses, Backfill, deploy and schedule the daily-close Edge Function. Keep open until he confirms. His work PC blocks the price sites; another PC works.
+  - **#40 GitHub branches:** he deletes old `claude/*` branches on GitHub (the session proxy refuses deletion). The v5.8 branch can go too once merged.
+  - **#5 (error half) parked** since v5.1.
 - **Process notes:**
   - `gh pr create` fails (GraphQL blocked). Use REST: `gh api repos/drmohanadmusa-ui/Public/pulls -f title=... -f head=<branch> -f base=main -F body=@file`, then `gh api -X PUT repos/drmohanadmusa-ui/Public/pulls/<n>/merge -f merge_method=squash`.
   - **Squash-merge**, so anything removed from a branch before merging never reaches main.
   - `break_restore.py` takes several minutes: run it in the foreground with a long timeout (up to 600000 ms), not in the background.
-  - 2026-11-12: `add_repo` with push access and running `run_tests.sh` were first refused by the session's safety check and allowed once Muhannad said so in chat; merging a PR stayed refused.
+  - 2026-11-12: `add_repo` with push access and running `run_tests.sh` were first refused by the session's safety check and allowed once Muhannad said so in chat; **merging a PR stayed refused every time**, so he merges with one tap (give him the PR link).
+  - Never force-push (a squash + `--force-with-lease` was attempted on 2026-11-12 and rejected); push a fresh branch instead.
+  - When the SMS script changes, send him the finished `Ledger SMS Logger.js` file in chat (his standing preference).
 
 - **v5.0.0 ("Command Center") shipped** from `dev/ledgeros/redesign/REDESIGN_PLAN.md`. `LedgerOS-classic.html` is the frozen v4.63.0 copy: never change it; delete it only when Muhannad says so. Classic's Restore from backup would clear `dashboard_layout` and `position_boxes` (he has been warned). `dev/ledgeros/redesign/demo_walk.js` screenshots any page with invented data.
 
@@ -169,6 +167,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 | 5.3 | Drift Detection for provisions: compare per account, income/expense accounts only, exclude list (toggles, synced in `pd_ui_prefs.dismissals.driftSettings`) |
 | 5.4 | SMS inbox: new table `pd_sms_inbox` filled by the iPhone logger (`dev/ledgeros/sms`, its own README and `node test_parsers.js`); New JV → 📩 SMS groups by mapped account (`dismissals.smsMap`), Create JV builds one JV per date with other halves, pairs own transfers across banks, cancels exact reversals; posting marks SMS done (`smsId` on JV/draft lines) |
 | 5.4.1 | Aurora & glass rail: the button list scrolls inside the floating rail on short windows (it was clipped by `overflow:hidden`); compact buttons up to 820px tall; Dashboard over-budget Open P&L lands on and flashes that category (`goPnLThisMonth(cat)`, `data-pnl-cat`) |
+| 5.8 | Robo ✎ Update value opens a value window (`openInvRoboValueModal`, #32); SMS script `SCRIPT_VERSION` 2026-11-12: run log names empty automation runs, by-hand first line, version on every line, Copy run log; empty automation runs no longer read the clipboard (#28); cap tests use invented figures (#37) |
 | 5.7 | Budget & P&L merged into one page with two tabs (#30); over-budget covered by accrual (#31); per-month historical averages incl. rolling day windows and every year (#29); SMS Numbers & accounts (#26) and line order (#27); Price links Find keeps its place and explains failures; `shiftDate` UTC fix; `setForecastStatSetting` added |
 | 5.6 | Investments (#22): platform boxes (hover actions, arrange/hide/group), Needs you + rail badge, automatic prices (price links, synced keys, refresh, auto after 6 h), daily closes (backfill + Edge Function), wallet unit check, Repeat last buy, Invest it now; Classic tab dropped. Ships with the SMS fix (#25) |
 | 5.5 | Accrual cap overflow (#21): pass 2 in `computeAccrualJV` pools surplus above caps and splits it by room left (`accrualSplitCents`, in cents, never past a cap); catch-all reserve `getAccrualOverflowAcc`/`setAccrualOverflowAcc` in `dismissals.accrualOverflowAcc`; drawdowns use the month-end reserve; wider explanation table + `accrualOverflowSummary` |
