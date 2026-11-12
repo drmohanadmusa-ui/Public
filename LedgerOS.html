@@ -583,12 +583,20 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.6.0';
+const APP_VERSION = '5.7.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.7.0', date:'2026-11-12', changes:[
+    'Budget and P&L are now one page, Budget & P&L, with two tabs. Overview has the period picker (this month, last month, year to date, a month, a year or any range), Income / Expenses / Net Result, and the Budget vs Actual and Spending Trend charts, which now follow the period you pick. Plan grid is the editable budget grid, open straight away. Budget\'s old month table is gone (the Expenses table on Overview has the same figures and more). Links from the Dashboard still land on the right spot.',
+    'Over budget but covered by accrual: when a category\'s accrual reserve covers what it is over, its Dashboard bar turns yellow with a black note (\u201cOver by \u2026 \u00b7 covered by accrual\u201d), it drops out of the Dashboard\'s to-do list, and its row on Budget & P&L is highlighted the same way. Partly covered stays red, with how much of it the reserve covers.',
+    'Historical averages, all per month: the last 30, 60, 90, 180 and 365 days (ending today), this year so far, and every earlier year you have data for, added automatically. They show on the \ud83d\udcca chart for an account or a sub category, and in Accounts \u2192 \ud83d\udcca Historical Averages. Forecast \u2192 Settings chooses which show (its checkboxes didn\'t save before; now they do).',
+    'SMS inbox: \ud83d\udd17 Numbers & accounts lists every card or account number with the LedgerOS account it goes to. Change or remove one any time, even with no SMS waiting. \u270e Change on a group opens it.',
+    'SMS \u2192 Create JV: all the lines on the bank or card account come first, then their other halves in the same order, then fee lines at the bottom.',
+    'Fixed: date steps (the Ledger\'s last 30 / 60 / 90 days filters, the investment statement\'s opening balance, and a few investment windows) landed one day early in Saudi time.',
+  ]},
   {version:'5.6.0', date:'2026-11-12', changes:[
     'Investments \u2192 Mine now shows a box for each platform instead of collapsed lines: value, gain %, cost / gain / cash, the top three holdings, how much is yours vs the family\'s, how old its prices are and when its units were last checked. Click a box to open that platform\'s own page with the full table and all its buttons.',
     'Box buttons (Buy / Sell, Repeat last buy, Collect, Deposit; Update value on robo platforms) appear when the mouse is over the box. On a phone they always show.',
@@ -2375,10 +2383,18 @@ async function seedCloud(){
 }
 
 /* ============================= NAV / ROUTER ============================= */
+// v5.7 (#30): Budget and P&L are one page, "Budget & P&L", with two tabs: Overview (screen 'pnl')
+// and Plan grid (screen 'budget'). The rail has one button; both screens light it up.
+function navIsOn(id){ return screen===id || (id==='pnl' && screen==='budget'); }
+function budgetPnlTabsHTML(active){
+  return `<div class="row noprint bp-tabs" role="tablist" style="gap:6px;margin-bottom:12px">
+    <button class="btn ${active==='overview'?'pri':'ghost'} sm" role="tab" aria-selected="${active==='overview'}" data-bptab="overview" onclick="if(pnlView==='acctchart'){ pnlView='main'; } go('pnl')">📈 Overview</button>
+    <button class="btn ${active==='grid'?'pri':'ghost'} sm" role="tab" aria-selected="${active==='grid'}" data-bptab="grid" onclick="go('budget')">🎯 Plan grid</button></div>`;
+}
 // [id, label, icon] — the icon is emoji for consistency with the rest of the app's UI.
 const SCREENS = [
   ['dashboard','Dashboard','📊'], ['newjv','New JV','✍️'], ['ledger','Ledger','📖'], ['accounts','Accounts','🗂'],
-  ['budget','Budget','🎯'], ['pnl','P&L','📈'], ['alloc','Allocations','🧾'], ['provisions','Provisions','🔮'], ['jamiah','Jamiah','🤝'], ['forecast','Forecast','🌤'], ['realestate','Real Estate','🏢'], ['investments','Investments','💹'],
+  ['pnl','Budget & P&L','📈'], ['alloc','Allocations','🧾'], ['provisions','Provisions','🔮'], ['jamiah','Jamiah','🤝'], ['forecast','Forecast','🌤'], ['realestate','Real Estate','🏢'], ['investments','Investments','💹'],
   ['settings','Settings','⚙️'],
 ];
 // Pages that can never be hidden and are never reorderable: Dashboard is the safe landing page,
@@ -3279,7 +3295,7 @@ function renderNav(){
   const hidden = getHiddenPages();
   const animClass = navHasAnimatedIn? '' : ' anim';
   document.getElementById('nav').innerHTML = orderedScreens().filter(([id])=> ALWAYS_VISIBLE_SCREENS.includes(id) || !hidden.includes(id)).map(([id,label,icon])=>
-    `<button class="${screen===id?'on':''}${animClass}" onclick="go('${id}')"${screen===id?' aria-current="page"':''}>${NAV_ICONS[id]? `<svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${NAV_ICONS[id]}"></path></svg>` : `<span class="nav-ico">${icon||''}</span>`}<span class="nav-lbl">${label}</span>${id==='investments'? invNavBadgeHTML() : ''}</button>`).join('');
+    `<button class="${navIsOn(id)?'on':''}${animClass}" onclick="go('${id}')"${navIsOn(id)?' aria-current="page"':''}>${NAV_ICONS[id]? `<svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${NAV_ICONS[id]}"></path></svg>` : `<span class="nav-ico">${icon||''}</span>`}<span class="nav-lbl">${label}</span>${id==='investments'? invNavBadgeHTML() : ''}</button>`).join('');
   navHasAnimatedIn = true;
 }
 let pageScrollPositions = {}; // in-memory only, this session — remembers where you were on each page
@@ -3292,9 +3308,10 @@ function go(s){
   screen = s; renderNav();
   closeMobileNav();
   const titleEl = document.getElementById('mobileTopbarTitle');
-  if(titleEl){ const found = SCREENS.find(([id])=>id===s); titleEl.textContent = found? (found[2]? found[2]+' '+found[1] : found[1]) : (s==='settings'?'⚙️ Settings':s==='statement'?'📄 Statement':s==='forecastSettings'?'🌤 Forecast Settings':'LedgerOS'); }
+  const navId = s==='budget'? 'pnl' : s;   // v5.7 (#30): Budget is the Plan grid tab of Budget & P&L
+  if(titleEl){ const found = SCREENS.find(([id])=>id===navId); titleEl.textContent = found? (found[2]? found[2]+' '+found[1] : found[1]) : (s==='settings'?'⚙️ Settings':s==='statement'?'📄 Statement':s==='forecastSettings'?'🌤 Forecast Settings':'LedgerOS'); }
   const tbTitle = document.getElementById('topbarTitle');
-  if(tbTitle){ const found = SCREENS.find(([id])=>id===s); tbTitle.textContent = found? found[1] : ({statement:'Statement', forecastSettings:'Forecast Settings'}[s]||'LedgerOS'); }
+  if(tbTitle){ const found = SCREENS.find(([id])=>id===navId); tbTitle.textContent = found? found[1] : ({statement:'Statement', forecastSettings:'Forecast Settings'}[s]||'LedgerOS'); }
   const tbDate = document.getElementById('topbarDate');
   if(tbDate) tbDate.textContent = '\u00b7 ' + new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'});
   const fn = {dashboard:renderDashboard,newjv:renderNewJV,ledger:renderLedger,accounts:renderAccounts,
@@ -4018,46 +4035,75 @@ function avgForMonths(accId, months){
   const vals = months.map(m=>forecastActual(accId,m));
   return vals.reduce((s,v)=>s+v,0)/months.length;
 }
-const FORECAST_STAT_DEFS = {
-  roll3:  {label:'Rolling 3-Month Average'},
-  roll6:  {label:'Rolling 6-Month Average'},
-  roll12: {label:'Rolling 12-Month Average'},
-  ytd:    {label:'Year-to-Date Average'},
-  y2022:  {label:'2022 Average'},
-  y2023:  {label:'2023 Average'},
-  y2024:  {label:'2024 Average'},
-  y2025:  {label:'2025 Average'},
-};
+// v5.7 (#29): historical averages, every one a per-month figure so it compares with a monthly budget:
+// rolling windows ending today (30/60/90/180/365 days → window total ÷ window length in months),
+// this year so far (÷ months elapsed, by days), and every earlier year with data (year total ÷ 12).
+const HIST_ROLL_DAYS = [30, 60, 90, 180, 365];
+const HIST_MONTH_DAYS = 365.25/12;
+function histFirstDate(ids){
+  let first = null;
+  for(const l of (D.ledger||[])){ if(ids.has(l.acc) && (!first || l.date<first)) first = l.date; }
+  return first;
+}
+// [[key, {label}]] in display order. accIds limits the years to those with data (null = the whole ledger).
+function historicalStatDefs(accIds){
+  const year = Number(todayStr().slice(0,4));
+  const ids = accIds? new Set(Array.from(accIds, Number)) : null;
+  let first = null;
+  if(ids) first = histFirstDate(ids);
+  else for(const l of (D.ledger||[])){ if(!first || l.date<first) first = l.date; }
+  const firstYear = first? Number(first.slice(0,4)) : year;
+  const defs = HIST_ROLL_DAYS.map(n=>['roll'+n, {label:`Last ${n} days`}]);
+  defs.push(['ytd', {label:`${year} so far`}]);
+  for(let y=year-1; y>=firstYear; y--) defs.push(['y'+y, {label:`${y} average`}]);
+  return defs;
+}
+function historicalStatsFor(accIds, asOf){
+  const ids = new Set(Array.from(accIds||[], Number));   // a list or a Set
+  const today = asOf || todayStr();
+  const first = histFirstDate(ids);
+  const stats = {};
+  const sumRange = (from, to) => sumAcc(l=>ids.has(l.acc), from, to);
+  const days = (from, to) => Math.round((Date.parse(to+'T00:00:00Z') - Date.parse(from+'T00:00:00Z'))/864e5) + 1;
+  HIST_ROLL_DAYS.forEach(n=>{
+    if(!first || first>today){ stats['roll'+n] = null; return; }
+    let from = shiftDate(today, -(n-1));
+    if(first>from) from = first;   // newer than the window: average over the days it has existed
+    stats['roll'+n] = sumRange(from, today) / (days(from, today)/HIST_MONTH_DAYS);
+  });
+  const year = Number(today.slice(0,4));
+  let jan = year+'-01-01';
+  if(first && first>jan) jan = first;
+  stats.ytd = (first && first<=today)? sumRange(jan, today) / (days(jan, today)/HIST_MONTH_DAYS) : null;
+  const firstYear = first? Number(first.slice(0,4)) : year;
+  for(let y=year-1; y>=firstYear; y--) stats['y'+y] = sumRange(y+'-01-01', y+'-12-31') / 12;
+  return stats;
+}
 function getForecastStatSettings(){
-  const defaults = {}; Object.keys(FORECAST_STAT_DEFS).forEach(k=>defaults[k]=true);
+  const defaults = {}; historicalStatDefs(null).forEach(([k])=>defaults[k]=true);
   try{ return {...defaults, ...JSON.parse(localStorage.getItem('forecastStatSettings')||'{}')}; }
   catch(e){ return defaults; }
 }
-function setForecastStatSetting(key, val){
-  const s = getForecastStatSettings(); s[key]=val;
-  safeSetItemWarn('forecastStatSettings', JSON.stringify(s));
+function accountHistoricalStats(accId){ return historicalStatsFor([accId]); }
+// The Forecast → Settings checkboxes called this but it was missing (ticking them did nothing) until v5.7.
+function setForecastStatSetting(key, on){
+  const st = getForecastStatSettings(); st[key] = !!on;
+  safeSetItem('forecastStatSettings', JSON.stringify(st));
 }
-function accountHistoricalStats(accId){
-  const currentMonth = todayStr().slice(0,7);
-  const stats = {};
-  stats.roll3  = avgForMonths(accId, monthsBetweenKeys(shiftMonthKey(currentMonth,-3),  prevMonthKey(currentMonth)));
-  stats.roll6  = avgForMonths(accId, monthsBetweenKeys(shiftMonthKey(currentMonth,-6),  prevMonthKey(currentMonth)));
-  stats.roll12 = avgForMonths(accId, monthsBetweenKeys(shiftMonthKey(currentMonth,-12), prevMonthKey(currentMonth)));
-  const year = Number(currentMonth.slice(0,4));
-  stats.ytd = avgForMonths(accId, monthsBetweenKeys(year+'-01', prevMonthKey(currentMonth)));
-  [2022,2023,2024,2025].forEach(y=>{ stats['y'+y] = avgForMonths(accId, monthsBetweenKeys(y+'-01', y+'-12')); });
-  return stats;
+// The averages table: Accounts → 📊 Historical Averages and the P&L 📊 chart (account or sub category).
+function historicalStatsTableHTML(accIds){
+  const stats = historicalStatsFor(accIds);
+  const settings = getForecastStatSettings();
+  const rows = historicalStatDefs(accIds).filter(([k])=>settings[k]!==false).map(([k,def])=>{
+    const v = stats[k];
+    return `<tr data-hist="${k}"><td>${esc(def.label)}</td><td class="num mono ${v!==null&&v!==undefined?moneyClass(v):''}">${v!==null&&v!==undefined?money(v):'\u2014'}</td></tr>`;
+  }).join('');
+  return `<table class="hist-stats"><thead><tr><th>Period</th><th class="num">Average per month</th></tr></thead><tbody>${rows||'<tr><td colspan="2" class="empty">Nothing enabled \u2014 turn some on in Forecast \u2192 Settings</td></tr>'}</tbody></table>`;
 }
 function openAccountStatsPopup(accId){
-  const stats = accountHistoricalStats(accId);
-  const settings = getForecastStatSettings();
-  const rows = Object.entries(FORECAST_STAT_DEFS).filter(([k])=>settings[k]).map(([k,def])=>{
-    const v = stats[k];
-    return `<tr><td>${esc(def.label)}</td><td class="num mono ${v!==null?moneyClass(v):''}">${v!==null?money(v):'—'}</td></tr>`;
-  }).join('');
   showModal(`<h3>${accId} — ${esc(accShort(accId))}</h3>
-    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Choose which of these show up here in Forecast → Settings.</div>
-    <table><thead><tr><th>Metric</th><th class="num">Average</th></tr></thead><tbody>${rows||'<tr><td colspan="2" class="empty">Nothing enabled — turn some on in Forecast Settings</td></tr>'}</tbody></table>
+    <div class="mut" style="font-size:11.5px;margin-bottom:10px">Every figure is per month. Rolling windows end today. Choose which show up in Forecast → Settings.</div>
+    ${historicalStatsTableHTML([accId])}
     <div class="row" style="margin-top:16px;justify-content:space-between">
       <button class="btn ghost" onclick="jumpToLedgerForAccount(${accId})">📒 View in Ledger</button>
       <button class="btn ghost" onclick="closeModal()">Close</button>
@@ -4942,9 +4988,11 @@ function dashboardTodoItems(){
   dashboardBudgetRows(ym).forEach(c=>{
     if(Math.abs(c.budget)<0.005 || c.variance > -0.005) return;
     const over = roundCents(-c.variance), key = c.cat+'|'+ym;
+    const cv = overspendCover(c.cat, over);
+    if(cv && cv.full) return;   // #31: the accrual reserve covers it, nothing to do
     if(obDismissed[key]!==undefined && over <= Number(obDismissed[key])+0.005) return;
     dashOverBudgetKeys.push({key, over});
-    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month', label:'Open P&L', onclick:`goPnLThisMonth(${esc(JSON.stringify(c.cat))})`, dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
+    items.push({tone:'neg', title:c.cat+' is over budget by '+money(-c.variance), sub:money(Math.abs(c.actual))+' spent of '+money(Math.abs(c.budget))+' this month'+(overspendCoverText(cv)? ' \u00B7 '+overspendCoverText(cv) : ''), label:'Open P&L', onclick:`goPnLThisMonth(${esc(JSON.stringify(c.cat))})`, dismiss:`dismissOverBudget(${dashOverBudgetKeys.length-1})`, dismissTitle:'Hide for the rest of this month (comes back if it goes further over)'});
   });
   computeDriftFlags().forEach(f=>{
     const label = f.kind==='provision'? accShort(f.acc)+' — '+f.groupName : f.ruleName+' ('+accShort(f.acc)+')';
@@ -5034,12 +5082,13 @@ function dashCashHTML(){
 }
 function dashBudgetHTML(){
   const rows = dashboardBudgetRows(todayStr().slice(0,7)).filter(c=>Math.abs(c.budget)>=0.005).slice(0,6);
-  return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Budget this month</h2><button class="btn ghost sm" onclick="go('budget')">Open Budget</button></div>
+  return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Budget this month</h2><button class="btn ghost sm" onclick="goPnLThisMonth()">Open Budget &amp; P&amp;L</button></div>
     ${rows.length? rows.map((c,i)=>{ const spent = Math.abs(c.actual), cap = Math.abs(c.budget); const pct = cap? spent/cap*100 : 0; const over = c.variance < -0.005;
-      const col = over? 'var(--red)' : (pct>=90? 'var(--yellow)' : 'var(--accent)');
+      const cv = over? overspendCover(c.cat, roundCents(-c.variance)) : null, covered = !!(cv && cv.full);
+      const col = covered? 'var(--yellow)' : over? 'var(--red)' : (pct>=90? 'var(--yellow)' : 'var(--accent)');
       return `<div class="bud-row"><div class="bud-top"><span>${esc(c.cat)}</span><span class="mono"><b>${money0(spent)}</b> <span class="mut">of ${money0(cap)}</span></span></div>
         <div class="bud-track"><div class="bud-fill grow-x" style="width:${Math.min(100,pct).toFixed(1)}%;background:${col};animation-delay:${i*80}ms"></div></div>
-        <div class="bud-note" style="color:${over?'var(--red)':(pct>=90?'var(--yellow)':'var(--muted)')}">${over? 'Over by '+money0(-c.variance) : (Math.abs(c.variance)<0.005? 'Fully used' : money0(c.variance)+' left')}</div></div>`; }).join('')
+        <div class="bud-note${covered?' bud-covered':''}" ${cv? `data-accrual-cover="${covered?'full':'part'}"` : ''} style="color:${covered?'var(--text)':over?'var(--red)':(pct>=90?'var(--yellow)':'var(--muted)')}">${over? (covered? '<b>Over by '+money0(-c.variance)+'</b>' : 'Over by '+money0(-c.variance))+(overspendCoverText(cv, money0)? ' \u00B7 '+overspendCoverText(cv, money0) : '') : (Math.abs(c.variance)<0.005? 'Fully used' : money0(c.variance)+' left')}</div></div>`; }).join('')
     : '<div class="mut" style="font-size:13px">No budget set for this month.</div>'}</div>`;
 }
 function dashWidgetBody(id){
@@ -5576,6 +5625,22 @@ function accruedForCategory(cat, asOfDate){
   if(!m || !m.liabilityAcc) return null;
   return -sumAcc(l=>l.acc===m.liabilityAcc, null, asOfDate);
 }
+// v5.7 (#31): how much of a category's overspend its accrual reserve covers (the "Accrued" balance as of
+// asOfDate). Fully covered → yellow bar / highlighted variance with a black note, and no "over budget" to-do;
+// partly covered → stays red, with "N of it covered by accrual". null when not over or no accrual mapping.
+function overspendCover(cat, over, asOfDate){
+  if(!(over>0.005)) return null;
+  const r = accruedForCategory(cat, asOfDate||todayStr());
+  if(r===null) return null;
+  const reserve = Math.max(0, roundCents(r));
+  if(reserve<0.005) return {reserve:0, covered:0, full:false};
+  return {reserve, covered: roundCents(Math.min(reserve, over)), full: reserve >= over - 0.005};
+}
+function overspendCoverText(cv, money0ish){
+  const f = money0ish || money;
+  if(!cv || cv.covered<0.005) return '';
+  return cv.full? `covered by accrual (reserve ${f(cv.reserve)})` : `${f(cv.covered)} of it covered by accrual`;
+}
 function accruedChipHTML(cat, asOfDate){
   const v = accruedForCategory(cat, asOfDate);
   if(v===null) return '';
@@ -6054,9 +6119,10 @@ function smsFindPartner(r, accA, accB, pool, taken){
     && s.amt!==null && r.amt!==null && Math.abs(s.amt-r.amt)<=1.0001 && s.date && r.date && smsDaysApart(s.date, r.date)<=1
     && (!s.counter || !smsAccFor(s.counter) || smsAccFor(s.counter)===accA)) || null;
 }
-// Builds (without changing anything) the JVs for one group: one per SMS date, each SMS on its own
-// line with its other half. The other half's account is filled only when it's one of his own
-// mapped accounts; otherwise he picks it. Fees get a line of their own.
+// Builds (without changing anything) the JVs for one group: one per SMS date. v5.7 (#27): every line on
+// the group's own account comes first (one per SMS, plus its fee lines), then the other halves in the
+// same order, then the fee other halves and transfer-fee differences at the bottom. The other half's
+// account is filled only when it's one of his own mapped accounts; otherwise he picks it.
 function smsBuildJVs(groupKey){
   const g = smsGroups().find(x=>x.key===groupKey);
   if(!g || !g.acc) return {jvs:[], netted:[], group:g||null};
@@ -6068,23 +6134,23 @@ function smsBuildJVs(groupKey){
     if(netted.has(r.id) || taken.has(r.id)) return;
     taken.add(r.id);
     const d = r.date || todayStr();
-    const lines = (byDate[d] = byDate[d] || []);
+    const day = (byDate[d] = byDate[d] || {own:[], other:[], fees:[]});
     const signed = smsSigned(r);
-    lines.push(L(accA, r.descr, signed, r.id));
+    day.own.push(L(accA, r.descr, signed, r.id));
     const accB = smsAccFor(r.counter);
     if(accB && accB!==accA){
       const p = smsFindPartner(r, accA, accB, pool, taken);
       if(p){
         taken.add(p.id);
         const pSigned = smsSigned(p);
-        lines.push(L(accB, p.descr || r.descr, pSigned, p.id));
+        day.other.push(L(accB, p.descr || r.descr, pSigned, p.id));
         const diff = smsR2(-(signed + pSigned));
-        if(Math.abs(diff)>=0.005) lines.push(L('', 'Transfer fee · '+r.descr, diff, r.id));
-      } else lines.push(L(accB, r.descr, signed===null? null : -signed, r.id));
-    } else lines.push(L('', r.descr, signed===null? null : -signed, r.id));
-    if(r.fee && r.fee>0){ lines.push(L(accA, 'Fee · '+r.descr, -r.fee, r.id)); lines.push(L('', 'Fee · '+r.descr, r.fee, r.id)); }
+        if(Math.abs(diff)>=0.005) day.fees.push(L('', 'Transfer fee · '+r.descr, diff, r.id));
+      } else day.other.push(L(accB, r.descr, signed===null? null : -signed, r.id));
+    } else day.other.push(L('', r.descr, signed===null? null : -signed, r.id));
+    if(r.fee && r.fee>0){ day.own.push(L(accA, 'Fee · '+r.descr, -r.fee, r.id)); day.fees.push(L('', 'Fee · '+r.descr, r.fee, r.id)); }
   });
-  return {jvs: Object.keys(byDate).sort().map(d=>({date:d, lines:byDate[d]})), netted:[...netted], group:g};
+  return {jvs: Object.keys(byDate).sort().map(d=>({date:d, lines:[...byDate[d].own, ...byDate[d].other, ...byDate[d].fees]})), netted:[...netted], group:g};
 }
 async function smsSetStatus(ids, status, jv){
   const set = new Set(ids.map(Number));
@@ -6137,6 +6203,23 @@ async function refreshSmsInbox(){
   toast('SMS inbox refreshed');
 }
 let smsDoneOpen = false;
+// v5.7 (#26): every mapped number with its account, changeable even when nothing is waiting.
+let smsMapOpen = false;
+async function smsChangeMapping(token, accId){
+  await setSmsAccount(token, accId? Number(accId) : null);
+  toast(accId? `${token} now goes to ${accId} · ${accShort(Number(accId))}` : `${token} removed: its SMS will ask for an account again`);
+  openSmsInbox();
+}
+function smsMapHTML(){
+  const opts = sel => D.accounts.filter(a=>[1,2].includes(firstDigit(a.id)) && (a.status!=='Inactive' || a.id===sel))
+    .map(a=>`<option value="${a.id}" ${a.id===sel?'selected':''}>${a.id} · ${esc(accShort(a.id))}</option>`).join('');
+  const entries = Object.entries(getSmsMap()).map(([t,v])=>[t, Number(v)]).sort((a,b)=> a[1]-b[1] || a[0].localeCompare(b[0]));
+  if(!entries.length) return '<div class="mut" style="font-size:12px;margin-top:6px">No numbers mapped yet. Pick an account on a waiting group and it is remembered here.</div>';
+  return `<div class="mut" style="font-size:11.5px;margin:6px 0">Each card or account number from the SMS, and the LedgerOS account it goes to. Change one here and its waiting SMS move with it.</div>
+    <table class="sms-map" style="margin-top:4px"><tbody>${entries.map(([t,acc])=>`<tr data-smsmap="${esc(t)}"><td class="mono" style="width:120px">${esc(t)}</td>
+      <td><select class="sms-map-pick" onchange="smsChangeMapping(${smsArg(t)}, this.value)">${opts(acc)}</select></td>
+      <td style="width:1%;white-space:nowrap"><button class="btn ghost sm" onclick="smsChangeMapping(${smsArg(t)}, '')">Remove</button></td></tr>`).join('')}</tbody></table>`;
+}
 function smsRowHTML(s, actions){
   const signed = smsSigned(s);
   const amtTxt = signed===null? `<span class="mut">${esc(s.currency)} ${esc(s.fxAmt===null? '' : String(s.fxAmt))}</span><div class="mut" style="font-size:11px">type the SAR</div>`
@@ -6166,6 +6249,7 @@ function openSmsInbox(){
           ${g.acc? `<div class="mut" style="font-size:11px;margin-top:4px">Matches: <input class="sms-aliases" style="width:220px;padding:2px 6px;font-size:12px" value="${esc(tokens)}" title="Card and account numbers or names from the SMS that belong to this account, separated by commas" onchange="setSmsAliases(${g.acc}, this.value).then(openSmsInbox)"></div>`
             : `<div style="margin-top:4px"><select class="sms-acc-pick" onchange="setSmsAccount(${smsArg(g.tokens[0])}, this.value).then(openSmsInbox)"><option value="">Which LedgerOS account is ${esc(g.tokens[0])}?</option>${accOpts()}</select></div>`}
         </div>
+        ${g.acc? `<button class="btn ghost sm" title="Send this card or account to a different LedgerOS account" onclick="smsMapOpen=true; openSmsInbox()">✎ Change</button>` : ''}
         <button class="btn pri sm" ${g.acc?'':'disabled'} onclick="smsCreateJVs(${smsArg(g.key)})">${dates>1? 'Create '+dates+' JVs' : 'Create JV'}</button>
       </div>
       <table style="margin-top:8px"><tbody>${g.rows.map(s=>smsRowHTML(s, netted.has(s.id)? '<span class="pill">cancels out</span>'
@@ -6177,6 +6261,8 @@ function openSmsInbox(){
     <p class="mut" style="font-size:12px">Bank SMS logged by your iPhone, grouped by account. Create JV builds one JV per SMS date, each SMS on its own line with the other half ready for you to pick its account. Nothing is posted until you post it.</p>
     <div class="row" style="justify-content:space-between;align-items:center"><span class="mut">${waiting} waiting${inJVs? ' · '+inJVs+' already in a JV or draft' : ''}</span><button class="btn ghost sm" onclick="refreshSmsInbox()">↻ Refresh</button></div>
     ${groups.map(groupHTML).join('') || '<div class="empty" style="padding:18px">No SMS waiting</div>'}
+    <div style="margin-top:12px"><button class="btn ghost sm" id="smsMapToggle" onclick="smsMapOpen=!smsMapOpen; openSmsInbox()">${smsMapOpen? '▾' : '▸'} 🔗 Numbers & accounts (${Object.keys(getSmsMap()).length})</button>
+      ${smsMapOpen? smsMapHTML() : ''}</div>
     <div style="margin-top:12px"><button class="btn ghost sm" id="smsDoneToggle" onclick="smsDoneOpen=!smsDoneOpen; openSmsInbox()">${smsDoneOpen? '▾' : '▸'} Done (${done.length})</button>
       ${smsDoneOpen? `<table style="margin-top:6px"><tbody>${done.map(s=>smsRowHTML(s, s.status==='posted'? `<span class="mut" style="font-size:11px">JV #${esc(String(s.jv||''))}</span>`
         : `<span class="mut" style="font-size:11px">${s.status==='netted'? 'cancelled out' : 'dismissed'}</span> <button class="btn ghost sm" onclick="smsRestore(${s.id})">Back to inbox</button>`)).join('') || '<tr><td class="empty">Nothing yet</td></tr>'}</tbody></table>` : ''}
@@ -6253,7 +6339,8 @@ function filteredLedger(){
     return true;
   }).sort((a,b)=> (b.date||'').localeCompare(a.date||'') || b.jv-a.jv);
 }
-function shiftDate(dstr, days){ const d=new Date(dstr+'T00:00:00'); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); }
+// v5.7: in UTC, so it doesn't land a day early east of UTC (Riyadh: local midnight is 21:00 the day before in UTC).
+function shiftDate(dstr, days){ const d=new Date(dstr+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
 function monthRange(ym){ const [y,m]=ym.split('-').map(Number); const lastDay=new Date(y,m,0).getDate(); return [ym+'-01', ym+'-'+String(lastDay).padStart(2,'0')]; }
 function applyLedgerPreset(val){
   ledgerFilter.preset = val;
@@ -7211,20 +7298,8 @@ function renderStatement(){
 }
 
 /* ============================= BUDGET VS ACTUAL ============================= */
-let budgetMonth = todayStr().slice(0,7);
 function expenseAccountsList(){ return postableAccounts().filter(a=>firstDigit(a.id)===6); }
 function budgetVarClass(v){ return v>0.005 ? 'r' : (v<-0.005 ? 'g' : ''); }
-function viewBudgetAccountMonth(acc){
-  const lines = D.ledger.filter(l=>l.acc===acc && monthOf(l.date)===budgetMonth).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  const total = lines.reduce((s,l)=>s+Number(l.amt),0);
-  showModal(`
-    <h3>${acc} — ${esc(accShort(acc))}</h3>
-    <div class="mut" style="font-size:12px;margin-bottom:10px">Transactions in ${esc(monthLabel(budgetMonth))}</div>
-    <table><thead><tr><th>Date</th><th>JV#</th><th>Description</th><th class="num">Amount</th></tr></thead>
-    <tbody>${lines.map(l=>`<tr class="click" onclick="viewJV(${l.jv})"><td class="mono">${esc(l.date)}</td><td class="mono">#${l.jv}</td><td>${esc(l.descr)}</td><td class="num mono ${moneyClass(l.amt)}">${money(l.amt)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No transactions this month</td></tr>'}</tbody>
-    <tfoot><tr><td colspan="3">Total</td><td class="num mono ${moneyClass(total)}">${money(total)}</td></tr></tfoot></table>
-    <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
-}
 // Resolved plan for the Budget page/grid: Provisions take priority (locked), else whatever is
 // stored in D.budget for that account+month (editable). Mirrors the exact same precedence the
 // Forecast page's Expense cells use, so the two pages always agree on the same numbers.
@@ -7359,10 +7434,10 @@ function renderBudgetCategorySection(cat, accs, months, currentMonth){
 }
 let budgetGridOpen = false; // v5.1: the grid starts collapsed on every visit (not remembered)
 function toggleBudgetGrid(){ budgetGridOpen = !budgetGridOpen; renderBudgetGrid(); }
-function budgetShiftMonth(delta){ budgetMonth = shiftMonthKey(budgetMonth, delta); renderBudgetControls(); renderBudgetSummaryTable(); renderBudgetCharts(); }
 // Clicking a category name under the Budget vs Actual bars scrolls to that category in Plan vs Actual and flashes its name.
+// v5.7 (#30): a category name under the Overview chart jumps to that category's row in Expenses, on the same page.
 function jumpToBudgetCategory(cat){
-  const el = [...document.querySelectorAll('#budgetSummary [data-bud-cat]')].find(e=>e.getAttribute('data-bud-cat')===cat);
+  const el = [...document.querySelectorAll('#app tr[data-pnl-cat]')].find(e=>e.getAttribute('data-pnl-cat')===cat);
   if(!el) return;
   if(el.scrollIntoView) el.scrollIntoView({block:'center', behavior:'smooth'});
   flashEl(el);
@@ -7375,11 +7450,9 @@ function chartCategoryLabelAt(chart, x, y, labels){
   return (i>=0 && i<labels.length)? labels[i] : null;
 }
 function renderBudget(){
-  budgetGridOpen = false;
-  document.getElementById('app').innerHTML = `<div id="budgetControls"></div><div id="budgetCharts"></div><div id="budgetSummary"></div><div id="budgetGrid"></div>`;
+  budgetGridOpen = true;   // v5.7 (#30): the Plan grid tab shows the grid straight away
+  document.getElementById('app').innerHTML = budgetPnlTabsHTML('grid') + `<div id="budgetControls"></div><div id="budgetGrid"></div>`;
   renderBudgetControls();
-  renderBudgetCharts();
-  renderBudgetSummaryTable();
   renderBudgetGrid();
 }
 function renderBudgetControls(){
@@ -7387,7 +7460,7 @@ function renderBudgetControls(){
   if(!el) return;
   el.innerHTML = `
     <div class="panel noprint row" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
-      <div><label class="fl">Month</label><div class="row" style="gap:4px;flex-wrap:nowrap"><button class="btn ghost sm" onclick="budgetShiftMonth(-1)" title="Previous month" aria-label="Previous month">‹</button><input type="month" value="${budgetMonth}" style="width:180px" onchange="budgetMonth=this.value; renderBudgetSummaryTable(); renderBudgetCharts()"><button class="btn ghost sm" onclick="budgetShiftMonth(1)" title="Next month" aria-label="Next month">›</button></div></div>
+      <div class="mut" style="font-size:12px;align-self:center">The plan for each expense account, month by month. Results are in the Overview tab.</div>
       <div class="row" style="gap:6px">
         <button class="btn ghost sm" onclick="openBudgetExportChoice()">⬇ Export Grid</button>
         <button class="btn ghost sm" onclick="document.getElementById('budgetGridImportInput').click()">⬆ Import Grid</button>
@@ -7399,14 +7472,17 @@ let _budgetChartVA = null, _budgetChartTrend = null;
 // Drill-down from clicking a bar on the Budget vs Actual chart — shows the real transactions
 // behind that category's actual figure for the month, with the budgeted amount alongside for
 // direct comparison.
-function openBudgetCategoryBreakdown(category, monthKey){
+// v5.7 (#30): over the Overview's period (from–to); a month key still works for one month.
+function openBudgetCategoryBreakdown(category, from, to){
+  if(!to){ [from, to] = monthRange(from); }
+  const months = budgetChartMonths(from, to);
   const accIds = new Set(expenseAccountsList().filter(a=>(a.category||'Other')===category).map(a=>a.id));
-  const txns = D.ledger.filter(l=>accIds.has(l.acc) && monthOf(l.date)===monthKey).sort((a,b)=>a.date.localeCompare(b.date));
+  const txns = D.ledger.filter(l=>accIds.has(l.acc) && l.date>=from && l.date<=to).sort((a,b)=>a.date.localeCompare(b.date));
   const actualTotal = txns.reduce((s,l)=>s+Math.abs(Number(l.amt)),0);
-  const budgetTotal = [...accIds].reduce((s,acc)=>s+Math.abs(resolvedBudgetCell(acc, monthKey).plan||0),0);
+  const budgetTotal = [...accIds].reduce((s,acc)=>s+months.reduce((t,m)=>t+Math.abs(resolvedBudgetCell(acc, m).plan||0),0),0);
   const diff = actualTotal - budgetTotal;
   showModal(`
-    <h3>${esc(category)} — ${esc(monthLabel(monthKey))}</h3>
+    <h3>${esc(category)} — ${esc(budgetChartPeriodLabel(from, to))}</h3>
     <div class="row" style="gap:16px;margin-bottom:14px">
       <div><div class="mut" style="font-size:10.5px;text-transform:uppercase">Budgeted</div><div class="mono" style="font-size:17px;font-weight:600">${money(budgetTotal)}</div></div>
       <div><div class="mut" style="font-size:10.5px;text-transform:uppercase">Actual</div><div class="mono" style="font-size:17px;font-weight:600">${money(actualTotal)}</div></div>
@@ -7444,28 +7520,45 @@ function applyWholeNumberChartDefaults(C){
   C.defaults.scales.linear.ticks.callback = v => money0(v);
 }
 if(typeof Chart!=='undefined') applyWholeNumberChartDefaults(Chart);
-function renderBudgetCharts(){
-  const el = document.getElementById('budgetCharts');
-  if(!el) return;
-  if(typeof Chart==='undefined'){ el.innerHTML = ''; return; }
-  el.innerHTML = `
-    <div class="grid2">
-      <div class="panel"><h3>Budget vs Actual — by Category (${esc(monthLabel(budgetMonth))})</h3><div class="mut" style="font-size:11px;margin-top:-8px;margin-bottom:8px">Click a bar for the actual transactions behind it</div><div style="position:relative;height:260px"><canvas id="budgetChartVA"></canvas></div></div>
-      <div class="panel"><h3>Spending Trend — Total Actual</h3><div style="position:relative;height:260px"><canvas id="budgetChartTrend"></canvas></div></div>
-    </div>`;
-  // ---- Chart 1: Budget vs Actual per category, for the currently-selected month ----
-  const accIds = new Set(expenseAccountsList().map(a=>a.id));
+// v5.7 (#30): the months a period touches, and how to name it ("Nov 2026" or "2026-01-01 → 2026-11-12").
+function budgetChartMonths(from, to){ return monthsBetweenKeys(String(from).slice(0,7), String(to).slice(0,7)); }
+function budgetChartPeriodLabel(from, to){
+  const [mf, mt] = monthRange(String(from).slice(0,7));
+  return (from===mf && to===mt)? monthLabel(String(from).slice(0,7)) : `${from} \u2192 ${to}`;
+}
+// Data for the two Overview charts, for the period picked on the Overview (pnlFrom–pnlTo).
+function budgetChartData(from, to){
+  const months = budgetChartMonths(from, to);
+  const accIds = expenseAccountsList().map(a=>a.id);
   const byCat = {};
-  [...accIds].forEach(acc=>{
-    const c = resolvedBudgetCell(acc, budgetMonth);
-    const planned = c.plan||0;
-    const actual = D.ledger.filter(l=>l.acc===acc && monthOf(l.date)===budgetMonth).reduce((s,l)=>s+Number(l.amt),0);
+  accIds.forEach(acc=>{
+    const planned = months.reduce((t,m)=>t+(resolvedBudgetCell(acc, m).plan||0),0);
+    const actual = sumAcc(l=>l.acc===acc, from, to);
     const cat = ACC_BY_ID[acc]?.category||'Other';
     if(!byCat[cat]) byCat[cat] = {planned:0, actual:0};
     byCat[cat].planned += Math.abs(planned);
     byCat[cat].actual += Math.abs(actual);
   });
   const catLabels = Object.keys(byCat).filter(c=>byCat[c].planned || byCat[c].actual);
+  // Trend: the months of the period (last 24 at most); a single month shows the 6 months up to it.
+  let trendMonths = months.length>1? months.slice(-24) : [];
+  if(months.length<=1){ let mk = shiftMonthKey(months[0]||String(to).slice(0,7), -5); for(let i=0;i<6;i++){ trendMonths.push(mk); mk = nextMonthKeyPlain(mk); } }
+  const trendData = trendMonths.map(m=>{ const [a,b] = monthRange(m); return Math.abs(sumAcc(l=>firstDigit(l.acc)===6, a, b)); });
+  return {months, byCat, catLabels, trendMonths, trendData};
+}
+function renderBudgetCharts(){
+  const el = document.getElementById('budgetCharts');
+  if(!el) return;
+  if(typeof Chart==='undefined'){ el.innerHTML = ''; return; }
+  const from = pnlFrom, to = pnlTo;
+  const cd = budgetChartData(from, to);
+  el.innerHTML = `
+    <div class="grid2">
+      <div class="panel"><h3>Budget vs Actual — by Category (${esc(budgetChartPeriodLabel(from, to))})</h3><div class="mut" style="font-size:11px;margin-top:-8px;margin-bottom:8px">Click a bar for the actual transactions behind it</div><div style="position:relative;height:260px"><canvas id="budgetChartVA"></canvas></div></div>
+      <div class="panel"><h3>Spending Trend — Total Actual${cd.months.length>1? '' : ' (6 months)'}</h3><div style="position:relative;height:260px"><canvas id="budgetChartTrend"></canvas></div></div>
+    </div>`;
+  // ---- Chart 1: Budget vs Actual per category, for the period ----
+  const byCat = cd.byCat, catLabels = cd.catLabels;
   if(_budgetChartVA) _budgetChartVA.destroy();
   const ctxVA = document.getElementById('budgetChartVA');
   if(ctxVA && catLabels.length){
@@ -7482,7 +7575,7 @@ function renderBudgetCharts(){
       options: { responsive:true, maintainAspectRatio:false, onClick: (evt, elements, chart)=>{
           if(!elements.length){ const cat = chartCategoryLabelAt(chart, evt.x, evt.y, catLabels); if(cat) jumpToBudgetCategory(cat); return; }
           const cat = catLabels[elements[0].index];
-          openBudgetCategoryBreakdown(cat, budgetMonth);
+          openBudgetCategoryBreakdown(cat, from, to);
         }, onHover: (evt, elements, chart)=>{ evt.native.target.style.cursor = (elements.length || chartCategoryLabelAt(chart, evt.x, evt.y, catLabels))? 'pointer' : 'default'; },
         layout:{ padding:{ top:18 } },
         plugins:{ legend:{position:'top', labels:{color:mutedColor, boxWidth:12} } },
@@ -7491,13 +7584,8 @@ function renderBudgetCharts(){
       plugins:[chartValueLabelsPlugin]
     });
   }
-  // ---- Chart 2: total actual spending trend across the trailing months up to the selected one ----
-  const trendMonths = [];
-  let mk = shiftMonthKey(budgetMonth, -5);
-  for(let i=0;i<6;i++){ trendMonths.push(mk); mk = nextMonthKeyPlain(mk); }
-  const trendData = trendMonths.map(m=>{
-    return Math.abs(sumAcc(l=>firstDigit(l.acc)===6, m+'-01', m+'-31'));
-  });
+  // ---- Chart 2: total actual spending per month across the period ----
+  const trendMonths = cd.trendMonths, trendData = cd.trendData;
   if(_budgetChartTrend) _budgetChartTrend.destroy();
   const ctxTrend = document.getElementById('budgetChartTrend');
   if(ctxTrend){
@@ -7518,41 +7606,6 @@ function renderBudgetCharts(){
       plugins:[chartValueLabelsPlugin]
     });
   }
-}
-function renderBudgetSummaryTable(){
-  const accIds = new Set(expenseAccountsList().map(a=>a.id));
-  const rows = [...accIds].map(acc=>{
-    const c = resolvedBudgetCell(acc, budgetMonth);
-    const planned = c.plan||0;
-    const actual = D.ledger.filter(l=>l.acc===acc && monthOf(l.date)===budgetMonth).reduce((s,l)=>s+Number(l.amt),0);
-    return {acc, planned, actual, variance: actual-planned};
-  });
-  const rowsByCat = {};
-  rows.forEach(r=>{ (rowsByCat[ACC_BY_ID[r.acc]?.category||'Other'] ??= []).push(r); });
-  const rowCats = Object.keys(rowsByCat).sort((a,b)=>{
-    const ma = Math.min(...rowsByCat[a].map(r=>r.acc)), mb = Math.min(...rowsByCat[b].map(r=>r.acc));
-    return ma-mb;
-  });
-  const tp = rows.reduce((s,r)=>s+r.planned,0), ta = rows.reduce((s,r)=>s+r.actual,0);
-  const el = document.getElementById('budgetSummary');
-  if(!el) return;
-  el.innerHTML = `
-    <div class="panel" style="padding:0">
-      <h3 style="padding:16px 16px 0">Plan vs Actual — Expense Accounts</h3>
-      <div class="mut" style="font-size:11.5px;padding:0 16px 8px">Plan vs Actual = Variance, for ${esc(monthLabel(budgetMonth))}.</div>
-      <table><thead><tr><th>Acc#</th><th>Account</th><th class="num">Plan</th><th class="num">Actual</th><th class="num">Variance</th></tr></thead>
-      <tbody>${rowCats.map(cat=>{
-        const items = rowsByCat[cat];
-        const cp = items.reduce((s,r)=>s+r.planned,0), ca = items.reduce((s,r)=>s+r.actual,0);
-        return `<tr style="background:var(--chip)"><td colspan="2" style="font-weight:700;color:var(--accent)"><span data-bud-cat="${esc(cat)}">${esc(cat)}</span>${accruedChipHTML(cat, monthEndDateStr(budgetMonth))}</td>
-            <td class="num mono" style="font-weight:700">${money(cp)}</td><td class="num mono" style="font-weight:700">${money(ca)}</td>
-            <td class="num mono ${budgetVarClass(ca-cp)}" style="font-weight:700">${money(ca-cp)}</td></tr>` +
-          items.map(r=>`<tr class="click" onclick="viewBudgetAccountMonth(${r.acc})"><td class="mono" style="padding-left:18px">${r.acc}</td><td>${esc(accShort(r.acc))}</td>
-            <td class="num mono">${money(r.planned)}</td><td class="num mono">${money(r.actual)}</td>
-            <td class="num mono ${budgetVarClass(r.variance)}">${money(r.variance)}</td></tr>`).join('');
-      }).join('') || '<tr><td colspan="5" class="empty">No budget or actuals for this month</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="2">Total</td><td class="num mono">${money(tp)}</td><td class="num mono">${money(ta)}</td><td class="num mono ${budgetVarClass(ta-tp)}">${money(ta-tp)}</td></tr></tfoot></table>
-    </div>`;
 }
 function renderBudgetGrid(){
   const el = document.getElementById('budgetGrid');
@@ -7819,7 +7872,10 @@ function renderPnL(){
   // since expTotal isn't final until every category has been summed above.
   const pctOfTotal = v => Math.abs(expTotal)<0.005? '—' : (Math.abs(v)/Math.abs(expTotal)*100).toFixed(2)+'%';
   const expBody = expCatData.map(({cat, items, catTotal, catBudget})=>{
-    return `<tr style="background:var(--chip)" data-pnl-cat="${esc(cat)}"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(catBudget,catTotal))}" style="font-weight:700">${money(pnlVarianceMagnitude(catBudget,catTotal))}</td></tr>` +
+    const catVar = pnlVarianceMagnitude(catBudget,catTotal);
+    const catCv = catVar < -0.005? overspendCover(cat, roundCents(-catVar), pnlTo) : null;   // #31, same rule as the Dashboard
+    const catCovered = !!(catCv && catCv.full);
+    return `<tr style="background:var(--chip)" data-pnl-cat="${esc(cat)}"><td style="font-weight:700;color:var(--accent)">${esc(cat)}${accruedChipHTML(cat, pnlTo)}${overspendCoverText(catCv)? ` <span class="pnl-cover" data-accrual-cover="${catCovered?'full':'part'}" style="font-weight:400;font-size:12px;color:var(--text)">\u00B7 ${esc(overspendCoverText(catCv))}</span>` : ''}${budgetedCats.has(cat)? ` <span class="mut" data-pnl-key="cat:${esc(cat)}" style="cursor:pointer;font-weight:400" onclick="event.stopPropagation(); openAcctBudgetChartForCategory('${esc(cat).replace(/'/g,"\\'")}')" title="Open Account Budget Chart for this sub category">📊</span>` : ''}</td><td class="num mono" style="font-weight:700">${money(catBudget)}</td><td class="num mono" style="font-weight:700">${money(catTotal)}</td><td class="num mono" style="font-weight:700">${pctOfTotal(catTotal)}</td><td class="num mono ${catCovered? '' : moneyClass(catVar)}" style="font-weight:700${catCovered? ';background:color-mix(in srgb,var(--yellow) 35%,transparent);color:var(--text)' : ''}" ${catCovered? 'title="Over budget, but the accrual reserve covers it"' : ''}>${money(catVar)}</td></tr>` +
       items.map(i=>`<tr><td class="click" style="padding-left:18px" onclick="viewPnLAccountTransactions(${i.a.id})">${esc(accShort(i.a.id))}${budgetedAccIds.has(i.a.id)? ` <span class="mut" data-pnl-key="acc:${i.a.id}" style="cursor:pointer" onclick="event.stopPropagation(); openAcctBudgetChart(${i.a.id})" title="Open Account Budget Chart for this account">📊</span>` : ''}</td><td class="num mono">${money(i.budget)}</td><td class="num mono">${money(i.actual)}</td><td class="num mono">${pctOfTotal(i.actual)}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(i.budget,i.actual))}">${money(pnlVarianceMagnitude(i.budget,i.actual))}</td></tr>`).join('');
   }).join('');
 
@@ -7829,7 +7885,7 @@ function renderPnL(){
   // over/under budget figure above).
   const net = incTotal - Math.abs(expTotal);
   const years = dataYears();
-  document.getElementById('app').innerHTML = `
+  document.getElementById('app').innerHTML = budgetPnlTabsHTML('overview') + `
     <div class="panel noprint">
       <div class="row">
         <button class="btn ghost sm" style="align-self:flex-end" onclick="pnlShiftMonth(-1)" title="Previous month" aria-label="Previous month">‹</button>
@@ -7858,6 +7914,7 @@ function renderPnL(){
       <div class="kpi"><div class="l">Total Expenses</div><div class="v">${money(expTotal)}</div><div class="mut" style="font-size:11.5px;margin-top:4px">${(()=>{ const magDiff = Math.abs(expTotal)-Math.abs(expBudgetTotal); return Math.abs(magDiff)<0.005? 'On budget' : `<span class="${moneyClass(-magDiff)}">${magDiff>0?'Over':'Under'} budget by ${money(Math.abs(magDiff))}</span>`; })()}</div></div>
       <div class="kpi"><div class="l">Net Result</div><div class="v ${moneyClass(net)}">${money(net)}</div></div>
     </div>
+    <div id="budgetCharts"></div>
     <div class="panel"><h3>Income</h3><table><tbody>${incBody||'<tr><td class="empty" colspan="2">No income activity</td></tr>'}</tbody>
       <tfoot><tr><td>Total Income</td><td class="num mono g" style="font-size:15px">${money(incTotal)}</td></tr></tfoot></table></div>
     <div class="panel"><h3>Expenses</h3><table><thead><tr><th></th><th class="num">Budget</th><th class="num">Actual</th><th class="num">% of Total</th><th class="num">Variance</th></tr></thead>
@@ -7865,6 +7922,7 @@ function renderPnL(){
       <tfoot><tr><td>Total Expenses</td><td class="num mono" style="font-size:15px">${money(expBudgetTotal)}</td><td class="num mono" style="font-size:15px">${money(expTotal)}</td><td class="num mono" style="font-size:15px">${Math.abs(expTotal)<0.005?'—':'100.00%'}</td><td class="num mono ${moneyClass(pnlVarianceMagnitude(expBudgetTotal,expTotal))}" style="font-size:15px">${money(pnlVarianceMagnitude(expBudgetTotal,expTotal))}</td></tr></tfoot></table></div>
     <div class="panel"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Net Result</h3><div class="num mono" style="font-size:20px;font-weight:700;color:${moneyClass(net)==='r'?'var(--red)':(moneyClass(net)==='g'?'var(--green)':'inherit')}">${money(net)}</div></div>
     <div class="mut" style="font-size:12px;margin-top:6px">Income is shown as a positive figure. Expenses reflect their real transaction sign — normally negative, but a reversal or credit can show positive. Net Result is always Income minus the magnitude of Expenses. Variance is Budget − Actual, compared by magnitude so it's correct regardless of an account's sign convention: positive (green) means you came in under budget, negative (red) means over budget.</div></div>`;
+    renderBudgetCharts();   // v5.7 (#30): Budget vs Actual + Spending Trend for this period
   } finally {
     endForecastFastPath();
   }
@@ -8103,6 +8161,9 @@ function renderAcctBudgetChartPage(){
       <div class="kpi"><div class="l">Actual to Date</div><div class="v">${money(data.totalActual)}</div></div>
       <div class="kpi"><div class="l">Remaining Budget for the Year</div><div class="v ${moneyClass(data.remaining)}">${money(data.remaining)}</div></div>
     </div>
+    <div class="panel acct-hist"><h3>Historical averages — ${chartTitle}</h3>
+      <div class="mut" style="font-size:11.5px;margin-bottom:8px">Per month. Rolling windows end today; years are the year's total ÷ 12.</div>
+      ${historicalStatsTableHTML(isSubcat? acctBudgetChartCategoryAccountIds(acctChartSubcat) : [acctChartAccId])}</div>
     <div class="panel"><h3>Monthly Budget vs Actual — ${chartTitle} (${acctChartYear})</h3>
       <div style="height:320px"><canvas id="acctBudgetBarChart"></canvas></div>
     </div>
@@ -15140,8 +15201,8 @@ function renderForecastSnapshotTrendChart(targetMonth){
 }
 function renderForecastStatSettingsList(){
   const settings = getForecastStatSettings();
-  return `<div class="mut" style="font-size:11.5px;margin:8px 0">Choose which averages show up when you click an account name in the grid.</div>
-    ${Object.entries(FORECAST_STAT_DEFS).map(([key,def])=>`
+  return `<div class="mut" style="font-size:11.5px;margin:8px 0">Choose which averages (all per month) show up in 📊 Historical Averages and on the P&amp;L 📊 chart.</div>
+    ${historicalStatDefs(null).map(([key,def])=>`
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:13px;cursor:pointer">
         <input type="checkbox" class="chk" ${settings[key]?'checked':''} onchange="setForecastStatSetting('${key}', this.checked)"> ${esc(def.label)}
       </label>`).join('')}`;
@@ -17413,7 +17474,13 @@ function applySemanticColors(){
   document.documentElement.style.setProperty('--red', getCustomColor('red'));
   applyAccent(); // the soft positive/negative tints are derived from these
 }
-function getHiddenPages(){ try{ return JSON.parse(localStorage.getItem('hiddenPages')||'[]'); }catch(e){ return []; } }
+function getHiddenPages(){
+  let h; try{ h = JSON.parse(localStorage.getItem('hiddenPages')||'[]'); }catch(e){ h = []; }
+  if(!Array.isArray(h)) h = [];
+  // v5.7 (#30): Budget & P&L replaced two pages; it stays hidden only if both were hidden.
+  if(h.includes('pnl') && !h.includes('budget')) h = h.filter(x=>x!=='pnl');
+  return h.filter(x=>x!=='budget');
+}
 function togglePageVisibility(id, visible){
   // Guarded rather than relying on the UI alone: hiding Settings would remove the only place
   // to un-hide it, and hiding Dashboard would remove the safe landing page.
@@ -17432,7 +17499,7 @@ function applyTheme(t){
   applyAccent();
   applyTypography();
   applySemanticColors();
-  if(screen==='budget' && typeof renderBudgetCharts==='function') renderBudgetCharts();
+  if(screen==='pnl' && pnlView!=='acctchart' && typeof renderBudgetCharts==='function') renderBudgetCharts();
 }
 function toggleTheme(){ applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'); }
 

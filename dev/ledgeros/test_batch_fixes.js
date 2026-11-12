@@ -4364,12 +4364,6 @@ function testEveryScreenHasAnIcon(){
     assert(s.length===3 && s[2] && String(s[2]).trim()!=='', 'Screen "'+s[0]+'" is missing an icon');
   }
 }
-function testBudgetSummaryRowIsClickable(){
-  const html = fs.readFileSync(APP_HTML, 'utf8');
-  // The whole row must open the account's transactions, not just the account-number cell.
-  assert(/<tr class="click" onclick="viewBudgetAccountMonth\(\$\{r\.acc\}\)">/.test(html),
-    'The budget summary line row should be clickable as a whole');
-}
 function testSchemaSqlCoversEveryTableTheAppReads(){
   const html = fs.readFileSync(APP_HTML, 'utf8');
   const sb = makeSandbox();
@@ -4406,9 +4400,10 @@ function testSettingsIsAPagePinnedLastAndPillNotClickable(){
 }
 function testCustomPageOrderIsRespected(){
   const sb = makeSandbox();
-  sb.__set('D', {uiPrefs:{pageOrder:['budget','ledger','dashboard']}});
+  sb.__set('D', {uiPrefs:{pageOrder:['budget','pnl','ledger','dashboard']}});
   const ids = sb.orderedScreens().map(s=>s[0]);
-  assert(ids[0]==='budget' && ids[1]==='ledger' && ids[2]==='dashboard',
+  // v5.7 (#30): 'budget' is no longer a rail page (it is the Plan grid tab); a saved order keeping it is fine.
+  assert(ids[0]==='pnl' && ids[1]==='ledger' && ids[2]==='dashboard',
     'Saved order should lead the list, got '+ids.slice(0,3).join(','));
   assert(ids[ids.length-1]==='settings', 'Settings stays pinned last regardless of saved order');
 }
@@ -6309,19 +6304,6 @@ async function testPnLAccruedFollowsThePeriodEndNotToday(){
   const html = sb.document.getElementById('app').innerHTML;
   assert(html.includes('1,500.00') && !html.includes('1,600.00'), 'As of Oct 15 only the first accrual (1,500.00) exists, so the 31st line must not count');
 }
-async function testBudgetPlanVsActualShowsAccruedForTheMonthShown(){
-  const sb = v455Sandbox(v455AccrualFixture());
-  sb.document.body.insertAdjacentHTML('beforeend', '<div id="budgetSummary"></div>');
-  sb.__set('budgetMonth', '2026-10');
-  sb.renderBudgetSummaryTable();
-  let html = sb.document.getElementById('budgetSummary').innerHTML;
-  assert((html.match(/accrued-chip/g)||[]).length===1, 'Budget shows the chip on the category row only (v4.61.0), got ' + (html.match(/accrued-chip/g)||[]).length);
-  assert(html.includes('1,600.00'), 'October shown → balance as of Oct 31 (1,600.00)');
-  sb.__set('budgetMonth', '2026-11');
-  sb.renderBudgetSummaryTable();
-  html = sb.document.getElementById('budgetSummary').innerHTML;
-  assert(!html.includes('1,600.00') && html.includes('11,599.00'), 'November shown → balance as of Nov 30 (11,599.00), proving it follows the month shown');
-}
 
 // ---- #8 budget export: future only vs historical + future ----
 function v455BudgetExportSandbox(){
@@ -7462,7 +7444,6 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   testReverseJvProducesExactMirrorAndNetsToZero();
   testDeleteJvIsGoneEntirely();
   testEveryScreenHasAnIcon();
-  testBudgetSummaryRowIsClickable();
   testSchemaSqlCoversEveryTableTheAppReads();
   await testAddedJVLinesStartBlankEvenWhileReconciling();
   await testStartReconcileStillPrefillsTheFirstLine();
@@ -7870,7 +7851,6 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testMonthEndDateStrHandlesShortMonthsAndLeapYears();
   await testPnLShowsAccruedNextToMappedCategoryAndItsAccrualAccountOnly();
   await testPnLAccruedFollowsThePeriodEndNotToday();
-  await testBudgetPlanVsActualShowsAccruedForTheMonthShown();
   await testExportGridButtonOpensTheChoiceInsteadOfExportingImmediately();
   await testBudgetExportFutureOnlyIsUnchanged();
   await testBudgetExportWithHistoryStartsAtEarliestLedgerMonthAndShowsActualForPast();
@@ -8068,6 +8048,16 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV56SetupHasPriceLinksAndTheJobButtons();
   await testV56NewStorageKeysAreListed();
   await testV56EdgeJobSavesYesterdaysCloses();
+  await testV57SmsJvKeepsTheAccountsLinesTogether();
+  await testV57SmsTransferPartnerAndFeeGoAfterTheAccountsLines();
+  await testV57SmsNumbersAndAccountsCanBeChanged();
+  await testV57HistoricalAveragesArePerMonth();
+  await testV57AveragesShowOnThePnLChartAndAccountsPopup();
+  await testV57ShiftDateIsRightEastOfUtc();
+  await testV57BudgetAndPnLAreOnePageWithTwoTabs();
+  await testV57OverviewChartsFollowThePeriod();
+  await testV57OverspendCoveredByAccrualTurnsYellowAndLeavesNeedsYou();
+  await testV57PartlyCoveredStaysRedWithANote();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8136,7 +8126,7 @@ async function testRailRendersIconsLabelsAndCurrentPage(){
   sb.renderNav();
   const nav = sb.document.getElementById('nav');
   const btns = [...nav.querySelectorAll('button')];
-  assert(btns.length>=13, 'Every page has a rail button');
+  assert(btns.length>=12, 'Every page has a rail button (12 since Budget and P&L merged in v5.7)');
   assert(btns.every(b=>b.querySelector('svg.nav-svg') && b.querySelector('.nav-lbl')), 'Each rail button has a line icon and a label');
   const cur = nav.querySelector('[aria-current="page"]');
   assert(cur && cur.classList.contains('on') && /Ledger/.test(cur.textContent), 'The current page is marked');
@@ -8146,7 +8136,7 @@ async function testTopBarShowsPageTitleAndThemeState(){
   const sb = shellSandbox();
   freezeDate(sb, '2026-11-07T10:00:00');
   sb.go('budget');
-  assert(sb.document.getElementById('topbarTitle').textContent==='Budget', 'Top bar shows the page name');
+  assert(sb.document.getElementById('topbarTitle').textContent==='Budget & P&L', 'Top bar shows the page name (the Plan grid tab of Budget & P&L)');
   assert(/7 November/.test(sb.document.getElementById('topbarDate').textContent), 'Top bar shows today\'s date');
   sb.go('forecastSettings');
   assert(sb.document.getElementById('topbarTitle').textContent==='Forecast Settings', 'Pages outside the rail still get a title');
@@ -8892,21 +8882,18 @@ async function testForecastNotesAreSyncedCallouts(){
   assert(!/forecastNotes|forecast_notes/.test(html.slice(html.indexOf('function exportCashPositionCSV('), html.indexOf('function exportCashPositionCSV(')+4000)), 'Notes are not in the export');
 }
 async function testBudgetMonthArrowsAndCollapsedGrid(){
+  // v5.7 (#30): Budget is the Plan grid tab of Budget & P&L. Its month box and arrows went with the
+  // month table (the Overview's period picker replaces them) and the grid shows straight away.
   const sb = dashSandbox();
-  sb.__set('budgetMonth', '2026-11');
   sb.go('budget');
-  const ctrl = sb.document.getElementById('budgetControls').innerHTML;
-  assert(/budgetShiftMonth\(-1\)[\s\S]*type="month"[\s\S]*budgetShiftMonth\(1\)/.test(ctrl), 'Arrows sit on each side of the month box');
-  sb.budgetShiftMonth(-1);
-  assert(vm.runInContext('budgetMonth', sb)==='2026-10', '‹ goes back a month');
-  sb.budgetShiftMonth(1); sb.budgetShiftMonth(1);
-  assert(vm.runInContext('budgetMonth', sb)==='2026-12', '› goes forward');
-  let grid = sb.document.getElementById('budgetGrid');
-  assert(/Show budget grid/.test(grid.textContent) && !grid.querySelector('table'), 'The budget grid starts collapsed');
+  const ctrl = sb.document.getElementById('budgetControls');
+  assert(ctrl && !/budgetShiftMonth|type="month"/.test(ctrl.innerHTML) && /openBudgetExportChoice\(\)/.test(ctrl.innerHTML), 'The Plan grid keeps Export / Import and has no month box');
+  const grid = sb.document.getElementById('budgetGrid');
+  assert(grid && grid.querySelector('table') && /Hide budget grid/.test(grid.textContent), 'The grid is open on arrival');
+  const tabs = sb.document.querySelectorAll('.bp-tabs [data-bptab]');
+  assert(tabs.length===2 && sb.document.querySelector('[data-bptab="grid"]').getAttribute('aria-selected')==='true', 'Both tabs show, Plan grid selected');
   sb.toggleBudgetGrid();
-  assert(/Hide budget grid/.test(grid.textContent), 'It expands');
-  sb.go('dashboard'); sb.go('budget');
-  assert(/Show budget grid/.test(sb.document.getElementById('budgetGrid').textContent), 'And is collapsed again on the next visit (not remembered)');
+  assert(/Show budget grid/.test(sb.document.getElementById('budgetGrid').textContent), 'It can still be folded away');
 }
 async function testBudgetChartCategoryNameJumpsAndFlashes(){
   const sb = dashSandbox();
@@ -8914,13 +8901,13 @@ async function testBudgetChartCategoryNameJumpsAndFlashes(){
   assert(sb.chartCategoryLabelAt({scales:{x:xs}}, 110, 210, ['A','B','C'])==='B', 'A click on a name under the bars finds that category');
   assert(sb.chartCategoryLabelAt({scales:{x:xs}}, 110, 100, ['A','B','C'])===null, 'A click above the axis (on the bars area) is not a name');
   sb.__set('pnlBudgetForAccountInRange', (acc)=> acc===60101? 100 : 0);
-  sb.go('budget');
-  const span = sb.document.querySelector('#budgetSummary [data-bud-cat="Living"]');
-  assert(span, 'Each category name in Plan vs Actual can be found');
+  sb.go('pnl');   // v5.7 (#30): the chart is on the Overview; a name jumps to that category's Expenses row
+  const span = sb.document.querySelector('#app tr[data-pnl-cat="Living"]');
+  assert(span, 'Each category in the chart has a row in Expenses');
   sb.jumpToBudgetCategory('Living');
-  assert(span && span.classList.contains('flash'), 'Jumping flashes the category name only');
+  assert(span && span.classList.contains('flash'), 'Jumping flashes that category\'s row');
   const src = fs.readFileSync(APP_JS, 'utf8');
-  assert(/if\(!elements\.length\)\{ const cat = chartCategoryLabelAt\(chart, evt\.x, evt\.y, catLabels\); if\(cat\) jumpToBudgetCategory\(cat\); return; \}/.test(src) && /openBudgetCategoryBreakdown\(cat, budgetMonth\)/.test(src), 'Names jump; bars still open the transactions');
+  assert(/if\(!elements\.length\)\{ const cat = chartCategoryLabelAt\(chart, evt\.x, evt\.y, catLabels\); if\(cat\) jumpToBudgetCategory\(cat\); return; \}/.test(src) && /openBudgetCategoryBreakdown\(cat, from, to\)/.test(src), 'Names jump; bars still open the transactions');
 }
 async function testPnLArrowsSitEachSideOfTheMonth(){
   const sb = dashSandbox();
@@ -9892,4 +9879,182 @@ async function testV56EdgeJobSavesYesterdaysCloses(){
   assert(calls.some(c=>/x_cg_demo_api_key=k1/.test(c.url)), 'It uses the synced CoinGecko key');
   const pre = await ctx._served.fn({method:'OPTIONS'});
   assert(pre.headers['Access-Control-Allow-Origin']==='*', 'It answers the browser\'s CORS check (Run the daily job now)');
+}
+
+// ================= v5.7.0: #26 SMS mappings, #27 SMS line order, #29 averages, #30 Budget & P&L, #31 accrual cover =================
+async function testV57SmsJvKeepsTheAccountsLinesTogether(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  // The fee is on the FIRST SMS, so "fees at the bottom" is only true if fee lines really are moved down.
+  D.smsInbox.push(R(1, {amt:88.1, descr:'TEST POWER CO', fee:2}), R(2, {amt:1.25, side:'Dr', kind:'Cashback', descr:'Cashback'}));
+  await sb.__map({'1111':10101});
+  const lines = sb.smsBuildJVs('a:10101').jvs[0].lines;
+  const sig = lines.map(l=>(l.acc||'?')+':'+l.amt).join(' ');
+  assert(sig==='10101:-88.1 10101:-2 10101:1.25 ?:88.1 ?:-1.25 ?:2',
+    'Card lines first (purchase, its fee, cashback), then the other halves in the same order, fee other half last; got ' + sig);
+  assert(Math.abs(lines.reduce((s,l)=>s+Number(l.amt),0))<0.005, 'Still balances');
+}
+async function testV57SmsTransferPartnerAndFeeGoAfterTheAccountsLines(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {acct:'A debit', side:'Cr', amt:500.5, counter:'2222', kind:'Outgoing transfer', descr:'TEST PERSON'}),
+    R(2, {acct:'2222', source:'BANKB', side:'Dr', amt:500, counter:'0101', kind:'Incoming transfer', descr:'TEST PERSON'}),
+    R(3, {acct:'A debit', amt:20, descr:'SHOP 3'}));
+  await sb.__map({'A debit':10101, '0101':10101, '2222':10102});
+  const lines = sb.smsBuildJVs('a:10101').jvs[0].lines;
+  const sig = lines.map(l=>(l.acc||'?')+':'+l.amt).join(' ');
+  assert(sig==='10101:-500.5 10101:-20 10102:500 ?:20 ?:0.5', 'Own account first; the other bank as the other half; the transfer fee at the bottom; got ' + sig);
+}
+async function testV57SmsNumbersAndAccountsCanBeChanged(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  await sb.__map({'1111':10101, '2222':10102});
+  sb.__set('smsMapOpen', true);
+  sb.openSmsInbox();
+  let m = sb.document.getElementById('modalRoot');
+  const row = m.querySelector('tr[data-smsmap="1111"] select.sms-map-pick');
+  assert(row && row.querySelector('option[selected]') && row.querySelector('option[selected]').value==='10101', 'Every mapped number is listed with its account, even with nothing waiting');
+  assert(/smsChangeMapping\("1111", this\.value\)/.test(row.getAttribute('onchange')||''), 'Picking another account changes it');
+  await sb.smsChangeMapping('1111', '10103');
+  assert(sb.smsAccFor('1111')===10103 && sb.smsAccFor('2222')===10102, 'Only that number moves');
+  await sb.smsChangeMapping('2222', '');
+  assert(sb.smsAccFor('2222')===null, 'Remove forgets it, so its SMS ask for an account again');
+  D.smsInbox.push(R(1, {acct:'1111'}));
+  sb.__set('smsMapOpen', false);
+  sb.openSmsInbox();
+  m = sb.document.getElementById('modalRoot');
+  assert(/smsMapOpen=true; openSmsInbox\(\)/.test(m.querySelector('.sms-group').innerHTML) && /✎ Change/.test(m.querySelector('.sms-group').innerHTML), 'A mapped group has ✎ Change, opening the list');
+  assert(m.querySelector('#smsMapToggle') && /Numbers & accounts \(1\)/.test(m.querySelector('#smsMapToggle').textContent), 'The list is folded away by default, with a count');
+}
+function v57AvgSandbox(){
+  const sb = dashSandbox({today:'2026-11-12T10:00:00.000Z'});
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:60150, name:'Power', descr:'Power', category:'Living', status:'Active', acc_type:'Individual Account'},
+                  {id:60151, name:'Water', descr:'Water', category:'Living', status:'Active', acc_type:'Individual Account'});
+  const L = (id, acc, amt, date) => ({id, jv:id, date, acc, amt, descr:'x'});
+  D.ledger.push(L(101,60150,1200,'2024-03-01'), L(102,60150,600,'2025-06-01'), L(103,60150,300,'2026-02-10'), L(104,60150,90,'2026-10-20'), L(105,60150,30,'2026-11-12'),
+                L(106,60151,60,'2026-11-01'));
+  sb.rebuildIndex();
+  return sb;
+}
+async function testV57HistoricalAveragesArePerMonth(){
+  const sb = v57AvgSandbox();
+  const st = sb.historicalStatsFor([60150]);
+  const pm = (total, days) => total/(days/(365.25/12));
+  const near = (a, b) => Math.abs(a-b) < 0.01;
+  assert(near(st.roll30, pm(30+90, 30)), 'Last 30 days: Oct 14 – Nov 12 total (120) as a monthly figure, got ' + st.roll30);
+  assert(near(st.roll365, pm(300+90+30, 365)), 'Last 365 days per month, got ' + st.roll365);
+  assert(near(st.y2025, 50) && near(st.y2024, 100), 'Each year = its total ÷ 12 (2025: 600/12, 2024: 1200/12)');
+  assert(near(st.ytd, pm(420, 316)), '2026 so far: Jan 1 – Nov 12 (316 days) as a monthly figure, got ' + st.ytd);
+  assert(!('y2023' in st), 'Years start at the first year with data');
+  const defs = sb.historicalStatDefs([60150]).map(d=>d[0]).join(',');
+  assert(defs==='roll30,roll60,roll90,roll180,roll365,ytd,y2025,y2024', 'Shown: rolling 30/60/90/180/365, this year, then every earlier year, newest first; got ' + defs);
+  const w = sb.historicalStatsFor([60151]);
+  assert(near(w.roll90, pm(60, 12)), 'An account newer than the window is averaged over the days it has existed, got ' + w.roll90);
+  const both = sb.historicalStatsFor(new Set([60150, 60151]));
+  assert(near(both.roll30, pm(180, 30)), 'A sub category adds its accounts (a Set works too), got ' + both.roll30);
+}
+async function testV57AveragesShowOnThePnLChartAndAccountsPopup(){
+  const sb = v57AvgSandbox();
+  sb.__set('drawAcctBudgetChart', ()=>{});
+  sb.__set('accountsWithBudgetFigures', ()=>[{id:60150}]);
+  sb.__set('subcategoriesWithBudgetFigures', ()=>['Living']);
+  sb.openAcctBudgetChart(60150);
+  let html = sb.document.getElementById('app').innerHTML;
+  assert(/Historical averages/.test(html) && /data-hist="roll30"/.test(html) && /data-hist="y2024"/.test(html) && /Average per month/.test(html), 'The P&L 📊 chart for an account shows the averages');
+  sb.openAcctBudgetChartForCategory('Living');
+  html = sb.document.getElementById('app').innerHTML;
+  assert(/Historical averages — Living/.test(html) && /data-hist="roll365"/.test(html), 'And for a sub category');
+  sb.openAccountStatsPopup(60150);
+  const m = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/data-hist="roll90"/.test(m) && /data-hist="ytd"/.test(m) && !/Rolling 3-Month/.test(m), 'Accounts → 📊 Historical Averages shows the same metrics');
+  const list = sb.renderForecastStatSettingsList();
+  assert(/setForecastStatSetting\('roll180'/.test(list) && /setForecastStatSetting\('y2024'/.test(list), 'Forecast → Settings lists the same choices');
+  sb.setForecastStatSetting('roll60', false);
+  sb.openAccountStatsPopup(60150);
+  assert(!/data-hist="roll60"/.test(sb.document.getElementById('modalRoot').innerHTML), 'Turning one off hides it');
+}
+async function testV57ShiftDateIsRightEastOfUtc(){
+  const src = fs.readFileSync(APP_JS, 'utf8');
+  const fn = src.match(/function shiftDate\(dstr, days\)\{[^\n]*\}/);
+  assert(fn, 'shiftDate exists');
+  if(!fn) return;
+  const out = require('child_process').execFileSync(process.execPath, ['-e', fn[0] + "; console.log([shiftDate('2026-11-12',0), shiftDate('2026-11-12',-30), shiftDate('2026-03-01',-1)].join(','))"],
+    {env: Object.assign({}, process.env, {TZ:'Asia/Riyadh'})}).toString().trim();
+  assert(out==='2026-11-12,2026-10-13,2026-02-28', 'In Riyadh time, shifting by 0 keeps the day and -30 lands on the right date, got ' + out);
+}
+async function testV57BudgetAndPnLAreOnePageWithTwoTabs(){
+  const sb = dashSandbox();
+  const SCREENS = vm.runInContext('SCREENS', sb);
+  const ids = SCREENS.map(s=>s[0]);
+  assert(ids.includes('pnl') && !ids.includes('budget') && SCREENS.find(s=>s[0]==='pnl')[1]==='Budget & P&L', 'One rail button, "Budget & P&L"');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="topbarTitle"></div>');
+  sb.go('budget');
+  const nav = sb.document.getElementById('nav');
+  const on = nav.querySelector('button.on');
+  assert(on && /go\('pnl'\)/.test(on.getAttribute('onclick')) && sb.document.getElementById('topbarTitle').textContent==='Budget & P&L', 'The Plan grid lights up the same rail button and title');
+  sb.go('pnl');
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/data-bptab="overview"[^>]*/.test(html) && sb.document.querySelector('[data-bptab="overview"]').getAttribute('aria-selected')==='true' && /id="budgetCharts"/.test(html), 'Overview has the tabs and the charts');
+  assert(!/id="budgetSummary"/.test(html), 'The old Budget month table is gone');
+  sb.localStorage.setItem('hiddenPages', JSON.stringify(['pnl']));
+  assert(!sb.getHiddenPages().includes('pnl'), 'Someone who hid only P&L still sees the merged page (Budget was visible)');
+  sb.localStorage.setItem('hiddenPages', JSON.stringify(['pnl','budget']));
+  assert(sb.getHiddenPages().join()==='pnl', 'Hidden only if both old pages were hidden');
+  const dash = sb.dashBudgetHTML();
+  assert(/goPnLThisMonth\(\)/.test(dash) && /Open Budget &amp; P&amp;L/.test(dash), 'The Dashboard budget box opens Budget & P&L on this month');
+}
+async function testV57OverviewChartsFollowThePeriod(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.ledger.push({id:201, jv:201, date:'2026-09-15', acc:60101, amt:400, descr:'x'}, {id:202, jv:202, date:'2026-11-03', acc:60101, amt:250, descr:'x'});
+  D.budget = [{id:1, acc:60101, date:'2026-09-01', amt:300}, {id:2, acc:60101, date:'2026-10-01', amt:300}, {id:3, acc:60101, date:'2026-11-01', amt:300}];
+  sb.rebuildIndex();
+  const ytd = sb.budgetChartData('2026-09-01', '2026-11-07');
+  assert(ytd.byCat.Living && ytd.byCat.Living.planned===900 && ytd.byCat.Living.actual===650+6000, 'A 3-month period: plan of all 3 months (900) and actual over the dates, got ' + JSON.stringify(ytd.byCat.Living));
+  assert(ytd.trendMonths.join()==='2026-09,2026-10,2026-11', 'The trend shows the period\'s months, got ' + ytd.trendMonths.join());
+  const one = sb.budgetChartData('2026-11-01', '2026-11-30');
+  assert(one.byCat.Living.planned===300 && one.trendMonths.length===6 && one.trendMonths[5]==='2026-11', 'One month: that month\'s plan; the trend shows the 6 months up to it');
+  assert(sb.budgetChartPeriodLabel('2026-11-01','2026-11-30')===sb.monthLabel('2026-11') && sb.budgetChartPeriodLabel('2026-01-01','2026-11-07')==='2026-01-01 → 2026-11-07', 'The chart title names the period');
+  sb.openBudgetCategoryBreakdown('Living', '2026-09-01', '2026-11-07');
+  const m = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/900\.00/.test(m) && /2026-09-15/.test(m) && /2026-11-03/.test(m), 'A bar opens the transactions and plan for the whole period');
+  sb.openBudgetCategoryBreakdown('Living', '2026-11');
+  assert(!/2026-09-15/.test(sb.document.getElementById('modalRoot').innerHTML), 'A month key still opens just that month');
+}
+function v57CoverSandbox(reserveAmt){
+  const sb = dashSandbox({today:'2026-11-12T10:00:00.000Z'});
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:20302, name:'Living reserve', descr:'Living reserve', category:'Accruals', status:'Active', acc_type:'Accrual Account'});
+  D.accrualMappings = [{category:'Living', liabilityAcc:20302, expenseAcc:60101}];
+  D.ledger.push({id:301, jv:301, date:'2026-11-02', acc:60101, amt:1000, descr:'spend'});
+  if(reserveAmt) D.ledger.push({id:302, jv:302, date:'2026-10-31', acc:20302, amt:-reserveAmt, descr:'accrue'});
+  D.budget = [{id:1, acc:60101, date:'2026-11-01', amt:800}];
+  sb.rebuildIndex();
+  return sb;
+}
+async function testV57OverspendCoveredByAccrualTurnsYellowAndLeavesNeedsYou(){
+  const sb = v57CoverSandbox(500);   // over by 200, reserve 500
+  const cv = sb.overspendCover('Living', 200);
+  assert(cv && cv.full && cv.reserve===500 && cv.covered===200, 'Reserve 500 covers 200 over, got ' + JSON.stringify(cv));
+  sb.document.body.insertAdjacentHTML('beforeend', `<div id="dashTest">${sb.dashBudgetHTML()}</div>`);
+  const note = sb.document.querySelector('#dashTest [data-accrual-cover="full"]');
+  assert(note && /Over by 200/.test(note.textContent) && /covered by accrual \(reserve 500\)/.test(note.textContent) && /var\(--text\)/.test(note.getAttribute('style')), 'Black note: over by, covered by the reserve');
+  const fill = sb.document.querySelector('#dashTest .bud-fill');
+  assert(fill && /var\(--yellow\)/.test(fill.getAttribute('style')), 'The bar is yellow');
+  assert(!/Living is over budget/.test(sb.dashTodoHTML()), 'Not in the Dashboard\'s needs-you list');
+  sb.__set('pnlFrom', '2026-11-01'); sb.__set('pnlTo', '2026-11-30'); sb.__set('pnlView', 'main');
+  sb.renderPnL();
+  const row = sb.document.querySelector('#app tr[data-pnl-cat="Living"]');
+  assert(row && row.querySelector('[data-accrual-cover="full"]') && /color-mix\(in srgb,var\(--yellow\)/.test(row.lastElementChild.getAttribute('style')||''), 'Same treatment on the P&L category row');
+}
+async function testV57PartlyCoveredStaysRedWithANote(){
+  const sb = v57CoverSandbox(150);   // over by 200, reserve 150
+  const cv = sb.overspendCover('Living', 200);
+  assert(cv && !cv.full && cv.covered===150, 'Partly covered: 150 of 200');
+  sb.document.body.insertAdjacentHTML('beforeend', `<div id="dashTest">${sb.dashBudgetHTML()}</div>`);
+  const note = sb.document.querySelector('#dashTest [data-accrual-cover="part"]');
+  assert(note && /Over by 200/.test(note.textContent) && /150 of it covered by accrual/.test(note.textContent) && /var\(--red\)/.test(note.getAttribute('style')), 'Stays red, with how much is covered');
+  const todo = sb.dashTodoHTML();
+  assert(/Living is over budget/.test(todo) && /150\.00 of it covered by accrual/.test(todo), 'Stays in needs-you, with the note');
+  const none = v57CoverSandbox(0);
+  assert(/Living is over budget/.test(none.dashTodoHTML()) && !/covered by accrual/.test(none.dashTodoHTML()), 'No reserve: unchanged');
+  assert(sb.overspendCover('Transport', 50)===null, 'A category without an accrual mapping is unchanged');
 }
