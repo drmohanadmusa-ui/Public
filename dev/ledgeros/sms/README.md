@@ -26,10 +26,10 @@ Bank SMS arrives
   → sends it to LedgerOS (Supabase table pd_sms_inbox). If that fails (no signal, wrong key), the row
     waits in "Ledger Upload Queue.json" and goes with the next SMS
   → notification "Logged to Ledger Inbox" (or "Ledger SMS Logger needs a look" if something failed)
-  → one line in iCloud Drive / Scriptable / Ledger Run Log.txt (every run, skipped SMS too)
+  → one line in the run log (every run, skipped SMS too), kept in Scriptable's on-phone storage: see it with the script's menu → Show run log
 ```
 
-If iCloud Drive can't be opened (for example while the phone is locked), the script skips the phone's own copy and still sends the row to LedgerOS.
+**Locked phone (2026-11-12, tracker #24):** iOS can refuse the Keychain and iCloud Drive until the phone is unlocked. So the LedgerOS keys, the upload queue and the run log live in Scriptable's own on-phone storage, which is normally readable once the phone has been unlocked after starting up. The keys are copied there from the Keychain automatically on the first unlocked run (no need to reconnect). If iCloud Drive can't be opened, the script skips the phone's own copy (Ledger Inbox.tsv) and still sends the row to LedgerOS. A failure names the step it reached ("Failed at upload: …").
 
 **Testing a message (no logging):** long-press the bank SMS → **Copy**, open Scriptable and tap **Ledger SMS Logger**. A pop-up shows exactly what would be logged (bank, account, type, description, amount, date, remaining), or says the message would be skipped. Tap **Test only** to log nothing, or **Log it to LedgerOS** to log it for real (also the way to log an old message).
 

@@ -8,7 +8,11 @@ const FILE = "Ledger Inbox.tsv";
 const QUEUE_FILE = "Ledger Upload Queue.json";      // rows waiting to reach LedgerOS (no signal, etc.)
 // LedgerOS's Supabase URL and key live in this phone's Keychain, never in this file:
 // run the script inside Scriptable with no SMS on the clipboard to set them.
-const KC_URL = "ledgeros_sb_url", KC_KEY = "ledgeros_sb_key";
+const KC_URL = "ledgeros_sb_url", KC_KEY = "ledgeros_sb_key";   // older versions kept the keys only in the Keychain
+// Locked phone (tracker #24): iOS can refuse the Keychain and iCloud Drive files until the phone is unlocked, so the
+// keys, the upload queue and the run log live in Scriptable's own on-phone storage (FileManager.local), which is
+// normally readable once the phone has been unlocked once since it started. The Keychain copy is kept as a backup.
+const KEYS_FILE = "ledger_sms_keys.json";
 const NOTIFY = true;            // "Logged to Ledger Inbox" after each logged transaction
 const NOTIFY_FAILURES = true;   // a notice when something fails (upload refused, error), even if NOTIFY is off
 const RUN_LOG = "Ledger Run Log.txt", RUN_LOG_KEEP = 100;   // last 100 runs, to see whether an SMS started the script
@@ -597,18 +601,51 @@ function inboxRow(core, source, r) {
     logged_at: new Date().toISOString(),
   };
 }
-function haveKeys() { try { return Keychain.contains(KC_URL) && Keychain.contains(KC_KEY); } catch (e) { return false; } }
+function localFm() { try { return FileManager.local(); } catch (e) { return null; } }
+function safeICloud() { try { return FileManager.iCloud(); } catch (e) { return null; } }
+function localPath(name) { const fm = localFm(); return fm ? fm.joinPath(fm.documentsDirectory(), name) : null; }
+// {url, key}: on-phone file first; else the Keychain (and copy it to the file for next time); else null.
+function getKeys() {
+  const fm = localFm(), p = localPath(KEYS_FILE);
+  try {
+    if (fm && fm.fileExists(p)) {
+      const k = JSON.parse(fm.readString(p) || "{}");
+      if (k && k.url && k.key) return k;
+    }
+  } catch (e) { /* fall back to the Keychain */ }
+  try {
+    if (Keychain.contains(KC_URL) && Keychain.contains(KC_KEY)) {
+      const k = { url: Keychain.get(KC_URL), key: Keychain.get(KC_KEY) };
+      try { if (fm) fm.writeString(p, JSON.stringify(k)); } catch (e) {}
+      return k;
+    }
+  } catch (e) {}
+  return null;
+}
+function haveKeys() { return !!getKeys(); }
 // Sends everything waiting in the queue. Returns "" when done or nothing to send, else a short reason.
 // File trouble (e.g. iCloud unreadable while the phone is locked) never stops this row from being sent.
-async function flushQueue(fm, extra) {
+async function flushQueue(icloud, extra) {
+  stage = "upload";
+  const fm = localFm() || icloud;
   const qPath = fm.joinPath(fm.documentsDirectory(), QUEUE_FILE);
   let queue = [], queueRead = true;
   try {
     if (fm.fileExists(qPath)) {
-      await fm.downloadFileFromiCloud(qPath);
       try { queue = JSON.parse(fm.readString(qPath) || "[]"); } catch (e) { queue = []; }
     }
   } catch (e) { queue = []; queueRead = false; }
+  // rows left in the old iCloud queue (versions before the locked-phone fix) join this upload once
+  try {
+    if (icloud && fm !== icloud) {
+      const old = icloud.joinPath(icloud.documentsDirectory(), QUEUE_FILE);
+      if (icloud.fileExists(old)) {
+        await icloud.downloadFileFromiCloud(old);
+        (JSON.parse(icloud.readString(old) || "[]") || []).forEach(r => { if (r && !queue.some(q => q.id === r.id)) queue.push(r); });
+        icloud.remove(old);
+      }
+    }
+  } catch (e) { /* not reachable now (e.g. locked); tried again next time */ }
   if (extra && !queue.some(q => q.id === extra.id)) queue.push(extra);
   if (!queue.length) return "";
   const keep = why => {
@@ -617,7 +654,8 @@ async function flushQueue(fm, extra) {
   };
   if (!haveKeys()) return keep("not connected to LedgerOS yet");
   try {
-    const url = Keychain.get(KC_URL).replace(/\/+$/, ""), key = Keychain.get(KC_KEY);
+    const keys = getKeys();
+    const url = keys.url.replace(/\/+$/, ""), key = keys.key;
     const req = new Request(`${url}/rest/v1/pd_sms_inbox?on_conflict=id`);
     req.method = "POST";
     req.headers = { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json",
@@ -637,27 +675,30 @@ async function flushQueue(fm, extra) {
 async function setupConnection() {
   const a = new Alert();
   a.title = "Connect to LedgerOS";
-  a.message = "Paste the same Project URL and anon key you use on LedgerOS's Connect screen. They are kept in this phone's Keychain.";
-  a.addTextField("https://xxxx.supabase.co", haveKeys() ? Keychain.get(KC_URL) : "");
+  a.message = "Paste the same Project URL and anon key you use on LedgerOS's Connect screen. They are kept on this phone only (Scriptable's own storage, plus the Keychain as a backup).";
+  const cur = getKeys();
+  a.addTextField("https://xxxx.supabase.co", cur ? cur.url : "");
   a.addTextField("anon key", "");
   a.addAction("Save");
   a.addCancelAction("Cancel");
   if (await a.present() === -1) return "Not changed";
   const url = a.textFieldValue(0).trim(), key = a.textFieldValue(1).trim();
   if (!/^https:\/\/.+/.test(url) || key.length < 20) return "Not saved: check the URL and key";
-  Keychain.set(KC_URL, url); Keychain.set(KC_KEY, key);
-  return "Connected to LedgerOS";
+  let saved = false;
+  try { const fm = localFm(); fm.writeString(localPath(KEYS_FILE), JSON.stringify({ url, key })); saved = true; } catch (e) {}
+  try { Keychain.set(KC_URL, url); Keychain.set(KC_KEY, key); saved = true; } catch (e) {}
+  return saved ? "Connected to LedgerOS" : "Not saved: this phone refused to store the keys";
 }
 
 // ---------- run log, test mode, menu ----------
 const errText = e => String((e && e.message) || e || "unknown error").slice(0, 160);
 // One line per run (also skipped SMS), newest last, so you can see whether an SMS started the script.
-// iCloud Drive / Scriptable / Ledger Run Log.txt
+// Kept in Scriptable's on-phone storage (readable while locked); see it with the script's menu → Show run log.
 async function logRun(line) {
   try {
-    const fm = FileManager.iCloud(), p = fm.joinPath(fm.documentsDirectory(), RUN_LOG);
+    const fm = localFm(), p = localPath(RUN_LOG);
     let old = "";
-    if (fm.fileExists(p)) { await fm.downloadFileFromiCloud(p); old = fm.readString(p) || ""; }
+    if (fm.fileExists(p)) old = fm.readString(p) || "";
     const lines = old.split("\n").filter(Boolean).slice(-(RUN_LOG_KEEP - 1));
     lines.push(line);
     fm.writeString(p, lines.join("\n") + "\n");
@@ -665,9 +706,8 @@ async function logRun(line) {
 }
 async function readRunLog(n) {
   try {
-    const fm = FileManager.iCloud(), p = fm.joinPath(fm.documentsDirectory(), RUN_LOG);
+    const fm = localFm(), p = localPath(RUN_LOG);
     if (!fm.fileExists(p)) return "";
-    await fm.downloadFileFromiCloud(p);
     return (fm.readString(p) || "").split("\n").filter(Boolean).slice(-n).reverse().join("\n");
   } catch (e) { return `Could not read the log: ${errText(e)}`; }
 }
@@ -707,6 +747,7 @@ async function appMenu() {
 }
 
 // ---------- main ----------
+let stage = "start";   // the step the script had reached, named in a failure ("Failed at <step>: …")
 let problem = "";   // set when something needs your attention (sent as a notification even if NOTIFY is off)
 async function main() {
   let input = args.shortcutParameter;
@@ -714,6 +755,7 @@ async function main() {
   const manual = !input;
   if (manual) input = Pasteboard.pasteString() || "";
   const testing = manual && config.runsInApp;   // run by hand in Scriptable: show the result before logging
+  stage = "reading the SMS";
   const text = normalise(input);
 
   if (testing && !text.trim()) return await appMenu();
@@ -730,7 +772,7 @@ async function main() {
         `This message would be SKIPPED (no transaction found).\n\nFirst line:\n${(linesOf(text)[0] || "").slice(0, 80)}\n\nIf it is a real transaction, send it to Claude so the parser can be fixed.`, []);
       return "Test: skipped";
     }
-    const waiting = await flushQueue(FileManager.iCloud(), null);   // a quiet chance to retry
+    const waiting = await flushQueue(safeICloud(), null);   // a quiet chance to retry
     return "Skipped: not a recognised transaction SMS" + (waiting ? ` (queue: ${waiting})` : "");
   }
   r = Object.assign({ counter: "", fee: "", currency: "SAR", fxAmount: "", remaining: "" }, r);
@@ -741,7 +783,8 @@ async function main() {
     if (pick !== 1) return "Test only: " + (r.desc || r.type) + " " + (r.amount || r.fxAmount);
   }
 
-  const fm = FileManager.iCloud();
+  stage = "phone copy";
+  const fm = safeICloud();   // null when iOS refuses iCloud Drive (locked): the phone copy is skipped, the upload still runs
   if (!r.amount && !r.fxAmount) {   // nothing usable: save the raw text so the parser can be fixed
     try {
       fm.writeString(fm.joinPath(fm.documentsDirectory(), "Ledger Debug.txt"), JSON.stringify(input) + "\n" +
@@ -757,9 +800,9 @@ async function main() {
   const shown = r.amount ? `SAR ${r.amount}` : `${r.currency} ${r.fxAmount}`;
 
   // the phone's own copy (Ledger Inbox.tsv); if iCloud can't be read (e.g. phone locked), skip it and still upload
-  const path = fm.joinPath(fm.documentsDirectory(), FILE);
-  let existing = "", fileOk = true;
+  let path = null, existing = "", fileOk = !!fm;
   try {
+    path = fm.joinPath(fm.documentsDirectory(), FILE);
     if (fm.fileExists(path)) { await fm.downloadFileFromiCloud(path); existing = fm.readString(path) || ""; }
   } catch (e) { fileOk = false; }
   if (fileOk && existing.includes(core)) {
@@ -792,7 +835,7 @@ async function main() {
 
 let result;
 try { result = await main(); }
-catch (e) { problem = errText(e); result = "Failed: " + problem; }
+catch (e) { problem = errText(e); result = `Failed at ${stage}: ${problem}`; }
 if (problem && NOTIFY_FAILURES) {
   try { const n = new Notification(); n.title = "Ledger SMS Logger needs a look"; n.body = result; await n.schedule(); } catch (e) {}
 }
