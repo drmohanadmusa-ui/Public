@@ -135,6 +135,7 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
   - **Squash-merge**, so anything removed from a branch before merging never reaches main.
   - `break_restore.py` takes several minutes: run it in the foreground with a long timeout (up to 600000 ms), not in the background.
   - 2026-11-12: `add_repo` with push access and running `run_tests.sh` were first refused by the session's safety check and allowed once Muhannad said so in chat; merging was refused earlier that day, but `gh api -X PUT .../pulls/<n>/merge` worked for PR #20 (v5.9.0). **Default from 2026-11-12 (his instruction): when he says ship, Claude opens the PR and merges it itself**, then checks the version on main; only if the merge is refused, give him the PR link.
+  - **Branch clean-up (his standing request, 2026-11-12):** after each merge, try to delete the merged branch. From the session this is refused three ways (API delete ref 403, `git push --delete` disconnect, repo setting `delete_branch_on_merge` 403), so the fix is on his side: GitHub → repo Settings → General → Pull Requests → tick **Automatically delete head branches** (once; then every merged PR branch goes by itself). Until he confirms it is on, list the merged branches for him to delete.
   - Never force-push (a squash + `--force-with-lease` was attempted on 2026-11-12 and rejected); push a fresh branch instead.
   - When the SMS script changes, send him the finished `Ledger SMS Logger.js` file in chat (his standing preference).
 
