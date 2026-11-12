@@ -30,6 +30,7 @@ He uses LedgerOS every day for real family money, so **treat it as production so
 7. **Be honest about mistakes**, including mistakes in first-draft tests. Say what was wrong and what you changed.
 8. **After shipping, give a short summary:** what changed, the test count, and any mistakes. **Don't send him the built HTML.**
 9. **He sends numbered checklists.** Say which items are already done rather than redoing them.
+10. **Question first, ship only when asked** (his standing practice, restated 2026-11-12). This covers your own extras too: a bug you find or a fix you'd like to add goes in the tracker as a question, not into the build, until he says yes.
 
 ## 2. Architecture essentials (read before changing anything)
 
@@ -63,6 +64,10 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 - **Cost corrections (v4.59):** stored as `kind:'costadj'` rows in `pd_inv_cash_movements`. The cash maths ignores them.
 - **Owner accounts:** `outAcc` is labelled "Invested into platform" and `inAcc` "Withdrawn from platform". His chart of accounts names accounts from the **platform's** perspective: "X - In" means money into platform X.
 - **Withdrawals:** capital at cost goes to the withdrawn account and the rest goes to Profit (`invWithdrawalBooking`).
+- **Budget & P&L (v5.7, #30):** one rail button (SCREENS id `pnl`, label "Budget & P&L"); tabs from `budgetPnlTabsHTML`: Overview = screen `pnl` (`renderPnL`, period picker drives everything incl. `renderBudgetCharts` via `budgetChartData(pnlFrom, pnlTo)`), Plan grid = screen `budget` (`renderBudget`, grid open on arrival, Export/Import only). `navIsOn` lights the rail for both; `getHiddenPages` hides the page only if both old ids were hidden. The old Budget month table, its month box and `viewBudgetAccountMonth` were removed.
+- **Over budget covered by accrual (v5.7, #31):** `overspendCover(cat, over, asOf)` (reserve = `accruedForCategory`); full → yellow bar + black note, not in the Dashboard to-do, highlighted P&L category row; partial → red + "N of it covered".
+- **Historical averages (v5.7, #29):** `historicalStatDefs` / `historicalStatsFor` (per month: rolling 30/60/90/180/365 days ending today, clamped to an account's first date; this year so far by days; every earlier year ÷ 12); `historicalStatsTableHTML` on the P&L 📊 chart (account or sub category) and Accounts → 📊; Forecast → Settings toggles via `setForecastStatSetting` (it was missing before v5.7).
+- **Dates:** `shiftDate` works in UTC since v5.7 (it used to land a day early east of UTC).
 - **Views:** Mine / Family / Activity / Reconcile / Insights / Setup (`INV_VIEWS`, `invView`). The Classic tab was dropped in v5.6; `renderInvClassicPage` is still the dispatch fallback and old tests use it.
 - **Pooled family contributions:** Collect Contributions plus "Split by platform cash".
   - **The app never posts ledger JVs for this.** Muhannad posts them by hand.
@@ -86,12 +91,12 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 
 **SMS inbox (v5.4)**
 - iPhone side: Shortcuts Message automations → Scriptable `dev/ledgeros/sms/ledger_sms_logger.js` (7 banks) → upload to `pd_sms_inbox` (dedupe by hashed id; failed uploads queue in iCloud). Its `README.md` is the explainer; parser tests: `node dev/ledgeros/sms/test_parsers.js` (117 passed). Every run writes a line to `Ledger Run Log.txt` on the phone (tells "automation never started" from "script skipped/failed"); run by hand in Scriptable with an SMS copied = test mode (shows the parsed row, Test only / Log it); iCloud file errors are non-fatal so the row still uploads. Locked phone (#24, fix A): keys (`ledger_sms_keys.json`, copied from the Keychain), upload queue and run log are in `FileManager.local()`; failures say `Failed at <stage>`. If a locked test still fails, fix B is agreed in principle: the Shortcut posts the raw SMS with Get Contents of URL and LedgerOS parses it.
-- App side: New JV → 📩 SMS. Groups by mapped account (`dismissals.smsMap`), one JV per SMS date, own-bank transfers paired within SAR 1 (difference = fee line), exact reversals cancel. Posting marks the SMS done (`smsId` on lines).
+- App side (v5.7: 🔗 Numbers & accounts lists every mapping, `smsChangeMapping`; JV lines = own account block, then other halves, then fees): New JV → 📩 SMS. Groups by mapped account (`dismissals.smsMap`), one JV per SMS date, own-bank transfers paired within SAR 1 (difference = fee line), exact reversals cancel. Posting marks the SMS done (`smsId` on lines).
 
 ## 3. Tests
 
 - **Run:** `bash dev/ledgeros/run_tests.sh`. It extracts the app's JS to `dev/ledgeros/.build/`, installs `jsdom` and `fake-indexeddb` on first run, prints any `FAIL` lines, then `N passed, 0 failed`.
-  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0.
+  - The baseline at the move to Claude Code was **1701 passed** (v4.63.0); **1909 passed** at v5.0.0; **1976 passed** at v5.1.0; **2000 passed** at v5.2.0; **2020 passed** at v5.3.0; **2101 passed** at v5.4.0; **2110 passed** at v5.4.1; **2150 passed** at v5.5.0; **2244 passed** at v5.6.0; **2288 passed** at v5.7.0.
   - Console noise about `QuotaExceededError` or "Not implemented: scrollTo" is expected.
 - **Harness basics:**
   - `makeSandbox()` gives a fresh app context in a vm.
@@ -164,5 +169,6 @@ The app is a single HTML file: inline CSS and JS, no build step, no framework, a
 | 5.3 | Drift Detection for provisions: compare per account, income/expense accounts only, exclude list (toggles, synced in `pd_ui_prefs.dismissals.driftSettings`) |
 | 5.4 | SMS inbox: new table `pd_sms_inbox` filled by the iPhone logger (`dev/ledgeros/sms`, its own README and `node test_parsers.js`); New JV → 📩 SMS groups by mapped account (`dismissals.smsMap`), Create JV builds one JV per date with other halves, pairs own transfers across banks, cancels exact reversals; posting marks SMS done (`smsId` on JV/draft lines) |
 | 5.4.1 | Aurora & glass rail: the button list scrolls inside the floating rail on short windows (it was clipped by `overflow:hidden`); compact buttons up to 820px tall; Dashboard over-budget Open P&L lands on and flashes that category (`goPnLThisMonth(cat)`, `data-pnl-cat`) |
+| 5.7 | Budget & P&L merged into one page with two tabs (#30); over-budget covered by accrual (#31); per-month historical averages incl. rolling day windows and every year (#29); SMS Numbers & accounts (#26) and line order (#27); Price links Find keeps its place and explains failures; `shiftDate` UTC fix; `setForecastStatSetting` added |
 | 5.6 | Investments (#22): platform boxes (hover actions, arrange/hide/group), Needs you + rail badge, automatic prices (price links, synced keys, refresh, auto after 6 h), daily closes (backfill + Edge Function), wallet unit check, Repeat last buy, Invest it now; Classic tab dropped. Ships with the SMS fix (#25) |
 | 5.5 | Accrual cap overflow (#21): pass 2 in `computeAccrualJV` pools surplus above caps and splits it by room left (`accrualSplitCents`, in cents, never past a cap); catch-all reserve `getAccrualOverflowAcc`/`setAccrualOverflowAcc` in `dismissals.accrualOverflowAcc`; drawdowns use the month-end reserve; wider explanation table + `accrualOverflowSummary` |
