@@ -30,7 +30,7 @@ He uses LedgerOS every day for real family money, so **treat it as production so
 7. **Be honest about mistakes**, including mistakes in first-draft tests. Say what was wrong and what you changed.
 8. **After shipping, give a short summary:** what changed, the test count, and any mistakes. **Don't send him the built HTML.**
 9. **He sends numbered checklists.** Say which items are already done rather than redoing them.
-10. **Question first, ship only when asked** (his standing practice, restated 2026-11-12). This covers your own extras too: a bug you find or a fix you'd like to add goes in the tracker as a question, not into the build, until he says yes.
+10. **Question first, ship only when asked** (his standing practice, restated 2026-11-12). This covers your own extras too: a bug you find or a fix you'd like to add goes in the tracker as a question, not into the build, until he says yes. Restated 2026-11-12 (#41): log every change or request in the tracker, ask only questions that clarify what he asked for, then log the answer and wait for more or for "ship".
 
 ## 2. Architecture essentials (read before changing anything)
 
