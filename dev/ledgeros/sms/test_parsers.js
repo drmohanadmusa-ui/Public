@@ -7,14 +7,17 @@ const path = require("path");
 const SRC = fs.readFileSync(path.join(__dirname, "ledger_sms_logger.js"), "utf8");
 
 // net: {keys:bool, code:number|null (null = no connection), sent:[]} — fake Keychain + Request
-// opt: {inApp, clipboard, pick (Alert button index), alerts:[], notes:[], locked (iCloud reads/writes throw), noICloud}
+// opt: {inApp, clipboard, pick (Alert button index), fields (text fields), alerts:[], notes:[], locked (iCloud reads/writes throw), noICloud,
+//       kcLocked (Keychain throws), localLocked (on-phone storage throws). On-phone storage = paths under /l, iCloud = /d.
 function runScript(sms, store, net, opt) {
   const out = [];
   net = net || { keys: false, code: 201, sent: [] };
   opt = opt || {};
   const lockedErr = () => { if (opt.locked) throw new Error("The file couldn't be opened (device locked)"); };
   const ctx = {
-    Keychain: { contains: () => net.keys, get: k => (k === "ledgeros_sb_url" ? "https://test.example.co/" : "test-key-0123456789abcdef0123"), set() {} },
+    Keychain: { contains: () => { if (opt.kcLocked) throw new Error("Keychain locked"); return net.keys; },
+      get: k => { if (opt.kcLocked) throw new Error("Keychain locked"); return k === "ledgeros_sb_url" ? "https://test.example.co/" : "test-key-0123456789abcdef0123"; },
+      set(k, v) { if (opt.kcLocked) throw new Error("Keychain locked"); (opt.kcSet = opt.kcSet || {})[k] = v; } },
     Request: class { constructor(u) { this.url = u; } async loadString() {
       if (net.code === null) throw new Error("offline");
       net.sent.push({ url: this.url, headers: this.headers, rows: JSON.parse(this.body) }); this.response = { statusCode: net.code }; return ""; } },
@@ -24,10 +27,15 @@ function runScript(sms, store, net, opt) {
     config: { runsInApp: !!opt.inApp },
     DateFormatter: class { string() { return "2026-01-01 00:00"; } },
     Notification: class { async schedule() { (opt.notes || []).push({ title: this.title, body: this.body }); } },
-    Alert: class { constructor() { this.actions = []; } addAction(a) { this.actions.push(a); } addCancelAction() {} addTextField() {}
+    Alert: class { constructor() { this.actions = []; } addAction(a) { this.actions.push(a); } addCancelAction() {} addTextField() {} textFieldValue(i) { return (opt.fields || [])[i] || ""; }
       async present() { (opt.alerts || []).push({ title: this.title, message: this.message, actions: this.actions }); return opt.pick === undefined ? -1 : opt.pick; } },
     Script: { setShortcutOutput: o => out.push(o), complete() {} },
-    FileManager: { iCloud: () => { if (opt.noICloud) throw new Error("iCloud unavailable"); return {
+    FileManager: { local: () => {
+      const lk = () => { if (opt.localLocked) throw new Error("Local storage locked"); };
+      return { documentsDirectory: () => "/l", joinPath: (a, b) => a + "/" + b,
+        fileExists: p => { lk(); return p in store; }, readString: p => { lk(); return store[p]; },
+        writeString: (p, c) => { lk(); store[p] = c; }, remove: p => { lk(); delete store[p]; } };
+    }, iCloud: () => { if (opt.noICloud) throw new Error("iCloud unavailable"); return {
       documentsDirectory: () => "/d", joinPath: (a, b) => a + "/" + b,
       fileExists: p => p in store, downloadFileFromiCloud: async () => { lockedErr(); },
       readString: p => { lockedErr(); return store[p]; }, writeString: (p, c) => { lockedErr(); store[p] = c; }, remove: p => { lockedErr(); delete store[p]; },
@@ -339,7 +347,7 @@ const CASES = [
   }
   // ---------- upload to LedgerOS (pd_sms_inbox) ----------
   const check = (cond, name) => { if (cond) pass++; else { fail++; console.log("FAIL " + name); } };
-  const queued = st => { try { return JSON.parse(st["/d/Ledger Upload Queue.json"] || "[]").length; } catch (e) { return -1; } };
+  const queued = st => { try { return JSON.parse(st["/l/Ledger Upload Queue.json"] || "[]").length; } catch (e) { return -1; } };
   const SMS = CASES[0].sms;
   {
     const store = {}, net = { keys: true, code: 201, sent: [] };
@@ -353,7 +361,7 @@ const CASES = [
     const again = { keys: true, code: 201, sent: [] };
     await runScript(SMS, {}, again);
     check(again.sent[0] && again.sent[0].rows[0].id === row.id, "upload: the same SMS always gets the same id (one inbox row)");
-    check(!store["/d/Ledger Upload Queue.json"], "upload: nothing left in the queue after a good upload");
+    check(!store["/l/Ledger Upload Queue.json"], "upload: nothing left in the queue after a good upload");
   }
   {
     const store = {}, off = { keys: true, code: null, sent: [] };
@@ -361,7 +369,7 @@ const CASES = [
     check(/no connection/.test(res) && queued(store) === 1, "upload: offline, the row waits in the queue (still logged on the phone)");
     const on = { keys: true, code: 201, sent: [] };
     await runScript(CASES[1].sms, store, on);
-    check(on.sent[0] && on.sent[0].rows.length === 2 && !store["/d/Ledger Upload Queue.json"], "upload: the next SMS sends the waiting row too, then the queue is empty");
+    check(on.sent[0] && on.sent[0].rows.length === 2 && !store["/l/Ledger Upload Queue.json"], "upload: the next SMS sends the waiting row too, then the queue is empty");
     const bad = { keys: true, code: 401, sent: [] };
     const r401 = await runScript(CASES[2].sms, store, bad);
     check(/401/.test(r401) && queued(store) === 1, "upload: a refused upload (wrong key) is kept for later and reported");
@@ -404,16 +412,16 @@ const CASES = [
     const store = {};
     await runScript(PURCHASE, store, { keys: true, code: 201, sent: [] });
     await runScript("Your code is 1234", store, { keys: true, code: 201, sent: [] });
-    const log = (store["/d/Ledger Run Log.txt"] || "").trim().split("\n");
+    const log = (store["/l/Ledger Run Log.txt"] || "").trim().split("\n");
     check(log.length === 2 && /\| SMS \| شراء إنترنت \| Logged: SNB CC/.test(log[0]) && /\| SMS \| Your code is 1234 \| Skipped/.test(log[1]),
       "run log: one line per run, skipped SMS included");
     const opt = { inApp: true, clipboard: "", pick: 1, alerts: [], notes: [] };
     await runScript(undefined, store, null, opt);
     check(opt.alerts[1] && opt.alerts[1].title === "Last runs (newest first)" && /^.*Skipped/.test(opt.alerts[1].message.split("\n")[0]),
       "run log: 'Show run log' lists the newest run first");
-    const big = {}; big["/d/Ledger Run Log.txt"] = Array.from({ length: 150 }, (_, i) => "old " + i).join("\n") + "\n";
+    const big = {}; big["/l/Ledger Run Log.txt"] = Array.from({ length: 150 }, (_, i) => "old " + i).join("\n") + "\n";
     await runScript("Your code is 1234", big, { keys: true, code: 201, sent: [] });
-    const kept = big["/d/Ledger Run Log.txt"].trim().split("\n");
+    const kept = big["/l/Ledger Run Log.txt"].trim().split("\n");
     check(kept.length === 100 && kept[0] === "old 51" && /Skipped/.test(kept[99]), "run log: keeps only the last 100 runs");
   }
   {
@@ -426,8 +434,11 @@ const CASES = [
   {
     const store = { "/d/Ledger Inbox.tsv": "earlier rows\n", "/d/Ledger Upload Queue.json": "[]" }, net = { keys: true, code: null, sent: [] }, opt = { locked: true, notes: [] };
     const res = await runScript(PURCHASE, store, net, opt);
-    check(/no connection/.test(res) && /could not save it on the phone/.test(res) && opt.notes.length === 1 && opt.notes[0].title === "Ledger SMS Logger needs a look",
-      "locked phone + offline: says the row could not be kept for a retry, and notifies");
+    check(/no connection/.test(res) && JSON.parse(store["/l/Ledger Upload Queue.json"] || "[]").length === 1 && opt.notes.length === 1 && opt.notes[0].title === "Ledger SMS Logger needs a look",
+      "locked phone + offline: the row waits in on-phone storage for a retry, and a notice says so");
+    const all = { "/d/Ledger Inbox.tsv": "x\n" }, o2 = { locked: true, localLocked: true, notes: [] };
+    const res2 = await runScript(PURCHASE, all, { keys: true, code: null, sent: [] }, o2);
+    check(/could not save it on the phone/.test(res2) && o2.notes.length === 1, "everything refused + offline: says the row could not be kept, and notifies");
   }
   {
     const opt = { notes: [] };
@@ -439,10 +450,39 @@ const CASES = [
     check(ok.notes.length === 1 && ok.notes[0].title === "Logged to Ledger Inbox", "notice: a good run sends the usual 'Logged' notice only");
   }
   {
-    const opt = { noICloud: true, notes: [] };
-    const res = await runScript(PURCHASE, {}, { keys: true, code: 201, sent: [] }, opt);
-    check(/^Failed: iCloud unavailable/.test(res) && opt.notes.length === 1 && opt.notes[0].title === "Ledger SMS Logger needs a look",
-      "failure: an unexpected error is reported and notified instead of stopping silently");
+    const opt = { noICloud: true, notes: [] }, net = { keys: true, code: 201, sent: [] };
+    const res = await runScript(PURCHASE, {}, net, opt);
+    check(/^Logged/.test(res) && /phone file not updated/.test(res) && net.sent.length === 1, "iCloud Drive refused entirely: the row still uploads (locked phone, #24)");
+    const bad = { notes: [] }, store = {};
+    const boom = { get content() { throw new Error("boom"); } };
+    const res2 = await runScript(boom, store, { keys: true, code: 201, sent: [] }, bad);
+    check(/^Failed at start: boom/.test(res2) && bad.notes.length === 1 && bad.notes[0].title === "Ledger SMS Logger needs a look" && /Failed at start: boom/.test(store["/l/Ledger Run Log.txt"] || ""),
+      "failure: names the step, notifies, and is written to the run log");
+  }
+  // ---------- locked phone, fix A (#24): keys, queue and log in on-phone storage ----------
+  {
+    const store = {}, net = { keys: true, code: 201, sent: [] };
+    await runScript(PURCHASE, store, net, {});
+    const k = JSON.parse(store["/l/ledger_sms_keys.json"] || "{}");
+    check(k.url === "https://test.example.co/" && k.key === "test-key-0123456789abcdef0123", "keys: copied from the Keychain to on-phone storage on an unlocked run");
+    const net2 = { keys: false, code: 201, sent: [] }, opt = { locked: true, kcLocked: true, notes: [] };
+    const res = await runScript(CASES.find(c => /cashback, Nov 2026/.test(c.name)).sms, store, net2, opt);
+    check(/^Logged/.test(res) && net2.sent.length === 1 && net2.sent[0].url.startsWith("https://test.example.co/rest/v1/pd_sms_inbox"),
+      "locked phone: Keychain and iCloud refused, the row still uploads with the on-phone keys, got " + res);
+    check(/\| SMS \| بطاقة ائتمانية استرجاع نقدي \| Logged/.test(store["/l/Ledger Run Log.txt"] || ""), "locked phone: the run is in the run log");
+  }
+  {
+    const store = { "/d/Ledger Upload Queue.json": JSON.stringify([{ id: 42, amt: 5 }]) }, net = { keys: true, code: 201, sent: [] };
+    await runScript(PURCHASE, store, net, {});
+    check(net.sent[0] && net.sent[0].rows.length === 2 && net.sent[0].rows.some(r => r.id === 42) && !store["/d/Ledger Upload Queue.json"],
+      "queue: rows left in the old iCloud queue are sent once and the old file is removed");
+  }
+  {
+    const store = {}, opt = { inApp: true, clipboard: "", pick: 0, fields: ["https://new.example.co", "new-key-0123456789abcdef0123"], alerts: [], notes: [] };
+    const res = await runScript(undefined, store, { keys: false, code: 201, sent: [] }, opt);
+    const k = JSON.parse(store["/l/ledger_sms_keys.json"] || "{}");
+    check(res === "Connected to LedgerOS" && k.url === "https://new.example.co" && opt.kcSet && opt.kcSet.ledgeros_sb_url === "https://new.example.co",
+      "Connect saves the keys on the phone and in the Keychain, got " + res);
   }
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
