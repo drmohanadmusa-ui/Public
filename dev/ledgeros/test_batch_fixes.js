@@ -8082,6 +8082,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV511NeedsReviewAndIgnoreSimilar();
   await testV511MissingSmsCheckFollowsTheBalance();
   await testV511PasteSmsUsesTheEdgeFunction();
+  await testV512CashbackIsNamedAfterItsPurchaseAndGoesToItsAccount();
+  await testV512BalanceWindowSuggestsTheBalance();
+  await testV512CreditCardOver30PercentWarns();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -10500,4 +10503,63 @@ async function testV511PasteSmsUsesTheEdgeFunction(){
   sb.fetch = async ()=>{ throw new TypeError('Failed to fetch'); };
   await sb.smsPasteSubmit();
   assert(toasts.some(([t, bad])=>bad && /Is sms-ingest deployed/.test(t)), 'If the function is not there, it says so');
+}
+// ================= v5.12.0: #60–#64 =================
+async function testV512CashbackIsNamedAfterItsPurchaseAndGoesToItsAccount(){
+  const {sb, D, R} = v511Sandbox();
+  D.accounts.push({id:30501, name:'Cashback income', descr:'Cashback income', category:'Other Income', status:'Active', acc_type:'Individual Account'});
+  sb.rebuildIndex();
+  D.smsInbox.push(R(1, {acct:'7777', time:'15:23', amt:75, side:'Cr', descr:'TEST SHOP', kind:'Online purchase'}),
+    R(2, {acct:'7777', time:'15:23', amt:0.53, side:'Dr', descr:'Cashback', kind:'Cashback'}),
+    R(3, {acct:'7777', time:'18:00', amt:40, side:'Cr', descr:'CAFE TEST', kind:'POS purchase'}),
+    R(4, {acct:'7777', time:'18:05', amt:0.28, side:'Dr', descr:'Cashback', kind:'Cashback'}),
+    R(5, {acct:'7777', date:'2026-11-01', time:'09:00', amt:1, side:'Dr', descr:'Cashback', kind:'Cashback'}));
+  assert(sb.smsDescr(D.smsInbox[1])==='Cashback · TEST SHOP (75.00)', 'Same card and minute: named after that purchase, got ' + sb.smsDescr(D.smsInbox[1]));
+  assert(sb.smsDescr(D.smsInbox[3])==='Cashback · CAFE TEST (40.00)', 'Otherwise the nearest earlier purchase on the card');
+  assert(sb.smsDescr(D.smsInbox[4])==='Cashback (purchase not found)', 'No purchase before it: says so');
+  await sb.__map({'7777':10101});
+  let lines = sb.smsBuildJVs('a:10101').jvs.find(j=>j.date==='2026-11-11').lines.filter(l=>l.smsId===2);
+  assert(lines.length===2 && lines.every(l=>l.descr==='Cashback · TEST SHOP (75.00)') && lines[1].acc==='', 'The JV lines carry the name; no cashback account set = blank other half');
+  await sb.setSmsCashbackAcc('30501');
+  assert(sb.getSmsCashbackAcc()===30501 && sb.__prefs().row.dismissals.smsCashbackAcc===30501, 'The cashback account is saved in the synced settings');
+  lines = sb.smsBuildJVs('a:10101').jvs.find(j=>j.date==='2026-11-11').lines;
+  assert(lines.find(l=>l.smsId===2 && l.acc==='30501') && !lines.some(l=>l.smsId===1 && l.acc==='30501'), 'Cashback other halves go to it; purchases still leave it for him');
+  sb.openSmsInbox();
+  sb.__set('smsMapOpen', true); sb.openSmsInbox();
+  assert(sb.document.getElementById('smsCashbackAcc') && /Cashback · TEST SHOP \(75\.00\)/.test(sb.document.getElementById('modalRoot').innerHTML), 'Numbers & accounts has the setting; the inbox shows the name');
+}
+async function testV512BalanceWindowSuggestsTheBalance(){
+  const {sb, D, R} = v511Sandbox();
+  D.accounts.find(a=>a.id===10103).credit_limit = 5000;
+  D.smsInbox.push(R(1, {acct:'1111', amt:100, side:'Cr'}), R(2, {acct:'1111', amt:20, side:'Dr', fee:1}),
+    R(3, {acct:'7777', amt:50, remaining:'4000.00', loggedAt:'2026-11-11T08:00:00Z'}), R(4, {acct:'7777', amt:10, remaining:'3990.00', loggedAt:'2026-11-11T09:00:00Z'}));
+  await sb.__map({'1111':10101, '7777':10103});
+  // an unposted draft line from an earlier SMS on the bank account counts too
+  vm.runInContext('jvDrafts', sb).push({id:900, date:'2026-11-10', lines:[{acc:'10101', descr:'old SMS', amt:'-30', smsId:77}, {acc:'', descr:'old SMS', amt:'30', smsId:77}]});
+  const ledger = sb.accountBalance(10101);
+  const b = sb.smsSuggestedBalance('a:10101', 10101);
+  assert(b && Math.abs(b.value - (ledger - 100 + 20 - 1 - 30))<0.001 && /^Ledger .* − 3 SMS 111\.00 = /.test(b.note), 'Bank: ledger + this JV\'s lines + unposted draft lines, got ' + JSON.stringify(b));
+  const c = sb.smsSuggestedBalance('a:10103', 10103);
+  assert(c && c.value===3990 && /From the SMS of/.test(c.note), 'Card: the remaining limit of the newest SMS by arrival, got ' + JSON.stringify(c));
+  D.smsInbox.forEach(x=>{ if(x.acct==='7777') x.remaining = ''; });
+  assert(sb.smsSuggestedBalance('a:10103', 10103)===null, 'No limit in the SMS: no suggestion (box as before)');
+  await sb.smsCreateJVs('a:10101');
+  const inp = sb.document.getElementById('smsStmtBal');
+  assert(inp && Number(inp.value)===b.value && /Suggested: Ledger/.test(sb.document.getElementById('modalRoot').innerHTML), 'The window opens with the suggestion and its working');
+}
+async function testV512CreditCardOver30PercentWarns(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:10150, name:'Test card', descr:'Test card', category:'Bank Accounts', status:'Active', acc_type:'Individual Account', is_credit_card:true, credit_limit:10000});
+  D.ledger.push({id:90, jv:90, date:'2026-10-02', acc:10150, amt:-3500, descr:'spend'});
+  sb.rebuildIndex();
+  const item = () => sb.dashboardTodoItems().find(i=>/is 35% used/.test(i.title));
+  assert(item() && /Owed 3,500\.00 of a 10,000\.00 limit/.test(item().sub) && /ccUtilDismissed\.add\(10150\)/.test(item().dismiss), 'Over 30%: a needs-you item with a dismiss, got ' + JSON.stringify(sb.dashboardTodoItems().map(i=>i.title)));
+  vm.runInContext('ccUtilDismissed.add(10150)', sb);
+  assert(!item(), 'Dismissed: hidden for now');
+  assert(!/ccUtilDismissed[^;]*localStorage|smsCashback/.test(String(vm.runInContext('ccUtilisation', sb))) && /^const ccUtilDismissed = new Set\(\);/m.test(fs.readFileSync(APP_HTML,'utf8')), 'Kept in memory only, so it is back next time the app opens');
+  vm.runInContext('ccUtilDismissed.clear()', sb);
+  D.ledger.push({id:91, jv:91, date:'2026-10-03', acc:10150, amt:600, descr:'top up'});
+  sb.rebuildIndex();
+  assert(!sb.dashboardTodoItems().some(i=>/% used/.test(i.title)), 'At 29% after a top-up: gone');
 }
