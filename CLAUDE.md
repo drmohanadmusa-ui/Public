@@ -52,6 +52,7 @@ Muhannad uses it to decide when to move to a fresh session. If the conversation 
 ## 6. Real data and other repos
 
 - Real data may only be **read**, through Muhannad's read-only connectors. Never write to it, and keep real figures in chat only.
+- **Setup is not data (his OK, 2026-11-13):** deploying or updating the apps' Supabase Edge Functions, scheduling their jobs and running the apps' additive schema SQL are allowed once he has given the access for it. Financial and personal records (ledger, JVs, accounts, investments, health logs and so on) stay read-only, and test calls must not create records.
 - Never touch these repos: `personal-apps-hosting` (must stay private), `WebApps` (an old copy) and `personal-data-backups`. They are his to manage.
 
 ## 7. Feedback mode: note, ask, then ship in one go (Muhannad's standing rule, all apps)
@@ -59,3 +60,10 @@ Muhannad uses it to decide when to move to a fresh session. If the conversation 
 - When Muhannad sends comments or ideas, **don't change the app**. Record each one in that app's tracker, ask any clarifying questions, and wait.
 - Trackers: `dev/ledgeros/FEEDBACK.md` and `dev/calendaros/FEEDBACK.md` (create on first use). Number every comment, and keep its status (open / question asked / agreed / shipped) and his answers.
 - Only when he says to push or ship do you build everything agreed in the tracker, test it, and release it as one version.
+
+## 8. Hands-off by default (Muhannad's standing rule, 2026-11-13, all apps)
+
+- Do every step that can be done from the session yourself: build, test, ship, merge, deploy, schedule, verify. Don't hand him a to-do list for things you can do.
+- Come back to him only when there is no other way: a decision that is his (feedback mode, section 7, still applies), something only his phone or accounts can do (iPhone Shortcuts, signing up for a service), or access you don't have yet. Then ask once, with everything needed in one message, and say exactly why it can't be done from the session.
+- When access is missing, ask for it (he gives what's needed) rather than routing the work to him.
+
