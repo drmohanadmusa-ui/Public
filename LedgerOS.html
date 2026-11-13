@@ -590,12 +590,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.11.0';
+const APP_VERSION = '5.12.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.12.0', date:'2026-11-13', changes:[
+    'SMS → Create JV, the balance window now suggests the balance: for a credit card, the remaining limit from the newest SMS in that JV; for a bank account, the ledger balance plus the SMS being posted and any of its SMS already in an unposted JV or draft, with the working shown under the box.',
+    'Cashback SMS are named after their purchase (“Cashback · SHOP (75.00)”: same card and minute, else the nearest earlier purchase), in the inbox and in the JV lines.',
+    '📩 SMS → Numbers & accounts: “Cashback goes to” sets the account for the other half of every cashback line when JVs are built from SMS.',
+    'Dashboard: a credit card more than 30% used (balance owed ÷ its limit) shows in the needs-you list. Dismiss hides it only until you next open the app; it stays until the card is back to 30% or less.',
+  ]},
   {version:'5.11.0', date:'2026-11-12', changes:[
     'Bank SMS now go from the iPhone straight to a small LedgerOS service on Supabase (“sms-ingest”), which reads them with the same rules as the Scriptable script: about a second per message, works on a locked phone, one “Logged” notice per SMS and no notice for duplicate runs. Setup steps: dev/ledgeros/edge/README.md.',
     '📩 SMS → Needs review: a message that wasn’t recognised but looks like money (an amount with a currency, not a code) is kept with its full text. “Not a bank: ignore similar” teaches the reader to ignore messages like it (e.g. Tabby); the ignore list shows under the paste box, each with ✕ to undo.',
@@ -5051,10 +5057,21 @@ function dashboardBudgetRows(ym){
     .map(c=>({...c, variance: pnlVarianceMagnitude(c.budget, c.actual)}))
     .sort((x,y)=>Math.abs(y.budget)-Math.abs(x.budget) || Math.abs(y.actual)-Math.abs(x.actual));
 }
+const ccUtilDismissed = new Set();   // in memory only: a dismissed warning is back next time the app opens
+function ccUtilisation(){
+  return D.accounts.filter(a=>a.is_credit_card && Number(a.credit_limit)>0 && a.status!=='Inactive' && a.status!=='Deleted').map(a=>{
+    const owed = Math.max(0, -accountBalance(a.id)), limit = Number(a.credit_limit);
+    return {id:a.id, owed, limit, pct: owed/limit*100};
+  });
+}
 function dashboardTodoItems(){
   const items = [];
   const smsWaiting = smsPending().length;
   if(smsWaiting) items.push({tone:'warn', title:smsWaiting+' bank SMS to post', sub:'Logged by your iPhone. Opens the SMS inbox in New JV', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
+  // v5.12 (#63): a credit card more than 30% used (LedgerOS balance owed / limit). Dismiss hides it until the app is opened again.
+  ccUtilisation().filter(c=>c.pct>30 && !ccUtilDismissed.has(c.id)).forEach(c=>items.push({tone:'neg', title:accShort(c.id)+' is '+c.pct.toFixed(0)+'% used',
+    sub:'Owed '+money(c.owed)+' of a '+money(c.limit)+' limit. Top it up to bring it to 30% or less', label:'Open', onclick:`openStatement(${c.id})`,
+    dismiss:`ccUtilDismissed.add(${c.id}); renderDashboard()`, dismissTitle:'Hide until you next open the app'}));
   const smsLook = smsNeedsLookCount();   // #59
   if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
@@ -6206,6 +6223,27 @@ function smsFindPartner(r, accA, accB, pool, taken){
 // the group's own account comes first (one per SMS, plus its fee lines), then the other halves in the
 // same order, then the fee other halves and transfer-fee differences at the bottom. The other half's
 // account is filled only when it's one of his own mapped accounts; otherwise he picks it.
+// v5.12 (#62): a cashback SMS names no merchant, so it borrows its purchase's: same card and minute, else the
+// nearest earlier purchase on that card. (#64) Its other half goes to the cashback account set in Numbers & accounts.
+const smsIsCashback = r => /cashback/i.test(r.kind||'') || /^cashback$/i.test(r.descr||'');
+function smsCashbackPurchase(r){
+  const at = x => (x.date||'')+' '+(x.time||'');
+  const cands = (D.smsInbox||[]).filter(x=>x.id!==r.id && x.source===r.source && x.acct===r.acct && x.side==='Cr' && !smsIsCashback(x)
+    && x.status!=='review' && x.status!=='dismissed' && at(x)<=at(r));
+  return cands.find(x=>at(x)===at(r)) || cands.sort((a,b)=>at(b).localeCompare(at(a)))[0] || null;
+}
+function smsDescr(r){
+  if(!smsIsCashback(r)) return r.descr;
+  const p = smsCashbackPurchase(r);
+  return p? `Cashback \u00b7 ${p.descr} (${fmt2(p.amt||0)})` : 'Cashback (purchase not found)';
+}
+function getSmsCashbackAcc(){ const v = Number(getUiDismissals().smsCashbackAcc); return v && ACC_BY_ID[v]? v : null; }
+async function setSmsCashbackAcc(v){
+  const d = Object.assign({}, getUiDismissals());
+  if(v) d.smsCashbackAcc = Number(v); else delete d.smsCashbackAcc;
+  await saveUiDismissals(d);
+  toast(v? 'Cashback lines will go to '+v+' \u00b7 '+accShort(Number(v)) : 'Cashback account cleared');
+}
 function smsBuildJVs(groupKey){
   const g = smsGroups().find(x=>x.key===groupKey);
   if(!g || !g.acc) return {jvs:[], netted:[], group:g||null};
@@ -6219,7 +6257,8 @@ function smsBuildJVs(groupKey){
     const d = r.date || todayStr();
     const day = (byDate[d] = byDate[d] || {own:[], other:[], fees:[]});
     const signed = smsSigned(r);
-    day.own.push(L(accA, r.descr, signed, r.id));
+    const descr = smsDescr(r);
+    day.own.push(L(accA, descr, signed, r.id));
     const accB = smsAccFor(r.counter);
     if(accB && accB!==accA){
       const p = smsFindPartner(r, accA, accB, pool, taken);
@@ -6230,7 +6269,7 @@ function smsBuildJVs(groupKey){
         const diff = smsR2(-(signed + pSigned));
         if(Math.abs(diff)>=0.005) day.fees.push(L('', 'Transfer fee · '+r.descr, diff, r.id));
       } else day.other.push(L(accB, r.descr, signed===null? null : -signed, r.id));
-    } else day.other.push(L('', r.descr, signed===null? null : -signed, r.id));
+    } else day.other.push(L(smsIsCashback(r)? (getSmsCashbackAcc()||'') : '', descr, signed===null? null : -signed, r.id));
     if(r.fee && r.fee>0){ day.own.push(L(accA, 'Fee · '+r.descr, -r.fee, r.id)); day.fees.push(L('', 'Fee · '+r.descr, r.fee, r.id)); }
   });
   return {jvs: Object.keys(byDate).sort().map(d=>({date:d, lines:[...byDate[d].own, ...byDate[d].other, ...byDate[d].fees]})), netted:[...netted], group:g};
@@ -6249,15 +6288,36 @@ function smsReconcileAcc(accId){
   const a = dashboardBankAccounts().active.find(x=>x.id===Number(accId));
   return a && !bankReconState(a).noLimit? a : null;
 }
+// v5.12: what the balance window suggests. #60 credit card: the remaining limit in the newest SMS (by arrival) of
+// this Create JV, else nothing. #61 other accounts: ledger balance + this Create JV's lines on the account + its SMS
+// lines already in an unposted JV or draft (the ledger only has posted JVs).
+function smsSuggestedBalance(groupKey, accId){
+  const a = ACC_BY_ID[accId]; if(!a) return null;
+  const {jvs, group} = smsBuildJVs(groupKey);
+  if(a.is_credit_card){
+    const r = (group? group.rows : []).filter(x=>x.remaining!==null && x.remaining!=='' && isFinite(smsRem(x)))
+      .sort((x,y)=>String(y.loggedAt||'').localeCompare(String(x.loggedAt||'')) || (y.date+' '+y.time).localeCompare(x.date+' '+x.time))[0];
+    return r? {value: smsRem(r), note: `From the SMS of ${fmtDateShort(r.date)} ${r.time}`} : null;
+  }
+  const onAcc = l => Number(l.acc)===Number(accId) && l.amt!=='' && l.amt!==null && l.amt!==undefined;
+  const here = jvs.flatMap(j=>j.lines).filter(onAcc);
+  const unposted = [jvDraft].concat(jvDrafts||[]).flatMap(d=>(d && d.lines)||[]).filter(l=>onAcc(l) && l.smsId);
+  const lines = here.concat(unposted);
+  const ledger = accountBalance(accId), sum = smsR2(lines.reduce((t,l)=>t+(Number(l.amt)||0), 0));
+  const n = new Set(lines.map(l=>l.smsId)).size;
+  return {value: smsR2(ledger + sum), note: `Ledger ${money(ledger)} ${sum<0? '\u2212' : '+'} ${n} SMS ${money(Math.abs(sum))} = ${money(ledger+sum)}`};
+}
 function openSmsStmtPrompt(groupKey, accId){
   const a = ACC_BY_ID[accId]; if(!a) return;
   const s = bankReconState(a);
+  const sug = smsSuggestedBalance(groupKey, accId);
   showModal(`
     <div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">\ud83c\udfe6 ${esc(accShort(a.id))}: balance now</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
     <div class="mut" style="font-size:12.5px;margin:8px 0 10px">Before the JV opens, type ${s.isCC? 'the card\'s <b>available limit</b>' : 'the account\'s balance'} from the bank app. Sums work too (500-150 saves 350).</div>
     <label class="fl">${s.isCC? 'Available limit' : 'Statement balance'}</label>
-    <input id="smsStmtBal" type="text" inputmode="decimal" class="num" style="width:180px" value="${s.hasStmt? s.typedVal : ''}"
+    <input id="smsStmtBal" type="text" inputmode="decimal" class="num" style="width:180px" value="${sug? sug.value : (s.hasStmt? s.typedVal : '')}"
       onkeydown="if(event.key==='Enter'){ event.preventDefault(); smsStmtSave(${smsArg(groupKey)}, ${a.id}); }">
+    ${sug? `<div class="mut" id="smsStmtNote" style="font-size:11.5px;margin-top:4px">Suggested: ${esc(sug.note)}. Check it against the bank app.</div>` : ''}
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
       <button class="btn ghost" onclick="smsCreateJVs(${smsArg(groupKey)}, true)">Skip</button>
       <button class="btn pri" onclick="smsStmtSave(${smsArg(groupKey)}, ${a.id})">Save and open the JV</button>
@@ -6326,11 +6386,15 @@ function smsMapHTML(){
   const opts = sel => D.accounts.filter(a=>[1,2].includes(firstDigit(a.id)) && (a.status!=='Inactive' || a.id===sel))
     .map(a=>`<option value="${a.id}" ${a.id===sel?'selected':''}>${a.id} · ${esc(accShort(a.id))}</option>`).join('');
   const entries = Object.entries(getSmsMap()).map(([t,v])=>[t, Number(v)]).sort((a,b)=> a[1]-b[1] || a[0].localeCompare(b[0]));
-  if(!entries.length) return '<div class="mut" style="font-size:12px;margin-top:6px">No numbers mapped yet. Pick an account on a waiting group and it is remembered here.</div>';
+  const cb = getSmsCashbackAcc();
+  const cbHTML = `<div class="row" style="gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap"><span style="font-size:12.5px">Cashback goes to</span>
+      <select id="smsCashbackAcc" style="width:auto" onchange="setSmsCashbackAcc(this.value)"><option value="">(I pick it each time)</option>${D.accounts.filter(a=>a.status!=='Inactive' || a.id===cb).map(a=>`<option value="${a.id}" ${a.id===cb?'selected':''}>${a.id} \u00b7 ${esc(accShort(a.id))}</option>`).join('')}</select>
+      <span class="mut" style="font-size:11px">the other half of every cashback line when JVs are built from SMS</span></div>`;
+  if(!entries.length) return cbHTML + '<div class="mut" style="font-size:12px;margin-top:6px">No numbers mapped yet. Pick an account on a waiting group and it is remembered here.</div>';
   return `<div class="mut" style="font-size:11.5px;margin:6px 0">Each card or account number from the SMS, and the LedgerOS account it goes to. Change one here and its waiting SMS move with it.</div>
     <table class="sms-map" style="margin-top:4px"><tbody>${entries.map(([t,acc])=>`<tr data-smsmap="${esc(t)}"><td class="mono" style="width:120px">${esc(t)}</td>
       <td><select class="sms-map-pick" onchange="smsChangeMapping(${smsArg(t)}, this.value)">${opts(acc)}</select></td>
-      <td style="width:1%;white-space:nowrap"><button class="btn ghost sm" onclick="smsChangeMapping(${smsArg(t)}, '')">Remove</button></td></tr>`).join('')}</tbody></table>`;
+      <td style="width:1%;white-space:nowrap"><button class="btn ghost sm" onclick="smsChangeMapping(${smsArg(t)}, '')">Remove</button></td></tr>`).join('')}</tbody></table>` + cbHTML;
 }
 // ===== v5.11 (#59): SMS that need a look =====
 // "Needs review" rows: messages the server-side parser (Edge Function sms-ingest) skipped but that look like money.
@@ -6449,7 +6513,7 @@ function smsRowHTML(s, actions){
   const extra = [s.kind, s.fee? 'fee '+money(s.fee) : '', (s.currency!=='SAR' && signed!==null && s.fxAmt!==null)? s.currency+' '+s.fxAmt : '',
     s.remaining? 'remaining '+s.remaining : '', other? '↔ '+other : ''].filter(Boolean).join(' · ');
   return `<tr><td class="mono" style="white-space:nowrap">${esc(fmtDateShort(s.date))} <span class="mut">${esc(s.time)}</span></td>
-    <td>${esc(s.descr)}<div class="mut" style="font-size:11px">${esc(extra)}</div></td>
+    <td>${esc(smsDescr(s))}<div class="mut" style="font-size:11px">${esc(extra)}</div></td>
     <td class="num mono">${amtTxt}</td><td style="white-space:nowrap;text-align:right">${actions}</td></tr>`;
 }
 function openSmsInbox(){

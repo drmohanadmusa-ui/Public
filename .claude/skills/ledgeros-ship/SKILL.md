@@ -45,6 +45,7 @@ Only ship work Muhannad has agreed to. If a step fails, stop, say exactly what f
 
 - **Schema change** (`DB_SCHEMA_CORE`)? Tell him to run Settings → Database Schema in the app. It is idempotent, and changes are additive only.
 - **New Supabase table?** Remind him to add it to his backup script's table list.
+- **SMS parser or an Edge Function changed?** Run `node dev/ledgeros/edge/sms-ingest/build.js` (the suite fails while `index.ts` is stale), then deploy it yourself through the Supabase Management API after the merge (commands at the top of `dev/ledgeros/edge/README.md`) and test it with a non-money text. Don't hand this to him (CLAUDE.md section 8).
 
 ## 6. Privacy check (the repo is public)
 
