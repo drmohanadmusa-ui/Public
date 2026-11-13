@@ -8085,6 +8085,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV512CashbackIsNamedAfterItsPurchaseAndGoesToItsAccount();
   await testV512BalanceWindowSuggestsTheBalance();
   await testV512CreditCardOver30PercentWarns();
+  await testV513MerchantMemorySuggestsTheAccount();
+  await testV513SuggestionIsAmberUntilChanged();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -10562,4 +10564,73 @@ async function testV512CreditCardOver30PercentWarns(){
   D.ledger.push({id:91, jv:91, date:'2026-10-03', acc:10150, amt:600, descr:'top up'});
   sb.rebuildIndex();
   assert(!sb.dashboardTodoItems().some(i=>/% used/.test(i.title)), 'At 29% after a top-up: gone');
+}
+
+// v5.13 (#66): merchant memory. Invented shops, accounts and amounts.
+function v513Sandbox(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.accounts.push({id:60103, name:'Groceries', descr:'Groceries', category:'Living', status:'Active', acc_type:'Individual Account'},
+    {id:60104, name:'Dining', descr:'Dining', category:'Living', status:'Active', acc_type:'Individual Account'});
+  sb.rebuildIndex();
+  // posted history: SHOP the description was retyped in the ledger, the SMS keeps the shop name
+  const post = (id, jv, date, descr, amt, acc) => {
+    D.smsInbox.push(R(id, {descr, amt, date, status:'posted', jv}));
+    D.ledger.push({id:5000+id*2, jv, date, acc:10101, amt:-amt, descr:'typed over'}, {id:5001+id*2, jv, date, acc, amt, descr:'my own words'});
+  };
+  post(11, 801, '2026-10-01', 'GREEN MART 12', 50, 60103);
+  post(12, 802, '2026-10-05', 'GREEN MART 12', 60, 60103);
+  post(13, 803, '2026-10-20', 'GREEN MART 12', 70, 60104);
+  post(14, 804, '2026-10-02', 'CAFE ONE', 20, 60102);
+  post(15, 805, '2026-10-09', 'CAFE ONE', 25, 60104);
+  return {sb, D, R};
+}
+async function testV513MerchantMemorySuggestsTheAccount(){
+  const {sb, D, R} = v513Sandbox();
+  await sb.__map({'1111':10101});
+  let s = sb.smsSuggestAcc(R(1, {descr:'GREEN MART 12'}));
+  assert(s && s.acc==='60103' && s.how==='exact', 'Most-used account for the shop wins (2 of 3), whatever the ledger description says; got ' + JSON.stringify(s));
+  s = sb.smsSuggestAcc(R(1, {descr:'CAFE ONE'}));
+  assert(s && s.acc==='60104' && s.how==='exact', 'A tie goes to the most recent use (the larger account id is listed last, so order alone cannot pass this); got ' + JSON.stringify(s));
+  s = sb.smsSuggestAcc(R(1, {descr:'GREEN MART 7'}));
+  assert(s && s.acc==='60103' && s.how==='word', 'Unknown branch with the same first word: suggested as a similar name; got ' + JSON.stringify(s));
+  assert(sb.smsSuggestAcc(R(1, {descr:'NEW PLACE'}))===null && sb.smsSuggestAcc(R(1, {descr:'AB SHOP'}))===null, 'Never seen, or a first word too short to trust: no suggestion');
+  assert(sb.smsSuggestAcc(R(1, {descr:'GREEN MART 12', kind:'Cashback'}))===null, 'Cashback keeps its own setting');
+  // a JV that split one SMS across two accounts teaches nothing
+  D.smsInbox.push(R(16, {descr:'SPLIT SHOP', amt:40, status:'posted', jv:806}));
+  D.ledger.push({id:6100, jv:806, date:'2026-10-11', acc:10101, amt:-40, descr:'x'}, {id:6101, jv:806, date:'2026-10-11', acc:60103, amt:40, descr:'x'}, {id:6102, jv:806, date:'2026-10-11', acc:60104, amt:40, descr:'x'});
+  assert(!sb.smsMerchantMemory()['split shop'], 'Two candidate lines on different accounts: skipped, not guessed');
+  // the card/bank's own lines never count, even an unrelated one with the matching amount in the same JV
+  D.smsInbox.push(R(17, {descr:'ZETA SHOP', amt:30, status:'posted', jv:807}));
+  D.ledger.push({id:6200, jv:807, date:'2026-10-12', acc:10101, amt:-30, descr:'x'}, {id:6201, jv:807, date:'2026-10-12', acc:60103, amt:30, descr:'x'}, {id:6202, jv:807, date:'2026-10-12', acc:10101, amt:30, descr:'transfer in'});
+  s = sb.smsSuggestAcc(R(1, {descr:'ZETA SHOP'}));
+  assert(s && s.acc==='60103', 'The bank line with the same amount is not the other half; got ' + JSON.stringify(s));
+  D.smsInbox.push(R(1, {descr:'GREEN MART 12', amt:33}), R(2, {descr:'NEW PLACE', amt:9}));
+  const lines = sb.smsBuildJVs('a:10101').jvs.find(j=>j.date==='2026-11-11').lines;
+  const other = id => lines.filter(l=>l.smsId===id)[1];
+  assert(other(1) && other(1).acc==='60103' && other(1).amt==='33', 'Create JV fills the purchase other half with the suggestion');
+  assert(other(2) && other(2).acc==='', 'No history: the other half stays blank as before');
+  assert(lines.filter(l=>l.smsId===1)[0].acc==='10101', 'The card/bank line is untouched');
+}
+async function testV513SuggestionIsAmberUntilChanged(){
+  const {sb, D, R} = v513Sandbox();
+  await sb.__map({'1111':10101});
+  D.smsInbox.push(R(1, {descr:'GREEN MART 12', amt:33}), R(2, {descr:'GREEN MART 9', amt:8}));
+  sb.document.body.innerHTML += '<div id="modalRoot"></div>';
+  sb.__set('screen', 'newjv');
+  await sb.smsCreateJVs('a:10101', true);
+  const jv = vm.runInContext('jvDraft', sb);
+  const idx = (id, n) => jv.lines.map((l,i)=>[l,i]).filter(([l])=>l.smsId===id)[n][1];
+  const html = i => sb.jvLineRow(jv.lines[i], i);
+  const i1 = idx(1,1), i2 = idx(2,1), own = idx(1,0);
+  assert(/class="jv-sug-exact"/.test(html(i1)) && /var\(--yellow\) 22%/.test(html(i1)) && />suggested</.test(html(i1)), 'Exact shop: amber with a suggested tag');
+  assert(/class="jv-sug-word"/.test(html(i2)) && /var\(--yellow\) 10%/.test(html(i2)), 'Similar name: paler amber');
+  assert(!/jv-sug-/.test(html(own)) && !/>suggested</.test(html(own)), 'The card/bank line is never coloured');
+  jv.lines[i1].acc = 60104;
+  assert(!/jv-sug-/.test(html(i1)), 'Another account in the line: no colour');
+  const pick = String(vm.runInContext('pickJVAcc', sb)), typed = String(vm.runInContext('jvAccInput', sb));
+  assert(/jvSugClear\(i\)/.test(pick) && /jvSugClear\(i\)/.test(typed), 'Picking or typing an account clears the colour straight away');
+  sb.document.body.innerHTML += '<input id="jvAcc_77" class="jv-sug-exact" style="border-color:red" title="t"><span id="jvSug_77">suggested</span>';
+  sb.jvSugClear(77);
+  const inp = sb.document.getElementById('jvAcc_77');
+  assert(inp && !inp.classList.contains('jv-sug-exact') && !inp.style.borderColor && !sb.document.getElementById('jvSug_77'), 'jvSugClear removes the colour and the tag');
 }
