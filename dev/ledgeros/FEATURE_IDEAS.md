@@ -1,6 +1,6 @@
 # LedgerOS feature long list (#65, 2026-11-13)
 
-Built from the online research and Muhannad's answers in #65. Sorted by impact on his own workflow first, then his wife's, then friends. Nothing here is agreed yet: he picks numbers, then each one gets deeper questions and an implementation plan.
+Built from the online research and Muhannad's answers in #65. Sorted by impact on his own workflow first, then his wife's, then friends. **His pick (2026-11-13):** his own features first, one version each: E (#66), B (#67), D (#68), A (#69, only if simpler than the Forecast). C parked for a later version (#70). Wife and friends features (F–P) parked: return here once his features have shipped.
 
 | # | Feature | Who | Why it ranks here | Size |
 |---|---|---|---|---|
