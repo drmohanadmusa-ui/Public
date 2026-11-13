@@ -1,5 +1,13 @@
 # LedgerOS daily closing prices (Supabase Edge Function)
 
+> **Deploys are done by Claude (2026-11-13).** Both functions are deployed and the schedule is set through the
+> Supabase Management API with Muhannad's scoped access token (project Anthropic-LedgerOS only; Edge Functions and
+> Database read-write, Project Settings and Logs read; saved as a network secret for `api.supabase.com`, 90 days).
+> The dashboard steps below are kept as the fallback. Deploy command (from this folder):
+> `curl -X POST "https://api.supabase.com/v1/projects/<ref>/functions/deploy?slug=<name>" -F 'metadata={"entrypoint_path":"index.ts","name":"<name>","verify_jwt":<true|false>};type=application/json' -F "file=@<name>/index.ts;type=application/typescript"`
+> `inv-daily-close` runs with `verify_jwt:false` (it only saves public prices and is safe to re-run), so the pg_cron job
+> needs no key; `sms-ingest` keeps `verify_jwt:true`. SQL goes to `POST /v1/projects/<ref>/database/query`.
+
 `inv-daily-close/index.ts` runs once a day on Supabase, even when LedgerOS is closed. It reads the price links and
 API keys you set in LedgerOS (⚙ Setup → 💹 Price links, saved with your synced settings), fetches one price per
 linked position, and saves it as **the closing price of the previous day (UTC)** in `pd_inv_valuations`.
@@ -94,7 +102,7 @@ Final set of automations: **Amount**, **مبلغ**, **شراء** (delete the `SA
 3. Add **Get Contents of URL**:
    - URL: `https://YOUR-PROJECT.supabase.co/functions/v1/sms-ingest`
    - tap the arrow (Show More): **Method** `POST`
-   - **Headers** → Add new header: key `Authorization`, value `Bearer YOUR-ANON-KEY`
+   - **Headers** → Add new header: key `apikey`, value YOUR-ANON-KEY (tested 2026-11-13: this header alone is enough)
    - **Request Body** `JSON` → Add new field → **Text**: key `text`, value: the **Shortcut Input** variable
      (if it offers a choice, pick its **Content**)
 4. Add **Get Dictionary Value**: Get **Value** for **notify** in **Contents of URL**.
