@@ -590,12 +590,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.12.0';
+const APP_VERSION = '5.13.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.13.0', date:'2026-11-13', changes:[
+    'SMS \u2192 Create JV now remembers your shops: a purchase line arrives with the account you used most for that shop before (ties go to the most recent one), shown in amber with a small \u201csuggested\u201d tag. A shop that only shares its first word with one you have used gets a paler amber. Keep it and post, or pick another account and the colour goes.',
+    'It learns from the SMS you have already posted, using the shop name the SMS arrived with, so you can keep retyping descriptions however you like. Nothing new is saved. Transfers and cashback keep their own rules, and a shop whose JV split one SMS across two accounts teaches nothing.',
+  ]},
   {version:'5.12.0', date:'2026-11-13', changes:[
     'SMS → Create JV, the balance window now suggests the balance: for a credit card, the remaining limit from the newest SMS in that JV; for a bank account, the ledger balance plus the SMS being posted and any of its SMS already in an unposted JV or draft, with the working shown under the box.',
     'Cashback SMS are named after their purchase (“Cashback · SHOP (75.00)”: same card and minute, else the nearest earlier purchase), in the inbox and in the JV lines.',
@@ -5445,13 +5449,15 @@ function renderJvBalanceCheckBar(){
 }
 function jvLineRow(l,i){
   const bcOn = jvBalanceCheckMode;
+  const sug = jvLineSuggestion(l);
   const bcSelected = jvBalanceCheckSelected.has(i);
   return `<tr style="${bcOn && !bcSelected? 'opacity:.4' : ''}">
     ${bcOn? `<td style="text-align:center"><input type="checkbox" ${bcSelected?'checked':''} onchange="toggleJvBalanceCheckLine(${i})"></td>` : ''}
     <td class="autoc"><div style="display:flex;gap:4px;align-items:center">
-      <input id="jvAcc_${i}" style="flex:1" placeholder="Search account…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${l.acc? esc(accName(l.acc)) : (l._q||'')}"
+      <input id="jvAcc_${i}" style="flex:1${sug? ';border-color:var(--yellow);background:color-mix(in srgb, var(--yellow) '+(sug==='exact'?'22':'10')+'%, transparent)' : ''}"${sug? ` class="jv-sug-${sug}" title="Suggested from the account you used for this shop before${sug==='word'?' (similar name)':''}: keep it or pick another"` : ''} placeholder="Search account…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${l.acc? esc(accName(l.acc)) : (l._q||'')}"
         oninput="jvAccInput(${i},this.value)" onfocus="jvAccInput(${i},this.value)"
         onkeydown="jvAccKey(event,${i})" onblur="setTimeout(()=>closeAcDrop(${i}),150)">
+      ${sug? `<span id="jvSug_${i}" class="mut" style="font-size:10.5px;color:var(--yellow);white-space:nowrap">suggested</span>` : ''}
       ${i>0? `<button type="button" class="x" title="Copy account from line above" onclick="copyAccAbove(${i})">⤴</button>` : ''}
       <button type="button" class="x" title="Clear" onclick="clearJVField(${i},'acc')">✕</button>
       <div class="acdrop" id="acdrop_${i}"></div>
@@ -5627,6 +5633,7 @@ function removeJVLine(i){
   renderNewJV();
 }
 function jvAccInput(i,val){
+  if(document.activeElement && document.activeElement.id==='jvAcc_'+i && val!==accName(jvDraft.lines[i].acc)) jvSugClear(i);
   jvDraft.lines[i]._q = val;
   if(!val){ jvDraft.lines[i].acc=''; }
   const matches = accountSearchMatches(val, postableAccounts());
@@ -5662,7 +5669,14 @@ function jvAccKey(ev,i){
   }
   else if(ev.key==='Escape'){ closeAcDrop(i); }
 }
+// Once he types or picks an account himself, the suggestion colour goes.
+function jvSugClear(i){
+  const inp = document.getElementById('jvAcc_'+i), tag = document.getElementById('jvSug_'+i);
+  if(inp){ inp.style.borderColor=''; inp.style.background=''; inp.classList.remove('jv-sug-exact','jv-sug-word'); inp.removeAttribute('title'); }
+  if(tag) tag.remove();
+}
 function pickJVAcc(i,accId){
+  jvSugClear(i);
   jvDraft.lines[i].acc = accId; jvDraft.lines[i]._matches=[]; jvDraft.lines[i]._hi=-1;
   const inp = document.getElementById('jvAcc_'+i);
   if(inp) inp.value = accName(accId);
@@ -6244,12 +6258,54 @@ async function setSmsCashbackAcc(v){
   await saveUiDismissals(d);
   toast(v? 'Cashback lines will go to '+v+' \u00b7 '+accShort(Number(v)) : 'Cashback account cleared');
 }
+// v5.13 (#66) merchant memory: which account each shop's purchases went to, learned from posted SMS.
+// Each posted SMS keeps its shop name and JV number, so the other half is the line in that JV with the
+// opposite amount on an account that isn't the card/bank itself (whatever the description says now).
+// Nothing new is stored. An SMS whose JV has two such lines on different accounts teaches nothing.
+function smsMerchantMemory(){
+  const byJv = {};
+  (D.ledger||[]).forEach(l=>{ if(l.jv) (byJv[l.jv] = byJv[l.jv] || []).push(l); });
+  const mem = {};
+  (D.smsInbox||[]).forEach(s=>{
+    if(s.status!=='posted' || !s.jv || smsIsCashback(s) || smsAccFor(s.counter)) return;
+    const k = smsMerchantKey(s), signed = smsSigned(s), own = smsAccFor(s.acct);
+    if(!k || signed===null) return;
+    const accs = [...new Set((byJv[s.jv]||[]).filter(l=>String(l.acc)!==String(own) && Math.abs(Number(l.amt)+signed)<0.005).map(l=>String(l.acc)))];
+    if(accs.length!==1 || !ACC_BY_ID[accs[0]]) return;
+    const e = ((mem[k] = mem[k] || {})[accs[0]] = mem[k][accs[0]] || {n:0, last:''});
+    e.n++; if((s.date||'')>e.last) e.last = s.date||'';
+  });
+  return mem;
+}
+// Most-used account for the shop, ties to the most recent; else the same first word (how:'word').
+function smsSuggestAcc(r, mem){
+  if(!r || smsIsCashback(r) || smsAccFor(r.counter)) return null;
+  mem = mem || smsMerchantMemory();
+  const k = smsMerchantKey(r); if(!k) return null;
+  const best = tallies => { const e = Object.entries(tallies).sort((a,b)=>b[1].n-a[1].n || b[1].last.localeCompare(a[1].last))[0]; return e? e[0] : null; };
+  if(mem[k]){ const acc = best(mem[k]); if(acc) return {acc, how:'exact'}; }
+  const w = k.split(' ')[0];
+  if(w.length<3) return null;
+  const merged = {};
+  Object.keys(mem).filter(m=>m.split(' ')[0]===w).forEach(m=>Object.entries(mem[m]).forEach(([acc,e])=>{
+    const t = (merged[acc] = merged[acc] || {n:0, last:''}); t.n += e.n; if(e.last>t.last) t.last = e.last; }));
+  const acc = best(merged);
+  return acc? {acc, how:'word'} : null;
+}
+// New JV: 'exact' | 'word' when this line still holds the account merchant memory suggested.
+function jvLineSuggestion(l){
+  if(!l || !l.smsId || !l.acc) return null;
+  const r = (D.smsInbox||[]).find(x=>x.id===Number(l.smsId));
+  if(!r || String(l.acc)===String(smsAccFor(r.acct))) return null;
+  const sug = smsSuggestAcc(r);
+  return sug && String(sug.acc)===String(l.acc)? sug.how : null;
+}
 function smsBuildJVs(groupKey){
   const g = smsGroups().find(x=>x.key===groupKey);
   if(!g || !g.acc) return {jvs:[], netted:[], group:g||null};
   const accA = g.acc, pool = smsPending();
   const netted = new Set(smsNettedPairs(g.rows).flat().map(r=>r.id));
-  const taken = new Set(), byDate = {};
+  const taken = new Set(), byDate = {}, mem = smsMerchantMemory();
   const L = (acc, descr, amt, smsId) => ({acc: acc? String(acc) : '', descr, amt: (amt===null||amt===undefined)? '' : String(smsR2(amt)), smsId});
   g.rows.forEach(r=>{
     if(netted.has(r.id) || taken.has(r.id)) return;
@@ -6269,7 +6325,7 @@ function smsBuildJVs(groupKey){
         const diff = smsR2(-(signed + pSigned));
         if(Math.abs(diff)>=0.005) day.fees.push(L('', 'Transfer fee · '+r.descr, diff, r.id));
       } else day.other.push(L(accB, r.descr, signed===null? null : -signed, r.id));
-    } else day.other.push(L(smsIsCashback(r)? (getSmsCashbackAcc()||'') : '', descr, signed===null? null : -signed, r.id));
+    } else { const sug = smsIsCashback(r)? null : smsSuggestAcc(r, mem); day.other.push(L(smsIsCashback(r)? (getSmsCashbackAcc()||'') : (sug? sug.acc : ''), descr, signed===null? null : -signed, r.id)); }
     if(r.fee && r.fee>0){ day.own.push(L(accA, 'Fee · '+r.descr, -r.fee, r.id)); day.fees.push(L('', 'Fee · '+r.descr, r.fee, r.id)); }
   });
   return {jvs: Object.keys(byDate).sort().map(d=>({date:d, lines:[...byDate[d].own, ...byDate[d].other, ...byDate[d].fees]})), netted:[...netted], group:g};
