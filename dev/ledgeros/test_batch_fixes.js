@@ -8087,6 +8087,11 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV512CreditCardOver30PercentWarns();
   await testV513MerchantMemorySuggestsTheAccount();
   await testV513SuggestionIsAmberUntilChanged();
+  await testV514LoanScheduleMaths();
+  await testV514LoanMidwaySettlementCompare();
+  await testV514LoanFillsItsProvision();
+  await testV514LoanLedgerCheckAndPage();
+  await testV514LoanSaveAndTableLists();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9164,8 +9169,8 @@ async function testSmsInboxTableIsInEveryTableList(){
   const html = fs.readFileSync(APP_HTML, 'utf8');
   const sb = makeSandbox();
   const sql = vm.runInContext('DB_SCHEMA_CORE', sb);
-  assert(/create table if not exists pd_sms_inbox \(/.test(sql) && /'pd_sms_inbox',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_sms_inbox and gives it the same RLS policy as every table');
-  assert(/fetchAllRows\('pd_sms_inbox','id'\)/.test(html) && /TOTAL_SOURCES = 27/.test(html), 'The cloud load fetches it (and the splash progress counts it)');
+  assert(/create table if not exists pd_sms_inbox \(/.test(sql) && /'pd_sms_inbox',\s*\n\s*'pd_loans',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_sms_inbox and gives it the same RLS policy as every table');
+  assert(/fetchAllRows\('pd_sms_inbox','id'\)/.test(html) && /TOTAL_SOURCES = 28/.test(html), 'The cloud load fetches it (and the splash progress counts it)');
   assert(/SB\.from\('pd_sms_inbox'\)\.delete\(\)\.neq\('id',-1\); bump/.test(html) && /insertWithRetry\('pd_sms_inbox', D\.smsInbox\.map\(smsToRow\)\)/.test(html), 'Restore from backup clears and restores it');
   assert((html.match(/SB\.from\('pd_sms_inbox'\)\.delete\(\)/g)||[]).length===2, 'Wipe-all clears it too');
   const D = vm.runInContext('D', sb); delete D.smsInbox; sb.normalizeDataShape(D);
@@ -10633,4 +10638,160 @@ async function testV513SuggestionIsAmberUntilChanged(){
   sb.jvSugClear(77);
   const inp = sb.document.getElementById('jvAcc_77');
   assert(inp && !inp.classList.contains('jv-sug-exact') && !inp.style.borderColor && !sb.document.getElementById('jvSug_77'), 'jvSugClear removes the colour and the tag');
+}
+
+// v5.14 (#67): Loans. Invented loans, accounts and figures only.
+function v514Sandbox(){
+  const sb = dashSandbox({today:'2026-11-14T10:00:00.000Z'});
+  const D = vm.runInContext('D', sb);
+  const A = (id, category, name) => ({id, name, descr:name, category, status:'Active', acc_type:'Individual Account'});
+  D.accounts.push(A(20111,'Short Term Liabilities','Payable'), A(20208,'Long Term Liabilities','Car finance'), A(20202,'Long Term Liabilities','Personal loan'),
+    A(60209,'Transportation','Car insurance'), A(60999,'Living','Financing cost'));
+  sb.rebuildIndex();
+  D.loans = []; D.provisionGroups = [];
+  return {sb, D};
+}
+const lnear = (a, b, tol) => Math.abs(Number(a) - Number(b)) <= (tol===undefined? 0.005 : tol);
+async function testV514LoanScheduleMaths(){
+  const {sb} = v514Sandbox();
+  // equal instalments at 6% APR: the textbook payment for 100,000 over 60 months is 1,933.28
+  let s = sb.loanSchedule({kind:'equal', terms:{amount:100000, termMonths:60, apr:6, firstPayment:'2026-01'}});
+  assert(!s.error && s.rows.length===60 && lnear(s.instalment, 1933.28), 'Equal: 60 rows, instalment 1,933.28, got ' + JSON.stringify([s.error, s.instalment]));
+  assert(s.rows[0] && lnear(s.rows[0].profit, 500) && lnear(s.rows[0].principal, 1433.28) && s.rows[0].month==='2026-01' && s.rows[1].month==='2026-02', 'Month 1: profit 500 on 100,000 at 0.5%, the rest is principal');
+  assert(s.rows[0].profit > s.rows[59].profit && lnear(s.rows[59].balance, 0) && lnear(s.rows.reduce((x,r)=>x+r.principal,0), 100000, 0.01), 'Profit heavier early; repaid to 0; principal adds up to the amount');
+  // flat 3% a year for 5 years = 15,000 profit, 1,916.67 a month; split at the APR it implies
+  s = sb.loanSchedule({kind:'equal', terms:{amount:100000, termMonths:60, flatRate:3, firstPayment:'2026-01'}});
+  assert(!s.error && lnear(s.instalment, 1916.67) && s.apr>5.5 && s.apr<5.9 && lnear(s.rows.reduce((x,r)=>x+r.profit,0), 15000, 1) && lnear(s.flat, 3, 0.01), 'Flat 3%: 15,000 profit, APR about 5.7%, got ' + JSON.stringify([s.instalment, s.apr, s.flat]));
+  assert(s.rows[0].profit > s.rows[30].profit, 'Flat-rate loan still takes profit more heavily early (reducing balance)');
+  // the bank's instalment wins and sets the rate
+  s = sb.loanSchedule({kind:'equal', terms:{amount:100000, termMonths:60, instalment:1933.28, apr:9, firstPayment:'2026-01'}});
+  assert(!s.error && lnear(s.apr, 6, 0.01), 'Instalment typed in: rate solved from it (6%), not the APR typed, got ' + s.apr);
+  assert(sb.loanSchedule({kind:'equal', terms:{amount:100000, termMonths:60, instalment:1000, firstPayment:'2026-01'}}).error, 'An instalment that can’t repay the amount is refused');
+  assert(sb.loanSchedule({kind:'equal', terms:{amount:100000, termMonths:60}}).error, 'Missing first payment month: error, no rows');
+  // balloon / 50-50: final payment with the last instalment, insurance on top of every payment
+  s = sb.loanSchedule({kind:'balloon', terms:{amount:100000, termMonths:24, apr:6, balloon:45000, insurance:400, firstPayment:'2026-01'}});
+  const last = s.rows[23];
+  assert(!s.error && last && lnear(last.balance, 0) && lnear(last.final, 45000, 0.5) && lnear(last.payment, s.instalment + 45000, 0.5), 'Balloon: last row pays the final 45,000 (within cent rounding over 24 months) and ends at 0, got ' + JSON.stringify(last));
+  assert(s.rows.every(r=>r.insurance===400 && lnear(r.total, r.payment+400)) && lnear(s.rows[0].profit, 500), 'Insurance is added to each payment, not profit or principal');
+  // profit-only months, then the principal steps up and instalments run
+  s = sb.loanSchedule({kind:'profitOnly', terms:{amount:500000, phase2Amount:800000, profitOnlyMonths:24, termMonths:264, apr:4.8, firstPayment:'2026-01'}});
+  assert(!s.error && s.rows.length===264 && s.rows.slice(0,24).every(r=>r.profitOnly && lnear(r.payment, 2000) && r.principal===0 && lnear(r.balance, 500000)), 'Profit-only: 24 months of 2,000 on 500,000, principal unchanged');
+  const r25 = s.rows[24];
+  assert(r25 && !r25.profitOnly && lnear(r25.opening, 800000) && lnear(r25.stepUp, 300000) && lnear(r25.profit, 3200) && lnear(s.rows[263].balance, 0), 'Month 25: principal steps up to 800,000, profit 3,200, repaid by the end');
+  s = sb.loanSchedule({kind:'profitOnly', terms:{amount:500000, profitOnlyMonths:12, profitOnlyPayment:2100, termMonths:72, instalment:9000, firstPayment:'2026-01'}});
+  assert(!s.error && lnear(s.rows[0].payment, 2100) && lnear(s.rows[0].profit, 2100) && lnear(s.rows[12].payment, 9000), 'Contract payments for both phases are used as given');
+}
+async function testV514LoanMidwaySettlementCompare(){
+  const {sb} = v514Sandbox();
+  const loan = {id:1, name:'Test loan', kind:'equal', terms:{amount:100000, termMonths:60, apr:6, firstPayment:'2025-01', noSettleBefore:'2027-01'}, accs:{}};
+  const st = sb.loanStatus(loan);
+  const s = sb.loanSchedule(loan);
+  assert(!st.error && st.done===22 && st.left===38 && st.next && st.next.month==='2026-11' && lnear(st.owed, s.rows[22].opening), 'Started 2025-01, today 2026-11: 22 done, 38 left, this month is next, got ' + JSON.stringify([st.done, st.left]));
+  assert(lnear(st.profitPaid + st.profitLeft, s.rows.reduce((x,r)=>x+r.profit,0), 0.01) && st.end==='2029-12', 'Profit paid + still to pay = all the profit; ends Dec 2029');
+  const x = sb.loanSettlement(loan, '2027-03');
+  const i = s.rows.findIndex(r=>r.month==='2027-03');
+  const next3 = s.rows[i].profit + s.rows[i+1].profit + s.rows[i+2].profit;
+  assert(x && lnear(x.owed, s.rows[i].opening) && lnear(x.next3, next3, 0.01) && lnear(x.amount, s.rows[i].opening + next3, 0.01), 'SAMA: principal owed + next 3 months’ profit, got ' + JSON.stringify(x));
+  assert(lnear(x.saved, s.rows.slice(i).reduce((a,r)=>a+r.profit,0) - next3, 0.01) && x.count===60-i && !x.blocked, 'Saved = the rest of the profit minus those 3 months');
+  assert(sb.loanSettlement(loan, '2026-12').blocked, 'Before the contract’s no-settlement date: flagged');
+  const c = sb.loanCompare(loan, '2027-03', 4, 36);
+  assert(c && !c.error && lnear(c.swap.monthly, sb.loanPayment(x.amount, 4/1200, 36), 0.01) && c.swap.end==='2030-03' && c.keep.end==='2029-12' && lnear(c.keep.monthly, s.instalment), 'Compare: new loan of the settlement amount, its own instalment and end date, got ' + JSON.stringify(c && c.swap));
+}
+function v514Provision(D){
+  const g = {id:7, name:'Test car', lines:[{acc:20111, lineId:100000, descrBase:'Car - Monthly Payment'}, {acc:20208, lineId:100001, descrBase:'Car - Principle'},
+    {acc:20208, lineId:100002, descrBase:'Car - Profit'}, {acc:60209, lineId:100003, descrBase:'Car - Insurance'}], months:{}};
+  ['2026-10','2026-11','2026-12','2027-01','2027-02','2027-03'].forEach(m=>{ g.months[m] = {100000:-1000, 100001:400, 100002:300, 100003:300}; });
+  D.provisionGroups.push(g);
+  return g;
+}
+async function testV514LoanFillsItsProvision(){
+  const {sb, D} = v514Sandbox();
+  const g = v514Provision(D);
+  const loan = {id:1, name:'Test car', kind:'balloon', provisionId:7, accs:{liability:20208, profit:60999, payable:20111, insurance:60209},
+    terms:{amount:50000, termMonths:3, apr:6, balloon:20000, insurance:300, firstPayment:'2026-11'}};
+  D.loans.push(loan);
+  const s = sb.loanSchedule(loan);
+  const p = sb.loanProvisionPlan(loan, '2026-12');
+  assert(!p.error && p.newLines.length===1 && p.newLines[0].acc===60999 && p.newLines[0].lineId===100004, 'Profit to Financing cost: a new line is added');
+  assert(p.roleLine.principal.lineId===100001 && p.roleLine.payable.lineId===100000 && p.roleLine.insurance.lineId===100003, 'Existing lines reused by account and wording (Principle / Monthly Payment / Insurance)');
+  await sb.applyLoanProvision(1, '2026-12');
+  const dec = g.months['2026-12'], r = s.rows[1];
+  assert(lnear(dec[100000], -r.total) && lnear(dec[100001], r.principal) && lnear(dec[100004], r.profit) && lnear(dec[100003], 300) && dec[100002]===0, 'December: payable −total, principal, profit on Financing cost, insurance; the old profit line on the loan account is 0, got ' + JSON.stringify(dec));
+  assert(Object.values(dec).reduce((a,v)=>a+Number(v),0) < 0.005 && Math.abs(Object.values(g.months['2027-01']).reduce((a,v)=>a+Number(v),0)) < 0.005, 'Each filled month balances to 0');
+  assert(lnear(g.months['2027-01'][100001], s.rows[2].principal) && s.rows[2].principal > 20000, 'Last month carries the final payment as principal (a cash outflow in the Forecast)');
+  assert(g.months['2027-02'][100000]===0 && g.months['2027-03'][100003]===0, 'Months after the loan ends are set to 0');
+  assert(g.months['2026-11'][100000]===-1000 && g.months['2026-10'][100002]===300 && g.months['2026-11'][100004]===undefined, 'Months before the chosen start are not touched');
+  assert(sb.__calls.some(c=>c.table==='pd_provisions' && c.kind==='upsert' && c.row.id===7 && c.row.lines.length===5), 'The provision is saved with its new line');
+  const again = sb.loanProvisionPlan(loan, '2026-12');
+  assert(!again.error && again.changes.length===0 && again.newLines.length===0, 'Running it again changes nothing');
+  // personal loan: one line with the whole instalment becomes principal + a new profit line
+  const g2 = {id:8, name:'Test personal', lines:[{acc:20202, lineId:100000, descrBase:'Personal Loan'}, {acc:20111, lineId:100001, descrBase:'Personal Loan'}], months:{'2026-12':{100000:2000, 100001:-2000}}};
+  D.provisionGroups.push(g2);
+  const pl = {id:2, name:'Test personal', kind:'equal', provisionId:8, accs:{liability:20202, profit:60999, payable:20111}, terms:{amount:60000, termMonths:36, apr:5, firstPayment:'2026-12'}};
+  const p2 = sb.loanProvisionPlan(pl, '2026-12');
+  assert(!p2.error && p2.roleLine.principal.lineId===100000 && p2.roleLine.payable.lineId===100001 && p2.newLines.length===1 && !p2.roleLine.insurance, 'Personal loan: whole-instalment line becomes principal, profit line added, no insurance line');
+  assert(sb.loanProvisionPlan(Object.assign({}, pl, {accs:{liability:20202}}), '2026-12').error, 'Missing profit or payable account: refused with a message');
+  assert(sb.loanProvisionPlan(Object.assign({}, pl, {provisionId:null}), '2026-12').error, 'No provision linked: refused');
+  D.loans.push(pl);
+  sb.openLoanProvisionPreview(2, '2026-12');
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Update “Test personal” from the schedule/.test(html) && /Personal Loan - Profit|Test personal - Profit/.test(html) && /Earlier months are not touched/.test(html), 'Preview lists the changes and the new line before anything is saved');
+}
+async function testV514LoanLedgerCheckAndPage(){
+  const {sb, D} = v514Sandbox();
+  const loan = {id:1, name:'Test loan', lender:'Test bank', kind:'equal', accs:{liability:20202}, terms:{amount:100000, termMonths:60, apr:6, firstPayment:'2026-10'}};
+  D.loans.push(loan);
+  const s = sb.loanSchedule(loan);
+  D.ledger.push({id:900, jv:900, date:'2026-09-20', acc:20202, amt:-100000, descr:'loan drawn'}, {id:901, jv:901, date:'2026-10-25', acc:20202, amt:1933.28, descr:'whole instalment'});
+  sb.rebuildIndex();
+  const chk = sb.loanLedgerCheck(loan);
+  assert(chk && lnear(chk.ledgerOwed, 100000-1933.28) && lnear(chk.scheduleOwed, s.rows[1].opening) && lnear(chk.diff, -s.rows[0].profit), 'Whole instalment booked to the loan: the ledger shows less owed by exactly the profit, got ' + JSON.stringify(chk));
+  assert(sb.loanLedgerCheck(Object.assign({}, loan, {accs:{}}))===null, 'No loan account: no check');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.renderLoansPage();
+  let html = sb.document.getElementById('app').innerHTML;
+  assert(/data-loan="1"/.test(html) && /1 of 60 months done · 59 left/.test(html) && /Test bank/.test(html) && /APR 6\.00%/.test(html), 'Card: months done/left, lender, APR');
+  assert(/shows 98,066\.72 owed; the schedule says/.test(html) && /credit 20202 500\.00/.test(html), 'Card shows the ledger difference and the correcting JV (credit the loan account)');
+  assert(/Not linked to a provision yet/.test(html) && /Principal owed/.test(html), 'Unlinked loan says the Forecast doesn’t see it');
+  sb.setLoanPanel(1, 'schedule');
+  html = sb.document.getElementById('app').innerHTML;
+  assert((html.match(/<tr style=/g)||[]).length===60 && /opacity:\.45/.test(html), 'Schedule: 60 rows, paid months greyed');
+  sb.setLoanPanel(1, 'settle');
+  assert(/You’d pay/.test(sb.document.getElementById('app').innerHTML) && /3 months’ profit/.test(sb.document.getElementById('app').innerHTML), 'Early settlement panel');
+  D.loans.push({id:2, name:'Broken', kind:'equal', accs:{}, terms:{}});
+  D.loans.push({id:3, name:'Old loan', kind:'equal', accs:{}, settledOn:'2026-01-01', terms:{amount:1000, termMonths:2, apr:5, firstPayment:'2025-01'}});
+  sb.renderLoansPage();
+  html = sb.document.getElementById('app').innerHTML;
+  assert(/Enter the amount, the term in months/.test(html) && /Settled loans \(1\)/.test(html), 'A loan missing terms says what to enter; settled loans are tucked away');
+}
+async function testV514LoanSaveAndTableLists(){
+  const {sb, D} = v514Sandbox();
+  sb.openLoanModal();
+  const set = (k, v) => { const el = sb.document.getElementById('loanF_'+k); assert(el, 'field ' + k); if(el) el.value = v; };
+  set('name', 'New loan'); set('kind', 'equal'); set('amount', '50,000'); set('termMonths', '24'); set('apr', '5'); set('firstPayment', '2026-12'); set('liability', '20202'); set('profit', '60999');
+  await sb.saveLoanFromModal(null);
+  const l = D.loans[0];
+  assert(l && l.id===1 && l.terms.amount===50000 && l.terms.termMonths===24 && l.terms.firstPayment==='2026-12' && l.accs.liability===20202 && l.accs.profit===60999 && l.accs.payable===20111, 'Saved with numbers, month and accounts (payable defaults to 20111), got ' + JSON.stringify(l));
+  const w = sb.__calls.find(c=>c.table==='pd_loans' && c.kind==='upsert');
+  assert(w && w.row.terms.amount===50000 && w.row.provision_id===null && w.row.kind==='equal', 'Written to pd_loans');
+  sb.openLoanModal(); set('name', 'Bad'); set('amount', 'abc');
+  await sb.saveLoanFromModal(null);
+  assert(D.loans.length===1, 'A non-number is refused');
+  const sel = sb.document.querySelector('#loanF_kind');
+  assert(sel && /loanKindFields\(this\.value\)/.test(sel.getAttribute('onchange')||''), 'Type choice shows its own fields');
+  await sb.toggleLoanSettled(1);
+  assert(l.settledOn==='2026-11-14' && sb.__calls.filter(c=>c.table==='pd_loans').pop().row.settled_on==='2026-11-14', 'Mark settled saves the date');
+  await sb.toggleLoanSettled(1);
+  assert(l.settledOn===null, 'Active again clears it');
+  const back = sb.loanFromRow(Object.assign(sb.loanToRow(l), {updated_at:'x'}));
+  assert(back.id===1 && back.terms.amount===50000 && back.accs.liability===20202 && back.provisionId===null && back.settledOn===null, 'Row round trip');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const sql = vm.runInContext('DB_SCHEMA_CORE', sb);
+  assert(/create table if not exists pd_loans \(/.test(sql) && /'pd_loans',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_loans with the same RLS policy');
+  assert(/fetchAllRows\('pd_loans','id'\)/.test(html) && /loanRows\] =/.test(html) && /D\.loans = loanRows\.data\.map\(loanFromRow\)/.test(html), 'Cloud load reads it');
+  assert(/SB\.from\('pd_loans'\)\.delete\(\)\.neq\('id',-1\); bump/.test(html) && /insertWithRetry\('pd_loans', D\.loans\.map\(loanToRow\)\)/.test(html) && (html.match(/SB\.from\('pd_loans'\)\.delete\(\)/g)||[]).length===2, 'Restore and wipe-all clear and restore it');
+  assert(/loans: parsed\.loans\|\|\[\]/.test(html), 'Restore from a backup file keeps the loans');
+  const D2 = vm.runInContext('D', sb); delete D2.loans; sb.normalizeDataShape(D2);
+  assert(Array.isArray(D2.loans), 'An old cache without loans gets an empty list');
+  assert(vm.runInContext('SCREENS', sb).some(s=>s[0]==='loans') && /loans:renderLoansPage/.test(html), 'Loans is a page in the side menu');
 }

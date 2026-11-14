@@ -590,12 +590,20 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.13.0';
+const APP_VERSION = '5.14.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.14.0', date:'2026-11-14', changes:[
+    'New Loans page in the side menu (\ud83c\udfe6). Add each loan with its contract figures, even one that is already running: the app works out the months done and left, the principal still owed, the profit paid and still to pay, the APR and the flat rate.',
+    'Three loan types: equal instalments; profit-only months, then the principal steps up and normal instalments start; and instalments with a final payment (50/50 car) plus insurance in each payment. Profit is split on the balance still owed, so it is heavier in the early months, as banks book it. When you type the contract instalment, it sets the rate.',
+    'Each loan card has its full schedule (paid months greyed, this month highlighted, \u2b07 CSV), an early-settlement calculator (SAMA rule: principal still owed + the next 3 months\u2019 profit, with the profit you save) and a compare view (keep the loan, or settle it with a new loan at a rate and term you choose).',
+    '\ud83d\udd2e Update provision fills the loan\u2019s provision from the month you pick to the end of the loan with the exact split (payable, principal, profit to Financing cost, insurance), after showing every change. Earlier months are never touched, so the Forecast and the provision JV follow the schedule, including the car\u2019s final payment. Nothing is posted for you.',
+    'Each card also compares the principal owed with the loan account in the ledger and, if they differ, tells you the one-time JV to post yourself.',
+    'DATABASE CHANGE: adds the new pd_loans table (already set up for you). Add pd_loans to your backup script\u2019s table list.',
+  ]},
   {version:'5.13.0', date:'2026-11-13', changes:[
     'SMS \u2192 Create JV now remembers your shops: a purchase line arrives with the account you used most for that shop before (ties go to the most recent one), shown in amber with a small \u201csuggested\u201d tag. A shop that only shares its first word with one you have used gets a paler amber. Keep it and post, or pick another account and the colour goes.',
     'It learns from the SMS you have already posted, using the shop name the SMS arrived with, so you can keep retyping descriptions however you like. Nothing new is saved. Transfers and cashback keep their own rules, and a shop whose JV split one SMS across two accounts teaches nothing.',
@@ -1323,7 +1331,7 @@ const CHANGELOG = [
     'Added an iPhone/iPad home-screen icon, so adding the site to your home screen shows a real icon instead of a blank screenshot.',
   ]},
 ];
-let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[], smsInbox:[]};
+let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[], loans:[], smsInbox:[]};
 let jvDrafts = []; // local-only scratchpad of unfinished JVs — not synced to cloud
 function loadJVDrafts(){ try{ return JSON.parse(localStorage.getItem('jvDrafts_v1')||'[]'); }catch(e){ return []; } }
 function saveJVDraftsList(){ try{ safeSetItem('jvDrafts_v1', JSON.stringify(jvDrafts)); }catch(e){} }
@@ -1406,6 +1414,7 @@ function normalizeDataShape(D){
   if(!Array.isArray(D.forecastSnapshots)) D.forecastSnapshots = [];
   if(!Array.isArray(D.invRoboValueLog)) D.invRoboValueLog = [];
   if(!Array.isArray(D.smsInbox)) D.smsInbox = [];
+  if(!Array.isArray(D.loans)) D.loans = [];
   if(!D.forecastPlans || typeof D.forecastPlans!=='object') D.forecastPlans = {};
   if(!D.nameTranslations || typeof D.nameTranslations!=='object') D.nameTranslations = {};
   if(!D.descrTranslations || typeof D.descrTranslations!=='object') D.descrTranslations = {};
@@ -2319,12 +2328,12 @@ async function fetchAllFromCloud(forceFullLedger){
   // slowest of the 16) with zero visible movement. Ledger's own page-by-page fetch progress
   // (ledgerProgress below) is blended in as a fraction of its single slot, so the bar now advances
   // smoothly through that wait instead of appearing to hang.
-  const TOTAL_SOURCES = 27;
+  const TOTAL_SOURCES = 28;
   let completedSources = 0; // counts the 24 non-ledger sources only
   let ledgerFraction = 0; // 0..1, how far through Ledger's own paginated fetch we are
   const recomputeSplashProgress = () => updateSplashProgress((completedSources + ledgerFraction) / TOTAL_SOURCES * 100);
   const tp = (p, isLedger) => p.then(r=>{ if(isLedger) ledgerFraction = 1; else completedSources++; recomputeSplashProgress(); return r; });
-  const [acc,led,bud,tpl,cat,subcat,drafts,prov,accr,jam,fplans,nameTr,descrTr,reBuild,farules,customCats,invOwn,invPlat,invPos,invTx,invVal,invCash,invSet,uiPrefs,fcSnaps,roboLog,smsRows] = await Promise.all([
+  const [acc,led,bud,tpl,cat,subcat,drafts,prov,accr,jam,fplans,nameTr,descrTr,reBuild,farules,customCats,invOwn,invPlat,invPos,invTx,invVal,invCash,invSet,uiPrefs,fcSnaps,roboLog,smsRows,loanRows] = await Promise.all([
     tp(fetchAllRows('pd_accounts','id')),
     tp(canSkipLedger? Promise.resolve({data: D.ledger.map(l=>({id:l.id,jv:l.jv,entry_date:l.date,acc:l.acc,descr:l.descr,amt:l.amt,alloc:l.alloc,allocatable:l.allocatable,acc_name_snapshot:l.accNameSnapshot||null,updated_at:l.updated_at||null})), error:null}) : fetchAllRows('pd_ledger','id','*',ledgerProgress), true),
     tp(fetchAllRows('pd_budget','id')),
@@ -2352,6 +2361,7 @@ async function fetchAllFromCloud(forceFullLedger){
     tp(fetchAllRows('pd_forecast_snapshots','id')),
     tp(fetchAllRows('pd_inv_robo_value_log','id')),
     tp(fetchAllRows('pd_sms_inbox','id')),
+    tp(fetchAllRows('pd_loans','id')),
   ]);
   if(acc.error||led.error||bud.error||tpl.error){ toast('Cloud load error',true); return; }
   D.accounts = acc.data.map(a=>({id:a.id, descr:a.descr, balance:a.balance, direction:a.direction, acc_type:a.acc_type, name:a.name, cf_type:a.cf_type, category:a.category, status:a.status, is_savings:!!a.is_savings, is_allocatable:!!a.is_allocatable, is_credit_card:!!a.is_credit_card, credit_limit:a.credit_limit, stmt_balance:a.stmt_balance, stmt_available:a.stmt_available, stmt_date:a.stmt_date||null, forecast_category:a.forecast_category||null, updated_at:a.updated_at||null}));
@@ -2382,6 +2392,8 @@ async function fetchAllFromCloud(forceFullLedger){
   if(!roboLog.error){ D.invRoboValueLog = roboLog.data.map(r=>({id:r.id, platformId:r.platform_id, date:r.entry_date, value:Number(r.value)||0, updated_at:r.updated_at||null})); }
   // v5.4: a database that hasn't had the schema script run yet has no pd_sms_inbox — keep what's on this device.
   if(smsRows && !smsRows.error){ D.smsInbox = smsRows.data.map(smsFromRow); }
+  // v5.14: same for pd_loans before its schema script has run.
+  if(loanRows && !loanRows.error){ D.loans = loanRows.data.map(loanFromRow); }
   syncCustomForecastCategories();
   if(serverLedgerMarker) safeSetItem('ledgerLastChanged', serverLedgerMarker);
 }
@@ -2454,7 +2466,7 @@ function budgetPnlTabsHTML(active){
 // [id, label, icon] — the icon is emoji for consistency with the rest of the app's UI.
 const SCREENS = [
   ['dashboard','Dashboard','📊'], ['newjv','New JV','✍️'], ['ledger','Ledger','📖'], ['accounts','Accounts','🗂'],
-  ['pnl','Budget & P&L','📈'], ['alloc','Allocations','🧾'], ['provisions','Provisions','🔮'], ['jamiah','Jamiah','🤝'], ['forecast','Forecast','🌤'], ['realestate','Real Estate','🏢'], ['investments','Investments','💹'],
+  ['pnl','Budget & P&L','📈'], ['alloc','Allocations','🧾'], ['provisions','Provisions','🔮'], ['jamiah','Jamiah','🤝'], ['forecast','Forecast','🌤'], ['loans','Loans','🏦'], ['realestate','Real Estate','🏢'], ['investments','Investments','💹'],
   ['settings','Settings','⚙️'],
 ];
 // Pages that can never be hidden and are never reorderable: Dashboard is the safe landing page,
@@ -3063,6 +3075,20 @@ create table if not exists pd_sms_inbox (
 );
 create index if not exists idx_sms_inbox_status on pd_sms_inbox(status);
 
+-- v5.14: loans (#67). Contract figures live in terms (jsonb); the schedule is worked out in the app.
+create table if not exists pd_loans (
+  id            bigint primary key,
+  name          text,
+  lender        text,
+  kind          text default 'equal',
+  accs          jsonb default '{}'::jsonb,
+  provision_id  bigint,
+  terms         jsonb default '{}'::jsonb,
+  notes         text,
+  settled_on    date,
+  updated_at    timestamptz default now()
+);
+
 create index if not exists idx_inv_positions_platform on pd_inv_positions(platform_id);
 create index if not exists idx_inv_tx_position        on pd_inv_transactions(position_id);
 create index if not exists idx_inv_val_position       on pd_inv_valuations(position_id);
@@ -3130,6 +3156,7 @@ begin
     'pd_forecast_snapshots',
     'pd_inv_robo_value_log',
     'pd_sms_inbox',
+    'pd_loans',
     'pd_sync_meta'
   ]
   loop
@@ -3343,7 +3370,7 @@ const NAV_ICONS = {
   dashboard:'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z', newjv:'M12 5v14M5 12h14',
   ledger:'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM9 9h6M9 13h6', accounts:'M4 7h16M4 12h16M4 17h16',
   budget:'M12 3a9 9 0 1 0 9 9h-9z', pnl:'M3 17l6-6 4 4 8-8M15 7h6v6', alloc:'M4 6h16M4 12h10M4 18h6',
-  provisions:'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
+  provisions:'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5', loans:'M3 10l9-6 9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 20h18',
   jamiah:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M14 15c3 0 8 1 8 5',
   forecast:'M3 12h4l3-8 4 16 3-8h4', realestate:'M3 21V9l9-6 9 6v12M9 21v-6h6v6', investments:'M3 3v18h18M7 14l3-3 3 3 5-6',
   settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2'
@@ -3375,7 +3402,7 @@ function go(s){
   const tbDate = document.getElementById('topbarDate');
   if(tbDate) tbDate.textContent = '\u00b7 ' + new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'});
   const fn = {dashboard:renderDashboard,newjv:renderNewJV,ledger:renderLedger,accounts:renderAccounts,
-    budget:renderBudget,pnl:renderPnL,alloc:renderAlloc,statement:renderStatement,settings:renderSettings,provisions:renderProvisions,jamiah:renderJamiahPage,forecast:renderForecastPage,forecastSettings:renderForecastSettingsPage,realestate:renderRealEstatePage,investments:renderInvestmentsPage}[s];
+    budget:renderBudget,pnl:renderPnL,alloc:renderAlloc,statement:renderStatement,settings:renderSettings,provisions:renderProvisions,jamiah:renderJamiahPage,forecast:renderForecastPage,forecastSettings:renderForecastSettingsPage,realestate:renderRealEstatePage,loans:renderLoansPage,investments:renderInvestmentsPage}[s];
   if(fn) fn();
   requestAnimationFrame(()=>{ window.scrollTo(0, pageScrollPositions[s]||0); });
 }
@@ -14829,6 +14856,405 @@ function renderPortfolioTotal(months, currentMonth){
     </table>
   </div>`;
 }
+/* ============================= LOANS (v5.14, #67) ============================= */
+// One engine for every loan: monthly rows, each split at the loan's monthly rate on the principal
+// still owed (reducing balance), so profit is heaviest early on, the way Saudi banks book it even
+// when they quote a flat rate. Kinds: 'equal' (equal instalments), 'profitOnly' (profit-only months
+// on a first principal, then the principal steps up to a new figure and equal instalments run to the
+// end), 'balloon' (equal instalments plus a final payment). Insurance is a fixed extra in each
+// payment: not profit, not principal. The bank's own figures win: an instalment typed in sets the rate.
+const LOAN_KINDS = {equal:'Equal instalments', profitOnly:'Profit-only months, then instalments', balloon:'Instalments + final payment'};
+const loanR2 = n => Math.round(Number(n)*100)/100;
+const loanNum = v => (v===''||v===null||v===undefined||isNaN(Number(v)))? null : Number(v);
+const loanSum = (rows, f) => loanR2(rows.reduce((s,r)=>s+(Number(r[f])||0), 0));
+// Present value at monthly rate r of n equal payments plus a final amount paid with the last one.
+function loanPV(r, pay, n, fin){
+  if(r===0) return pay*n + fin;
+  return pay*(1-Math.pow(1+r,-n))/r + fin*Math.pow(1+r,-n);
+}
+// The monthly rate at which those payments repay the amount (bisection); null when none fits.
+function loanSolveRate(amount, pay, n, fin){
+  fin = fin||0;
+  if(!(amount>0) || !(pay>0) || !(n>0)) return null;
+  if(loanPV(0, pay, n, fin) < amount - 0.005) return null;
+  let lo = 0, hi = 0.2;
+  for(let i=0;i<200;i++){ const mid = (lo+hi)/2; if(loanPV(mid, pay, n, fin) > amount) lo = mid; else hi = mid; }
+  return (lo+hi)/2;
+}
+function loanPayment(amount, r, n, fin){
+  fin = fin||0;
+  if(r===0) return (amount-fin)/n;
+  return (amount - fin*Math.pow(1+r,-n))*r/(1-Math.pow(1+r,-n));
+}
+function loanSchedule(loan){
+  const t = (loan && loan.terms) || {};
+  const kind = LOAN_KINDS[loan && loan.kind]? loan.kind : 'equal';
+  const amount = loanNum(t.amount), n = Math.round(loanNum(t.termMonths)||0);
+  const first = /^\d{4}-\d{2}$/.test(t.firstPayment||'')? t.firstPayment : null;
+  const ins = loanNum(t.insurance)||0, fin = kind==='balloon'? (loanNum(t.balloon)||0) : 0;
+  const out = {rows:[], rate:null, instalment:null, kind, error:null};
+  if(!(amount>0) || !(n>0) || !first){ out.error = 'Enter the amount, the term in months and the first payment month.'; return out; }
+  const m1 = kind==='profitOnly'? Math.max(0, Math.min(n-1, Math.round(loanNum(t.profitOnlyMonths)||0))) : 0;
+  const p2 = kind==='profitOnly'? (loanNum(t.phase2Amount)||amount) : amount;
+  const n2 = n - m1, apr = loanNum(t.apr), flat = loanNum(t.flatRate), poPay = loanNum(t.profitOnlyPayment);
+  let I = loanNum(t.instalment), r = null;
+  if(fin >= p2){ out.error = 'The final payment must be less than the amount financed.'; return out; }
+  if(I!==null && I>0) r = loanSolveRate(p2, I, n2, fin);
+  else if(apr!==null && apr>=0) r = apr/1200;
+  else if(flat!==null && flat>=0){ I = (p2 - fin + p2*flat/100*n2/12)/n2; r = loanSolveRate(p2, I, n2, fin); }
+  else if(kind==='profitOnly' && poPay>0 && m1>0) r = poPay/amount;
+  if(r===null){ out.error = 'Enter the instalment, the APR or the flat rate (the instalment entered can’t repay this amount).'; return out; }
+  if(!(I>0)) I = loanPayment(p2, r, n2, fin);
+  out.rate = r; out.instalment = loanR2(I); out.apr = loanR2(r*1200);
+  let bal = amount, mk = first;
+  for(let k=1;k<=n;k++){
+    const opening = (kind==='profitOnly' && m1>0 && k===m1+1)? p2 : bal;   // the principal steps up when instalments start
+    let profit, principal, pay;
+    if(k<=m1){ pay = poPay>0? loanR2(poPay) : loanR2(opening*r); profit = pay; principal = 0; }
+    else {
+      profit = loanR2(opening*r); pay = loanR2(I); principal = loanR2(pay - profit);
+      if(k===n){ principal = loanR2(opening); pay = loanR2(principal + profit); }
+    }
+    bal = loanR2(opening - principal);
+    out.rows.push({k, month:mk, opening:loanR2(opening), payment:pay, profit, principal, insurance:ins, total:loanR2(pay+ins), balance:bal,
+      profitOnly:k<=m1, stepUp:(kind==='profitOnly' && m1>0 && k===m1+1)? loanR2(p2-amount) : 0, final:(k===n && fin>0)? loanR2(pay-I) : 0});
+    mk = shiftMonthKey(mk, 1);
+  }
+  const instRows = out.rows.filter(x=>!x.profitOnly);
+  out.flat = instRows.length? loanR2(loanSum(instRows,'profit')/p2/(instRows.length/12)*100) : null;
+  return out;
+}
+// Where the loan stands at the start of month mk (default this month): every earlier instalment
+// counts as paid, this month's is the next one.
+function loanStatus(loan, mk){
+  mk = mk || todayStr().slice(0,7);
+  const s = loanSchedule(loan);
+  if(s.error) return {error:s.error, sched:s};
+  const done = s.rows.filter(r=>r.month<mk), left = s.rows.filter(r=>r.month>=mk);
+  return {sched:s, done:done.length, left:left.length, total:s.rows.length, owed: left.length? left[0].opening : 0, next:left[0]||null,
+    profitPaid:loanSum(done,'profit'), profitLeft:loanSum(left,'profit'), paidTotal:loanSum(done,'total'), leftTotal:loanSum(left,'total'),
+    start:s.rows[0].month, end:s.rows[s.rows.length-1].month};
+}
+// SAMA rule: settling early costs the principal still owed plus the profit of the next 3 months;
+// the rest of the profit is not charged.
+function loanSettlement(loan, mk){
+  const s = loanSchedule(loan);
+  if(s.error) return null;
+  const i = s.rows.findIndex(r=>r.month>=mk);
+  if(i<0) return null;
+  const rest = s.rows.slice(i), next3 = loanSum(s.rows.slice(i, i+3), 'profit');
+  const nsb = ((loan.terms||{}).noSettleBefore)||'';
+  return {month:s.rows[i].month, owed:s.rows[i].opening, next3, amount:loanR2(s.rows[i].opening + next3),
+    saved:loanR2(loanSum(rest,'profit') - next3), remPayments:loanSum(rest,'payment'), count:rest.length, blocked: !!nsb && s.rows[i].month < nsb, noSettleBefore:nsb};
+}
+// Settle loan X in month mk with a new equal-instalment loan Y of the settlement amount.
+function loanCompare(loan, mk, apr, term){
+  const st = loanSettlement(loan, mk);
+  if(!st) return null;
+  const s = loanSchedule(loan), rest = s.rows.slice(s.rows.findIndex(r=>r.month>=mk));
+  const y = loanSchedule({kind:'equal', terms:{amount:st.amount, termMonths:term, apr, firstPayment:shiftMonthKey(st.month, 1)}});
+  if(y.error) return {settle:st, error:y.error};
+  return {settle:st,
+    keep:{monthly:rest[0].payment, total:loanSum(rest,'payment'), profit:loanSum(rest,'profit'), end:rest[rest.length-1].month},
+    swap:{monthly:y.instalment, total:loanSum(y.rows,'payment'), profit:loanR2(loanSum(y.rows,'profit') + st.next3), end:y.rows[y.rows.length-1].month}};
+}
+// Ledger check: principal owed by the schedule vs the liability account's ledger balance
+// (liabilities carry negative balances).
+function loanLedgerCheck(loan, mk){
+  const acc = Number((loan.accs||{}).liability);
+  if(!acc || !ACC_BY_ID[acc]) return null;
+  const st = loanStatus(loan, mk);
+  if(st.error) return null;
+  const ledgerOwed = loanR2(-accountBalance(acc));
+  return {acc, ledgerOwed, scheduleOwed:st.owed, diff:loanR2(ledgerOwed - st.owed)};
+}
+// "Update provision from schedule": fills the linked provision's months from fromMk to the loan's
+// end (payable −payment, liability +principal, profit +profit, insurance +insurance); months after
+// the end get 0 on those lines; months before fromMk are never touched. Existing lines are reused
+// by account and wording (principal / profit / insurance); any other line in the provision is set
+// to 0 in the filled months so nothing is counted twice; missing lines are added.
+const LOAN_ROLE_RE = {profit:/profit/i, insurance:/insur/i, principal:/princip/i, payable:null};
+function loanProvisionPlan(loan, fromMk){
+  const g = findProvisionGroup(Number(loan.provisionId));
+  if(!g) return {error:'Link this loan to a provision first (✎ Edit).'};
+  const s = loanSchedule(loan);
+  if(s.error) return {error:s.error};
+  const a = loan.accs||{}, needIns = s.rows.some(r=>r.insurance>0);
+  const want = {payable:Number(a.payable), principal:Number(a.liability), profit:Number(a.profit), insurance:Number(a.insurance)};
+  const missing = ['payable','principal','profit'].concat(needIns? ['insurance'] : []).filter(k=>!want[k] || !ACC_BY_ID[want[k]]);
+  if(missing.length) return {error:'Pick the '+missing.map(k=>k==='principal'? 'loan (liability)' : k).join(', ')+' account'+(missing.length>1?'s':'')+' first (✎ Edit).'};
+  const used = new Set(), roleLine = {}, newLines = [];
+  let nextId = g.lines.reduce((m,l)=>Math.max(m, Number(l.lineId)||0), 0) + 1;
+  const otherRe = role => Object.entries(LOAN_ROLE_RE).filter(([k,re])=>k!==role && re).map(([,re])=>re);
+  ['profit','insurance','principal','payable'].forEach(role=>{
+    if(role==='insurance' && !needIns) return;
+    const cands = g.lines.filter(l=>Number(l.acc)===want[role] && !used.has(l.lineId));
+    const re = LOAN_ROLE_RE[role];
+    let l = (re && cands.find(x=>re.test(x.descrBase||''))) || cands.find(x=>!otherRe(role).some(o=>o.test(x.descrBase||''))) || null;
+    if(!l){ l = {acc:want[role], lineId:nextId++, descrBase:(loan.name||'Loan')+' - '+{payable:'Instalment', principal:'Principal', profit:'Profit', insurance:'Insurance'}[role]}; newLines.push(l); }
+    used.add(l.lineId); roleLine[role] = l;
+  });
+  const lines = g.lines.concat(newLines);
+  const plan = {}, changes = [];
+  const byMonth = {}; s.rows.forEach(r=>{ byMonth[r.month] = r; });
+  const end = s.rows[s.rows.length-1].month;
+  const months = new Set(s.rows.map(r=>r.month).filter(m=>m>=fromMk));
+  Object.keys(g.months||{}).forEach(m=>{ if(m>end && m>=fromMk) months.add(m); });
+  [...months].sort().forEach(m=>{
+    const r = byMonth[m];
+    const vals = {};
+    lines.forEach(l=>{ vals[l.lineId] = 0; });
+    if(r){
+      vals[roleLine.payable.lineId] = loanR2(-r.total);
+      vals[roleLine.principal.lineId] = loanR2((vals[roleLine.principal.lineId]||0) + r.principal);
+      vals[roleLine.profit.lineId] = loanR2((vals[roleLine.profit.lineId]||0) + r.profit);
+      if(roleLine.insurance) vals[roleLine.insurance.lineId] = loanR2((vals[roleLine.insurance.lineId]||0) + r.insurance);
+    }
+    const old = (g.months||{})[m] || {};
+    plan[m] = vals;
+    lines.forEach(l=>{
+      const o = old[l.lineId]===undefined||old[l.lineId]===null||old[l.lineId]===''? null : Number(old[l.lineId]);
+      const nv = vals[l.lineId];
+      if((o===null && nv!==0) || (o!==null && Math.abs(o-nv)>=0.005)) changes.push({month:m, lineId:l.lineId, acc:l.acc, label:l.descrBase||'', old:o, value:nv});
+    });
+  });
+  return {g, plan, changes, newLines, roleLine, fromMk};
+}
+async function applyLoanProvision(id, fromMk){
+  if(blockIfSyncing()) return;
+  const loan = (D.loans||[]).find(l=>l.id===id); if(!loan) return;
+  const p = loanProvisionPlan(loan, fromMk);
+  if(p.error){ toast(p.error, true); return; }
+  const g = p.g;
+  p.newLines.forEach(l=>g.lines.push(l));
+  Object.entries(p.plan).forEach(([m, vals])=>{
+    const cell = Object.assign({}, g.months[m]||{});
+    Object.entries(vals).forEach(([lid, v])=>{ if(v===0 && (cell[lid]===undefined||cell[lid]===null||cell[lid]==='')) return; cell[lid] = v; });
+    g.months[m] = cell;
+  });
+  await persistProvisionGroup(g);
+  closeModal();
+  toast('“'+g.name+'” updated from '+monthLabel(fromMk)+' ('+p.changes.length+' cell'+(p.changes.length===1?'':'s')+'): Forecast and the provision JV follow it');
+  logActivity('action', 'Loan “'+loan.name+'”: filled provision “'+g.name+'” from '+fromMk+' ('+p.changes.length+' changes)');
+  renderLoansPage();
+}
+function openLoanProvisionPreview(id, fromMk){
+  const loan = (D.loans||[]).find(l=>l.id===id); if(!loan) return;
+  fromMk = fromMk || todayStr().slice(0,7);
+  const p = loanProvisionPlan(loan, fromMk);
+  if(p.error){ toast(p.error, true); return; }
+  const s = loanSchedule(loan);
+  const startOpts = [...new Set([todayStr().slice(0,7)].concat(s.rows.map(r=>r.month)))].filter(m=>m>=shiftMonthKey(todayStr().slice(0,7),-1) || m===fromMk).sort()
+    .map(m=>`<option value="${m}" ${m===fromMk?'selected':''}>${esc(monthLabel(m))}</option>`).join('');
+  const shown = p.changes.slice(0, 60);
+  showModal(`<h3 style="margin-top:0">🔮 Update “${esc(p.g.name)}” from the schedule</h3>
+    <div class="mut" style="font-size:12.5px;margin-bottom:8px">Fills this provision’s months from the month below to the end of the loan with the exact instalment split. Earlier months are not touched. Lines the loan doesn’t use are set to 0 in those months so nothing is counted twice${p.newLines.length? '; new lines are added: '+p.newLines.map(l=>esc(l.acc+' · '+(l.descrBase||''))).join(', ') : ''}. Nothing is posted.</div>
+    <div class="row" style="gap:8px;align-items:center;margin-bottom:8px"><span>From</span><select id="loanProvFrom" style="width:auto" onchange="openLoanProvisionPreview(${id}, this.value)">${startOpts}</select></div>
+    ${p.changes.length? `<div style="max-height:46vh;overflow:auto"><table><thead><tr><th>Month</th><th>Line</th><th class="num">Now</th><th class="num">New</th></tr></thead><tbody>
+      ${shown.map(c=>`<tr><td>${esc(monthLabel(c.month))}</td><td>${esc(c.acc+' · '+(c.label||accShort(c.acc)))}</td><td class="num mut">${c.old===null? '' : fmt2(c.old)}</td><td class="num">${fmt2(c.value)}</td></tr>`).join('')}
+      </tbody></table></div>${p.changes.length>shown.length? `<div class="mut" style="font-size:12px">…and ${p.changes.length-shown.length} more</div>` : ''}` : '<div class="mut">Already matches the schedule: nothing to change.</div>'}
+    <div class="row" style="gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      ${p.changes.length? `<button class="btn pri" onclick="applyLoanProvision(${id}, ${esc(JSON.stringify(fromMk))})">Update ${p.changes.length} cell${p.changes.length===1?'':'s'}</button>` : ''}
+    </div>`, true);
+}
+function loanFromRow(r){
+  return {id:Number(r.id), name:r.name||'', lender:r.lender||'', kind:LOAN_KINDS[r.kind]? r.kind : 'equal', accs:(r.accs && typeof r.accs==='object')? r.accs : {},
+    provisionId:r.provision_id===null||r.provision_id===undefined? null : Number(r.provision_id), terms:(r.terms && typeof r.terms==='object')? r.terms : {},
+    notes:r.notes||'', settledOn:r.settled_on||null, updated_at:r.updated_at||null};
+}
+function loanToRow(l){
+  return {id:l.id, name:l.name, lender:l.lender||null, kind:l.kind, accs:l.accs||{}, provision_id:l.provisionId||null, terms:l.terms||{}, notes:l.notes||null, settled_on:l.settledOn||null};
+}
+async function saveLoanRecord(l){
+  const base = l.updated_at||null;
+  if(!(D.loans||[]).some(x=>x.id===l.id)) D.loans.push(l);
+  persistLocal();
+  await syncWrite('pd_loans', 'upsert', loanToRow(l), base);
+}
+const LOAN_FIELDS = [
+  ['amount','Amount financed (SAR)','Profit-only loans: the principal during the profit-only months', ''],
+  ['termMonths','Term (months, all of them)','', ''],
+  ['firstPayment','First payment month','', 'month'],
+  ['instalment','Monthly instalment (SAR, without insurance)','From the contract; when filled, it sets the rate. Profit-only loans: the instalment after the profit-only months', ''],
+  ['apr','APR (% a year)','Used when no instalment is entered', ''],
+  ['flatRate','Flat rate (% a year)','Used when neither instalment nor APR is entered', ''],
+  ['insurance','Insurance in each payment (SAR a month)','', ''],
+  ['downPayment','Down payment (SAR, not financed)','For information', '', 'balloon'],
+  ['balloon','Final payment (SAR)','Paid with the last instalment', '', 'balloon'],
+  ['profitOnlyMonths','Profit-only months','', '', 'profitOnly'],
+  ['profitOnlyPayment','Profit-only payment (SAR a month)','Optional: from the contract', '', 'profitOnly'],
+  ['phase2Amount','Principal once instalments start (SAR)','Leave blank if it stays the same', '', 'profitOnly'],
+  ['adminFee','Admin fee (SAR)','For information', ''],
+  ['noSettleBefore','No early settlement before','Optional: some mortgages', 'month'],
+];
+function loanKindFields(kind){
+  document.querySelectorAll('#modalRoot [data-loan-kinds]').forEach(el=>{ el.style.display = el.getAttribute('data-loan-kinds').split(' ').includes(kind)? 'block' : 'none'; });
+}
+function openLoanModal(id){
+  const l = (D.loans||[]).find(x=>x.id===id) || {id:null, name:'', lender:'', kind:'equal', accs:{payable:20111}, provisionId:null, terms:{}, notes:''};
+  const accOpts = (sel, filter) => '<option value="">—</option>' + postableAccounts().filter(filter||(()=>true))
+    .map(a=>`<option value="${a.id}" ${Number(sel)===a.id?'selected':''}>${a.id} · ${esc(accShort(a.id))}</option>`).join('');
+  const t = l.terms||{}, a = l.accs||{};
+  const field = ([k, label, hint, type, kinds]) => `<label ${kinds? `data-loan-kinds="${kinds}"` : ''} style="display:${kinds && !kinds.split(' ').includes(l.kind)? 'none' : 'block'};margin-bottom:8px"><div style="font-size:12.5px">${esc(label)}</div>
+      <input id="loanF_${k}" ${type==='month'? 'type="month"' : 'type="text" inputmode="decimal"'} value="${esc(t[k]===undefined||t[k]===null? '' : String(t[k]))}">
+      ${hint? `<div class="mut" style="font-size:11.5px">${esc(hint)}</div>` : ''}</label>`;
+  showModal(`<h3 style="margin-top:0">${l.id? '✎ Edit loan' : '+ Add loan'}</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 16px">
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Name</div><input id="loanF_name" value="${esc(l.name)}"></label>
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Lender</div><input id="loanF_lender" value="${esc(l.lender||'')}"></label>
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Type</div><select id="loanF_kind" onchange="loanKindFields(this.value)">${Object.entries(LOAN_KINDS).map(([k,v])=>`<option value="${k}" ${k===l.kind?'selected':''}>${esc(v)}</option>`).join('')}</select></label>
+      ${LOAN_FIELDS.map(field).join('')}
+    </div>
+    <h4 style="margin:10px 0 6px">Accounts and provision</h4>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 16px">
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Loan account (principal)</div><select id="loanF_liability">${accOpts(a.liability)}</select></label>
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Profit goes to (e.g. Financing cost)</div><select id="loanF_profit">${accOpts(a.profit)}</select></label>
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Paid from (payable)</div><select id="loanF_payable">${accOpts(a.payable)}</select></label>
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Insurance goes to</div><select id="loanF_insurance">${accOpts(a.insurance)}</select></label>
+      <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Provision it fills</div><select id="loanF_provision"><option value="">—</option>${D.provisionGroups.map(g=>`<option value="${g.id}" ${Number(l.provisionId)===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select></label>
+    </div>
+    <label style="display:block;margin-bottom:8px"><div style="font-size:12.5px">Notes</div><input id="loanF_notes" value="${esc(l.notes||'')}"></label>
+    <div class="row" style="gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn pri" onclick="saveLoanFromModal(${l.id===null? 'null' : l.id})">Save</button>
+    </div>`, true);
+}
+async function saveLoanFromModal(id){
+  if(blockIfSyncing()) return;
+  const v = k => { const el = document.getElementById('loanF_'+k); return el? String(el.value).trim() : ''; };
+  const name = v('name');
+  if(!name){ toast('Give the loan a name', true); return; }
+  const terms = {};
+  LOAN_FIELDS.forEach(([k,,,type])=>{ const x = v(k).replace(/,/g,''); if(x==='') return; terms[k] = type==='month'? x : Number(x); });
+  const bad = LOAN_FIELDS.filter(([k,,,type])=>type!=='month' && terms[k]!==undefined && isNaN(terms[k])).map(f=>f[1]);
+  if(bad.length){ toast('Not a number: '+bad.join(', '), true); return; }
+  const accs = {}; ['liability','profit','payable','insurance'].forEach(k=>{ const x = Number(v(k)); if(x) accs[k] = x; });
+  const existing = (D.loans||[]).find(x=>x.id===id);
+  const l = Object.assign(existing || {id: 1 + (D.loans||[]).reduce((m,x)=>Math.max(m, Number(x.id)||0), 0), settledOn:null, updated_at:null},
+    {name, lender:v('lender'), kind:v('kind')||'equal', accs, provisionId: Number(v('provision'))||null, terms, notes:v('notes')});
+  const s = loanSchedule(l);
+  if(s.error){ toast(s.error, true); return; }
+  await saveLoanRecord(l);
+  closeModal();
+  toast('Loan “'+name+'” saved: '+s.rows.length+' instalments');
+  logActivity('action', 'Saved loan “'+name+'”');
+  renderLoansPage();
+}
+async function deleteLoan(id){
+  if(blockIfSyncing()) return;
+  const l = (D.loans||[]).find(x=>x.id===id); if(!l) return;
+  if(!confirm('Delete the loan “'+l.name+'”? Its provision and ledger are not touched.')) return;
+  D.loans = D.loans.filter(x=>x.id!==id);
+  persistLocal();
+  await syncWrite('pd_loans', 'delete', {id}, l.updated_at||null);
+  renderLoansPage();
+}
+async function toggleLoanSettled(id){
+  if(blockIfSyncing()) return;
+  const l = (D.loans||[]).find(x=>x.id===id); if(!l) return;
+  l.settledOn = l.settledOn? null : todayStr();
+  await saveLoanRecord(l);
+  renderLoansPage();
+}
+function exportLoanScheduleCSV(id){
+  const l = (D.loans||[]).find(x=>x.id===id); if(!l) return;
+  const s = loanSchedule(l); if(s.error){ toast(s.error, true); return; }
+  const lines = ['#,Month,Payment,Profit,Principal,Insurance,Total,Balance'].concat(s.rows.map(r=>[r.k, r.month, r.payment, r.profit, r.principal, r.insurance, r.total, r.balance].map(csvEscape).join(',')));
+  const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob); dl.download = (l.name||'Loan')+' schedule - '+todayStr()+'.csv'; dl.click();
+}
+let loanPanel = {};      // per loan, memory only: 'schedule' | 'settle' | 'compare' | null
+let loanSettleMonth = {}; // per loan
+let loanCompareIn = {};   // per loan: {apr, term}
+function setLoanPanel(id, p){ loanPanel[id] = loanPanel[id]===p? null : p; renderLoansPage(); }
+function loanScheduleHTML(l, st, mk){
+  return `<div style="max-height:420px;overflow:auto;margin-top:10px"><table><thead><tr><th>#</th><th>Month</th><th class="num">Payment</th><th class="num">Profit</th><th class="num">Principal</th><th class="num">Insurance</th><th class="num">Balance</th></tr></thead><tbody>
+    ${st.sched.rows.map(r=>`<tr style="${r.month<mk? 'opacity:.45' : r.month===mk? 'background:color-mix(in srgb, var(--accent, #6366f1) 14%, transparent);font-weight:600' : ''}">
+      <td>${r.k}</td><td>${esc(monthLabel(r.month))}${r.profitOnly? ' <span class="mut" style="font-size:11px">profit only</span>' : ''}${r.stepUp? ' <span class="mut" style="font-size:11px">principal +'+fmt2(r.stepUp)+'</span>' : ''}${r.final? ' <span class="mut" style="font-size:11px">incl. final '+fmt2(r.final)+'</span>' : ''}</td>
+      <td class="num">${fmt2(r.payment)}</td><td class="num">${fmt2(r.profit)}</td><td class="num">${fmt2(r.principal)}</td><td class="num">${r.insurance? fmt2(r.insurance) : ''}</td><td class="num">${fmt2(r.balance)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+function loanSettleHTML(l, st, mk){
+  const months = st.sched.rows.filter(r=>r.month>=mk).map(r=>r.month);
+  if(!months.length) return '<div class="mut" style="margin-top:10px">Nothing left to settle.</div>';
+  const m = months.includes(loanSettleMonth[l.id])? loanSettleMonth[l.id] : months[0];
+  const x = loanSettlement(l, m);
+  return `<div style="margin-top:10px"><div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><span>Settle in</span>
+      <select style="width:auto" onchange="loanSettleMonth[${l.id}]=this.value; renderLoansPage()">${months.map(k=>`<option value="${k}" ${k===m?'selected':''}>${esc(monthLabel(k))}</option>`).join('')}</select></div>
+    ${x.blocked? `<div style="color:var(--red, #dc2626);font-size:12.5px;margin-top:6px">The contract allows settlement from ${esc(monthLabel(x.noSettleBefore))}.</div>` : ''}
+    <div class="cards" style="margin:10px 0 0">
+      <div class="kpi"><div class="l">You’d pay</div><div class="v">${money(x.amount)}</div><div class="mut" style="font-size:11.5px">principal ${money(x.owed)} + 3 months’ profit ${money(x.next3)}</div></div>
+      <div class="kpi"><div class="l">Profit saved</div><div class="v g">${money(x.saved)}</div></div>
+      <div class="kpi"><div class="l">Payments that disappear</div><div class="v">${money(x.remPayments)}</div><div class="mut" style="font-size:11.5px">${x.count} instalment${x.count===1?'':'s'}, without insurance</div></div>
+    </div><div class="mut" style="font-size:11.5px;margin-top:6px">SAMA rule: the principal still owed plus the profit of the next 3 months. Confirm the exact figure with the bank.</div></div>`;
+}
+function loanCompareHTML(l, st, mk){
+  const months = st.sched.rows.filter(r=>r.month>=mk).map(r=>r.month);
+  if(!months.length) return '<div class="mut" style="margin-top:10px">Nothing left to compare.</div>';
+  const m = months.includes(loanSettleMonth[l.id])? loanSettleMonth[l.id] : months[0];
+  const inp = loanCompareIn[l.id] || (loanCompareIn[l.id] = {apr:'', term:''});
+  const c = (inp.apr!=='' && inp.term!=='')? loanCompare(l, m, Number(inp.apr), Number(inp.term)) : null;
+  const col = (h, o) => `<div class="kpi"><div class="l">${h}</div><div style="font-size:13px;line-height:1.7">Monthly <b>${money(o.monthly)}</b><br>Still to pay <b>${money(o.total)}</b><br>Profit <b>${money(o.profit)}</b><br>Ends <b>${esc(monthLabel(o.end))}</b></div></div>`;
+  return `<div style="margin-top:10px"><div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+      <span>Settle in</span><select style="width:auto" onchange="loanSettleMonth[${l.id}]=this.value; renderLoansPage()">${months.map(k=>`<option value="${k}" ${k===m?'selected':''}>${esc(monthLabel(k))}</option>`).join('')}</select>
+      <span>with a new loan at APR %</span><input style="width:80px" inputmode="decimal" value="${esc(inp.apr)}" onchange="loanCompareIn[${l.id}].apr=this.value.trim(); renderLoansPage()">
+      <span>over months</span><input style="width:70px" inputmode="numeric" value="${esc(inp.term)}" onchange="loanCompareIn[${l.id}].term=this.value.trim(); renderLoansPage()"></div>
+    ${!c? '<div class="mut" style="font-size:12.5px;margin-top:8px">Enter the new loan’s APR and term.</div>'
+      : c.error? `<div class="mut" style="margin-top:8px">${esc(c.error)}</div>`
+      : `<div class="cards" style="margin:10px 0 0">${col('Keep it', c.keep)}${col('Settle with a new loan of '+money(c.settle.amount), c.swap)}</div>
+         <div class="mut" style="font-size:11.5px">The new loan’s profit includes the 3 months’ profit paid on settlement. Insurance is left out of both.</div>`}</div>`;
+}
+function loanCardHTML(l, mk){
+  const st = loanStatus(l, mk);
+  const head = `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+      <div><div style="font-size:16px;font-weight:700">${esc(l.name)}${l.settledOn? ' <span class="mut" style="font-size:12px">settled '+esc(fmtDateShort(l.settledOn))+'</span>' : ''}</div>
+        <div class="mut" style="font-size:12.5px">${esc([l.lender, LOAN_KINDS[l.kind]].filter(Boolean).join(' · '))}</div></div>
+      <div class="row noprint" style="gap:6px;flex-wrap:wrap">
+        ${st.error? '' : `<button class="btn ${loanPanel[l.id]==='schedule'?'pri':'ghost'} sm" onclick="setLoanPanel(${l.id},'schedule')">📅 Schedule</button>
+        <button class="btn ${loanPanel[l.id]==='settle'?'pri':'ghost'} sm" onclick="setLoanPanel(${l.id},'settle')">🧮 Early settlement</button>
+        <button class="btn ${loanPanel[l.id]==='compare'?'pri':'ghost'} sm" onclick="setLoanPanel(${l.id},'compare')">⚖ Compare</button>
+        <button class="btn ghost sm" onclick="openLoanProvisionPreview(${l.id})">🔮 Update provision</button>
+        <button class="btn ghost sm" onclick="exportLoanScheduleCSV(${l.id})">⬇ CSV</button>`}
+        <button class="btn ghost sm" onclick="openLoanModal(${l.id})">✎ Edit</button>
+        <button class="btn ghost sm" onclick="toggleLoanSettled(${l.id})">${l.settledOn? '↺ Active again' : '✓ Mark settled'}</button>
+        <button class="btn ghost sm" onclick="deleteLoan(${l.id})">🗑</button>
+      </div></div>`;
+  if(st.error) return `<div class="panel loan-card" data-loan="${l.id}">${head}<div class="mut" style="margin-top:8px">${esc(st.error)}</div></div>`;
+  const pct = st.total? Math.round(st.done/st.total*100) : 0;
+  const n = st.next, chk = loanLedgerCheck(l, mk), g = l.provisionId? D.provisionGroups.find(x=>x.id===Number(l.provisionId)) : null;
+  return `<div class="panel loan-card" data-loan="${l.id}">${head}
+    <div style="margin:10px 0 4px;font-size:12.5px">${st.done} of ${st.total} months done · ${st.left} left · ${esc(monthLabel(st.start))} → ${esc(monthLabel(st.end))}</div>
+    <div style="height:8px;border-radius:6px;background:var(--line);overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--accent, #6366f1)"></div></div>
+    <div class="cards" style="margin:12px 0 0">
+      <div class="kpi"><div class="l">Principal owed</div><div class="v">${money(st.owed)}</div></div>
+      <div class="kpi"><div class="l">${n? (n.month===mk? 'This month' : 'Next: '+esc(monthLabel(n.month))) : 'Next payment'}</div><div class="v">${n? money(n.total) : '—'}</div>
+        ${n? `<div class="mut" style="font-size:11.5px">profit ${money(n.profit)} · principal ${money(n.principal)}${n.insurance? ' · insurance '+money(n.insurance) : ''}</div>` : ''}</div>
+      <div class="kpi"><div class="l">Profit paid / still to pay</div><div class="v">${money(st.profitPaid)} / ${money(st.profitLeft)}</div></div>
+      <div class="kpi"><div class="l">Rates</div><div class="v" style="font-size:18px">APR ${fmt2(st.sched.apr)}%</div><div class="mut" style="font-size:11.5px">flat ${st.sched.flat===null? '—' : fmt2(st.sched.flat)+'%'} · instalment ${money(st.sched.instalment)}${(l.terms||{}).adminFee? ' · admin fee '+money(l.terms.adminFee) : ''}</div></div>
+    </div>
+    <div style="font-size:12.5px;margin-top:10px">${chk? (Math.abs(chk.diff)<0.005? `✓ Ledger ${chk.acc} matches the principal owed.`
+      : `<span style="color:var(--yellow)">⚠</span> Ledger ${chk.acc} shows ${money(chk.ledgerOwed)} owed; the schedule says ${money(chk.scheduleOwed)} at the start of this month (difference ${money(chk.diff)}). If this is profit booked to the loan account, post a one-time JV: ${chk.diff>0? 'debit' : 'credit'} ${chk.acc} ${money(Math.abs(chk.diff))}, other side your choice. If this month’s instalment is already posted, part of the difference is its principal.`)
+      : '<span class="mut">Pick the loan account (✎ Edit) to check it against the ledger.</span>'}</div>
+    <div class="mut" style="font-size:12.5px;margin-top:4px">${g? 'Fills the provision “'+esc(g.name)+'” (🔮 Update provision).' : 'Not linked to a provision yet: the Forecast doesn’t see it (✎ Edit).'}${l.notes? ' · '+esc(l.notes) : ''}</div>
+    ${loanPanel[l.id]==='schedule'? loanScheduleHTML(l, st, mk) : loanPanel[l.id]==='settle'? loanSettleHTML(l, st, mk) : loanPanel[l.id]==='compare'? loanCompareHTML(l, st, mk) : ''}
+  </div>`;
+}
+function renderLoansPage(){
+  const mk = todayStr().slice(0,7);
+  const loans = (D.loans||[]).slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const active = loans.filter(l=>!l.settledOn), settled = loans.filter(l=>l.settledOn);
+  const sts = active.map(l=>loanStatus(l, mk)).filter(s=>!s.error);
+  const owed = loanR2(sts.reduce((s,x)=>s+x.owed, 0)), month = loanR2(sts.reduce((s,x)=>s+(x.next && x.next.month===mk? x.next.total : 0), 0)), profitLeft = loanR2(sts.reduce((s,x)=>s+x.profitLeft, 0));
+  document.getElementById('app').innerHTML = `
+    <div class="panel noprint row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="mut" style="font-size:12.5px;max-width:620px">${active.length? `Principal owed ${money(owed)} · paying ${money(month)} this month · profit still to pay ${money(profitLeft)}` : 'Your loans, their schedules, early settlement and the provisions they fill.'}</div>
+      <button class="btn pri sm" onclick="openLoanModal()">+ Add loan</button>
+    </div>
+    ${active.length? active.map(l=>loanCardHTML(l, mk)).join('') : '<div class="panel empty">No loans yet: click + Add loan.</div>'}
+    ${settled.length? `<details class="panel"><summary>Settled loans (${settled.length})</summary>${settled.map(l=>loanCardHTML(l, mk)).join('')}</details>` : ''}`;
+}
+
 function renderRealEstatePage(){
   beginForecastFastPath();
   try{
@@ -17126,7 +17552,7 @@ async function restoreFromBackup(parsed){
         customForecastCategories: parsed.customForecastCategories||[],
         invOwners: parsed.invOwners||[], invPlatforms: parsed.invPlatforms||[], invPositions: parsed.invPositions||[],
         invTransactions: parsed.invTransactions||[], invValuations: parsed.invValuations||[], invCashMovements: parsed.invCashMovements||[],
-        invSettings: parsed.invSettings||{}, uiPrefs: parsed.uiPrefs||{}, forecastSnapshots: parsed.forecastSnapshots||[], invRoboValueLog: parsed.invRoboValueLog||[], smsInbox: parsed.smsInbox||[] };
+        invSettings: parsed.invSettings||{}, uiPrefs: parsed.uiPrefs||{}, forecastSnapshots: parsed.forecastSnapshots||[], invRoboValueLog: parsed.invRoboValueLog||[], smsInbox: parsed.smsInbox||[], loans: parsed.loans||[] };
   // Backfills anything still missing (an older backup file predating a module, for instance) with
   // the same defaults the app boots with, rather than leaving it undefined — this is exactly the
   // normalization step that was missing here before, which crashed the cloud-restore path below
@@ -17173,6 +17599,7 @@ async function restoreFromBackup(parsed){
   await SB.from('pd_forecast_snapshots').delete().neq('id',-1); bump('Clearing old data');
   await SB.from('pd_inv_robo_value_log').delete().neq('id',-1); bump('Clearing old data');
   await SB.from('pd_sms_inbox').delete().neq('id',-1); bump('Clearing old data');
+  await SB.from('pd_loans').delete().neq('id',-1); bump('Clearing old data');
   if(D.accounts.length) await insertWithRetry('pd_accounts', D.accounts.map(a=>({id:a.id,descr:a.descr,balance:a.balance,direction:a.direction,acc_type:a.acc_type,name:a.name,cf_type:a.cf_type,category:a.category,status:a.status,is_savings:!!a.is_savings,is_allocatable:!!a.is_allocatable,is_credit_card:!!a.is_credit_card,credit_limit:a.credit_limit,stmt_balance:a.stmt_balance,stmt_available:a.stmt_available,stmt_date:a.stmt_date,forecast_category:a.forecast_category||null})));
   bump('Restoring accounts');
   if(D.templates.length) await insertWithRetry('pd_templates', D.templates.map(t=>({id:t.id,name:t.name,lines:t.lines})));
@@ -17205,6 +17632,7 @@ async function restoreFromBackup(parsed){
   if((D.forecastSnapshots||[]).length) await insertWithRetry('pd_forecast_snapshots', D.forecastSnapshots.map(s=>({id:s.id, anchor_month:s.anchorMonth, taken_at:s.takenAt, kind:s.kind||'auto', months:s.months||[], sign_flips:s.signFlips||{}})));
   if((D.invRoboValueLog||[]).length) await insertWithRetry('pd_inv_robo_value_log', D.invRoboValueLog.map(r=>({id:r.id, platform_id:r.platformId, entry_date:r.date, value:Number(r.value)||0})));
   if((D.smsInbox||[]).length) await insertWithRetry('pd_sms_inbox', D.smsInbox.map(smsToRow));
+  if((D.loans||[]).length) await insertWithRetry('pd_loans', D.loans.map(loanToRow));
   bump('Restoring Investments');
   bump('Restoring Custom Categories');
   if(Object.keys(D.forecastPlans).length) await insertWithRetry('pd_forecast_plans', [{id:1, plans:D.forecastPlans}]);
@@ -17820,6 +18248,7 @@ async function clearEverything(){
     await SB.from('pd_forecast_snapshots').delete().neq('id',-1);
     await SB.from('pd_inv_robo_value_log').delete().neq('id',-1);
     await SB.from('pd_sms_inbox').delete().neq('id',-1);
+    await SB.from('pd_loans').delete().neq('id',-1);
   }
   go('dashboard');
 }
