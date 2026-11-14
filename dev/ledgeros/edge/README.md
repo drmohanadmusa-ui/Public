@@ -6,7 +6,7 @@
 > The dashboard steps below are kept as the fallback. Deploy command (from this folder):
 > `curl -X POST "https://api.supabase.com/v1/projects/<ref>/functions/deploy?slug=<name>" -F 'metadata={"entrypoint_path":"index.ts","name":"<name>","verify_jwt":<true|false>};type=application/json' -F "file=@<name>/index.ts;type=application/typescript"`
 > `inv-daily-close` runs with `verify_jwt:false` (it only saves public prices and is safe to re-run), so the pg_cron job
-> needs no key; `sms-ingest` keeps `verify_jwt:true`. SQL goes to `POST /v1/projects/<ref>/database/query`.
+> needs no key; `sms-ingest` keeps `verify_jwt:true`. `wallet-rpc` (v5.15, #75) also keeps `verify_jwt:true`: it passes read-only wallet calls (allow-list of methods and servers) from the app to Solana's own server and the EVM servers, because browsers can't call them directly. SQL goes to `POST /v1/projects/<ref>/database/query`.
 
 `inv-daily-close/index.ts` runs once a day on Supabase, even when LedgerOS is closed. It reads the price links and
 API keys you set in LedgerOS (⚙ Setup → 💹 Price links, saved with your synced settings), fetches one price per

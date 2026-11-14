@@ -8092,6 +8092,11 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV514LoanFillsItsProvision();
   await testV514LoanLedgerCheckAndPage();
   await testV514LoanSaveAndTableLists();
+  await testV515CardAlertSettings();
+  await testV515BackToInboxAfterPosting();
+  await testV515TransferAlreadyPostedIsCleared();
+  await testV515WalletRpcEdgeFunction();
+  await testV515WalletDailyCheckAndSolanaImport();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9546,7 +9551,16 @@ function v56Sandbox(extra, routes){
   sb.__set('invSleep', ()=>Promise.resolve());
   sb.__set('renderNav', ()=>{});
   sb.__set('drawInvCharts', ()=>{});
+  try{ sb.localStorage.setItem('sb_url', 'https://test.example.co'); sb.localStorage.setItem('sb_key', 'anon-test'); }catch(e){}
   sb.fetch = async (url, opts)=>{
+    // v5.15 (#75): wallet calls go through the Edge Function wallet-rpc; unwrap them to the chain's own server
+    // so the routes below answer them as before (the server side is tested in the wallet-rpc tests).
+    if(/\/functions\/v1\/wallet-rpc$/.test(String(url))){
+      calls.push({url:String(url), opts});
+      const w = JSON.parse(opts.body);
+      url = vm.runInContext('INV_CHAINS['+JSON.stringify(w.chain)+'].rpc', sb);
+      opts = Object.assign({}, opts, {body: JSON.stringify(w.body)});
+    }
     calls.push({url:String(url), opts});
     const r = (routes||[]).find(x=>x[0].test(String(url)));
     if(!r) return {ok:false, status:404, json: async()=>({}), text: async()=>'not found'};
@@ -9795,7 +9809,8 @@ async function testV56WalletCheckReadsEvmBalancesWithDecimals(){
   const bal = await sb.invWalletBalances({chain:'base', address:'0x00000000000000000000000000000000000000aa'}, [BCAT, '0x0000000000000000000000000000000000000000']);
   assert(bal[BCAT.toLowerCase()]===2.5, 'balanceOf 2,500,000 with 6 decimals = 2.5 units, got ' + bal[BCAT.toLowerCase()]);
   assert(bal['0x0000000000000000000000000000000000000000']===1.5, 'Native coin balance in 18 decimals = 1.5, got ' + bal['0x0000000000000000000000000000000000000000']);
-  const call = sb._calls[0] && JSON.parse(sb._calls[0].opts.body).find(c=>c.id==='b0');
+  const sent = sb._calls.find(c=>/mainnet\.base\.org/.test(c.url));
+  const call = sent && JSON.parse(sent.opts.body).find(c=>c.id==='b0');
   assert(call && call.params[0].data==='0x70a08231' + '00000000000000000000000000000000000000aa'.padStart(64,'0'), 'balanceOf is called with the wallet address');
 }
 async function testV56WalletAddressIsCheckedAgainstTheChain(){
@@ -10561,10 +10576,9 @@ async function testV512CreditCardOver30PercentWarns(){
   D.ledger.push({id:90, jv:90, date:'2026-10-02', acc:10150, amt:-3500, descr:'spend'});
   sb.rebuildIndex();
   const item = () => sb.dashboardTodoItems().find(i=>/is 35% used/.test(i.title));
-  assert(item() && /Owed 3,500\.00 of a 10,000\.00 limit/.test(item().sub) && /ccUtilDismissed\.add\(10150\)/.test(item().dismiss), 'Over 30%: a needs-you item with a dismiss, got ' + JSON.stringify(sb.dashboardTodoItems().map(i=>i.title)));
-  vm.runInContext('ccUtilDismissed.add(10150)', sb);
-  assert(!item(), 'Dismissed: hidden for now');
-  assert(!/ccUtilDismissed[^;]*localStorage|smsCashback/.test(String(vm.runInContext('ccUtilisation', sb))) && /^const ccUtilDismissed = new Set\(\);/m.test(fs.readFileSync(APP_HTML,'utf8')), 'Kept in memory only, so it is back next time the app opens');
+  assert(item() && /Owed 3,500\.00 of a 10,000\.00 limit/.test(item().sub) && /dismissCcUtil\(10150\)/.test(item().dismiss), 'Over 30%: a needs-you item with a dismiss (v5.15: dismissCcUtil), got ' + JSON.stringify(sb.dashboardTodoItems().map(i=>i.title)));
+  await sb.dismissCcUtil(10150);
+  assert(!item(), 'Dismissed: hidden while the used % does not go up (v5.15 default)');
   vm.runInContext('ccUtilDismissed.clear()', sb);
   D.ledger.push({id:91, jv:91, date:'2026-10-03', acc:10150, amt:600, descr:'top up'});
   sb.rebuildIndex();
@@ -10794,4 +10808,181 @@ async function testV514LoanSaveAndTableLists(){
   const D2 = vm.runInContext('D', sb); delete D2.loans; sb.normalizeDataShape(D2);
   assert(Array.isArray(D2.loans), 'An old cache without loans gets an empty list');
   assert(vm.runInContext('SCREENS', sb).some(s=>s[0]==='loans') && /loans:renderLoansPage/.test(html), 'Loans is a page in the side menu');
+}
+
+// v5.15 (#71, #73, #74, #75, #76). Invented accounts, wallets and figures only.
+async function testV515CardAlertSettings(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:10150, name:'Test card', descr:'Test card', category:'Bank Accounts', status:'Active', acc_type:'Individual Account', is_credit_card:true, credit_limit:10000});
+  D.ledger.push({id:90, jv:90, date:'2026-10-02', acc:10150, amt:-3500, descr:'spend'});
+  sb.rebuildIndex();
+  const item = () => sb.dashboardTodoItems().find(i=>/% used/.test(i.title));
+  const st = sb.getCcUtilSettings();
+  assert(st.pct===30 && st.dismissable && st.back==='up', 'Defaults: 30%, Dismiss on, back when the % goes up');
+  const save = async (o) => { const d = Object.assign({}, sb.getUiDismissals()); d.ccUtil = Object.assign({}, d.ccUtil||{}, o); await sb.saveUiDismissals(d); };
+  await save({pct:40});
+  assert(!item(), 'Threshold 40%: a card at 35% is fine');
+  await save({pct:30, dismissable:false});
+  assert(item() && !item().dismiss, 'Dismiss switched off: no Dismiss button');
+  await save({dismissable:true, back:'up'});
+  await sb.dismissCcUtil(10150);
+  assert(!item() && sb.getCcUtilSettings().hidden[10150].pct===35, 'Dismissed at 35%: hidden, remembered (synced)');
+  D.ledger.push({id:91, jv:91, date:'2026-10-03', acc:10150, amt:-300, descr:'more'}); sb.rebuildIndex();
+  assert(item() && /38% used/.test(item().title), 'Back once the used % goes up (38%)');
+  await save({back:'month'});
+  await sb.dismissCcUtil(10150);
+  assert(!item(), 'Back next month: hidden this month');
+  freezeDate(sb, '2026-12-02T10:00:00.000Z');
+  assert(item(), 'Next month: back');
+  await save({back:'open'});
+  await sb.dismissCcUtil(10150);
+  assert(!item() && vm.runInContext('ccUtilDismissed.has(10150)', sb), 'Back next time the app opens: kept in memory only');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.renderSettings();
+  const html = sb.document.getElementById('app').innerHTML;
+  assert(/Credit Card Alert/.test(html), 'Settings has a Credit Card Alert section');
+  sb.__set('renderSettings', ()=>{});
+  const els = ['ccUtilPct','ccUtilDismissable','ccUtilBack'].map(id=>sb.document.getElementById(id));
+  if(!els.every(Boolean)){ sb.document.body.insertAdjacentHTML('beforeend', '<input id="ccUtilPct"><input type="checkbox" id="ccUtilDismissable"><select id="ccUtilBack"><option value="up">up</option><option value="month">month</option></select>'); }
+  sb.document.getElementById('ccUtilPct').value = '45'; sb.document.getElementById('ccUtilDismissable').checked = false; sb.document.getElementById('ccUtilBack').value = 'month';
+  await sb.saveCcUtilSettingsFromInputs();
+  const s2 = sb.getCcUtilSettings();
+  assert(s2.pct===45 && s2.dismissable===false && s2.back==='month' && sb.__prefs().row.dismissals.ccUtil.pct===45, 'Save writes the three settings to the synced settings, got ' + JSON.stringify(s2));
+  sb.document.getElementById('ccUtilPct').value = '0';
+  await sb.saveCcUtilSettingsFromInputs();
+  assert(sb.getCcUtilSettings().pct===45, 'A % outside 1–100 is refused');
+}
+async function testV515BackToInboxAfterPosting(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  await sb.__map({'1111':10101});
+  const went = []; let opened = 0, cont = null;
+  sb.__set('go', s=>went.push(s)); sb.__set('openSmsInbox', ()=>{ opened++; }); sb.__set('continueDraft', id=>{ cont = id; });
+  D.smsInbox.push(R(1));
+  sb.smsAfterPost();
+  assert(went.pop()==='newjv' && opened===1, 'SMS still waiting: back to the SMS inbox');
+  D.smsInbox[0].status = 'posted';
+  sb.__set('jvDrafts', [{id:5, date:'2026-11-12', lines:[{acc:'10101', descr:'x', amt:'-1', smsId:1}]}, {id:4, date:'2026-11-10', lines:[{acc:'10101', descr:'x', amt:'-1', smsId:2}]}, {id:3, date:'2026-11-01', lines:[{acc:'10101', descr:'plain', amt:'-1'}]}]);
+  sb.smsAfterPost();
+  assert(cont===4, 'Only drafted SMS dates left: the earliest SMS draft opens, got ' + cont);
+  sb.__set('jvDrafts', []);
+  sb.smsAfterPost();
+  assert(went.pop()==='dashboard', 'Nothing left: the Dashboard');
+  const post = String(vm.runInContext('postJV', sb));
+  assert(/if\(smsIds\.length\) smsAfterPost\(\);/.test(post) && /await smsAutoClear\(\)/.test(post), 'Posting a JV made from SMS goes there (and clears already-posted transfers first)');
+}
+async function testV515TransferAlreadyPostedIsCleared(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  await sb.__map({'1111':10101, '2222':10102});
+  // bank 1's SMS was posted with bank 2 as its other half (JV 50); bank 2's own SMS then arrives
+  D.smsInbox.push(R(1, {kind:'Outgoing transfer', side:'Cr', amt:500, status:'posted', jv:50}));
+  D.ledger.push({id:700, jv:50, date:'2026-11-11', acc:10101, amt:-500, descr:'to bank 2'}, {id:701, jv:50, date:'2026-11-11', acc:10102, amt:500, descr:'from bank 1'});
+  D.smsInbox.push(R(2, {acct:'2222', kind:'Incoming transfer', side:'Dr', amt:500, date:'2026-11-12'}));
+  let m = sb.smsAlreadyPostedMatches();
+  assert(m.length===1 && m[0].sms.id===2 && m[0].jv===50, 'Bank 2 SMS found in JV 50 (next day, within 24 hours), got ' + JSON.stringify(m.map(x=>[x.sms.id, x.jv])));
+  D.smsInbox[1].date = '2026-11-13';
+  assert(!sb.smsAlreadyPostedMatches().length, 'Two days apart: not matched');
+  D.smsInbox[1].date = '2026-11-11'; D.smsInbox[1].amt = 500.5;
+  assert(!sb.smsAlreadyPostedMatches().length, 'A different amount (even by 50 halalas): not matched');
+  D.smsInbox[1].amt = 500; D.smsInbox[1].kind = 'POS purchase';
+  assert(!sb.smsAlreadyPostedMatches().length, 'Not a transfer: never matched');
+  D.smsInbox[1].kind = 'Incoming transfer';
+  D.smsInbox.push(R(3, {acct:'2222', kind:'Incoming transfer', side:'Dr', amt:500, status:'posted', jv:50}));
+  assert(!sb.smsAlreadyPostedMatches().length, 'The line already belongs to another SMS: not matched');
+  D.smsInbox.pop();
+  D.smsInbox.push(R(4, {acct:'2222', kind:'Incoming transfer', side:'Dr', amt:500}));
+  m = sb.smsAlreadyPostedMatches();
+  assert(m.length===1, 'One posted line clears one SMS only, even with two identical SMS waiting');
+  D.smsInbox.pop();
+  const n = await sb.smsAutoClear();
+  const s2 = D.smsInbox.find(x=>x.id===2);
+  assert(n===1 && s2.status==='matched' && s2.jv===50 && sb.__calls.some(c=>c.table==='pd_sms_inbox' && c.row.id===2 && c.row.status==='matched' && c.row.jv===50), 'Cleared: status matched with JV 50, synced');
+  assert(!sb.smsPending().some(x=>x.id===2), 'No longer waiting');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openSmsInbox();
+  const html = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/Cleared automatically \(1\)/.test(html) && /in JV #50/.test(html) && /smsUndoAutoClear\(2\)/.test(html), 'Inbox lists it under Cleared automatically with Undo');
+  await sb.smsUndoAutoClear(2);
+  assert(s2.status==='pending' && (sb.getUiDismissals().smsNoAuto||[]).includes(2) && !sb.smsAlreadyPostedMatches().length, 'Undo: back to waiting and never matched again');
+}
+function loadWalletRpcEdge(){
+  const src = fs.readFileSync(path.join(__dirname, 'edge', 'wallet-rpc', 'index.ts'), 'utf8').replace(/^export /mg, '');
+  const ctx = {console, JSON};
+  vm.createContext(ctx);
+  vm.runInContext(src + '\nthis.walletRpc = walletRpc; this.WALLET_RPC = WALLET_RPC;', ctx);
+  return ctx;
+}
+async function testV515WalletRpcEdgeFunction(){
+  const ctx = loadWalletRpcEdge();
+  const sent = [];
+  const f = async (url, o)=>{ sent.push({url, body:o.body}); return {status:200, text: async()=>'{"result":1}'}; };
+  let r = await ctx.walletRpc({chain:'solana', body:{jsonrpc:'2.0', id:1, method:'getTokenAccountsByOwner', params:['W']}}, f);
+  assert(r.status===200 && r.body==='{"result":1}' && sent[0] && sent[0].url==='https://api.mainnet-beta.solana.com' && JSON.parse(sent[0].body).method==='getTokenAccountsByOwner', 'Solana calls go to Solana’s own server from Supabase’s side');
+  r = await ctx.walletRpc({chain:'base', body:[{method:'eth_call'}, {method:'eth_getBalance'}]}, f);
+  assert(r.status===200 && sent[1].url==='https://mainnet.base.org', 'EVM batches pass through to the chain’s server');
+  r = await ctx.walletRpc({chain:'solana', body:{method:'sendTransaction'}}, f);
+  assert(r.status===400 && /not allowed/.test(r.body) && sent.length===2, 'Anything but a read call is refused without being sent');
+  r = await ctx.walletRpc({chain:'nowhere', body:{method:'getBalance'}}, f);
+  assert(r.status===400 && sent.length===2, 'Unknown chain refused');
+  const sb = v56Sandbox({}, []);
+  let seen = null;
+  sb.fetch = async (url, opts)=>{ seen = {url:String(url), opts}; return {ok:true, status:200, json: async()=>({result:{value:[]}}), text: async()=>'{}'}; };
+  await sb.invChainRpc('solana', {method:'getBalance'});
+  assert(seen && seen.url==='https://test.example.co/functions/v1/wallet-rpc' && seen.opts.headers.apikey==='anon-test' && JSON.parse(seen.opts.body).chain==='solana', 'The app calls wallet-rpc with its Supabase key');
+  await sb.saveInvPriceCfg({rpc:{solana:'https://my-own-rpc.example'}});
+  await sb.invChainRpc('solana', {method:'getBalance'});
+  assert(seen.url==='https://my-own-rpc.example', 'His own Solana address (Price links) is still called directly');
+}
+function v515Tx(owner, opts){
+  const o = Object.assign({fee:5000, err:null, pre:[], post:[], lamPre:2e9, lamPost:2e9, first:owner, time:1794700800}, opts||{});
+  const tb = (mint, own, amt) => ({mint, owner:own, uiTokenAmount:{uiAmountString:String(amt)}});
+  return {blockTime:o.time, meta:{err:o.err, fee:o.fee, preTokenBalances:o.pre.map(x=>tb(...x)), postTokenBalances:o.post.map(x=>tb(...x)), preBalances:[o.lamPre, 0], postBalances:[o.lamPost, 0]},
+    transaction:{message:{accountKeys:[{pubkey:o.first}, {pubkey:'Other111'}]}}};
+}
+async function testV515WalletDailyCheckAndSolanaImport(){
+  const W = 'Wallet1111111111111111111111111111111111111', USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  // a swap: 100 USDC out, 250 FROG in, fee paid in SOL; another owner's balances are ignored
+  const swap = v515Tx(W, {pre:[[USDC, W, 300], [FROG, W, 1000], [FROG, 'Pool1111', 9999]], post:[[USDC, W, 200], [FROG, W, 1250], [FROG, 'Pool1111', 9749]], lamPost:2e9-5000});
+  const d = sb => sb.invSolTxDeltas(swap, W);
+  const sb = v56Sandbox({}, [
+    [/solana-rpc\.publicnode\.com/, (url, opts)=>{
+      const b = JSON.parse(opts.body);
+      if(b.method==='getTokenAccountsByOwner') return {result:{value: b.params[1].programId.startsWith('Tokenkeg')? [{account:{data:{parsed:{info:{mint:FROG, tokenAmount:{uiAmountString:'1250'}}}}}}] : []}};
+      if(b.method==='getSignaturesForAddress') return {result:[{signature:'SigSwap1111', err:null}, {signature:'SigFail1111', err:{x:1}}]};
+      if(b.method==='getTransaction') return {result: swap};
+      return {result:null};
+    }],
+  ]);
+  const x = d(sb);
+  const by = Object.fromEntries((x&&x.deltas||[]).map(e=>[e.mint, e.units]));
+  assert(x && by[USDC]===-100 && by[FROG]===250 && !(vm.runInContext('INV_SOL_NATIVE_MINT', sb) in by) && x.date==='2026-11-15', 'Swap read as −100 USDC, +250 FROG; the fee alone is not a SOL move, got ' + JSON.stringify(x));
+  const send = sb.invSolTxDeltas(v515Tx(W, {lamPost:2e9-5000-1e9}), W);
+  assert(send && send.deltas.length===1 && send.deltas[0].units===-1, 'Sending 1 SOL: −1 SOL, fee excluded');
+  assert(sb.invSolTxDeltas(v515Tx(W, {err:{x:1}}), W)===null, 'Failed transactions are ignored');
+  await v56Link(sb, V56_LINKS);
+  await sb.setInvPlatformWallets(2, [{chain:'solana', address:W}]);
+  await sb.invWalletAutoCheck();
+  let needs = sb.invNeedsYouItems().find(i=>i.key==='wal2');
+  assert(needs && /Phantom: the wallet differs from LedgerOS for FROG \(\+250\)/.test(needs.text) && /invShowWalletDiff\(2\)/.test(needs.act), 'Daily check: a Needs you item shows the difference, got ' + JSON.stringify(needs));
+  assert(!sb._writes.some(w=>w.table==='pd_inv_positions'), 'The check saves nothing');
+  await sb.invWalletAutoCheck();
+  assert(sb._calls.filter(c=>/getTokenAccountsByOwner/.test(c.opts && c.opts.body || '') && /publicnode/.test(c.url)).length===2, 'Runs once per app session');
+  await sb.loadInvWalletTxs(2);
+  const st = vm.runInContext('invWalletTxs[2]', sb);
+  assert(st && !st.loading && st.txs.length===1 && st.txs[0].sig==='SigSwap1111', 'Recent transactions read; failed ones skipped');
+  sb.__set('invView', 'recon');
+  vm.runInContext('invReconExpandedPlatforms.add(2)', sb);
+  const html = v56Html(sb);
+  assert(/class="inv-wtx" data-sig="SigSwap1111"/.test(html) && /\+250 FROG/.test(html) && /−100 USDC|-100 USDC/.test(html) && /invLogWalletTx\(2, &quot;SigSwap1111&quot;, &quot;Frog1111/.test(html), 'Reconcile lists the transaction with a Log FROG button');
+  let opened = null;
+  sb.__set('openInvTxModal', id=>{ opened = {id, preset: sb._invTxPreset}; });
+  sb.invLogWalletTx(2, 'SigSwap1111', FROG);
+  assert(opened && opened.id===3 && opened.preset.date==='2026-11-15' && opened.preset.kind==='buy' && opened.preset.units===250 && opened.preset.usdAmount===100, 'Log it: trade window for FROG, buy 250 on that day for $100 (the USDC leg), got ' + JSON.stringify(opened));
+  const dr = {id:null, date:'2026-01-01', kind:'sell', units:''};
+  sb._invTxPreset = opened && opened.preset;
+  sb.invApplyTxPreset(dr);
+  assert(dr.date==='2026-11-15' && dr.kind==='buy' && dr.units===250 && dr.usdAmount===100, 'The window takes the date, kind, units and USD from it');
+  const D = vm.runInContext('D', sb);
+  D.invTransactions.push({id:99, positionId:3, date:'2026-11-15', kind:'buy', units:250, totalSar:375, owners:[{ownerId:1, units:250}], cashSide:'bank'});
+  assert(/FROG looks logged/.test(v56Html(sb)), 'Once logged, the line says so instead of offering Log');
 }
