@@ -5894,7 +5894,7 @@ async function testEditingOnePersonsUnitsByHandTurnsAutoSplitOff(){
 }
 async function testPerPersonOverdrawIsWarnedByName(){
   const sb = poolSandbox();
-  let msg = null; sb.__set('toast', m=>{ if(/Heads up/.test(m)) msg = m; });
+  let msg = null; sb.__set('toast', m=>{ if(/Heads up|Not enough cash/.test(m)) msg = m; });
   await poolCollect(sb, 1, '2026-10-01', {1:375, 2:375}); // $100 each, $200 on the platform
   sb.openInvTxModal(1, null);
   const d = sb._invTxDraft;
@@ -5902,7 +5902,7 @@ async function testPerPersonOverdrawIsWarnedByName(){
   sb.setInvTxCashSide('cash'); sb.setInvTxUsd('150');
   sb.setInvTxOwnerUnits(1, '1'); // all of it to A by hand — more than A's $100
   await sb.saveInvTx();
-  assert(msg && /A's cash on this platform negative/.test(msg), 'The platform total ($200) covers it, but A alone only has $100 — A should be named, got ' + msg);
+  assert(msg && /Not enough cash on this platform for A\./.test(msg), 'The platform total ($200) covers it, but A alone only has $100 — A is named and (v5.16 #82) the save is blocked, got ' + msg);
 }
 async function testNoOverdrawWarningWhenTheSplitFollowsCash(){
   const sb = poolSandbox();
@@ -8097,6 +8097,10 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV515TransferAlreadyPostedIsCleared();
   await testV515WalletRpcEdgeFunction();
   await testV515WalletDailyCheckAndSolanaImport();
+  await testV516AllViewAndPriceLinks();
+  await testV516GeckoTerminalFallback();
+  await testV516CashSplitAndCashBuyLimit();
+  await testV516OneSaveHideAndWalletImport();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -10269,7 +10273,7 @@ async function testV59PriceLinksExactTokenAndGreenWhenPicked(){
   // Unknown address: says so
   await v56Link(sb, {4:{kind:'dex', chain:'base', address:BCAT}});
   await sb.invLinkSearch(4);
-  assert(/Neither CoinGecko nor DexScreener knows this address/.test(vm.runInContext('window._invLinkUi.searchErrors.join(" ")', sb)), 'An address nobody knows says so');
+  assert(/CoinGecko, DexScreener and GeckoTerminal don\u2019t know this address/.test(vm.runInContext('window._invLinkUi.searchErrors.join(" ")', sb)), 'An address nobody knows says so (v5.16: GeckoTerminal asked too)');
   // CoinGecko hits get chain and price
   await sb.invLinkSearch(1);
   const eth = vm.runInContext('window._invLinkUi.results', sb).find(r=>r.link.kind==='cg');
@@ -10985,4 +10989,115 @@ async function testV515WalletDailyCheckAndSolanaImport(){
   const D = vm.runInContext('D', sb);
   D.invTransactions.push({id:99, positionId:3, date:'2026-11-15', kind:'buy', units:250, totalSar:375, owners:[{ownerId:1, units:250}], cashSide:'bank'});
   assert(/FROG looks logged/.test(v56Html(sb)), 'Once logged, the line says so instead of offering Log');
+}
+
+// v5.16 (#77–#89). Invented coins, wallets and figures only.
+async function testV516AllViewAndPriceLinks(){
+  const sb = v56Sandbox({}, []);
+  const D = vm.runInContext('D', sb);
+  D.invOwners.push({id:2, name:'Test family', isSelf:false});
+  D.invTransactions.push({id:50, positionId:3, date:'2026-09-03', kind:'buy', units:400, totalSar:150, owners:[{ownerId:2, units:400}], cashSide:'bank'});
+  const all = sb.invOwnerHoldings('all').find(h=>h.platform.id===2), mine = sb.invOwnerHoldings(1).find(h=>h.platform.id===2);
+  const frog = h => h && h.positions.find(r=>r.pos.id===3);
+  assert(frog(all) && frog(all).units===1400 && frog(mine) && frog(mine).units===1000, 'All adds everyone’s units (1,000 mine + 400 family)');
+  assert(vm.runInContext('INV_VIEWS', sb).some(v=>v[0]==='all'), 'All is a tab');
+  sb.__set('invView', 'all');
+  const html = v56Html(sb);
+  assert(/Everyone together/.test(html) && /Total Value/.test(html), 'All view renders with totals');
+  await v56Link(sb, {3:{kind:'dex', chain:'solana', address:FROG}});
+  sb.openInvPriceLinks();
+  const m = sb.document.getElementById('modalRoot').innerHTML;
+  const iNot = m.indexOf('Not linked yet'), iLnk = m.indexOf('Linked (1)');
+  assert(iNot>=0 && iLnk>iNot, 'Price links: not linked first, then linked');
+  assert(m.indexOf(FROG)>iLnk && /solscan\.io\/token\/Frog1111/.test(m) && /writeText/.test(m), 'Linked coins show the full address with Copy and Solscan');
+}
+async function testV516GeckoTerminalFallback(){
+  const ADDR = 'Fort111111111111111111111111111111111111111';
+  const sb = v56Sandbox({}, [
+    [/api\.coingecko\.com/, {error:'coin not found'}, 404],
+    [/dexscreener/, {pairs:null}],
+    [/geckoterminal\.com\/api\/v2\/networks\/solana\/tokens\/Fort1+\/pools/, {data:[
+      {attributes:{base_token_price_usd:'0.00005', quote_token_price_usd:'240', reserve_in_usd:'38'}, relationships:{base_token:{data:{id:'solana_'+ADDR}}}},
+      {attributes:{base_token_price_usd:'9', quote_token_price_usd:'0.00006', reserve_in_usd:'500'}, relationships:{base_token:{data:{id:'solana_Other'}}}}]}],
+    [/geckoterminal\.com\/api\/v2\/networks\/solana\/tokens\/Fort1+$/, {data:{attributes:{name:'Test Fortuna', symbol:'tfort'}}}],
+    [/geckoterminal\.com\/api\/v2\/simple/, {data:{attributes:{token_prices:{[ADDR]:null}}}}],
+  ]);
+  const pool = await sb.invGtTopPool('solana', ADDR);
+  assert(pool && pool.price===0.00006 && pool.liq===500, 'Deepest pool (ours is its quote token), priced on our side, got ' + JSON.stringify(pool));
+  const x = await sb.invLookupAddress('solana', ADDR);
+  assert(x.result && x.result.symbol==='TFORT' && /GeckoTerminal/.test(x.result.sub) && x.result.link.address===ADDR, 'Find falls back to GeckoTerminal, got ' + JSON.stringify(x));
+  const q = await sb.invQuoteDex([{posId:3, chain:'solana', address:ADDR}]);
+  assert(q[3] && q[3].price===0.00006 && /thin pool/.test(q[3].note), 'Refresh prices: GeckoTerminal pool as the last resort, flagged as a thin pool, got ' + JSON.stringify(q));
+}
+async function testV516CashSplitAndCashBuyLimit(){
+  const sb = v56Sandbox({}, []);
+  sb.invPlatformCash = () => ({byOwner:{1:{usd:300}, 2:{usd:100}, 3:{usd:0}}, totalUsd:400, totalSar:1500});
+  const sp = sb.invCashShareSplit(1, 100);
+  assert(sp.length===2 && sp.find(x=>x.ownerId===1).usd===75 && sp.find(x=>x.ownerId===2).usd===25, 'Split by each person’s share of the platform cash (300:100)');
+  const odd = sb.invCashShareSplit(1, 0.01*101);
+  assert(Math.round(odd.reduce((a,x)=>a+x.usd,0)*100)===101, 'Cents always add up to the total');
+  const D = vm.runInContext('D', sb);
+  D.invOwners.push({id:2, name:'Test family', isSelf:false});
+  sb.openInvCashModal(1, 'transfer');
+  sb._invCashDraft.usdAmount = '100';
+  sb.invCashAutoSplit();
+  const m = sb.document.getElementById('modalRoot').innerHTML;
+  assert(sb._invCashDraft.owners.length===2 && sb._invCashDraft.owners[0].usd===75 && /has \$300\.00 here/.test(m) && /onchange="invCashAutoSplit\(\)"/.test(m), 'Transfer window shows each person’s cash and splits the total');
+  sb.openInvCashModal(1, 'withdrawal');
+  assert(/has \$100\.00 here/.test(sb.document.getElementById('modalRoot').innerHTML), 'Withdrawals too');
+  sb.openInvCashModal(1, 'deposit');
+  assert(!/has \$/.test(sb.document.getElementById('modalRoot').innerHTML), 'Not on deposits');
+  const src = String(vm.runInContext('saveInvTxNow', sb));
+  assert(/Not enough cash on this platform: \$/.test(src) && /available\. Record the deposit or transfer first\.', true\); return; \}/.test(src), 'A cash buy above the platform’s cash is blocked');
+}
+async function testV516OneSaveHideAndWalletImport(){
+  const sb = v56Sandbox({}, []);
+  let n = 0; const releases = [];
+  sb.saveInvTxNow = () => { n++; return new Promise(r=>{ releases.push(r); }); };
+  const a = sb.saveInvTx(), b = sb.saveInvTx();
+  const seen = n;
+  releases.forEach(r=>r()); await a; await b;
+  assert(seen===1, 'A second click while saving is ignored, got ' + seen);
+  const c = sb.saveInvTx(); releases.forEach(r=>r()); await c;
+  assert(n===2, 'Once done, saving works again');
+  // Hide collapses the wallet panel
+  await v56Link(sb, V56_LINKS);
+  await sb.setInvPlatformWallets(2, [{chain:'solana', address:'Wallet1111111111111111111111111111111111111'}]);
+  vm.runInContext("invWalletResults[2] = {rows:[], untracked:0, error:'', at:'x'}; invWalletTxs[2] = {loading:false, txs:[], error:''};", sb);
+  const p2 = vm.runInContext('D', sb).invPlatforms.find(p=>p.id===2);
+  assert(!/inv-wallet-txs/.test(sb.invWalletPanelHTML(p2, false)) && /inv-wallet-txs/.test(sb.invWalletPanelHTML(p2, true)), 'Hidden: no wallet table or transactions');
+  // a sale paid in USDT that passes straight through to another address
+  const W = 'Wallet1111111111111111111111111111111111111', USDT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+  const keys = [W, 'WalFrogAcc', 'WalUsdtAcc', 'PoolUsdtAcc', 'ElseUsdtAcc'].map(pubkey=>({pubkey}));
+  const tb = (i, mint, owner, amt) => ({accountIndex:i, mint, owner, uiTokenAmount:{uiAmountString:String(amt), decimals:6}});
+  const tx = {blockTime:1794700800, meta:{err:null, fee:5000, preBalances:[2e9], postBalances:[2e9-5000],
+      preTokenBalances:[tb(1, FROG, W, 1000), tb(2, USDT, W, 0), tb(3, USDT, 'Pool', 5000), tb(4, USDT, 'ElseWallet', 0)],
+      postTokenBalances:[tb(1, FROG, W, 600), tb(2, USDT, W, 0), tb(3, USDT, 'Pool', 4581.99), tb(4, USDT, 'ElseWallet', 418.01)],
+      innerInstructions:[{instructions:[{parsed:{type:'transferChecked', info:{source:'PoolUsdtAcc', destination:'WalUsdtAcc', mint:USDT, tokenAmount:{uiAmountString:'418.01'}}}},
+        {parsed:{type:'transfer', info:{source:'WalUsdtAcc', destination:'ElseUsdtAcc', amount:'418010000'}}}]}]},
+    transaction:{message:{accountKeys:keys, instructions:[]}}};
+  const d = sb.invSolTxDeltas(tx, W);
+  const usdt = d && d.deltas.find(x=>x.mint===USDT);
+  assert(usdt && usdt.passed && usdt.units===418.01 && usdt.to==='ElseWallet' && d.deltas.find(x=>x.mint===FROG).units===-400, 'USDT that came in and went straight out is shown (418.01, sent on), got ' + JSON.stringify(d));
+  vm.runInContext('invWalletTxs[2] = '+JSON.stringify({loading:false, error:'', txs:[Object.assign({sig:'SigSale1111', wallet:W}, d)]}), sb);
+  let opened = null;
+  sb.__set('openInvTxModal', id=>{ opened = {id, preset: sb._invTxPreset}; });
+  sb.invLogWalletTx(2, 'SigSale1111', FROG);
+  assert(opened && opened.preset && opened.preset.kind==='sell' && opened.preset.units===400 && opened.preset.usdAmount===418.01, 'Log it: a sale of 400 FROG for $418.01, got ' + JSON.stringify(opened));
+  const html = sb.invWalletTxsHTML(2);
+  assert(/solscan\.io\/tx\/SigSale1111/.test(html) && /418\.01 USDT received, sent on to Else/.test(html) && /FROG cost basis:/.test(html), 'Line has the Solscan link, the passed-through USDT and the cost basis');
+  const D = vm.runInContext('D', sb);
+  D.invTransactions.push({id:98, positionId:3, date:'2026-11-14', kind:'sell', units:398, totalSar:1500, owners:[{ownerId:1, units:398}], cashSide:'bank'});
+  assert(sb.invTxLooksLogged(3, '2026-11-15', -400), 'Looks logged within a day and 1% of the units');
+  assert(!sb.invTxLooksLogged(3, '2026-11-17', -400), 'Not three days apart');
+  // 429: waits and tries again; a transaction read once is not read again
+  let calls = 0, fails = 2;
+  sb.__set('invSleep', async()=>{});
+  sb.invChainRpc = async (chain, body) => { calls++; if(body.method==='getTransaction' && fails-- > 0) throw new Error('wallet-rpc said 429');
+    return body.method==='getSignaturesForAddress'? {result:[{signature:'SigSale1111', err:null}]} : {result:tx}; };
+  await sb.loadInvWalletTxs(2);
+  const st = vm.runInContext('invWalletTxs[2]', sb);
+  assert(st && !st.error && st.txs.length===1 && calls===4, 'Two 429s, then read (4 calls), got ' + JSON.stringify([st && st.error, calls]));
+  await sb.loadInvWalletTxs(2);
+  assert(calls===5, 'Second look: only the signature list, the transaction comes from memory');
 }
