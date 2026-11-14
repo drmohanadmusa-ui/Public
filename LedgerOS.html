@@ -590,12 +590,20 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.14.0';
+const APP_VERSION = '5.15.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.15.0', date:'2026-11-14', changes:[
+    'Settings \u2192 \ud83d\udcb3 Credit Card Alert: choose the % that triggers the Dashboard warning (30% by default), whether it has a Dismiss button, and when a dismissed warning comes back: only when the card\u2019s used % goes up (default), next month, or next time the app opens. Synced across devices.',
+    'After you post a JV made from SMS you go straight back to the SMS inbox while SMS are waiting; when the only ones left are dates saved as drafts, the next of those drafts opens; when nothing is left, the Dashboard.',
+    'Transfers between your own banks are no longer counted twice: when a waiting transfer SMS is already in a posted JV (same account, same amount to the halala, within a day, not already taken by another SMS) it is cleared automatically. They are listed under Cleared automatically in the inbox with an Undo button.',
+    'Wallet checks now go through LedgerOS\u2019s own Supabase service (wallet-rpc), so Solana works again: the old free server blocks the call that lists a wallet\u2019s tokens. Ethereum and Base go the same way.',
+    'Every time the app opens it checks your wallets in the background; any coin whose on-chain units differ from LedgerOS shows in Investments \u2192 Needs you with the difference. Nothing is saved for you.',
+    'Solana wallets: \ud83d\udcdc Transactions (Reconcile) lists the wallet\u2019s last 20 transactions with the coins in and out. Log opens the trade window filled in (date, buy or sell, units, and the USD when it was paid in USDC or USDT, or from the other coin\u2019s price that day); transfers to your other wallets offer Move coins. Ones already logged say so.',
+  ]},
   {version:'5.14.0', date:'2026-11-14', changes:[
     'New Loans page in the side menu (\ud83c\udfe6). Add each loan with its contract figures, even one that is already running: the app works out the months done and left, the principal still owed, the profit paid and still to pay, the APR and the flat rate.',
     'Three loan types: equal instalments; profit-only months, then the principal steps up and normal instalments start; and instalments with a final payment (50/50 car) plus insurance in each payment. Profit is split on the balance still owed, so it is heavier in the early months, as banks book it. When you type the contract instalment, it sets the rate.',
@@ -2391,9 +2399,10 @@ async function fetchAllFromCloud(forceFullLedger){
   if(!fcSnaps.error){ D.forecastSnapshots = fcSnaps.data.map(s=>({id:s.id, anchorMonth:s.anchor_month, takenAt:s.taken_at, kind:s.kind||'auto', months:Array.isArray(s.months)?s.months:[], signFlips:(s.sign_flips&&typeof s.sign_flips==='object')?s.sign_flips:{}, updated_at:s.updated_at||null})); }
   if(!roboLog.error){ D.invRoboValueLog = roboLog.data.map(r=>({id:r.id, platformId:r.platform_id, date:r.entry_date, value:Number(r.value)||0, updated_at:r.updated_at||null})); }
   // v5.4: a database that hasn't had the schema script run yet has no pd_sms_inbox — keep what's on this device.
-  if(smsRows && !smsRows.error){ D.smsInbox = smsRows.data.map(smsFromRow); }
+  if(smsRows && !smsRows.error){ D.smsInbox = smsRows.data.map(smsFromRow); setTimeout(()=>{ smsAutoClear().catch(()=>{}); }, 0); }
   // v5.14: same for pd_loans before its schema script has run.
   if(loanRows && !loanRows.error){ D.loans = loanRows.data.map(loanFromRow); }
+  setTimeout(()=>{ invWalletAutoCheck().catch(()=>{}); }, 4000);   // v5.15 (#76)
   syncCustomForecastCategories();
   if(serverLedgerMarker) safeSetItem('ledgerLastChanged', serverLedgerMarker);
 }
@@ -5088,7 +5097,47 @@ function dashboardBudgetRows(ym){
     .map(c=>({...c, variance: pnlVarianceMagnitude(c.budget, c.actual)}))
     .sort((x,y)=>Math.abs(y.budget)-Math.abs(x.budget) || Math.abs(y.actual)-Math.abs(x.actual));
 }
-const ccUtilDismissed = new Set();   // in memory only: a dismissed warning is back next time the app opens
+const ccUtilDismissed = new Set();   // in memory only: used when the come-back rule is "next time the app opens"
+// v5.15 (#71): threshold, Dismiss on/off and the come-back rule, synced in pd_ui_prefs.dismissals.ccUtil =
+// {pct, dismissable, back:'open'|'month'|'up', hidden:{accId:{month, pct}}}. Default: 30%, Dismiss on, back when the % goes up.
+const CC_UTIL_BACK = {up:'only when the card\u2019s used % goes up', month:'next month', open:'next time the app opens'};
+function getCcUtilSettings(){
+  const c = getUiDismissals().ccUtil || {};
+  const pct = Number(c.pct);
+  return {pct: pct>0 && pct<=100? pct : 30, dismissable: c.dismissable!==false, back: CC_UTIL_BACK[c.back]? c.back : 'up',
+    hidden: (c.hidden && typeof c.hidden==='object' && !Array.isArray(c.hidden))? c.hidden : {}};
+}
+function ccUtilIsHidden(c, st){
+  st = st || getCcUtilSettings();
+  if(!st.dismissable) return false;
+  if(st.back==='open') return ccUtilDismissed.has(c.id);
+  const h = st.hidden[c.id];
+  if(!h) return false;
+  if(st.back==='month') return h.month===todayStr().slice(0,7);
+  return Math.round(c.pct) <= Number(h.pct);
+}
+async function dismissCcUtil(id){
+  const st = getCcUtilSettings();
+  if(st.back==='open') ccUtilDismissed.add(id);
+  else {
+    const c = ccUtilisation().find(x=>x.id===id);
+    const d = Object.assign({}, getUiDismissals()), cu = Object.assign({}, d.ccUtil||{});
+    cu.hidden = Object.assign({}, cu.hidden||{}, {[id]: {month: todayStr().slice(0,7), pct: c? Math.round(c.pct) : 0}});
+    d.ccUtil = cu;
+    await saveUiDismissals(d);
+  }
+  renderDashboard();
+}
+async function saveCcUtilSettingsFromInputs(){
+  const pct = Number(((document.getElementById('ccUtilPct')||{}).value||'').trim());
+  if(!(pct>0 && pct<=100)){ toast('Enter a % between 1 and 100', true); return; }
+  const dis = document.getElementById('ccUtilDismissable'), back = (document.getElementById('ccUtilBack')||{}).value;
+  const d = Object.assign({}, getUiDismissals());
+  d.ccUtil = Object.assign({}, d.ccUtil||{}, {pct, dismissable: dis? !!dis.checked : true, back: CC_UTIL_BACK[back]? back : 'up'});
+  await saveUiDismissals(d);
+  toast('Credit card alert saved \u2713');
+  renderSettings();
+}
 function ccUtilisation(){
   return D.accounts.filter(a=>a.is_credit_card && Number(a.credit_limit)>0 && a.status!=='Inactive' && a.status!=='Deleted').map(a=>{
     const owed = Math.max(0, -accountBalance(a.id)), limit = Number(a.credit_limit);
@@ -5099,10 +5148,11 @@ function dashboardTodoItems(){
   const items = [];
   const smsWaiting = smsPending().length;
   if(smsWaiting) items.push({tone:'warn', title:smsWaiting+' bank SMS to post', sub:'Logged by your iPhone. Opens the SMS inbox in New JV', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
-  // v5.12 (#63): a credit card more than 30% used (LedgerOS balance owed / limit). Dismiss hides it until the app is opened again.
-  ccUtilisation().filter(c=>c.pct>30 && !ccUtilDismissed.has(c.id)).forEach(c=>items.push({tone:'neg', title:accShort(c.id)+' is '+c.pct.toFixed(0)+'% used',
-    sub:'Owed '+money(c.owed)+' of a '+money(c.limit)+' limit. Top it up to bring it to 30% or less', label:'Open', onclick:`openStatement(${c.id})`,
-    dismiss:`ccUtilDismissed.add(${c.id}); renderDashboard()`, dismissTitle:'Hide until you next open the app'}));
+  // v5.12 (#63) / v5.15 (#71): a credit card above the Settings threshold (LedgerOS balance owed / limit).
+  const ccSt = getCcUtilSettings();
+  ccUtilisation().filter(c=>c.pct>ccSt.pct && !ccUtilIsHidden(c, ccSt)).forEach(c=>items.push(Object.assign({tone:'neg', title:accShort(c.id)+' is '+c.pct.toFixed(0)+'% used',
+    sub:'Owed '+money(c.owed)+' of a '+money(c.limit)+' limit. Top it up to bring it to '+ccSt.pct+'% or less', label:'Open', onclick:`openStatement(${c.id})`},
+    ccSt.dismissable? {dismiss:`dismissCcUtil(${c.id})`, dismissTitle:'Hide it; it comes back '+CC_UTIL_BACK[ccSt.back]} : {})));
   const smsLook = smsNeedsLookCount();   // #59
   if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
@@ -6441,6 +6491,62 @@ async function smsCreateJVs(groupKey, balanceAsked){
   if(netted.length) parts.push(netted.length+' SMS cancelled out');
   toast(parts.join(' · ')+(first? '. Pick the missing accounts, check, then post.' : ''));
 }
+// v5.15 (#73): after posting a JV made from SMS: back to the inbox while SMS wait; else the next SMS draft; else the Dashboard.
+function smsAfterPost(){
+  jvReturnScreen = null; reconcileAcc = null;
+  if(smsPending().length || smsReviewRows().length){ go('newjv'); openSmsInbox(); return; }
+  const next = (jvDrafts||[]).filter(d=>(d.lines||[]).some(l=>l.smsId)).sort((a,b)=>String(a.date).localeCompare(String(b.date)) || a.id-b.id)[0];
+  if(next){ go('newjv'); continueDraft(next.id); return; }
+  go('dashboard');
+}
+// v5.15 (#74): a waiting transfer SMS whose account already has a posted ledger line for the same amount
+// (to the cent, dated within a day) that no other SMS accounts for is already in the books, usually as the
+// other half of the other bank's SMS. It is marked 'matched' with that JV (Undo puts it back and stops it
+// being matched again: dismissals.smsNoAuto).
+function smsAlreadyPostedMatches(){
+  const noAuto = new Set((getUiDismissals().smsNoAuto||[]).map(Number));
+  const pend = smsPending().filter(s=>/transfer/i.test(s.kind||'') && s.amt!==null && !noAuto.has(s.id) && smsAccFor(s.acct));
+  if(!pend.length) return [];
+  const key = (jv, acc, amt) => jv+'|'+acc+'|'+Math.round(Number(amt)*100);
+  const used = {};
+  (D.smsInbox||[]).forEach(x=>{
+    if((x.status!=='posted' && x.status!=='matched') || !x.jv || x.amt===null) return;
+    const acc = smsAccFor(x.acct); if(!acc) return;
+    const k = key(x.jv, acc, smsSigned(x)); used[k] = (used[k]||0) + 1;
+  });
+  const lines = {};
+  (D.ledger||[]).forEach(l=>{ if(!l.jv) return; const k = key(l.jv, l.acc, l.amt); (lines[k] = lines[k] || []).push(l); });
+  const out = [];
+  pend.forEach(s=>{
+    const acc = smsAccFor(s.acct), signed = smsSigned(s);
+    const hit = (D.ledger||[]).filter(l=>Number(l.acc)===acc && l.jv && Math.abs(Number(l.amt)-signed)<0.005 && smsDaysApart(l.date, s.date)<=1)
+      .find(l=>{ const k = key(l.jv, acc, l.amt); return (lines[k]||[]).length > (used[k]||0); });
+    if(!hit) return;
+    const k = key(hit.jv, acc, hit.amt); used[k] = (used[k]||0) + 1;
+    out.push({sms:s, jv:hit.jv});
+  });
+  return out;
+}
+let smsAutoClearBusy = false;
+async function smsAutoClear(){
+  if(smsAutoClearBusy) return 0;
+  const m = smsAlreadyPostedMatches();
+  if(!m.length) return 0;
+  smsAutoClearBusy = true;
+  try{
+    for(const x of m) await smsSetStatus([x.sms.id], 'matched', x.jv);
+    toast(m.length+' SMS already in '+[...new Set(m.map(x=>'JV #'+x.jv))].join(', ')+': cleared');
+    logActivity('action', 'Cleared '+m.length+' transfer SMS already posted ('+m.map(x=>x.sms.id+'\u2192JV #'+x.jv).join(', ')+')');
+  } finally { smsAutoClearBusy = false; }
+  return m.length;
+}
+async function smsUndoAutoClear(id){
+  const d = Object.assign({}, getUiDismissals());
+  d.smsNoAuto = [...new Set((d.smsNoAuto||[]).map(Number).concat([Number(id)]))];
+  await saveUiDismissals(d);
+  await smsSetStatus([id], 'pending');
+  openSmsInbox();
+}
 async function smsDismiss(id){ await smsSetStatus([id], 'dismissed'); openSmsInbox(); }
 async function smsRestore(id){ const s = (D.smsInbox||[]).find(x=>x.id===id); await smsSetStatus([id], s && s.kind==='Needs review'? 'review' : 'pending'); openSmsInbox(); }
 function smsCopy(id){
@@ -6600,10 +6706,12 @@ function smsRowHTML(s, actions){
     <td class="num mono">${amtTxt}</td><td style="white-space:nowrap;text-align:right">${actions}</td></tr>`;
 }
 function openSmsInbox(){
+  if(!smsAutoClearBusy && smsAlreadyPostedMatches().length){ smsAutoClear().then(n=>{ if(n && document.querySelector('#modalRoot .modal')) openSmsInbox(); }).catch(()=>{}); }
   const groups = smsGroups();
   const accOpts = () => D.accounts.filter(a=>[1,2].includes(firstDigit(a.id)) && a.status!=='Inactive')
     .map(a=>`<option value="${a.id}">${a.id} · ${esc(accShort(a.id))}</option>`).join('');
-  const done = (D.smsInbox||[]).filter(s=>s.status!=='pending' && s.status!=='review').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time));
+  const done = (D.smsInbox||[]).filter(s=>s.status!=='pending' && s.status!=='review' && s.status!=='matched').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time));
+  const matched = (D.smsInbox||[]).filter(s=>s.status==='matched').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time)).slice(0, 30);
   const busy = smsIdsInJVs();
   const inJVs = (D.smsInbox||[]).filter(s=>s.status==='pending' && busy.has(s.id)).length;
   const waiting = groups.reduce((n,g)=>n+g.rows.length, 0);
@@ -6630,6 +6738,9 @@ function openSmsInbox(){
     <div class="row" style="justify-content:space-between;align-items:center"><span class="mut">${waiting} waiting${inJVs? ' · '+inJVs+' already in a JV or draft' : ''}</span><button class="btn ghost sm" onclick="refreshSmsInbox()">↻ Refresh</button></div>
     ${smsNeedsLookHTML()}
     ${groups.map(groupHTML).join('') || '<div class="empty" style="padding:18px">No SMS waiting</div>'}
+    ${matched.length? `<details style="margin-top:12px" id="smsMatchedList"><summary class="btn ghost sm" style="display:inline-block">Cleared automatically (${matched.length})</summary>
+      <div class="mut" style="font-size:11.5px;margin:6px 0">Transfer SMS already in a posted JV (the other bank\u2019s SMS booked this side), so they were not posted again.</div>
+      <table><tbody>${matched.map(s=>smsRowHTML(s, `<span class="mut" style="font-size:11px">in JV #${esc(String(s.jv||''))}</span> <button class="btn ghost sm" onclick="smsUndoAutoClear(${s.id})">Undo</button>`)).join('')}</tbody></table></details>` : ''}
     <div style="margin-top:12px"><button class="btn ghost sm" id="smsMapToggle" onclick="smsMapOpen=!smsMapOpen; openSmsInbox()">${smsMapOpen? '▾' : '▸'} 🔗 Numbers & accounts (${Object.keys(getSmsMap()).length})</button>
       ${smsMapOpen? smsMapHTML() : ''}</div>
     <div style="margin-top:12px"><button class="btn ghost sm" id="smsDoneToggle" onclick="smsDoneOpen=!smsDoneOpen; openSmsInbox()">${smsDoneOpen? '▾' : '▸'} Done (${done.length})</button>
@@ -6675,10 +6786,12 @@ async function postJV(){
     if(smsIds.length){ try{ await smsSetStatus(smsIds, 'posted', jv); }catch(e){ logActivity('error', 'Posted JV #'+jv+' but could not mark its SMS as posted: '+e); } }
     toast('JV #'+jv+' posted ✓'+(smsIds.length? ' · '+smsIds.length+' SMS done' : '')+(syncQueue.length? ' (queued for sync)':''));
     logActivity('action', 'Posted JV #'+jv+' ('+lines.length+' lines, net '+money(total)+')');
+    if(smsIds.length){ try{ await smsAutoClear(); }catch(e){ logActivity('error', 'SMS auto-clear after JV #'+jv+' failed: '+e); } }
     resetJVDraft();
     ledgerFilter = {acc:'', from:'', to:'', q:'', jv:'', preset:'', specificMonth:'', unallocOnly:false};
     ledgerPage = 0;
-    if(jvReturnScreen){ const dest = jvReturnScreen; jvReturnScreen = null; go(dest); }
+    if(smsIds.length) smsAfterPost();
+    else if(jvReturnScreen){ const dest = jvReturnScreen; jvReturnScreen = null; go(dest); }
     else if(reconcileAcc){ reconcileAcc = null; go('dashboard'); }
     else go('ledger');
   } finally {
@@ -11600,15 +11713,24 @@ async function editInvPlatformWallet(platformId){
 async function invRpc(url, body){
   return invFetchJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
 }
+// v5.15 (#75): wallet calls go through the Edge Function wallet-rpc (Supabase's side), because publicnode
+// blocks getTokenAccountsByOwner and Solana's own server refuses browsers. An address typed in Price
+// settings (rpc.solana) is still called directly.
+async function invChainRpc(chain, body){
+  const own = (getInvPriceCfg().rpc||{})[chain];
+  if(own) return invRpc(own, body);
+  let url = '', key = '';
+  try{ url = (localStorage.getItem('sb_url')||'').replace(/\/+$/, ''); key = localStorage.getItem('sb_key')||''; }catch(e){}
+  if(!url || !key) throw new Error('not connected to Supabase on this device');
+  return invFetchJson(url+'/functions/v1/wallet-rpc', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key}, body:JSON.stringify({chain, body})});
+}
 // {address(lower-case for EVM, as-is for Solana): units} for the given token addresses in one wallet
 async function invWalletBalances(wallet, tokenAddrs){
-  const ch = INV_CHAINS[wallet.chain];
-  const rpc = (getInvPriceCfg().rpc||{})[wallet.chain] || ch.rpc;
   const out = {};
   if(wallet.chain==='solana'){
     const programs = ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'];
     for(const programId of programs){
-      const r = await invRpc(rpc, {jsonrpc:'2.0', id:1, method:'getTokenAccountsByOwner', params:[wallet.address, {programId}, {encoding:'jsonParsed'}]});
+      const r = await invChainRpc('solana', {jsonrpc:'2.0', id:1, method:'getTokenAccountsByOwner', params:[wallet.address, {programId}, {encoding:'jsonParsed'}]});
       if(r && r.error) throw new Error('Solana RPC: '+(r.error.message||'error'));
       (((r||{}).result||{}).value||[]).forEach(acc=>{
         const info = ((((acc||{}).account||{}).data||{}).parsed||{}).info||{};
@@ -11617,7 +11739,7 @@ async function invWalletBalances(wallet, tokenAddrs){
       });
     }
     if(tokenAddrs.includes(INV_SOL_NATIVE_MINT)){
-      const b = await invRpc(rpc, {jsonrpc:'2.0', id:2, method:'getBalance', params:[wallet.address]});
+      const b = await invChainRpc('solana', {jsonrpc:'2.0', id:2, method:'getBalance', params:[wallet.address]});
       out[INV_SOL_NATIVE_MINT] = (out[INV_SOL_NATIVE_MINT]||0) + (Number(((b||{}).result||{}).value)||0)/1e9;
     }
     return out;
@@ -11633,7 +11755,7 @@ async function invWalletBalances(wallet, tokenAddrs){
     }
   });
   if(!calls.length) return out;
-  const res = await invRpc(rpc, calls);
+  const res = await invChainRpc(wallet.chain, calls);
   const byId = {}; (Array.isArray(res)? res : [res]).forEach(x=>{ if(x) byId[x.id] = x.result; });
   const big = h => { try{ return h && h!=='0x'? BigInt(h) : 0n; }catch(e){ return 0n; } };
   const toUnits = (raw, dec) => { const d = 10n ** BigInt(dec); return Number(raw / d) + Number(raw % d)/Number(d); };
@@ -11646,13 +11768,19 @@ async function invWalletBalances(wallet, tokenAddrs){
 }
 let invWalletResults = {};   // platformId → {rows:[{pos, tracker, wallet}], untracked:n, error, at}
 async function checkInvPlatformWallet(platformId){
+  if(!invPlatformWallets(platformId).length){ editInvPlatformWallet(platformId); return; }
+  toast('Reading wallet…');
+  await invReadPlatformWallet(platformId);
+  invReconExpandedPlatforms.add(platformId);
+  renderInvestmentsPage();
+}
+// Reads every wallet of a platform and stores {rows:[{pos, tracker, wallet}], untracked, error, at} in invWalletResults.
+async function invReadPlatformWallet(platformId){
   const wallets = invPlatformWallets(platformId);
-  if(!wallets.length){ editInvPlatformWallet(platformId); return; }
   const cfg = getInvPriceCfg();
   const positions = invPositionsForPlatform(platformId).filter(p=>p.status!=='Closed');
   const rows = [], errors = [];
   let untracked = 0;
-  toast('Reading wallet…');
   for(const w of wallets){
     const mine = positions.filter(p=>{ const l = cfg.links[p.id]; return l && l.kind==='dex' && l.chain===w.chain; });
     try{
@@ -11670,8 +11798,103 @@ async function checkInvPlatformWallet(platformId){
   }
   invWalletResults[platformId] = {rows, untracked, error: errors.join(' · '), at: nowISO()};
   if(!rows.length && !errors.length) invWalletResults[platformId].error = 'No positions on this platform are linked to a token address on that chain yet (⚙ Setup → 💹 Price links).';
+  return invWalletResults[platformId];
+}
+const invWalletDiffers = x => Math.abs(x.wallet - x.tracker) > Math.max(1e-6, Math.abs(x.tracker)*1e-6);
+// v5.15 (#76): once per app session (on load) every platform wallet is read in the background; a difference
+// becomes a Needs you item. Nothing is saved: units only change when he records a transaction.
+let invWalletAutoDone = false;
+async function invWalletAutoCheck(){
+  if(invWalletAutoDone) return;
+  invWalletAutoDone = true;
+  const plats = (D.invPlatforms||[]).filter(p=>invPlatformWallets(p.id).length);
+  for(const p of plats){ try{ await invReadPlatformWallet(p.id); }catch(e){ invWalletResults[p.id] = {rows:[], untracked:0, error:String(e && e.message || e), at:nowISO()}; } }
+  if(plats.length){ try{ renderNav(); }catch(e){} if(screen==='investments') renderInvestmentsPage(); }
+}
+function invShowWalletDiff(platformId){
   invReconExpandedPlatforms.add(platformId);
-  renderInvestmentsPage();
+  if(screen!=='investments') go('investments');
+  setInvView('recon');
+  const sol = invPlatformWallets(platformId).some(w=>w.chain==='solana');
+  if(sol && !invWalletTxs[platformId]) loadInvWalletTxs(platformId);
+}
+// ---------- v5.15 (#76): Solana transaction import ----------
+// Recent transactions of a platform's Solana wallet(s), each as the wallet's own change per token
+// (post − pre token balances owned by the wallet; SOL from the lamport balance, fee excluded).
+const INV_SOL_STABLES = {EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v:'USDC', Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB:'USDT'};
+const INV_WALLET_TX_LIMIT = 20;
+let invWalletTxs = {};   // platformId → {loading, error, txs:[{sig, date, time, fee, deltas:[{mint, units}]}]}
+function invSolTxDeltas(tx, owner){
+  if(!tx || !tx.meta || tx.meta.err) return null;
+  const m = tx.meta, by = {};
+  const add = (list, sign) => (list||[]).forEach(b=>{ if(b.owner!==owner) return; const u = Number(((b.uiTokenAmount||{}).uiAmountString) || (b.uiTokenAmount||{}).uiAmount || 0); by[b.mint] = (by[b.mint]||0) + sign*u; });
+  add(m.preTokenBalances, -1); add(m.postTokenBalances, 1);
+  const keys = (((tx.transaction||{}).message||{}).accountKeys||[]).map(k=>typeof k==='string'? k : k.pubkey);
+  const i = keys.indexOf(owner), fee = Number(m.fee)||0;
+  if(i>=0){ let lam = (Number((m.postBalances||[])[i])||0) - (Number((m.preBalances||[])[i])||0); if(i===0) lam += fee; if(Math.abs(lam) > 5000) by[INV_SOL_NATIVE_MINT] = (by[INV_SOL_NATIVE_MINT]||0) + lam/1e9; }
+  const deltas = Object.entries(by).map(([mint, units])=>({mint, units:Math.round(units*1e9)/1e9})).filter(d=>Math.abs(d.units) > 1e-9);
+  const t = Number(tx.blockTime)||0, iso = t? new Date(t*1000).toISOString() : '';
+  return {date: iso.slice(0,10), time: iso.slice(11,16), fee: i===0? fee/1e9 : 0, deltas};
+}
+async function loadInvWalletTxs(platformId){
+  invWalletTxs[platformId] = {loading:true, txs:[], error:''};
+  if(screen==='investments') renderInvestmentsPage();
+  const out = [], errors = [];
+  for(const w of invPlatformWallets(platformId).filter(x=>x.chain==='solana')){
+    try{
+      const sigs = await invChainRpc('solana', {jsonrpc:'2.0', id:1, method:'getSignaturesForAddress', params:[w.address, {limit:INV_WALLET_TX_LIMIT}]});
+      if(sigs && sigs.error) throw new Error(sigs.error.message||'error');
+      for(const sg of ((sigs||{}).result||[]).filter(x=>!x.err)){
+        const r = await invChainRpc('solana', {jsonrpc:'2.0', id:2, method:'getTransaction', params:[sg.signature, {encoding:'jsonParsed', maxSupportedTransactionVersion:0}]});
+        const d = invSolTxDeltas((r||{}).result, w.address);
+        if(d && d.deltas.length) out.push(Object.assign({sig:sg.signature, wallet:w.address}, d));
+      }
+    }catch(e){ errors.push('Solana: '+(e && e.message || e)); }
+  }
+  out.sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+  invWalletTxs[platformId] = {loading:false, txs:out, error:errors.join(' · ')};
+  if(screen==='investments') renderInvestmentsPage();
+}
+// The position a token belongs to on this platform (by its Solana price link), or null.
+function invPosForMint(platformId, mint){
+  const cfg = getInvPriceCfg();
+  return invPositionsForPlatform(platformId).find(p=>{ const l = cfg.links[p.id]; return l && l.kind==='dex' && l.chain==='solana' && l.address===mint; }) || null;
+}
+// A transaction on that day with (about) the same units is probably already logged.
+function invTxLooksLogged(posId, date, units){
+  return (D.invTransactions||[]).some(t=>t.positionId===posId && t.date===date && Math.abs((Number(t.units)||0) - Math.abs(units)) <= Math.max(1e-9, Math.abs(units)*0.005));
+}
+// Log it: the trade window opens filled in (date, buy/sell, units; USD from a USDC/USDT leg, else from the
+// other leg at that day's price when it is a tracked position). He checks and saves.
+function invLogWalletTx(platformId, sig, mint){
+  const tx = ((invWalletTxs[platformId]||{}).txs||[]).find(t=>t.sig===sig); if(!tx) return;
+  const d = tx.deltas.find(x=>x.mint===mint), pos = invPosForMint(platformId, mint);
+  if(!d || !pos) return;
+  const stable = tx.deltas.find(x=>INV_SOL_STABLES[x.mint] && Math.sign(x.units)===-Math.sign(d.units));
+  let usd = stable? Math.abs(stable.units) : '';
+  if(!stable){
+    const other = tx.deltas.find(x=>x.mint!==mint && Math.sign(x.units)===-Math.sign(d.units));
+    const op = other && invPosForMint(platformId, other.mint);
+    const px = op && (op.currency||'USD')==='USD'? Number(invPriceAsOf(op.id, tx.date)) : 0;
+    if(px>0) usd = Math.round(Math.abs(other.units)*px*100)/100;
+  }
+  window._invTxPreset = {date:tx.date, kind: d.units>0? 'buy' : 'sell', units: Math.abs(d.units), usdAmount: usd, note:'From wallet '+sig.slice(0,8)+'\u2026'};
+  openInvTxModal(pos.id);
+}
+function invWalletTxsHTML(platformId){
+  const st = invWalletTxs[platformId];
+  if(!st) return '';
+  if(st.loading) return '<div class="mut" style="font-size:12px;margin:6px 0">Reading recent wallet transactions\u2026</div>';
+  const label = mint => { const pos = invPosForMint(platformId, mint); return pos? (pos.ticker||pos.name) : mint===INV_SOL_NATIVE_MINT? 'SOL' : INV_SOL_STABLES[mint] || invShortAddr(mint); };
+  const rows = st.txs.map(t=>`<tr class="inv-wtx" data-sig="${esc(t.sig)}"><td class="mono" style="white-space:nowrap">${esc(t.date)} ${esc(t.time)}</td>
+      <td>${t.deltas.map(d=>`<span style="color:${d.units>0?'var(--green, #16a34a)':'var(--red, #dc2626)'}">${d.units>0?'+':''}${invFmtUnits(d.units)} ${esc(label(d.mint))}</span>`).join(' \u00b7 ')}</td>
+      <td style="text-align:right;white-space:nowrap">${t.deltas.filter(d=>invPosForMint(platformId, d.mint)).map(d=>{ const pos = invPosForMint(platformId, d.mint);
+        return invTxLooksLogged(pos.id, t.date, d.units)? `<span class="mut" style="font-size:11px">${esc(label(d.mint))} looks logged</span>`
+          : `<button class="btn ghost sm" onclick="invLogWalletTx(${platformId}, ${esc(JSON.stringify(t.sig))}, ${esc(JSON.stringify(d.mint))})">Log ${esc(label(d.mint))}</button>`; }).join(' ')}
+        ${t.deltas.length===1 && invPosForMint(platformId, t.deltas[0].mint)? `<button class="btn ghost sm" title="Sent to or received from another of your wallets" onclick="openInvMoveAssets(${platformId}, ${invPosForMint(platformId, t.deltas[0].mint).id})">\u21c4 Move coins</button>` : ''}</td></tr>`).join('');
+  return `<div class="inv-wallet-txs" style="margin:6px 0"><div class="mut" style="font-size:11.5px">Last ${INV_WALLET_TX_LIMIT} Solana transactions (newest first). Log opens the trade window filled in; nothing is saved until you save it.</div>
+    ${st.error? `<div style="color:var(--red, #dc2626);font-size:12px">${esc(st.error)}</div>` : ''}
+    ${rows? `<table style="font-size:12px;margin-top:4px"><tbody>${rows}</tbody></table>` : '<div class="mut" style="font-size:12px">No transactions found.</div>'}</div>`;
 }
 async function saveInvWalletUnits(platformId){
   const r = invWalletResults[platformId]; if(!r || !r.rows.length) return;
@@ -11692,15 +11915,16 @@ function invWalletPanelHTML(p){
   const head = `<div class="row noprint inv-wallet" data-walletplat="${p.id}" style="gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 4px;font-size:12px">
       <span class="mut">👛 ${wallets.length? wallets.map(w=>INV_CHAINS[w.chain].label+' '+esc(invShortAddr(w.address))).join(' · ') : 'No wallet set'}</span>
       ${wallets.length? `<button class="btn ghost sm" onclick="checkInvPlatformWallet(${p.id})">Check wallet</button>` : ''}
+      ${wallets.some(w=>w.chain==='solana')? `<button class="btn ghost sm" onclick="loadInvWalletTxs(${p.id})">\ud83d\udcdc Transactions</button>` : ''}
       <button class="btn ghost sm" onclick="editInvPlatformWallet(${p.id})">${wallets.length? '✎' : '+ Wallet address'}</button></div>`;
-  if(!r) return head;
+  if(!r) return head + invWalletTxsHTML(p.id);
   const body = r.rows.length? `<table style="font-size:12px;margin-top:4px"><thead><tr><th>Token</th><th class="num">Tracker</th><th class="num">Wallet</th><th class="num">Difference</th></tr></thead><tbody>${r.rows.map(x=>{
       const diff = x.wallet - x.tracker, ok = Math.abs(diff) <= Math.max(1e-6, Math.abs(x.tracker)*1e-6);
       return `<tr data-walletpos="${x.pos.id}"><td>${esc(x.pos.ticker||x.pos.name)}</td><td class="num mono">${invFmtUnits(x.tracker)}</td><td class="num mono">${invFmtUnits(x.wallet)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : invFmtUnits(diff)}</td></tr>`;
     }).join('')}</tbody></table>
     <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">Save wallet units as statement units</button>
       ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other token${r.untracked===1?'':'s'} in this wallet aren't in the tracker.</span>` : ''}</div>` : '';
-  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + body;
+  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + body + invWalletTxsHTML(p.id);
 }
 
 // ---------- platform boxes (👤 Mine) ----------
@@ -11915,6 +12139,11 @@ function invNeedsYouItems(){
       const d = p.roboValueDate, age = d? invDaysSince(d) : null;
       if(age===null || age>INV_ROBO_PROMPT_DAYS) items.push({key:'robo'+p.id, icon:'🤖', text:`${esc(p.name)}: value ${age===null? 'never logged' : 'last updated '+age+' days ago'} — log this month's value`, btn:'✎ Update value', act:`openInvRoboValueModal(${p.id})`});
     });
+    Object.entries(invWalletResults).forEach(([pid, r])=>{
+      const plat = (D.invPlatforms||[]).find(x=>x.id===Number(pid)); if(!plat || !r) return;
+      const diff = (r.rows||[]).filter(invWalletDiffers);
+      if(diff.length) items.push({key:'wal'+pid, icon:'\ud83d\udc5b', text:`${esc(plat.name)}: the wallet differs from LedgerOS for ${diff.map(x=>esc(x.pos.ticker||x.pos.name)+' ('+(x.wallet-x.tracker>0?'+':'')+invFmtUnits(x.wallet-x.tracker)+')').join(', ')}`, btn:'\ud83d\udc5b Show', act:`invShowWalletDiff(${pid})`});
+    });
     const recon = invReconIssueCount();
     if(recon) items.push({key:'recon', icon:'✅', text:`${recon} ${recon===1?'person\'s':'people\'s'} ledger and tracker don't agree`, btn:'✅ Reconcile', act:"setInvView('recon')"});
     invActionablePlatformsSorted().forEach(p=>{
@@ -11986,6 +12215,9 @@ function invApplyTxPreset(d){
   window._invTxPreset = null;
   if(!p || !d || d.id) return;
   if(p.cashSide) d.cashSide = p.cashSide;
+  if(p.date) d.date = p.date;
+  if(p.kind) d.kind = p.kind;
+  if(p.units) d.units = p.units;
   if(p.usdAmount!==undefined && p.usdAmount!=='') d.usdAmount = p.usdAmount;
   if(p.totalSar) d.totalSar = p.totalSar;
   if(p.feePct!==undefined && p.feePct!=='') d.feePct = p.feePct;
@@ -17339,6 +17571,18 @@ function renderSettings(){
         </div>
         <div class="mut" style="font-size:11px;margin-top:10px">Currently: green for <span class="mono">${getBalanceStaleDays()}</span> day(s) after the Statement Balance date, red after that. <span class="mono">0</span> means only the exact day it was updated.</div>
       </div>`},
+    ccalert: {label:'\ud83d\udcb3 Credit Card Alert', html: (()=>{ const st = getCcUtilSettings(); return `
+      <div class="panel">
+        <h3>\ud83d\udcb3 Credit Card Alert</h3>
+        <div class="mut" style="font-size:12.5px;margin-bottom:12px">The Dashboard warns when a credit card owes more than this share of its limit (ledger balance owed \u00f7 credit limit).</div>
+        <label class="fl">Warn above</label>
+        <input type="number" id="ccUtilPct" min="1" max="100" step="1" value="${st.pct}" style="width:90px;margin-bottom:10px"> %
+        <label class="row" style="gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" class="chk" style="width:auto" id="ccUtilDismissable" ${st.dismissable?'checked':''}> Show a Dismiss button</label>
+        <label class="fl">After Dismiss, it comes back</label>
+        <select id="ccUtilBack" style="width:auto;margin-bottom:10px">${Object.entries(CC_UTIL_BACK).map(([k,v])=>`<option value="${k}" ${k===st.back?'selected':''}>${v}</option>`).join('')}</select>
+        <div class="row" style="margin-top:6px"><button class="btn pri sm" onclick="saveCcUtilSettingsFromInputs()">Save</button></div>
+        <div class="mut" style="font-size:11px;margin-top:10px">Synced across your devices.</div>
+      </div>`; })()},
     gridexport: {label:'📅 Grid & Export End Month', html: `
       <div class="panel">
         <h3>📅 Grid & Export End Month</h3>
