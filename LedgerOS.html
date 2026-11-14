@@ -313,6 +313,9 @@ body{transition:background-color .35s ease}
 #sidebar{background:var(--rail);border-right:none}
 #sidebar .brand{flex-direction:column;justify-content:center;gap:4px;padding:14px 8px 10px}
 #sidebar .brand .mark{width:38px;height:38px;border-radius:11px;background:var(--rail-on-bg);color:var(--rail-on-fg);font-family:var(--sans);font-size:17px}
+.brand .mark.has-logo, body.bg-aurora #sidebar .brand .mark.has-logo{background:none;padding:0;overflow:hidden}
+.brand .mark.has-logo svg{width:100%;height:100%;display:block}
+.logo-pick{display:inline-flex;align-items:center;gap:6px}.logo-pick svg{width:22px;height:22px;border-radius:5px}
 #sidebar .brand h1{display:none}
 #sidebar .brand .mut{color:var(--rail-text)!important;opacity:.75;margin:0!important}
 nav{padding:4px 8px;gap:2px}
@@ -590,12 +593,24 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.17.0';
+const APP_VERSION = '5.18.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.18.0', date:'2026-11-14', changes:[
+    'New logo: the Budget ring replaces the L at the top of the side rail. Settings \u2192 Appearance \u2192 Logo can switch it to Card fan or Growing palm (synced).',
+    'Month review: income now takes its plan from the Forecast (it showed 0 before). Income above plan is green and expense above plan red; the \u2691 flag is red, and category rows are larger on a shaded band.',
+    'Month review: suggested budgets now appear (accounts with no status stored were skipped by mistake in 5.17).',
+    'Month review step 4, Plans that disagree: every account where the Forecast, Budget and Provisions figures differ, this month and the next 12. The Dashboard reminds you while any exist.',
+    'Month review step 5, Unused provisions to move to income: amounts parked in Short Term Liabilities for 3 months (an October amount is due in January) that are not allocated or reversed yet. One button fills a New JV moving them to Other Income for you to check and post. The accounts and months are in the tab\u2019s Settings; the Dashboard reminds you too.',
+    'Investments opens on \ud83d\udc65 All, now the first tab (then Mine, Family). All also shows Needs you and the prices bar.',
+    'Investments: new \ud83d\udcb2 Prices tab: one row per coin with everyone\u2019s units on every platform added up, price, value and last update; a coin without a price has a button to its price link.',
+    'Price links are per coin: link a coin once and every platform holding it (same ticker) gets the price. The Price links window shows one row per coin with its platforms.',
+    'A platform\u2019s own page shows each position\u2019s price. Platforms with nothing in them show as a box marked No holdings.',
+    'Reconcile \u2192 wallet check: a row where the wallet and the tracker differ has + Log buy / + Log sell, opening the trade window with today\u2019s date and the difference in units.',
+  ]},
   {version:'5.17.0', date:'2026-11-14', changes:[
     'New \ud83d\uddd3 Month review tab on Budget & P&L, for the month just closed. Step 1: actual vs plan per category and account, flagged when off by more than both 10% and SAR 200 (both editable in the tab\u2019s Settings), with the accrual cover shown. Step 2: a suggested budget for each account planned in the Budget grid: the usual month (the middle value of the last 12, leaving out irregular items) plus irregular items \u00f7 12, rounded to 10, with a reason (rising, under-used, one-off spike, seasonal, new). Large or once-a-year payments are marked irregular automatically and you can tick or untick each one. If an accrual cap is too small for a yearly item, the months it needs are suggested.',
     'Month review: Review and overwrite shows the old and new figure for every month before it writes the ticked accounts\u2019 budget from this month for 12 months (editable). Step 3 lists provision lines whose amount or timing didn\u2019t match last month, offers to use last month\u2019s actual from now on, and warns when a provision ends within 3 months.',
@@ -3407,7 +3422,28 @@ const NAV_ICONS = {
   settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2'
 };
 let navHasAnimatedIn = false; // the staggered nav entrance plays once per session, on first render only
+// v5.18 (#96): app logo, synced in pd_ui_prefs.dismissals.appLogo; Budget ring by default, Card fan or Growing palm in Settings.
+const APP_LOGOS = {
+  ring:  {label:'Budget ring', svg:'<defs><linearGradient id="lgO" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#ea580c"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="url(#lgO)"/><circle cx="24" cy="24" r="12.5" fill="none" stroke="#fff" stroke-width="5" stroke-dasharray="58 21" transform="rotate(-60 24 24)"/><circle cx="24" cy="24" r="12.5" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="5" stroke-dasharray="15 64" stroke-dashoffset="-61" transform="rotate(-60 24 24)"/><path d="M24 18.5l1.5 3.9 3.9 1.6-3.9 1.6-1.5 3.9-1.5-3.9-3.9-1.6 3.9-1.6z" fill="#fff"/>'},
+  cards: {label:'Card fan', svg:'<defs><linearGradient id="lgK" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3aed"/><stop offset="1" stop-color="#4338ca"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="url(#lgK)"/><rect x="9" y="15" width="24" height="16" rx="3.5" fill="#fff" opacity=".28" transform="rotate(-18 21 23)"/><rect x="11" y="16" width="24" height="16" rx="3.5" fill="#fff" opacity=".55" transform="rotate(-6 23 24)"/><rect x="13" y="18" width="24" height="16" rx="3.5" fill="#fff" transform="rotate(6 25 26)"/><rect x="16.5" y="22.5" width="5" height="4" rx="1" fill="#f5c542" transform="rotate(6 25 26)"/><rect x="16.5" y="29.5" width="12" height="1.8" rx=".9" fill="#4338ca" opacity=".5" transform="rotate(6 25 26)"/>'},
+  palm:  {label:'Growing palm', svg:'<defs><linearGradient id="lgM" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e293b"/><stop offset="1" stop-color="#0f172a"/></linearGradient><linearGradient id="lgMg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fcd34d"/><stop offset="1" stop-color="#d4a017"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="url(#lgM)"/><path d="M24 30V17" stroke="#34d399" stroke-width="2.6" stroke-linecap="round"/><path d="M24 21c-1-5-5-7.5-10-7 .3 5 3.8 8 10 7z" fill="#34d399"/><path d="M24 18c1.2-5.5 5.5-8 11-7.2-.6 5.6-4.6 8.5-11 7.2z" fill="#10b981"/><ellipse cx="24" cy="34.5" rx="11" ry="3.6" fill="#b8860b"/><ellipse cx="24" cy="32" rx="11" ry="3.6" fill="url(#lgMg)"/>'},
+};
+function getAppLogo(){ const v = getUiDismissals().appLogo; return APP_LOGOS[v]? v : 'ring'; }
+function appLogoSvg(key, idSuffix){ const svg = APP_LOGOS[key].svg; return '<svg viewBox="0 0 48 48" aria-hidden="true">'+(idSuffix? svg.replace(/id="(lg\w+)"/g, 'id="$1'+idSuffix+'"').replace(/url\(#(lg\w+)\)/g, 'url(#$1'+idSuffix+')') : svg)+'</svg>'; }
+function applyAppLogo(){
+  const key = getAppLogo();
+  document.querySelectorAll('.brand .mark').forEach(el=>{
+    if(el.dataset.logo===key) return;
+    el.dataset.logo = key; el.classList.add('has-logo'); el.setAttribute('title', 'LedgerOS'); el.innerHTML = appLogoSvg(key);
+  });
+}
+async function setAppLogo(key){
+  if(!APP_LOGOS[key]) return;
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {appLogo:key}));
+  applyAppLogo(); renderSettings();
+}
 function renderNav(){
+  applyAppLogo();
   const vEl = document.getElementById('sidebarVersionTag');
   if(vEl && !vEl.textContent) vEl.textContent = 'v'+APP_VERSION;
   const hidden = getHiddenPages();
@@ -5178,6 +5214,10 @@ function dashboardTodoItems(){
   // v5.17 (#68): the month just closed waits for its review from the 1st until marked reviewed
   const mrMk = mrDueMonth();
   if(!mrIsDone(mrMk) && (D.ledger||[]).length) items.push({tone:'warn', title:'Review '+monthLabel(mrMk), sub:'Month review: actual vs plan, suggested budgets, provisions', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
+  const stlDue = mrStlDue();   // #95
+  if(stlDue.length) items.push({tone:'warn', title:stlDue.length+' unused provision amount'+(stlDue.length===1?'':'s')+' can move to income', sub:money(stlDue.reduce((s,x)=>s+x.amt,0))+' in '+accShort(mrSettings().stlAcc)+' for '+mrSettings().stlMonths+' months or more', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
+  const planBad = mrPlanConflicts();   // #92
+  if(planBad.length) items.push({tone:'warn', title:planBad.length+' account'+(planBad.length===1?' has plans':'s have plans')+' that disagree', sub:'Forecast, Budget and Provisions should match. Opens the Month review', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
   const smsLook = smsNeedsLookCount();   // #59
   if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
@@ -8360,14 +8400,17 @@ function pnlBudgetForAccountInRange(accId, fromDate, toDate){
 // accrual cap check; Accept overwrites the Budget cells from this month for N months after a month-by-month
 // preview; (3) provision lines whose amount or timing didn't match. Synced in pd_ui_prefs.dismissals.monthReview =
 // {done:{'YYYY-MM':date}, irregular:{ledgerId:true|false}, settings:{pct, sar, months, round}}. Never posts JVs.
-const MR_DEFAULTS = {pct:10, sar:200, months:12, round:10};
+const MR_DEFAULTS = {pct:10, sar:200, months:12, round:10, stlMonths:3};
 let mrMonth = null;
 function mrState(){ const m = getUiDismissals().monthReview; return (m && typeof m==='object' && !Array.isArray(m))? m : {}; }
 async function mrSaveState(patch){ const d = Object.assign({}, getUiDismissals()); d.monthReview = Object.assign({}, mrState(), patch); await saveUiDismissals(d); }
 function mrSettings(){
   const c = mrState().settings || {};
   const n = (v, d, lo, hi) => { const x = Number(v); return (v!==undefined && v!==null && v!=='' && x>=lo && x<=hi)? x : d; };
-  return {pct:n(c.pct, MR_DEFAULTS.pct, 0, 1000), sar:n(c.sar, MR_DEFAULTS.sar, 0, 1e9), months:Math.round(n(c.months, MR_DEFAULTS.months, 1, 60)), round:n(c.round, MR_DEFAULTS.round, 0.01, 1e6)};
+  const accOr = (v, fallback) => (v && ACC_BY_ID[Number(v)])? Number(v) : fallback;
+  const otherIncome = (D.accounts||[]).find(a=>firstDigit(a.id)===3 && a.acc_type==='Individual Account' && /^other income$/i.test(String(accShort(a.id)).trim()));
+  return {pct:n(c.pct, MR_DEFAULTS.pct, 0, 1000), sar:n(c.sar, MR_DEFAULTS.sar, 0, 1e9), months:Math.round(n(c.months, MR_DEFAULTS.months, 1, 60)), round:n(c.round, MR_DEFAULTS.round, 0.01, 1e6),
+    stlAcc: accOr(c.stlAcc, ACC_BY_ID[20106]? 20106 : null), stlIncomeAcc: accOr(c.stlIncomeAcc, otherIncome? otherIncome.id : null), stlMonths: Math.round(n(c.stlMonths, MR_DEFAULTS.stlMonths, 1, 36))};
 }
 function mrDueMonth(){ return prevMonthKey(todayStr().slice(0,7)); }
 function mrIsDone(mk){ return !!(mrState().done||{})[mk]; }
@@ -8385,9 +8428,11 @@ function mrRound(v, r){ return roundCents(Math.round(v/r)*r); }
 function mrActualVsPlan(mk){
   const [from, to] = monthRange(mk), st = mrSettings(), cats = {};
   D.accounts.filter(a=>(firstDigit(a.id)===6 || firstDigit(a.id)===3) && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account') && a.status!=='Deleted').forEach(a=>{
-    const actual = Math.abs(sumAcc(l=>l.acc===a.id, from, to)), plan = Math.abs(pnlBudgetForAccountInRange(a.id, from, to));
+    const income = firstDigit(a.id)===3;
+    // v5.18 (#92): income is planned in the Forecast; take that month's original plan
+    const actual = Math.abs(sumAcc(l=>l.acc===a.id, from, to)), plan = Math.abs(income? (computeForecastCell(a, mk, mk).plan||0) : pnlBudgetForAccountInRange(a.id, from, to));
     if(actual<0.005 && plan<0.005) return;
-    const income = firstDigit(a.id)===3, c = cats[(income?'I|':'E|')+a.category] ??= {cat:a.category, income, plan:0, actual:0, rows:[]};
+    const c = cats[(income?'I|':'E|')+a.category] ??= {cat:a.category, income, plan:0, actual:0, rows:[]};
     c.plan += plan; c.actual += actual;
     c.rows.push({a, plan, actual, diff: actual-plan, flag: mrFlag(plan, actual, st)});
   });
@@ -8438,7 +8483,7 @@ function mrAccountStudy(a, mk){
 }
 function mrSuggestions(mk){
   const cur = todayStr().slice(0,7);
-  return D.accounts.filter(a=>firstDigit(a.id)===6 && a.acc_type==='Individual Account' && a.status==='Active')
+  return D.accounts.filter(a=>firstDigit(a.id)===6 && a.acc_type==='Individual Account' && a.status!=='Inactive' && a.status!=='Deleted')   // #97: blank status = active
     .filter(a=>{ const c = computeForecastCell(a, cur, cur); return c.source==='budget' || c.source==='budget-empty'; })
     .map(a=>mrAccountStudy(a, mk)).filter(r=>r && (r.change || r.irregular.length || r.tags.length))
     .sort((x,y)=> (y.tick-x.tick) || Math.abs(y.suggested-y.plan)-Math.abs(x.suggested-x.plan));
@@ -8549,6 +8594,52 @@ async function mrApplyProvisionFix(gid, lineId){
   renderMonthReview();
 }
 
+// v5.18 (#92): accounts whose plans disagree, this month and the next 12. Expense accounts compare Budget with
+// Provisions (the Forecast takes them from there); income and other planned accounts also compare the Forecast figure.
+function mrPlanConflicts(){
+  const cur = todayStr().slice(0,7), months = []; for(let i=0;i<=12;i++) months.push(shiftMonthKey(cur, i));
+  const own = !_forecastFastIndexes; if(own) beginForecastFastPath();
+  try{
+    const out = [];
+    D.accounts.filter(a=>(firstDigit(a.id)===3 || firstDigit(a.id)===6) && a.acc_type==='Individual Account' && a.status!=='Inactive' && a.status!=='Deleted').forEach(a=>{
+      const behavior = (FORECAST_CATEGORIES[getForecastCategory(a)]||{}).behavior;
+      const bad = [];
+      months.forEach(m=>{
+        const fig = {budget: budgetPlanFor(a.id, m), provisions: provisionsPlanFor(a.id, m)};
+        if(behavior==='manual' || behavior==='manual_or_provision') fig.forecast = getManualPlan(a.id, m);
+        const vals = Object.values(fig).filter(v=>v!==null && v!==undefined).map(v=>Math.abs(Number(v)));
+        if(vals.length>=2 && Math.max(...vals)-Math.min(...vals) > 0.5) bad.push(Object.assign({m}, fig));
+      });
+      if(bad.length) out.push({a, months:bad});
+    });
+    return out;
+  } finally { if(own) endForecastFastPath(); }
+}
+// v5.18 (#95): amounts parked in the unused-provisions account (a credit) that can move to income once N months have
+// passed (an October amount is due in January). Already moved = allocated, or a later line with the opposite amount.
+function mrStlDue(){
+  const st = mrSettings(); if(!st.stlAcc) return [];
+  const cur = todayStr().slice(0,7);
+  const lines = (D.ledger||[]).filter(l=>Number(l.acc)===st.stlAcc).slice().sort((x,y)=>String(x.date).localeCompare(String(y.date)) || x.id-y.id);
+  const used = new Set();
+  return lines.filter(l=>Number(l.amt)<0 && !l.alloc).filter(l=>{
+    const back = lines.find(r=>!used.has(r.id) && r.id!==l.id && String(r.date)>=String(l.date) && Math.abs(Number(r.amt)+Number(l.amt))<0.005);
+    if(back){ used.add(back.id); return false; }
+    return true;
+  }).map(l=>({l, due: shiftMonthKey(monthOf(l.date), st.stlMonths), amt: roundCents(-Number(l.amt))})).filter(x=>x.due<=cur);
+}
+function mrStlBuildJV(){
+  const st = mrSettings(), due = mrStlDue();
+  if(!due.length) return;
+  if(!st.stlIncomeAcc){ toast('Pick the income account first (Month review \u2192 Settings)', true); return; }
+  const lines = [];
+  due.forEach(x=>{ const d = 'Unused provision to income: '+(x.l.descr||fmtDateShort(x.l.date)); lines.push({acc:String(st.stlAcc), descr:d, amt:String(x.amt)}); });
+  due.forEach(x=>{ const d = 'Unused provision to income: '+(x.l.descr||fmtDateShort(x.l.date)); lines.push({acc:String(st.stlIncomeAcc), descr:d, amt:String(-x.amt)}); });
+  jvDraft = {date: todayStr(), lines: lines.map(l=>Object.assign(freshLine(), l))};
+  jvBalanceCheckSelected = new Set();
+  go('newjv');
+  toast(due.length+' amount'+(due.length===1?'':'s')+' ready to move: check, then post');
+}
 async function mrMarkReviewed(mk, on){
   const done = Object.assign({}, mrState().done||{});
   if(on) done[mk] = todayStr(); else delete done[mk];
@@ -8558,7 +8649,8 @@ async function mrMarkReviewed(mk, on){
 }
 async function mrSaveSettingsFromInputs(){
   const v = id => (document.getElementById(id)||{}).value;
-  const c = {pct:Number(v('mrPct')), sar:Number(v('mrSar')), months:Math.round(Number(v('mrMonths'))), round:Number(v('mrRound'))};
+  const c = {pct:Number(v('mrPct')), sar:Number(v('mrSar')), months:Math.round(Number(v('mrMonths'))), round:Number(v('mrRound')),
+    stlAcc:Number(v('mrStlAcc'))||null, stlIncomeAcc:Number(v('mrStlIncome'))||null, stlMonths:Math.round(Number(v('mrStlMonths')))||MR_DEFAULTS.stlMonths};
   if(!(c.pct>=0 && c.pct<=1000) || !(c.sar>=0) || !(c.months>=1 && c.months<=60) || !(c.round>=0.01)){ toast('Check the numbers: months 1–60, rounding at least 0.01', true); return; }
   await mrSaveState({settings:c});
   toast('Month review settings saved ✓');
@@ -8573,11 +8665,17 @@ function renderMonthReview(){
   try{ step1 = mrActualVsPlan(mk); step2 = mrSuggestions(mk); step3 = mrProvisionChecks(mk); }
   finally{ endForecastFastPath(); }
   const pick = []; for(let i=1;i<=12;i++) pick.push(shiftMonthKey(todayStr().slice(0,7), -i));
-  const diffTxt = d => `<span class="${d>0.005?'r':''}">${d>0?'+':''}${money0(d)}</span>`;
+  // v5.18 (#92b): above plan is good for income (green) and bad for expenses (red); below plan the other way round
+  const diffTxt = (d, income) => `<span class="${Math.abs(d)<0.005? '' : (d>0)===!!income? 'g' : 'r'}">${d>0?'+':''}${money0(d)}</span>`;
+  const flagIcon = '<span class="r mr-flag-icon" aria-label="flagged">\u2691</span> ';
   const flagged = step1.reduce((n,c)=>n+c.rows.filter(r=>r.flag).length, 0);
-  const s1 = step1.map(c=>`<tr class="mr-cat${c.flag?' mr-flag':''}" style="font-weight:600"><td>${c.flag?'⚑ ':''}${esc(c.cat)}${c.income?' <span class="badge">income</span>':''}</td><td class="num mono">${money0(c.plan)}</td><td class="num mono">${money0(c.actual)}</td><td class="num mono">${diffTxt(c.diff)}</td>
+  const s1 = step1.map(c=>`<tr class="mr-cat${c.flag?' mr-flag':''}" style="font-weight:700;font-size:14px;background:var(--chip)"><td>${c.flag? flagIcon : ''}${esc(c.cat)}${c.income?' <span class="badge">income</span>':''}</td><td class="num mono">${money0(c.plan)}</td><td class="num mono">${money0(c.actual)}</td><td class="num mono">${diffTxt(c.diff, c.income)}</td>
       <td style="font-size:11.5px">${c.cover? (c.cover.full? 'Covered by the accrual reserve' : money0(c.cover.covered)+' of it covered by accrual') : ''}</td></tr>`
-    + c.rows.map(r=>`<tr class="${r.flag?'mr-flag':''}" data-mrrow="${r.a.id}"><td style="padding-left:18px">${r.flag?'⚑ ':''}${esc(accShort(r.a.id))}</td><td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.actual)}</td><td class="num mono">${diffTxt(r.diff)}</td><td></td></tr>`).join('')).join('');
+    + c.rows.map(r=>`<tr class="${r.flag?'mr-flag':''}" data-mrrow="${r.a.id}"><td style="padding-left:22px;font-size:12px">${r.flag? flagIcon : ''}${esc(accShort(r.a.id))}</td><td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.actual)}</td><td class="num mono">${diffTxt(r.diff, c.income)}</td><td></td></tr>`).join('')).join('');
+  const conflicts = mrPlanConflicts(), stl = mrStlDue();
+  const figTxt = x => ['forecast','budget','provisions'].filter(k=>x[k]!==undefined && x[k]!==null).map(k=>({forecast:'Forecast', budget:'Budget', provisions:'Provisions'})[k]+' '+money0(Math.abs(x[k]))).join(' \u00b7 ');
+  const s4 = conflicts.map(c=>`<li data-mrconflict="${c.a.id}"><b>${esc(accShort(c.a.id))}</b>: ${esc(monthLabel(c.months[0].m))} ${esc(figTxt(c.months[0]))}${c.months.length>1? ` <span class="mut">(and ${c.months.length-1} more month${c.months.length===2?'':'s'})</span>` : ''}</li>`).join('');
+  const s5 = stl.map(x=>`<tr data-mrstl="${x.l.id}"><td class="mono">${esc(fmtDateShort(x.l.date))}</td><td>${esc(x.l.descr||'')}</td><td class="num mono">${money(x.amt)}</td><td class="mut">due ${esc(monthLabel(x.due))}</td></tr>`).join('');
   const s2 = step2.map(r=>`<tr data-mrsug="${r.a.id}"><td><input type="checkbox" class="chk mr-acc" style="width:auto" data-acc="${r.a.id}" ${r.tick&&r.change?'checked':''} ${r.change?'':'disabled'} aria-label="Accept ${esc(accShort(r.a.id))}"></td>
       <td>${esc(accShort(r.a.id))}<div class="mut" style="font-size:11px">${r.tags.map(t=>`<span class="badge" data-mrtag="${t.k}">${esc(t.t)}</span>`).join(' ')}</div>
         ${r.candidates.length? `<div style="font-size:11px;margin-top:3px">${r.candidates.map(l=>`<label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px"><input type="checkbox" class="chk" style="width:auto" data-mrirr="${l.id}" ${r.irregular.includes(l)?'checked':''} onchange="mrToggleIrregular(${l.id}, this.checked)"> irregular: ${esc(fmtDateShort(l.date))} ${money0(l.amt)}</label>`).join('')}</div>` : ''}
@@ -8600,6 +8698,9 @@ function renderMonthReview(){
           <label>and over SAR<br><input id="mrSar" type="number" style="width:90px" value="${st.sar}"></label>
           <label>Months to fill<br><input id="mrMonths" type="number" style="width:70px" value="${st.months}"></label>
           <label>Round to<br><input id="mrRound" type="number" style="width:70px" value="${st.round}"></label>
+          <label>Unused provisions account<br><input id="mrStlAcc" type="number" style="width:90px" value="${st.stlAcc||''}"></label>
+          <label>moves to<br><input id="mrStlIncome" type="number" style="width:90px" value="${st.stlIncomeAcc||''}"></label>
+          <label>after months<br><input id="mrStlMonths" type="number" style="width:70px" value="${st.stlMonths}"></label>
           <button class="btn ghost sm" onclick="mrSaveSettingsFromInputs()">Save</button></div></details></div>
     <div class="panel"><h3>1 · Actual vs plan, ${esc(monthLabel(mk))}</h3>
       <div class="mut" style="font-size:12px;margin-bottom:6px">⚑ = off by more than ${st.pct}% and SAR ${money0(st.sar)}. ${flagged} account${flagged===1?'':'s'} flagged.</div>
@@ -8609,7 +8710,16 @@ function renderMonthReview(){
       ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th></th><th>Account</th><th class="num">Plan now</th><th class="num">Usual</th><th class="num">Irregular (12 mo)</th><th class="num">Suggested</th></tr></thead><tbody>${s2}</tbody></table></div>
         <div class="row" style="margin-top:8px"><button class="btn pri sm" onclick="mrOpenAccept()">Review and overwrite…</button></div>` : '<div class="mut">No Budget-planned accounts with history.</div>'}</div>
     <div class="panel"><h3>3 · Provisions</h3>
-      ${s3? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s3}</ul>` : '<div class="mut">All provision lines matched last month.</div>'}</div>`;
+      ${s3? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s3}</ul>` : '<div class="mut">All provision lines matched last month.</div>'}</div>
+    <div class="panel" id="mrConflicts"><h3>4 \u00b7 Plans that disagree</h3>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">This month and the next 12: accounts where the Forecast, Budget and Provisions figures for a month are not the same.</div>
+      ${s4? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s4}</ul>` : '<div class="mut">All plans agree.</div>'}</div>
+    <div class="panel" id="mrStl"><h3>5 \u00b7 Unused provisions to move to income</h3>
+      ${!st.stlAcc? '<div class="mut">Set the unused provisions account in \u2699 Settings above.</div>'
+        : s5? `<div class="mut" style="font-size:12px;margin-bottom:6px">Amounts in ${esc(accShort(st.stlAcc))} for ${st.stlMonths} months or more, not moved yet.</div>
+          <div style="overflow-x:auto"><table style="font-size:12.5px"><tbody>${s5}</tbody></table></div>
+          <div class="row" style="margin-top:8px"><button class="btn pri sm" onclick="mrStlBuildJV()">Move ${stl.length} to ${esc(st.stlIncomeAcc? accShort(st.stlIncomeAcc) : 'income')} in New JV</button></div>`
+        : '<div class="mut">Nothing due this month.</div>'}</div>`;
 }
 function pnlVarianceMagnitude(budget, actual){ return Math.abs(budget) - Math.abs(actual); }
 function renderPnL(){
@@ -10145,6 +10255,13 @@ function invDeriveUnitsFromSar(totalUnits, allocSar, totalSar){
 }
 // Units display to 8 decimal places for crypto and stocks, trailing zeros trimmed so whole
 // numbers still read cleanly.
+// v5.18: prices keep 4 significant digits below 1 (meme coins trade at fractions of a cent)
+function invFmtPrice(v){
+  const n = Number(v)||0;
+  if(!n) return '0';
+  if(Math.abs(n)>=1) return fmt2(n);
+  return n.toFixed(Math.min(12, 3 - Math.floor(Math.log10(Math.abs(n))))).replace(/0+$/,'');
+}
 function invFmtUnits(u){
   const n = Number(u)||0;
   if(!n) return '0';
@@ -11331,17 +11448,17 @@ function invPctText(cost, market, hasVal){
      🗂 Classic   — the previous all-in-one page, kept as a fallback
    USDT and USDC holdings count as cash (1:1 with USD) everywhere in these views. */
 const INV_VIEWS = [
-  ['mine','👤 Mine'], ['family','👨‍👩‍👧 Family'], ['all','👥 All'], ['activity','📋 Activity'], ['recon','✅ Reconcile'],
+  ['all','👥 All'], ['mine','👤 Mine'], ['family','👨‍👩‍👧 Family'], ['prices','💲 Prices'], ['activity','📋 Activity'], ['recon','✅ Reconcile'],
   ['insights','📊 Insights'], ['setup','⚙ Setup']
-];
+];   // v5.18 (#99): All first and the tab Investments opens on; (#102) Prices
 // v5.6: the 🗂 Classic tab is gone from the menu (Muhannad, #22). Its page is still the fallback below.
-let invView = (function(){ try{ const v = localStorage.getItem('invView'); return INV_VIEWS.some(x=>x[0]===v)? v : 'mine'; }catch(e){ return 'mine'; } })();
+let invView = 'all';   // v5.18 (#99): the app always opens Investments on All
 let invCcy = (function(){ try{ return localStorage.getItem('invCcy')==='USD'? 'USD' : 'SAR'; }catch(e){ return 'SAR'; } })();
 let invShowDetails = false;
 const invCardsExpanded = new Set();
 let invActivityFilter = {platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100};
 function setInvView(v){
-  invView = INV_VIEWS.some(x=>x[0]===v)? v : 'mine';
+  invView = INV_VIEWS.some(x=>x[0]===v)? v : 'all';
   try{ localStorage.setItem('invView', invView); }catch(e){}
   renderInvestmentsPage();
 }
@@ -11419,7 +11536,7 @@ function invHoldingsTotals(list){
 function invReconIssueCount(){ return invOwnerReconciliation().filter(r=>r.linked && !r.ok).length; }
 function invNavHTML(){
   const issues = invReconIssueCount();
-  const ccy = (invView==='mine'||invView==='family'||invView==='all')? `<div class="toggle-tabs" style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden" title="Show amounts in SAR or USD">
+  const ccy = (invView==='mine'||invView==='family'||invView==='all'||invView==='prices')? `<div class="toggle-tabs" style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden" title="Show amounts in SAR or USD">
       <button class="tbtn" style="border:none;border-radius:0;${invCcy==='SAR'?'background:var(--accent);color:#ffffff':''}" onclick="setInvCcy('SAR')">SAR</button>
       <button class="tbtn" style="border:none;border-radius:0;${invCcy==='USD'?'background:var(--accent);color:#ffffff':''}" onclick="setInvCcy('USD')">USD</button></div>` : '';
   return `<div class="row noprint" id="invNav" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
@@ -11443,7 +11560,7 @@ function invTotalsCardsHTML(t, labels){
 }
 // One platform as a compact card: a single summary line, expanding to a simple table.
 // scope 'mine' gets the action buttons; a family member's card is read-only.
-function invHoldingCardHTML(h, scope, forceOpen, allCols){
+function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
   const key = scope+':'+h.platform.id;
   const open = !!forceOpen || invCardsExpanded.has(key);
   const pl = h.valueSar - h.costSar;
@@ -11468,12 +11585,14 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols){
     </div>`;
   }
   const det = !!allCols || invShowDetails;   // #53: the Family pop-out always shows cost, price, realised
-  const cols = 5 + (det? 3 : 0);
+  const pc = !!showPrice && !det;   // v5.18 (#98): the platform page always shows the price
+  const cols = 5 + (det? 3 : 0) + (pc? 1 : 0);
   const posRows = h.positions.map(r=>{
     const rpl = r.valueSar - r.costSar;
     return `<tr class="click" style="cursor:pointer" onclick="openInvPosition(${r.pos.id})">
       <td><b>${esc(r.pos.name)}</b>${r.pos.ticker? ` <span class="mut">${esc(r.pos.ticker)}</span>`:''}${r.hasValuation? '' : ' <span class="mut" style="font-size:11px">(no price)</span>'}</td>
       <td class="num mono">${invFmtUnits(r.units)}</td>
+      ${pc? `<td class="num mono" data-posprice="${r.pos.id}">${r.hasValuation? invFmtPrice(r.price)+' '+esc(r.pos.currency||'') : '\u2014'}</td>` : ''}
       <td class="num mono">${invDisp(r.valueSar)}</td>
       <td class="num mono ${moneyClass(rpl)}">${invDisp(rpl)}</td>
       <td class="num mono ${moneyClass(rpl)}">${invPlPct(r.costSar, r.valueSar)}</td>
@@ -11485,7 +11604,7 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols){
     ...(Math.abs(h.cashUsd)>0.005? [{label:'USD', usd:h.cashUsd, sar:h.cashSar, onclick:`openInvPlatformCashOwners(${pid})`}] : []),
     ...h.stable.map(r=>({label:(r.pos.ticker||r.pos.name).toUpperCase(), usd:r.usd, sar:r.costSar, onclick:`openInvPosition(${r.pos.id})`}))
   ].map(c=>`<tr class="click inv-cash-line" style="cursor:pointer" onclick="${c.onclick}">
-      <td>💵 ${esc(c.label)} cash${Math.abs(c.usd)>1e-9? ` <span class="mut" style="font-size:11px" title="SAR per USD this cash cost">@ ${(c.sar/c.usd).toFixed(4)}</span>` : ''}</td><td class="num mono">$${fmt2(c.usd)}</td><td class="num mono">${invDisp(c.usd*fx)}</td>
+      <td>💵 ${esc(c.label)} cash${Math.abs(c.usd)>1e-9? ` <span class="mut" style="font-size:11px" title="SAR per USD this cash cost">@ ${(c.sar/c.usd).toFixed(4)}</span>` : ''}</td><td class="num mono">$${fmt2(c.usd)}</td>${pc? '<td></td>' : ''}<td class="num mono">${invDisp(c.usd*fx)}</td>
       <td class="num mono ${moneyClass(c.usd*fx-c.sar)}">${invDisp(c.usd*fx-c.sar)}</td><td class="num mono ${moneyClass(c.usd*fx-c.sar)}">${invPlPct(c.sar, c.usd*fx)}</td>
       ${det? `<td class="num mono">${invDisp(c.sar)}</td><td></td><td></td>` : ''}</tr>`).join('');
   const closed = h.closed.length? `<details style="margin-top:8px"><summary class="mut" style="cursor:pointer;font-size:12px">Closed positions (${h.closed.length})</summary>
@@ -11501,7 +11620,7 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols){
     </div>` : '';
   return `<div class="panel inv-card" data-card="${key}">${head}
     <div style="overflow-x:auto;margin-top:10px"><table style="min-width:${det? 720 : 460}px"><thead><tr>
-      <th>Position</th><th class="num">Units</th><th class="num">Value</th><th class="num">P/L</th><th class="num">%</th>
+      <th>Position</th><th class="num">Units</th>${pc? '<th class="num">Price</th>' : ''}<th class="num">Value</th><th class="num">P/L</th><th class="num">%</th>
       ${det? '<th class="num">Cost</th><th class="num">Price</th><th class="num">Realised</th>' : ''}
     </tr></thead><tbody>${posRows || (cashRows? '' : `<tr><td colspan="${cols}" class="empty">Nothing held here right now</td></tr>`)}${cashRows}</tbody></table></div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px;flex-wrap:wrap;gap:6px">
@@ -11536,10 +11655,22 @@ function invValCmp(a, b){ return a.date<b.date? -1 : a.date>b.date? 1 : (invIsCl
 function invUtcDate(ms){ return new Date(ms).toISOString().slice(0,10); }
 
 // ---------- synced price settings ----------
+// v5.18 (#102c): price links are per coin. Positions with the same ticker are one coin: a link saved on one
+// is saved on all of them, and a position with no link of its own uses its coin's (so every reader, the
+// daily close job included once saved, sees one link per coin).
+function invCoinKey(p){ return String((p && (p.ticker||p.name))||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function invCoinPositions(posId){
+  const me = (D.invPositions||[]).find(p=>p.id===posId); if(!me) return [];
+  const k = invCoinKey(me);
+  return k? (D.invPositions||[]).filter(p=>invCoinKey(p)===k) : [me];
+}
 function getInvPriceCfg(){
   const c = getUiDismissals().invPrices;
   const o = (c && typeof c==='object' && !Array.isArray(c))? c : {};
-  return {keys: o.keys||{}, links: o.links||{}, wallets: o.wallets||{}, rpc: o.rpc||{}};
+  const links = Object.assign({}, o.links||{}), byCoin = {};
+  (D.invPositions||[]).forEach(p=>{ const l = links[p.id], k = invCoinKey(p); if(k && l && l.kind && !byCoin[k]) byCoin[k] = l; });
+  (D.invPositions||[]).forEach(p=>{ const k = invCoinKey(p); if(k && !(links[p.id] && links[p.id].kind) && byCoin[k]) links[p.id] = byCoin[k]; });
+  return {keys: o.keys||{}, links, wallets: o.wallets||{}, rpc: o.rpc||{}};
 }
 async function saveInvPriceCfg(patch){
   const d = Object.assign({}, getUiDismissals());
@@ -11549,7 +11680,8 @@ async function saveInvPriceCfg(patch){
 function invPriceLink(posId){ const l = getInvPriceCfg().links[posId]; return (l && l.kind)? l : null; }
 async function setInvPriceLink(posId, link){
   const links = Object.assign({}, getInvPriceCfg().links);
-  if(link) links[posId] = link; else delete links[posId];
+  const ids = invCoinPositions(posId).map(p=>p.id); if(!ids.includes(posId)) ids.push(posId);
+  ids.forEach(id=>{ if(link) links[id] = link; else delete links[id]; });
   await saveInvPriceCfg({links});
 }
 function invLinkLabel(l){
@@ -11821,15 +11953,18 @@ function renderInvPriceLinks(){
   const keepTop = box? box.scrollTop : 0;
   const cfg = getInvPriceCfg();
   const ui = window._invLinkUi;
+  // v5.18 (#102c): one row per coin (same ticker on several platforms = one row)
+  const seenCoin = new Set();
   const positions = (D.invPositions||[]).filter(p=>p.status!=='Closed' && !invIsStablecoin(p))
-    .slice().sort((a,b)=>{ const pa = (invPlatformById(a.platformId)||{}).name||'', pb = (invPlatformById(b.platformId)||{}).name||''; return pa===pb? String(a.ticker||a.name).localeCompare(String(b.ticker||b.name)) : pa.localeCompare(pb); });
+    .slice().sort((a,b)=>String(a.ticker||a.name).localeCompare(String(b.ticker||b.name)) || a.id-b.id)
+    .filter(p=>{ const k = invCoinKey(p)||('#'+p.id); if(seenCoin.has(k)) return false; seenCoin.add(k); return true; });
   const linked = positions.filter(p=>cfg.links[p.id]).length;
   // v5.16 (#79): not linked first, then linked.
   const rowOf = p=>{
     const l = cfg.links[p.id];
     const plat = invPlatformById(p.platformId);
     const res = ui.posId===p.id? invLinkResultsHTML(p) : '';
-    return `<tr data-linkpos="${p.id}"><td><b${invLinkPicked(l)? ' class="g inv-link-picked" title="Coin picked"' : ''}>${esc(p.ticker||p.name)}</b> <span class="mut" style="font-size:11px">${esc(p.name!==p.ticker? p.name : '')}</span><div class="mut" style="font-size:11px">${esc(plat? plat.name : '')}</div></td>
+    return `<tr data-linkpos="${p.id}"><td><b${invLinkPicked(l)? ' class="g inv-link-picked" title="Coin picked"' : ''}>${esc(p.ticker||p.name)}</b> <span class="mut" style="font-size:11px">${esc(p.name!==p.ticker? p.name : '')}</span><div class="mut" style="font-size:11px" data-linkplats="${p.id}">${esc([...new Set(invCoinPositions(p.id).map(x=>(invPlatformById(x.platformId)||{}).name).filter(Boolean))].join(', ') || (plat? plat.name : ''))}</div></td>
       <td style="font-size:12px">${l? esc(invLinkLabel(l)) : '<span class="mut">not linked (manual)</span>'}${l && l.address? invLinkAddressHTML(l) : ''}</td>
       <td class="noprint" style="white-space:nowrap">
         <button class="btn ghost sm" onclick="invLinkSearch(${p.id})">🔎 Find</button>
@@ -12230,6 +12365,12 @@ function invTxLooksLogged(posId, date, units){   // v5.16 (#84): within a day an
 }
 // Log it: the trade window opens filled in (date, buy/sell, units; USD from a USDC/USDT leg, else from the
 // other leg at that day's price when it is a tracked position). He checks and saves.
+// v5.18 (#101): wallet above the tracker → a buy of the difference, below → a sell; today, units filled in, he adds the price.
+function invLogWalletDiff(posId, diff){
+  if(!(Math.abs(diff)>0)) return;
+  window._invTxPreset = {date: todayStr(), kind: diff>0? 'buy' : 'sell', units: Math.abs(diff), note:'Wallet check difference'};
+  openInvTxModal(posId);
+}
 function invLogWalletTx(platformId, sig, mint){
   const tx = ((invWalletTxs[platformId]||{}).txs||[]).find(t=>t.sig===sig); if(!tx) return;
   const d = tx.deltas.find(x=>x.mint===mint), pos = invPosForMint(platformId, mint);
@@ -12288,7 +12429,7 @@ function invWalletPanelHTML(p, open){
   if(!r) return head + invWalletTxsHTML(p.id);
   const body = r.rows.length? `<table style="font-size:12px;margin-top:4px"><thead><tr><th>Token</th><th class="num">Tracker</th><th class="num">Wallet</th><th class="num">Difference</th></tr></thead><tbody>${r.rows.map(x=>{
       const diff = x.wallet - x.tracker, ok = Math.abs(diff) <= Math.max(1e-6, Math.abs(x.tracker)*1e-6);
-      return `<tr data-walletpos="${x.pos.id}"><td>${esc(x.pos.ticker||x.pos.name)}</td><td class="num mono">${invFmtUnits(x.tracker)}</td><td class="num mono">${invFmtUnits(x.wallet)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : invFmtUnits(diff)}</td></tr>`;
+      return `<tr data-walletpos="${x.pos.id}"><td>${esc(x.pos.ticker||x.pos.name)}</td><td class="num mono">${invFmtUnits(x.tracker)}</td><td class="num mono">${invFmtUnits(x.wallet)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : invFmtUnits(diff)+` <button class="btn ghost sm" data-walletlog="${x.pos.id}" title="Log a ${diff>0?'buy':'sell'} of the difference" onclick="invLogWalletDiff(${x.pos.id}, ${Math.round(diff*1e8)/1e8})">+ Log ${diff>0?'buy':'sell'}</button>`}</td></tr>`;
     }).join('')}</tbody></table>
     <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">Save wallet units as statement units</button>
       ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other token${r.untracked===1?'':'s'} in this wallet aren't in the tracker.</span>` : ''}</div>` : '';
@@ -12365,6 +12506,11 @@ function invBoxFreshness(h){
 }
 function invBoxHTML(h, ctx){
   const pid = h.platform.id;
+  if(!h.hasAnything && !invBoxEdit){   // v5.18 (#100): a platform with nothing in it still gets a box
+    return `<div class="panel inv-box inv-box-empty click" data-box="${pid}" tabindex="0" style="margin:0;cursor:pointer" onclick="openInvPlatformPage(${pid})">
+      <b style="font-size:15px">${h.robo?'\ud83e\udd16':'\ud83c\udfe6'} ${esc(h.platform.name)}</b><div class="mut" style="font-size:11.5px">${esc(h.robo? 'Robo portfolio' : invPlatformKind(pid))}</div>
+      <div class="mut" style="margin-top:8px">No holdings</div></div>`;
+  }
   const pl = h.valueSar - h.costSar;
   const cashUsd = h.cashUsd + h.stableUsd;
   const prefs = ctx.prefs;
@@ -12459,7 +12605,7 @@ function renderInvPlatformPage(nav, holdings){
   app.innerHTML = nav + `<div class="row noprint" style="gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn ghost sm" onclick="closeInvPlatformPage()">← All platforms</button>
       <span class="mut" style="font-size:12px">${h.robo? (h.stats.valueDate? 'Value as of '+esc(h.stats.valueDate) : 'No value logged') : `${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}`}</span></div>`
-    + invHoldingCardHTML(h, 'mine', true);
+    + invHoldingCardHTML(h, 'mine', true, false, true);
 }
 
 // ---------- Needs you (top of Investments, count on the rail) ----------
@@ -12611,17 +12757,50 @@ function renderInvMineView(nav){
   const mine = holdings.filter(h=>h.hasAnything), empty = holdings.filter(h=>!h.hasAnything);
   app.innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'My Value', cost:'My Cost', costSub:'what it cost you', cash:'My Cash'}) +
     invPricesBarHTML() +
-    (mine.length? invBoxesHTML(mine) : `<div class="panel empty">You don't hold anything yet — use + Add.</div>`) +
-    (empty.length? `<div class="mut" style="font-size:12px;margin-top:4px">Platforms with nothing of yours: ${empty.map(h=>esc(h.platform.name)).join(', ')}</div>` : '');
+    (holdings.length? invBoxesHTML(mine.concat(empty)) : `<div class="panel empty">You don't hold anything yet — use + Add.</div>`);
+}
+// v5.18 (#102): one row per coin (same ticker = same coin), everyone's units on every platform added up;
+// coins with no units are left out. A coin without a price gets a button to its price link.
+function invPricesRows(){
+  const coins = {};
+  invOwnerHoldings('all', invCashState(null).state).forEach(h=>h.positions.forEach(r=>{
+    const k = invCoinKey(r.pos) || ('#'+r.pos.id);
+    const c = coins[k] = coins[k] || {key:k, rep:r.pos, units:0, valueSar:0, price:null, priceDate:null, currency:r.pos.currency||'', platforms:new Set(), priced:false};
+    c.units += r.units; c.valueSar += r.valueSar; c.platforms.add(h.platform.name);
+    if(r.hasValuation){ c.priced = true; if(!c.priceDate || String(r.priceDate||'') > c.priceDate){ c.price = r.price; c.priceDate = r.priceDate; c.currency = r.pos.currency||''; } }
+  }));
+  return Object.values(coins).sort((a,b)=> (a.priced===b.priced? 0 : a.priced? 1 : -1) || b.valueSar-a.valueSar);
+}
+function invOpenPriceLinkFor(posId){
+  openInvPriceLinks();
+  const ids = invCoinPositions(posId).map(p=>p.id);
+  const row = [...document.querySelectorAll('#invPriceLinksTable tr[data-linkpos]')].find(tr=>ids.includes(Number(tr.dataset.linkpos)));
+  if(row){ if(row.scrollIntoView) row.scrollIntoView({block:'center'}); flashEl(row); }
+}
+function renderInvPricesView(nav){
+  const rows = invPricesRows(), unpriced = rows.filter(r=>!r.priced).length;
+  const body = rows.map(r=>{
+    const l = invPriceLink(r.rep.id), old = r.priceDate && invDaysSince(r.priceDate) > 1;
+    return `<tr data-pricecoin="${esc(r.key)}"><td><b>${esc(r.rep.ticker||r.rep.name)}</b> <span class="mut" style="font-size:11px">${esc([...r.platforms].join(', '))}</span></td>
+      <td class="num mono">${invFmtUnits(r.units)}</td>
+      <td class="num mono">${r.priced? invFmtPrice(r.price)+' '+esc(r.currency) : '\u2014'}</td>
+      <td class="num mono">${invDisp(r.valueSar)}${r.priced? '' : ' <span class="mut" style="font-size:11px">at cost</span>'}</td>
+      <td class="mono ${old? 'r' : ''}" style="white-space:nowrap">${r.priceDate? esc(r.priceDate) : '<span class="r">No price</span>'}</td>
+      <td class="noprint">${r.priced && l? '' : `<button class="btn ghost sm" data-pricelink="${r.rep.id}" onclick="invOpenPriceLinkFor(${r.rep.id})">\ud83d\udcb9 ${l? 'Check price link' : 'Set price link'}</button>`}</td></tr>`;
+  }).join('');
+  document.getElementById('app').innerHTML = nav + invPricesBarHTML() + `<div class="panel">
+    <div class="mut" style="font-size:12px;margin-bottom:8px">One row per coin: everyone\u2019s units on every platform added up.${unpriced? ` ${unpriced} without a price (valued at cost), listed first.` : ''}</div>
+    ${body? `<div style="overflow-x:auto"><table class="inv-prices-table" style="min-width:620px"><thead><tr><th>Coin</th><th class="num">Units</th><th class="num">Price</th><th class="num">Value</th><th>Last update</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : '<div class="empty">Nothing held yet.</div>'}</div>`;
 }
 function renderInvAllView(nav){
   const holdings = invOwnerHoldings('all', invCashState(null).state);
   if(invPlatformPageId!==null){ renderInvPlatformPage(nav, holdings); return; }
   const t = invHoldingsTotals(holdings);
   const any = holdings.filter(h=>h.hasAnything);
-  document.getElementById('app').innerHTML = nav + invTotalsCardsHTML(t, {value:'Total Value', cost:'Total Cost', costSub:'everyone together', cash:'Total Cash'}) +
+  // v5.18 (#99): All is the tab Investments opens on, so it carries Needs you and the prices bar too
+  document.getElementById('app').innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'Total Value', cost:'Total Cost', costSub:'everyone together', cash:'Total Cash'}) + invPricesBarHTML() +
     `<div class="mut" style="font-size:12px;margin:0 0 8px">Everyone together (you and family), so units match the platform or wallet totals.</div>` +
-    (any.length? invBoxesHTML(any) : `<div class="panel empty">Nothing held yet.</div>`);
+    (holdings.length? invBoxesHTML(any.concat(holdings.filter(h=>!h.hasAnything))) : `<div class="panel empty">Nothing held yet.</div>`);
 }
 // ---- Family view ----
 function invFamilyPeople(){
@@ -12960,6 +13139,7 @@ function renderInvestmentsPage(){
   if(invView==='recon'){ renderInvReconPage(nav + invOwnerReconPanelHTML()); return; }
   if(invView==='mine'){ renderInvMineView(nav); return; }
   if(invView==='all'){ renderInvAllView(nav); return; }
+  if(invView==='prices'){ renderInvPricesView(nav); return; }
   if(invView==='family'){ renderInvFamilyView(nav); return; }
   if(invView==='activity'){ renderInvActivityView(nav); return; }
   if(invView==='insights'){ renderInvInsightsView(nav); return; }
@@ -17924,6 +18104,8 @@ function renderSettings(){
         <div class="grid2" style="margin-bottom:14px">
           <div><label class="fl">Background</label><div class="seg" role="group" aria-label="Background">${[['plain','Plain'],['tinted','Tinted'],['aurora','Aurora & glass']].map(([v,l])=>`<button aria-pressed="${getUiBackground()===v}" onclick="setUiBackground('${v}')">${l}</button>`).join('')}</div>
             <div class="mut" style="font-size:11.5px;margin-top:6px">Tinted washes the page with the accent. Aurora &amp; glass adds a slow glow behind the page and turns the side rail and top bar into floating glass.</div></div>
+          <div><label class="fl">Logo</label><div class="seg" role="group" aria-label="Logo">${Object.entries(APP_LOGOS).map(([k,v])=>`<button aria-pressed="${getAppLogo()===k}" data-logopick="${k}" onclick="setAppLogo('${k}')"><span class="logo-pick">${appLogoSvg(k, 'p')}${esc(v.label)}</span></button>`).join('')}</div>
+            <div class="mut" style="font-size:11.5px;margin-top:6px">The mark at the top of the side rail. Synced to every device.</div></div>
           <div><label class="fl">Motion</label><div class="seg" role="group" aria-label="Motion"><button aria-pressed="${getUiMotion()}" onclick="setUiMotion(true)">On</button><button aria-pressed="${!getUiMotion()}" onclick="setUiMotion(false)">Off</button></div>
             <div class="mut" style="font-size:11.5px;margin-top:6px">Off always wins when your computer asks for reduced motion.</div></div>
         </div>

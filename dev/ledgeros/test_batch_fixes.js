@@ -6609,10 +6609,10 @@ async function viewPooledSetup(sb){
 }
 async function testInvestmentsOpensOnMineAndHasEveryView(){
   const sb = viewSandbox();
-  assert(vm.runInContext('invView', sb)==='mine', 'The Investments page should open on 👤 Mine by default');
+  assert(vm.runInContext('invView', sb)==='all', 'v5.18 (#99): the Investments page opens on 👥 All');
   sb.renderInvestmentsPage();
   const html = sb.document.getElementById('app').innerHTML;
-  const views = ['mine','family','activity','recon','insights','setup'];
+  const views = ['all','mine','family','prices','activity','recon','insights','setup'];
   assert(views.every(v=>html.includes('data-invview="'+v+'"')), 'The nav should offer all six views');
   assert(!html.includes('data-invview="classic"'), 'v5.6: the Classic tab is gone from the menu');
   sb.localStorage.setItem('invView', 'classic');
@@ -6642,7 +6642,7 @@ async function testMineTableHasFiveColumnsUntilDetailsAreShown(){
   vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
   let html = viewHtml(sb, 'mine');
   let head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
-  assert(head && (head[1].match(/<th/g)||[]).length===5, 'Default table should have 5 columns, got ' + (head&&(head[1].match(/<th/g)||[]).length));
+  assert(head && (head[1].match(/<th/g)||[]).length===6 && /Price/.test(head[1]), 'v5.18 (#98): the platform page table has 6 columns, Price included, got ' + (head&&(head[1].match(/<th/g)||[]).length));
   sb.toggleInvDetails();
   html = sb.document.getElementById('app').innerHTML;
   head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
@@ -8106,6 +8106,11 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV517MonthReviewSuggestions();
   await testV517MonthReviewOverwriteBudget();
   await testV517MonthReviewProvisionsAndToDo();
+  await testV518MonthReviewIncomeColoursAndStatus();
+  await testV518PlansThatDisagree();
+  await testV518UnusedProvisionsToIncome();
+  await testV518PerCoinPriceLinksAndPricesTab();
+  await testV518AppLogo();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11241,4 +11246,145 @@ async function testV517MonthReviewProvisionsAndToDo(){
   const before = ds.dashboardTodoItems().filter(i=>/^Review /.test(i.title));
   await ds.mrMarkReviewed(ds.mrDueMonth(), true);
   assert(before.length===1 && before[0].onclick.includes("go('monthreview')") && !ds.dashboardTodoItems().some(i=>/^Review /.test(i.title)), 'Dashboard to-do until marked reviewed, opens the tab');
+}
+async function testV518MonthReviewIncomeColoursAndStatus(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:30101, name:'Salary', category:'Regular Income', acc_type:'Individual Account', forecast_category:'income'});
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
+  D.forecastPlans[30101] = {'2026-10':-5000};
+  D.ledger.push({id:950, jv:950, date:'2026-10-25', acc:30101, amt:-5600, descr:'salary'});
+  const inc = sb.mrActualVsPlan('2026-10').find(c=>c.cat==='Regular Income');
+  assert(inc && inc.income && inc.plan===5000 && inc.actual===5600 && inc.flag, 'Income plan comes from the Forecast (5,000), got ' + JSON.stringify(inc && [inc.plan, inc.actual, inc.flag]));
+  delete D.accounts[0].status;   // #97: blank status = active
+  assert(sb.mrSuggestions('2026-10').some(r=>r.a.id===60101), 'An account with no status stored still gets a suggestion');
+  sb.renderMonthReview();
+  const app = sb.document.getElementById('app');
+  const incRow = app.querySelector('[data-mrrow="30101"]'), groRow = app.querySelector('[data-mrrow="60101"]');
+  assert(incRow && incRow.querySelector('td:nth-child(4) .g') && /\+600/.test(incRow.textContent), 'Income above plan shows green');
+  assert(groRow && groRow.querySelector('td:nth-child(4) .r'), 'Expense above plan shows red');
+  const cat = app.querySelector('tr.mr-cat');
+  assert(cat && /font-weight:\s*700/.test(cat.getAttribute('style')) && /background/.test(cat.getAttribute('style')) && app.querySelector('.mr-flag .mr-flag-icon.r'), 'Category rows bold on a band; the flag is red');
+}
+async function testV518PlansThatDisagree(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:30101, name:'Salary', category:'Regular Income', acc_type:'Individual Account', forecast_category:'income'});
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
+  D.forecastPlans[30101] = {'2026-11':-5000, '2026-12':-5000};
+  D.budget.push({id:20, acc:30101, date:'2026-11-01', amt:5200});
+  D.forecastPlans[60101] = {'2026-11':999};   // an expense's old Forecast figure is not used, so not compared
+  let c = sb.mrPlanConflicts();
+  const sal = c.find(x=>x.a.id===30101);
+  assert(sal && sal.months.length===1 && sal.months[0].m==='2026-11' && sal.months[0].forecast===-5000 && sal.months[0].budget===5200, 'Salary: Forecast 5,000 vs Budget 5,200 in Nov only, got ' + JSON.stringify(sal && sal.months));
+  assert(!c.some(x=>x.a.id===60101), 'Groceries: Budget only (and its unused Forecast figure ignored): no alert');
+  D.provisionGroups.push({id:9, name:'Food', lines:[{acc:60101, lineId:60101}], months:{'2026-12':{60101:900}}});
+  c = sb.mrPlanConflicts();
+  assert(c.some(x=>x.a.id===60101 && x.months[0].m==='2026-12' && x.months[0].budget===500+500 && x.months[0].provisions===900), 'Budget 1,000 vs Provisions 900 in Dec is flagged');
+  sb.renderMonthReview();
+  assert(sb.document.querySelector('#mrConflicts [data-mrconflict="30101"]') && /Forecast 5,?000 · Budget 5,?200/.test(sb.document.getElementById('mrConflicts').textContent), 'Step 4 lists it with the figures');
+  const ds = dashSandbox();
+  const Dd = vm.runInContext('D', ds);
+  Dd.forecastPlans = Dd.forecastPlans || {};
+  const inc = Dd.accounts.find(a=>Math.floor(a.id/10000)===3) || (Dd.accounts.push({id:30109, name:'Pay', category:'Pay', status:'Active', acc_type:'Individual Account', forecast_category:'income'}), Dd.accounts[Dd.accounts.length-1]);
+  inc.forecast_category = 'income';
+  Dd.forecastPlans[inc.id] = {'2026-11':-100};
+  Dd.budget.push({id:777, acc:inc.id, date:'2026-11-01', amt:250});
+  ds.rebuildIndex();
+  assert(ds.dashboardTodoItems().some(i=>/plans? that disagree/.test(i.title) && i.onclick.includes("go('monthreview')")), 'Dashboard to-do while plans disagree');
+}
+async function testV518UnusedProvisionsToIncome(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:20106, name:'Short Term Liabilities', category:'Short Term Liabilities', acc_type:'Individual Account'},
+    {id:30201, name:'Other Income', category:'One Time Income', acc_type:'Individual Account', forecast_category:'income'});
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
+  D.ledger.push(
+    {id:801, jv:801, date:'2026-08-05', acc:20106, amt:-300, descr:'unused A'},
+    {id:802, jv:802, date:'2026-08-09', acc:20106, amt:-200, descr:'unused B'},
+    {id:803, jv:803, date:'2026-08-20', acc:20106, amt:-150, descr:'already moved', alloc:5},
+    {id:804, jv:804, date:'2026-07-10', acc:20106, amt:-400, descr:'reversed later'},
+    {id:805, jv:805, date:'2026-10-01', acc:20106, amt:400, descr:'moved to income'},
+    {id:806, jv:806, date:'2026-09-02', acc:20106, amt:-100, descr:'not due until Dec'});
+  const st = sb.mrSettings();
+  assert(st.stlAcc===20106 && st.stlIncomeAcc===30201 && st.stlMonths===3, 'Defaults: 20106, Other Income found by name, 3 months, got ' + JSON.stringify([st.stlAcc, st.stlIncomeAcc, st.stlMonths]));
+  const due = sb.mrStlDue();
+  assert(due.length===2 && due[0].l.id===801 && due[0].due==='2026-11' && due[1].amt===200, 'August amounts are due in November; allocated, reversed and September ones are not, got ' + JSON.stringify(due.map(x=>[x.l.id, x.due, x.amt])));
+  let went = null; sb.__set('go', s=>{ went = s; });
+  sb.mrStlBuildJV();
+  const lines = vm.runInContext('jvDraft.lines', sb).map(l=>[l.acc, l.amt]);
+  assert(went==='newjv' && JSON.stringify(lines)===JSON.stringify([['20106','300'],['20106','200'],['30201','-300'],['30201','-200']]), 'New JV filled: out of 20106, into Other Income, got ' + JSON.stringify(lines));
+  sb.renderMonthReview();
+  assert(sb.document.querySelectorAll('#mrStl [data-mrstl]').length===2 && /Move 2 to Other Income/.test(sb.document.getElementById('mrStl').textContent), 'Step 5 lists both with a Move button');
+  const ds = dashSandbox();
+  const Dd = vm.runInContext('D', ds);
+  Dd.accounts.push({id:20106, name:'STL', category:'Short Term Liabilities', status:'Active', acc_type:'Individual Account'});
+  Dd.ledger.push({id:901, jv:901, date:'2026-07-01', acc:20106, amt:-50, descr:'x'});
+  ds.rebuildIndex();
+  assert(ds.dashboardTodoItems().some(i=>/1 unused provision amount can move to income/.test(i.title)), 'Dashboard to-do for amounts due');
+}
+async function testV518PerCoinPriceLinksAndPricesTab(){
+  const sb = v56Sandbox({invPositions:[
+      {id:1, platformId:1, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:3, platformId:2, name:'Test Frog', ticker:'FROG', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:7, platformId:2, name:'Ethereum', ticker:'eth', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:8, platformId:4, name:'Unused', ticker:'NONE', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invPlatforms:[{id:1, name:'Binance'}, {id:2, name:'Phantom'}, {id:4, name:'Empty Wallet'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-09-02', kind:'buy', units:1, totalSar:7500, owners:[{ownerId:1, units:0.6},{ownerId:2, units:0.4}], cashSide:'opening'},
+      {id:2, positionId:2, date:'2026-09-02', kind:'buy', units:10, totalSar:3750, owners:[{ownerId:1, units:10}], cashSide:'bank'},
+      {id:3, positionId:3, date:'2026-09-02', kind:'buy', units:1000, totalSar:375, owners:[{ownerId:1, units:1000}], cashSide:'bank'},
+      {id:7, positionId:7, date:'2026-09-03', kind:'buy', units:0.5, totalSar:3750, owners:[{ownerId:1, units:0.5}], cashSide:'bank'}],
+    invValuations:[{id:1, positionId:1, date:'2026-09-10', price:2000}, {id:2, positionId:2, date:'2026-09-10', price:100}, {id:3, positionId:7, date:'2026-09-12', price:2100}]});
+  await sb.setInvPriceLink(1, {kind:'cg', id:'ethereum', label:'Ethereum'});
+  const D = vm.runInContext('D', sb);
+  const stored = D.uiPrefs.dismissals.invPrices.links;
+  assert(stored[1] && stored[7] && stored[7].id==='ethereum' && !stored[2], 'Linking ETH on Binance links ETH on Phantom too (same ticker = same coin), got ' + JSON.stringify(Object.keys(stored)));
+  D.uiPrefs.dismissals.invPrices.links = {1:{kind:'cg', id:'ethereum'}};
+  assert(sb.getInvPriceCfg().links[7] && sb.invPriceLink(7).id==='ethereum', 'A position with no link of its own uses its coin\'s link');
+  await sb.setInvPriceLink(7, null);
+  assert(!sb.invPriceLink(1) && !sb.invPriceLink(7), 'Clearing removes the link for the whole coin');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvPriceLinks();
+  const ethRows = [...sb.document.querySelectorAll('#invPriceLinksTable tr[data-linkpos]')].filter(tr=>/\bETH\b/i.test(tr.textContent));
+  assert(ethRows.length===1 && /Binance, Phantom|Phantom, Binance/.test(ethRows[0].textContent), 'Price links: one row per coin, naming both platforms');
+  const rows = sb.invPricesRows();
+  const eth = rows.find(r=>r.key==='ETH'), frog = rows.find(r=>r.key==='FROG');
+  assert(eth && Math.abs(eth.units-1.5)<1e-9 && eth.price===2100 && eth.priceDate==='2026-09-12' && eth.platforms.size===2, 'Prices: ETH units added up across platforms (1.5), newest price, got ' + JSON.stringify(eth && [eth.units, eth.price, eth.priceDate]));
+  assert(frog && !frog.priced && rows[0].key==='FROG' && !rows.some(r=>r.key==='NONE'), 'Unpriced coins first; coins with no units left out');
+  sb.__set('invView', 'prices'); sb.renderInvestmentsPage();
+  const app = sb.document.getElementById('app');
+  assert(app.querySelector('[data-invview="prices"]') && app.querySelector('tr[data-pricecoin="FROG"] [data-pricelink]') && /No price/.test(app.querySelector('tr[data-pricecoin="FROG"]').textContent), 'Prices tab: a coin with no price has a Set price link button');
+  assert(sb.invFmtPrice(0.0000123456)==='0.00001235' && sb.invFmtPrice(2100)==='2,100.00', 'Small prices keep 4 significant digits, got ' + sb.invFmtPrice(0.0000123456));
+  // #100 empty platform box, #98 price column
+  sb.__set('invView', 'all'); sb.renderInvestmentsPage();
+  const empty = sb.document.querySelector('.inv-box-empty[data-box="4"]');
+  assert(empty && /No holdings/.test(empty.textContent), 'A platform with nothing in it shows a No holdings box');
+  vm.runInContext('invPlatformPageId = 2', sb); sb.__set('invView', 'mine'); sb.renderInvestmentsPage();
+  assert(sb.document.querySelector('[data-posprice="7"]') && /2,?100\.00 USD/.test(sb.document.querySelector('[data-posprice="7"]').textContent), 'Platform page shows each position\'s price');
+  // #101 quick add
+  let opened = null; sb.__set('openInvTxModal', id=>{ opened = {id, preset: sb._invTxPreset}; });
+  sb.invLogWalletDiff(3, -25.5);
+  assert(opened && opened.id===3 && opened.preset.kind==='sell' && opened.preset.units===25.5 && opened.preset.date==='2026-11-12', 'Wallet below tracker: a sell of the difference, today');
+  sb.invLogWalletDiff(3, 4);
+  assert(opened.preset.kind==='buy' && opened.preset.units===4, 'Wallet above tracker: a buy');
+  const panel = vm.runInContext('invWalletResults[2] = {rows:[{pos:D.invPositions[2], tracker:1000, wallet:990}]}; invWalletPanelHTML(invPlatformById(2), true)', sb);
+  assert(/data-walletlog="3"/.test(panel) && /invLogWalletDiff\(3, -10\)/.test(panel) && /\+ Log sell/.test(panel), 'The wallet difference row has a + Log sell button with the difference');
+}
+async function testV518AppLogo(){
+  const sb = makeSandbox();
+  sb.document.body.insertAdjacentHTML('afterbegin', '<div class="brand"><div class="mark">L</div></div>');
+  const D = vm.runInContext('D', sb);
+  D.uiPrefs = {};
+  sb.__set('syncWrite', async()=>({ok:true})); sb.__set('renderSettings', ()=>{});
+  assert(sb.getAppLogo()==='ring', 'Default logo: Budget ring');
+  sb.applyAppLogo();
+  const mark = sb.document.querySelector('.brand .mark');
+  assert(mark.classList.contains('has-logo') && mark.querySelector('svg') && /lgO/.test(mark.innerHTML) && !/^L$/.test(mark.textContent.trim()), 'The L is replaced by the ring mark');
+  await sb.setAppLogo('palm');
+  assert(D.uiPrefs.dismissals.appLogo==='palm' && /lgM/.test(mark.innerHTML), 'Settings → Logo: Growing palm, synced');
+  await sb.setAppLogo('nope');
+  assert(sb.getAppLogo()==='palm', 'Unknown choice ignored');
+  assert(/data-logopick="\$\{k\}"/.test(fs.readFileSync(APP_HTML, 'utf8')) && Object.keys(vm.runInContext('APP_LOGOS', sb)).join()==='ring,cards,palm', 'Settings offers Budget ring, Card fan, Growing palm');
 }
