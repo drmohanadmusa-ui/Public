@@ -590,12 +590,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.16.0';
+const APP_VERSION = '5.17.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.17.0', date:'2026-11-14', changes:[
+    'New \ud83d\uddd3 Month review tab on Budget & P&L, for the month just closed. Step 1: actual vs plan per category and account, flagged when off by more than both 10% and SAR 200 (both editable in the tab\u2019s Settings), with the accrual cover shown. Step 2: a suggested budget for each account planned in the Budget grid: the usual month (the middle value of the last 12, leaving out irregular items) plus irregular items \u00f7 12, rounded to 10, with a reason (rising, under-used, one-off spike, seasonal, new). Large or once-a-year payments are marked irregular automatically and you can tick or untick each one. If an accrual cap is too small for a yearly item, the months it needs are suggested.',
+    'Month review: Review and overwrite shows the old and new figure for every month before it writes the ticked accounts\u2019 budget from this month for 12 months (editable). Step 3 lists provision lines whose amount or timing didn\u2019t match last month, offers to use last month\u2019s actual from now on, and warns when a provision ends within 3 months.',
+    'The Dashboard lists \u201cReview <month>\u201d from the 1st until you press Mark month reviewed (Undo is in the tab).',
+    'A transfer SMS is now cleared automatically only when the JV it matches was made from an SMS sent within an hour of it (before: within a day). A JV with no SMS in it is no longer matched.',
+    'Fixed: Save wallet units as statement units (Reconcile) never reached the cloud: the database refused the save because it sent only the units. It now sends the whole position, and saves stuck in \u201cpending sync\u201d go through on the next sync.',
+  ]},
   {version:'5.16.0', date:'2026-11-14', changes:[
     'Investments has a new \ud83d\udc65 All tab: the same platform boxes as Mine, with everyone\u2019s units, cost and cash added together, so they can be checked against the platform or wallet totals.',
     'Price links: coins not linked yet are listed first, then the linked ones; each linked coin shows its full contract address with Copy and a Solscan (or explorer) link. Find and Refresh prices now also ask GeckoTerminal, so a token on neither CoinGecko nor DexScreener (a tiny pool) still gets a price, marked \u201cthin pool\u201d when its liquidity is small.',
@@ -2122,6 +2129,11 @@ async function flushSyncQueue(){
       newConflicts.push({op, serverRow});
       continue;
     }
+    // v5.16.1 (#90): wallet-unit saves queued by older versions lack the position's name; fill the row from this device
+    if(op.kind==='upsert' && op.table==='pd_inv_positions' && op.row.name===undefined){
+      const p = (D.invPositions||[]).find(x=>x.id===op.row.id);
+      if(p) op.row = Object.assign(invPositionRow(p), {updated_at: op.row.updated_at});
+    }
     try{
       const r = op.kind==='upsert' ? await SB.from(op.table).upsert(op.row) : await SB.from(op.table).delete().eq('id', op.row.id);
       if(r.error) remaining.push(op);
@@ -2475,11 +2487,12 @@ async function seedCloud(){
 /* ============================= NAV / ROUTER ============================= */
 // v5.7 (#30): Budget and P&L are one page, "Budget & P&L", with two tabs: Overview (screen 'pnl')
 // and Plan grid (screen 'budget'). The rail has one button; both screens light it up.
-function navIsOn(id){ return screen===id || (id==='pnl' && screen==='budget'); }
+function navIsOn(id){ return screen===id || (id==='pnl' && (screen==='budget' || screen==='monthreview')); }
 function budgetPnlTabsHTML(active){
   return `<div class="row noprint bp-tabs" role="tablist" style="gap:6px;margin-bottom:12px">
     <button class="btn ${active==='overview'?'pri':'ghost'} sm" role="tab" aria-selected="${active==='overview'}" data-bptab="overview" onclick="if(pnlView==='acctchart'){ pnlView='main'; } go('pnl')">📈 Overview</button>
-    <button class="btn ${active==='grid'?'pri':'ghost'} sm" role="tab" aria-selected="${active==='grid'}" data-bptab="grid" onclick="go('budget')">🎯 Plan grid</button></div>`;
+    <button class="btn ${active==='grid'?'pri':'ghost'} sm" role="tab" aria-selected="${active==='grid'}" data-bptab="grid" onclick="go('budget')">🎯 Plan grid</button>
+    <button class="btn ${active==='review'?'pri':'ghost'} sm" role="tab" aria-selected="${active==='review'}" data-bptab="review" onclick="mrMonth=null; go('monthreview')">\ud83d\uddd3 Month review</button></div>`;
 }
 // [id, label, icon] — the icon is emoji for consistency with the rest of the app's UI.
 const SCREENS = [
@@ -3413,14 +3426,14 @@ function go(s){
   screen = s; renderNav();
   closeMobileNav();
   const titleEl = document.getElementById('mobileTopbarTitle');
-  const navId = s==='budget'? 'pnl' : s;   // v5.7 (#30): Budget is the Plan grid tab of Budget & P&L
+  const navId = (s==='budget' || s==='monthreview')? 'pnl' : s;   // v5.7 (#30): Budget is the Plan grid tab of Budget & P&L
   if(titleEl){ const found = SCREENS.find(([id])=>id===navId); titleEl.textContent = found? (found[2]? found[2]+' '+found[1] : found[1]) : (s==='settings'?'⚙️ Settings':s==='statement'?'📄 Statement':s==='forecastSettings'?'🌤 Forecast Settings':'LedgerOS'); }
   const tbTitle = document.getElementById('topbarTitle');
   if(tbTitle){ const found = SCREENS.find(([id])=>id===navId); tbTitle.textContent = found? found[1] : ({statement:'Statement', forecastSettings:'Forecast Settings'}[s]||'LedgerOS'); }
   const tbDate = document.getElementById('topbarDate');
   if(tbDate) tbDate.textContent = '\u00b7 ' + new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'});
   const fn = {dashboard:renderDashboard,newjv:renderNewJV,ledger:renderLedger,accounts:renderAccounts,
-    budget:renderBudget,pnl:renderPnL,alloc:renderAlloc,statement:renderStatement,settings:renderSettings,provisions:renderProvisions,jamiah:renderJamiahPage,forecast:renderForecastPage,forecastSettings:renderForecastSettingsPage,realestate:renderRealEstatePage,loans:renderLoansPage,investments:renderInvestmentsPage}[s];
+    budget:renderBudget,monthreview:renderMonthReview,pnl:renderPnL,alloc:renderAlloc,statement:renderStatement,settings:renderSettings,provisions:renderProvisions,jamiah:renderJamiahPage,forecast:renderForecastPage,forecastSettings:renderForecastSettingsPage,realestate:renderRealEstatePage,loans:renderLoansPage,investments:renderInvestmentsPage}[s];
   if(fn) fn();
   requestAnimationFrame(()=>{ window.scrollTo(0, pageScrollPositions[s]||0); });
 }
@@ -5162,6 +5175,9 @@ function dashboardTodoItems(){
   ccUtilisation().filter(c=>c.pct>ccSt.pct && !ccUtilIsHidden(c, ccSt)).forEach(c=>items.push(Object.assign({tone:'neg', title:accShort(c.id)+' is '+c.pct.toFixed(0)+'% used',
     sub:'Owed '+money(c.owed)+' of a '+money(c.limit)+' limit. Top it up to bring it to '+ccSt.pct+'% or less', label:'Open', onclick:`openStatement(${c.id})`},
     ccSt.dismissable? {dismiss:`dismissCcUtil(${c.id})`, dismissTitle:'Hide it; it comes back '+CC_UTIL_BACK[ccSt.back]} : {})));
+  // v5.17 (#68): the month just closed waits for its review from the 1st until marked reviewed
+  const mrMk = mrDueMonth();
+  if(!mrIsDone(mrMk) && (D.ledger||[]).length) items.push({tone:'warn', title:'Review '+monthLabel(mrMk), sub:'Month review: actual vs plan, suggested budgets, provisions', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
   const smsLook = smsNeedsLookCount();   // #59
   if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
@@ -6509,8 +6525,9 @@ function smsAfterPost(){
   go('dashboard');
 }
 // v5.15 (#74): a waiting transfer SMS whose account already has a posted ledger line for the same amount
-// (to the cent, dated within a day) that no other SMS accounts for is already in the books, usually as the
-// other half of the other bank's SMS. It is marked 'matched' with that JV (Undo puts it back and stops it
+// (to the cent) that no other SMS accounts for is already in the books, usually as the other half of the
+// other bank's SMS. v5.17 (#91): only when that JV was made from an SMS sent within an hour of this one
+// (a JV with no SMS in it is never matched). It is marked 'matched' with that JV (Undo puts it back and stops it
 // being matched again: dismissals.smsNoAuto).
 function smsAlreadyPostedMatches(){
   const noAuto = new Set((getUiDismissals().smsNoAuto||[]).map(Number));
@@ -6528,13 +6545,19 @@ function smsAlreadyPostedMatches(){
   const out = [];
   pend.forEach(s=>{
     const acc = smsAccFor(s.acct), signed = smsSigned(s);
-    const hit = (D.ledger||[]).filter(l=>Number(l.acc)===acc && l.jv && Math.abs(Number(l.amt)-signed)<0.005 && smsDaysApart(l.date, s.date)<=1)
+    const hit = (D.ledger||[]).filter(l=>Number(l.acc)===acc && l.jv && Math.abs(Number(l.amt)-signed)<0.005 && smsJvWithinHour(l.jv, s))
       .find(l=>{ const k = key(l.jv, acc, l.amt); return (lines[k]||[]).length > (used[k]||0); });
     if(!hit) return;
     const k = key(hit.jv, acc, hit.amt); used[k] = (used[k]||0) + 1;
     out.push({sms:s, jv:hit.jv});
   });
   return out;
+}
+function smsWhen(x){ const t = new Date((x.date||'')+'T'+(/^\d{1,2}:\d{2}$/.test(x.time||'')? String(x.time).padStart(5,'0') : '00:00')+':00'); return isNaN(t)? null : t.getTime(); }
+// v5.17 (#91): an SMS posted in that JV was sent within 60 minutes of this one (bank date + time on the SMS).
+function smsJvWithinHour(jv, s){
+  const at = smsWhen(s); if(at===null) return false;
+  return (D.smsInbox||[]).some(x=>x.id!==s.id && x.jv===jv && x.status==='posted' && smsWhen(x)!==null && Math.abs(smsWhen(x)-at) <= 3600000);
 }
 let smsAutoClearBusy = false;
 async function smsAutoClear(){
@@ -8330,6 +8353,264 @@ function pnlBudgetForAccountInRange(accId, fromDate, toDate){
 // over budget (bad) — correct regardless of which sign convention the underlying account uses.
 // A raw signed subtraction (actual - budget) can flip the wrong way depending on account sign
 // convention, which is exactly the bug this replaces.
+/* ============================= MONTH REVIEW (v5.17, #68) ============================= */
+// Budget & P&L → 🗓 Month review, for the month just closed: (1) actual vs plan, flagged when off by more than
+// BOTH the % and the SAR threshold; (2) suggested budgets for Budget-planned expense accounts: usual month (median
+// of the last 12 complete months, irregular items left out) + irregular items ÷ 12, with a reason tag and an
+// accrual cap check; Accept overwrites the Budget cells from this month for N months after a month-by-month
+// preview; (3) provision lines whose amount or timing didn't match. Synced in pd_ui_prefs.dismissals.monthReview =
+// {done:{'YYYY-MM':date}, irregular:{ledgerId:true|false}, settings:{pct, sar, months, round}}. Never posts JVs.
+const MR_DEFAULTS = {pct:10, sar:200, months:12, round:10};
+let mrMonth = null;
+function mrState(){ const m = getUiDismissals().monthReview; return (m && typeof m==='object' && !Array.isArray(m))? m : {}; }
+async function mrSaveState(patch){ const d = Object.assign({}, getUiDismissals()); d.monthReview = Object.assign({}, mrState(), patch); await saveUiDismissals(d); }
+function mrSettings(){
+  const c = mrState().settings || {};
+  const n = (v, d, lo, hi) => { const x = Number(v); return (v!==undefined && v!==null && v!=='' && x>=lo && x<=hi)? x : d; };
+  return {pct:n(c.pct, MR_DEFAULTS.pct, 0, 1000), sar:n(c.sar, MR_DEFAULTS.sar, 0, 1e9), months:Math.round(n(c.months, MR_DEFAULTS.months, 1, 60)), round:n(c.round, MR_DEFAULTS.round, 0.01, 1e6)};
+}
+function mrDueMonth(){ return prevMonthKey(todayStr().slice(0,7)); }
+function mrIsDone(mk){ return !!(mrState().done||{})[mk]; }
+function mrFillMonths(){ const cur = todayStr().slice(0,7), n = mrSettings().months, out = []; for(let i=0;i<n;i++) out.push(shiftMonthKey(cur, i)); return out; }
+// Off by more than BOTH thresholds (R1). Nothing planned: flagged once the actual is over the SAR threshold.
+function mrFlag(plan, actual, st){
+  st = st || mrSettings();
+  const diff = Math.abs(Math.abs(actual) - Math.abs(plan)), base = Math.abs(plan);
+  return diff > st.sar && (base < 0.005 || diff/base*100 > st.pct);
+}
+function mrMedian(a){ if(!a.length) return 0; const s = a.slice().sort((x,y)=>x-y), m = Math.floor(s.length/2); return s.length%2? s[m] : (s[m-1]+s[m])/2; }
+function mrRound(v, r){ return roundCents(Math.round(v/r)*r); }
+
+// Step 1
+function mrActualVsPlan(mk){
+  const [from, to] = monthRange(mk), st = mrSettings(), cats = {};
+  D.accounts.filter(a=>(firstDigit(a.id)===6 || firstDigit(a.id)===3) && (a.acc_type==='Individual Account'||a.acc_type==='Accrual Account') && a.status!=='Deleted').forEach(a=>{
+    const actual = Math.abs(sumAcc(l=>l.acc===a.id, from, to)), plan = Math.abs(pnlBudgetForAccountInRange(a.id, from, to));
+    if(actual<0.005 && plan<0.005) return;
+    const income = firstDigit(a.id)===3, c = cats[(income?'I|':'E|')+a.category] ??= {cat:a.category, income, plan:0, actual:0, rows:[]};
+    c.plan += plan; c.actual += actual;
+    c.rows.push({a, plan, actual, diff: actual-plan, flag: mrFlag(plan, actual, st)});
+  });
+  return Object.values(cats).map(c=>Object.assign(c, {diff: c.actual-c.plan, flag: mrFlag(c.plan, c.actual, st),
+      cover: (!c.income && c.actual-c.plan>0.005)? overspendCover(c.cat, roundCents(c.actual-c.plan), to) : null}))
+    .sort((x,y)=> (x.income===y.income? 0 : x.income? -1 : 1) || (y.flag-x.flag) || Math.abs(y.diff)-Math.abs(x.diff));
+}
+
+// Step 2: one Budget-planned expense account
+function mrAccountStudy(a, mk){
+  const st = mrSettings(), ov = mrState().irregular || {}, cur = todayStr().slice(0,7);
+  let first = null; D.ledger.forEach(l=>{ if(l.acc===a.id && (!first || l.date<first)) first = l.date; });
+  if(!first) return null;
+  const months = []; for(let i=11;i>=0;i--){ const m = shiftMonthKey(mk, -i); if(m>=first.slice(0,7)) months.push(m); }
+  if(!months.length) return null;
+  const txs = D.ledger.filter(l=>l.acc===a.id && l.date>=monthRange(months[0])[0] && l.date<=monthRange(mk)[1]);
+  const sumIn = (m, skip) => txs.filter(l=>monthOf(l.date)===m && !(skip && skip.has(l.id))).reduce((s,l)=>s+(Number(l.amt)||0), 0);
+  const totals = months.map(m=>sumIn(m));
+  const isNew = months.length < 3, m0 = mrMedian(totals), spendMonths = totals.filter(v=>Math.abs(v)>=0.005).length;
+  // R3: a payment over 3× the usual month, or spend in only 1–3 of the last 12 months
+  const auto = l => !isNew && Number(l.amt)>0 && ((months.length===12 && spendMonths<=3) || (m0>0.005 && Number(l.amt) > 3*m0));
+  const irregular = txs.filter(l=> ov[l.id]!==undefined? !!ov[l.id] : auto(l));
+  const irrIds = new Set(irregular.map(l=>l.id));
+  const usual = Math.max(0, roundCents(mrMedian(months.map(m=>sumIn(m, irrIds)))));
+  const annual = roundCents(irregular.reduce((s,l)=>s+(Number(l.amt)||0), 0));
+  const suggested = Math.max(0, mrRound(usual + annual/12, st.round));
+  // shown with an "irregular" tick: what is marked now, anything he changed, and other large payments he may want to mark
+  const candidates = txs.filter(l=>Number(l.amt)>0 && (irrIds.has(l.id) || ov[l.id]!==undefined || Number(l.amt) > 2*Math.max(usual, 1)));
+  const plan = Math.abs(budgetPlanFor(a.id, cur)||0);
+  const tags = [];
+  if(isNew) tags.push({k:'new', t:'New: under 3 months of history'});
+  else {
+    const last3 = months.slice(-3).map((m,i)=>({act: totals[totals.length-3+i], plan: Math.abs(budgetPlanFor(a.id, m)||0)}));
+    if(last3.length===3 && last3.every(x=>x.plan>0.005 && x.act > x.plan+0.005)) tags.push({k:'rising', t:'Rising: above plan 3 months in a row'});
+    if(last3.length===3 && last3.every(x=>x.plan>0.005 && x.act < x.plan-0.005)) tags.push({k:'falling', t:'Under-used: under plan 3 months in a row'});
+    if(irregular.some(l=>monthOf(l.date)===mk)) tags.push({k:'spike', t:'One-off spike in '+monthLabel(mk)});
+    const ly = shiftMonthKey(mk, -11), lyTot = months.includes(ly)? sumIn(ly) : 0;
+    if(lyTot > st.sar && lyTot > 2*usual) tags.push({k:'seasonal', t:'Seasonal: '+monthLabel(ly)+' was high ('+money0(lyTot)+')'});
+  }
+  let accrual = null;
+  const map = (D.accrualMappings||[]).find(x=>x.category===a.category), capM = accrualCapMonths(map);
+  if(irregular.length && capM!==null){
+    const biggest = Math.max(...irregular.map(l=>Number(l.amt)||0));
+    const catBudget = Math.abs(accrualCategoryBudget(a.category, cur)) - plan + suggested;
+    if(catBudget>0.005 && capM*catBudget < biggest-0.005) accrual = {capM, need: Math.ceil(biggest/catBudget), biggest};
+  }
+  return {a, months, usual, annual, irregular, candidates, suggested, plan, tags, accrual, change: Math.abs(suggested-plan)>=0.005, tick: mrFlag(plan, suggested, st)};
+}
+function mrSuggestions(mk){
+  const cur = todayStr().slice(0,7);
+  return D.accounts.filter(a=>firstDigit(a.id)===6 && a.acc_type==='Individual Account' && a.status==='Active')
+    .filter(a=>{ const c = computeForecastCell(a, cur, cur); return c.source==='budget' || c.source==='budget-empty'; })
+    .map(a=>mrAccountStudy(a, mk)).filter(r=>r && (r.change || r.irregular.length || r.tags.length))
+    .sort((x,y)=> (y.tick-x.tick) || Math.abs(y.suggested-y.plan)-Math.abs(x.suggested-x.plan));
+}
+async function mrToggleIrregular(id, on){
+  const irr = Object.assign({}, mrState().irregular||{}); irr[id] = !!on;
+  await mrSaveState({irregular: irr});
+  renderMonthReview();
+}
+// The month-by-month old → new figures Accept would write (R4: overwrite).
+function mrAcceptPlan(accIds, mk){
+  const sug = {}; mrSuggestions(mk).forEach(r=>{ sug[r.a.id] = r.suggested; });
+  const fill = mrFillMonths();
+  return accIds.filter(id=>sug[id]!==undefined).map(id=>({acc:id, value:sug[id], months: fill.map(m=>({m, old: budgetPlanFor(id, m), nw: sug[id]}))}));
+}
+function mrOpenAccept(){
+  const ids = [...document.querySelectorAll('.mr-acc:checked')].map(el=>Number(el.dataset.acc));
+  if(!ids.length){ toast('Tick at least one account first', true); return; }
+  const plan = mrAcceptPlan(ids, mrMonth||mrDueMonth()), fill = mrFillMonths();
+  const cell = x => (x.old===null? '<span class="mut">—</span>' : money0(Math.abs(x.old))) + ' → <b>' + money0(x.nw) + '</b>';
+  showModal(`<h2>Overwrite the budget</h2>
+    <div class="mut" style="font-size:12.5px;margin-bottom:8px">Old → new, month by month. Every month shown is overwritten, including figures you typed yourself.</div>
+    <div style="overflow-x:auto"><table class="mr-preview" style="font-size:12px"><thead><tr><th>Account</th>${fill.map(m=>`<th class="num">${esc(monthLabel(m))}</th>`).join('')}</tr></thead>
+    <tbody>${plan.map(p=>`<tr data-mracc="${p.acc}"><td>${esc(accShort(p.acc))}</td>${p.months.map(x=>`<td class="num mono" style="white-space:nowrap">${cell(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:12px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn pri" onclick="mrApply(${esc(JSON.stringify(ids))})">Overwrite ${plan.length} account${plan.length===1?'':'s'}</button></div>`, true);
+}
+let mrApplyBusy = false;
+async function mrApply(accIds){
+  if(blockIfSyncing() || mrApplyBusy) return;
+  mrApplyBusy = true;
+  try{
+    const plan = mrAcceptPlan(accIds, mrMonth||mrDueMonth()), ops = [];
+    let nid = nextBudgetId();
+    plan.forEach(p=>p.months.forEach(({m})=>{
+      const rows = D.budget.filter(b=>b.acc===p.acc && monthOf(b.date)===m);
+      const keep = p.value>=0.005? rows[0] : null;
+      rows.filter(r=>r!==keep).forEach(r=>{ D.budget = D.budget.filter(b=>b!==r); ops.push({table:'pd_budget', kind:'delete', row:{id:r.id}, base:r.updated_at||null}); });
+      if(keep){
+        if(Math.abs(Number(keep.amt)-p.value)<0.005) return;
+        const base = keep.updated_at||null; keep.amt = p.value;
+        ops.push({table:'pd_budget', kind:'upsert', row:{id:keep.id, entry_date:keep.date, acc:keep.acc, descr:keep.descr, amt:keep.amt}, base});
+      } else if(p.value>=0.005){
+        const row = {id:nid++, date:m+'-01', acc:p.acc, descr:'Budget - '+monthLabel(m), amt:p.value};
+        D.budget.push(row);
+        ops.push({table:'pd_budget', kind:'upsert', row:{id:row.id, entry_date:row.date, acc:row.acc, descr:row.descr, amt:row.amt}, base:null});
+      }
+    }));
+    persistLocal();
+    await syncWriteMany(ops);
+    closeModal();
+    toast('Budget updated for '+plan.length+' account'+(plan.length===1?'':'s')+' ('+ops.length+' cell'+(ops.length===1?'':'s')+') ✓');
+    logActivity('action', 'Month review: budget overwritten for '+plan.map(p=>p.acc).join(', ')+' ('+ops.length+' changes)');
+    renderMonthReview();
+  } finally { mrApplyBusy = false; }
+}
+
+// Step 3: provision lines (income and expense accounts) whose amount or timing didn't match last month
+function mrProvisionChecks(mk){
+  const st = mrSettings(), cur = todayStr().slice(0,7), out = [], seen = new Set();
+  const lineCount = {};
+  (D.provisionGroups||[]).forEach(g=>{ ensureLineIds(g); g.lines.forEach(l=>{ lineCount[l.acc] = (lineCount[l.acc]||0)+1; }); });
+  (D.provisionGroups||[]).forEach(g=>{
+    g.lines.forEach(line=>{
+      const acc = Number(line.acc);
+      if(seen.has(acc) || ![3,6].includes(firstDigit(acc))) return;
+      const plan = provisionsPlanFor(acc, mk) || 0, actual = forecastActual(acc, mk);
+      let kind = null;
+      if(Math.abs(plan)>=0.005 && Math.abs(actual)<0.005) kind = 'missing';
+      else if(Math.abs(plan)<0.005 && Math.abs(actual)>=0.005) kind = 'extra';
+      else if(Math.abs(plan)>=0.005 && mrFlag(plan, actual, st)) kind = 'amount';
+      if(!kind) return;
+      seen.add(acc);
+      out.push({kind, g, line, acc, plan, actual, single: lineCount[line.acc]===1});
+    });
+    const filled = Object.keys(g.months||{}).filter(m=>Object.values(g.months[m]||{}).some(v=>v!==undefined && v!==null && v!=='' && Number(v)!==0)).sort();
+    const last = filled[filled.length-1];
+    if(last && last>=cur && last<=shiftMonthKey(cur, 2)) out.push({kind:'ending', g, last});
+  });
+  return out;
+}
+// Amount fix: this line's future months (from this month, where it has a figure) take last month's actual.
+function mrProvisionPlan(gid, lineId, mk){
+  const g = findProvisionGroup(gid); if(!g) return null;
+  const line = g.lines.find(l=>l.lineId===lineId); if(!line) return null;
+  const cur = todayStr().slice(0,7), nw = roundCents(forecastActual(Number(line.acc), mk));
+  const months = Object.keys(g.months||{}).filter(m=>m>=cur && g.months[m] && g.months[m][lineId]!==undefined && g.months[m][lineId]!==null && g.months[m][lineId]!=='').sort()
+    .map(m=>({m, old: Number(g.months[m][lineId]), nw}));
+  return {g, line, nw, months};
+}
+function mrOpenProvisionFix(gid, lineId){
+  const p = mrProvisionPlan(gid, lineId, mrMonth||mrDueMonth());
+  if(!p || !p.months.length){ toast('No future months planned on this line', true); return; }
+  showModal(`<h2>Update “${esc(p.g.name)}”</h2>
+    <div class="mut" style="font-size:12.5px;margin-bottom:8px">${esc(accShort(p.line.acc))}: old → new, month by month.</div>
+    <div style="overflow-x:auto"><table style="font-size:12px"><tbody>${p.months.map(x=>`<tr><td>${esc(monthLabel(x.m))}</td><td class="num mono">${money(x.old)} → <b>${money(x.nw)}</b></td></tr>`).join('')}</tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:12px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn pri" onclick="mrApplyProvisionFix(${gid}, ${esc(JSON.stringify(lineId))})">Overwrite ${p.months.length} month${p.months.length===1?'':'s'}</button></div>`);
+}
+async function mrApplyProvisionFix(gid, lineId){
+  if(blockIfSyncing()) return;
+  const p = mrProvisionPlan(gid, lineId, mrMonth||mrDueMonth()); if(!p) return;
+  p.months.forEach(x=>{ p.g.months[x.m] = Object.assign({}, p.g.months[x.m], {[lineId]: x.nw}); });
+  await persistProvisionGroup(p.g);
+  closeModal();
+  toast('“'+p.g.name+'” updated for '+p.months.length+' month'+(p.months.length===1?'':'s')+' ✓');
+  logActivity('action', 'Month review: provision “'+p.g.name+'” line '+p.line.acc+' set to '+p.nw+' ('+p.months.length+' months)');
+  renderMonthReview();
+}
+
+async function mrMarkReviewed(mk, on){
+  const done = Object.assign({}, mrState().done||{});
+  if(on) done[mk] = todayStr(); else delete done[mk];
+  await mrSaveState({done});
+  toast(on? monthLabel(mk)+' marked reviewed ✓' : monthLabel(mk)+' back on the to-do list');
+  renderMonthReview();
+}
+async function mrSaveSettingsFromInputs(){
+  const v = id => (document.getElementById(id)||{}).value;
+  const c = {pct:Number(v('mrPct')), sar:Number(v('mrSar')), months:Math.round(Number(v('mrMonths'))), round:Number(v('mrRound'))};
+  if(!(c.pct>=0 && c.pct<=1000) || !(c.sar>=0) || !(c.months>=1 && c.months<=60) || !(c.round>=0.01)){ toast('Check the numbers: months 1–60, rounding at least 0.01', true); return; }
+  await mrSaveState({settings:c});
+  toast('Month review settings saved ✓');
+  renderMonthReview();
+}
+function mrSetMonth(mk){ mrMonth = mk; renderMonthReview(); }
+
+function renderMonthReview(){
+  const mk = mrMonth || mrDueMonth(), st = mrSettings(), doneOn = (mrState().done||{})[mk];
+  let step1, step2, step3;
+  beginForecastFastPath();
+  try{ step1 = mrActualVsPlan(mk); step2 = mrSuggestions(mk); step3 = mrProvisionChecks(mk); }
+  finally{ endForecastFastPath(); }
+  const pick = []; for(let i=1;i<=12;i++) pick.push(shiftMonthKey(todayStr().slice(0,7), -i));
+  const diffTxt = d => `<span class="${d>0.005?'r':''}">${d>0?'+':''}${money0(d)}</span>`;
+  const flagged = step1.reduce((n,c)=>n+c.rows.filter(r=>r.flag).length, 0);
+  const s1 = step1.map(c=>`<tr class="mr-cat${c.flag?' mr-flag':''}" style="font-weight:600"><td>${c.flag?'⚑ ':''}${esc(c.cat)}${c.income?' <span class="badge">income</span>':''}</td><td class="num mono">${money0(c.plan)}</td><td class="num mono">${money0(c.actual)}</td><td class="num mono">${diffTxt(c.diff)}</td>
+      <td style="font-size:11.5px">${c.cover? (c.cover.full? 'Covered by the accrual reserve' : money0(c.cover.covered)+' of it covered by accrual') : ''}</td></tr>`
+    + c.rows.map(r=>`<tr class="${r.flag?'mr-flag':''}" data-mrrow="${r.a.id}"><td style="padding-left:18px">${r.flag?'⚑ ':''}${esc(accShort(r.a.id))}</td><td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.actual)}</td><td class="num mono">${diffTxt(r.diff)}</td><td></td></tr>`).join('')).join('');
+  const s2 = step2.map(r=>`<tr data-mrsug="${r.a.id}"><td><input type="checkbox" class="chk mr-acc" style="width:auto" data-acc="${r.a.id}" ${r.tick&&r.change?'checked':''} ${r.change?'':'disabled'} aria-label="Accept ${esc(accShort(r.a.id))}"></td>
+      <td>${esc(accShort(r.a.id))}<div class="mut" style="font-size:11px">${r.tags.map(t=>`<span class="badge" data-mrtag="${t.k}">${esc(t.t)}</span>`).join(' ')}</div>
+        ${r.candidates.length? `<div style="font-size:11px;margin-top:3px">${r.candidates.map(l=>`<label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px"><input type="checkbox" class="chk" style="width:auto" data-mrirr="${l.id}" ${r.irregular.includes(l)?'checked':''} onchange="mrToggleIrregular(${l.id}, this.checked)"> irregular: ${esc(fmtDateShort(l.date))} ${money0(l.amt)}</label>`).join('')}</div>` : ''}
+        ${r.accrual? `<div style="font-size:11px;color:var(--yellow)" data-mraccrual="${r.a.id}">Accrual cap ${r.accrual.capM} months can't hold the ${money0(r.accrual.biggest)} item; ${r.accrual.need} months would (Settings → Accrual Mappings)</div>` : ''}</td>
+      <td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.usual)}</td><td class="num mono">${money0(r.annual)}</td><td class="num mono"><b>${money0(r.suggested)}</b></td></tr>`).join('');
+  const kindTxt = {missing:'Planned, nothing booked: paid in another month or skipped?', extra:'Booked with nothing planned this month', amount:'Amount differs from the plan'};
+  const s3 = step3.map(x=> x.kind==='ending'
+    ? `<li data-mrprov="ending">“${esc(x.g.name)}” ends in ${esc(monthLabel(x.last))}. <button class="btn ghost sm" onclick="provisionEditingId=${x.g.id}; go('provisions')">Open</button></li>`
+    : `<li data-mrprov="${x.kind}">“${esc(x.g.name)}” · ${esc(accShort(x.acc))}: planned ${money0(x.plan)}, booked ${money0(x.actual)}. ${kindTxt[x.kind]}
+        ${x.kind==='amount' && x.single? `<button class="btn ghost sm" onclick="mrOpenProvisionFix(${x.g.id}, ${esc(JSON.stringify(x.line.lineId))})">Use ${money0(x.actual)} from now on</button>` : `<button class="btn ghost sm" onclick="goToProvisionLine(${x.g.id}, ${esc(JSON.stringify(x.line.lineId))})">Open</button>`}</li>`).join('');
+  document.getElementById('app').innerHTML = budgetPnlTabsHTML('review') + `
+    <div class="panel"><div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+      <h2 style="margin:0">🗓 Month review</h2>
+      <select onchange="mrSetMonth(this.value)" aria-label="Month to review" style="width:auto">${pick.map(m=>`<option value="${m}" ${m===mk?'selected':''}>${esc(monthLabel(m))}</option>`).join('')}</select>
+      ${doneOn? `<span class="pill" style="color:var(--green)">Reviewed ${esc(fmtDateShort(doneOn))}</span><button class="btn ghost sm" onclick="mrMarkReviewed('${mk}', false)">Undo</button>`
+        : `<button class="btn pri sm" onclick="mrMarkReviewed('${mk}', true)">Mark month reviewed</button>`}</div>
+      <details style="margin-top:8px"><summary class="mut" style="font-size:12px;cursor:pointer">⚙ Settings</summary>
+        <div class="row" style="gap:10px;flex-wrap:wrap;align-items:end;margin-top:6px;font-size:12px">
+          <label>Flag over %<br><input id="mrPct" type="number" style="width:80px" value="${st.pct}"></label>
+          <label>and over SAR<br><input id="mrSar" type="number" style="width:90px" value="${st.sar}"></label>
+          <label>Months to fill<br><input id="mrMonths" type="number" style="width:70px" value="${st.months}"></label>
+          <label>Round to<br><input id="mrRound" type="number" style="width:70px" value="${st.round}"></label>
+          <button class="btn ghost sm" onclick="mrSaveSettingsFromInputs()">Save</button></div></details></div>
+    <div class="panel"><h3>1 · Actual vs plan, ${esc(monthLabel(mk))}</h3>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">⚑ = off by more than ${st.pct}% and SAR ${money0(st.sar)}. ${flagged} account${flagged===1?'':'s'} flagged.</div>
+      ${s1? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Category / account</th><th class="num">Plan</th><th class="num">Actual</th><th class="num">Difference</th><th></th></tr></thead><tbody>${s1}</tbody></table></div>` : '<div class="mut">Nothing planned or booked that month.</div>'}</div>
+    <div class="panel"><h3>2 · Suggested budget</h3>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">Accounts planned in the Budget grid. Suggested = usual month (median of the last 12, irregular items left out) + irregular items ÷ 12, rounded to ${money0(st.round)}. Tick to accept; it overwrites ${st.months} month${st.months===1?'':'s'} from ${esc(monthLabel(todayStr().slice(0,7)))}.</div>
+      ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th></th><th>Account</th><th class="num">Plan now</th><th class="num">Usual</th><th class="num">Irregular (12 mo)</th><th class="num">Suggested</th></tr></thead><tbody>${s2}</tbody></table></div>
+        <div class="row" style="margin-top:8px"><button class="btn pri sm" onclick="mrOpenAccept()">Review and overwrite…</button></div>` : '<div class="mut">No Budget-planned accounts with history.</div>'}</div>
+    <div class="panel"><h3>3 · Provisions</h3>
+      ${s3? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s3}</ul>` : '<div class="mut">All provision lines matched last month.</div>'}</div>`;
+}
 function pnlVarianceMagnitude(budget, actual){ return Math.abs(budget) - Math.abs(actual); }
 function renderPnL(){
   if(pnlView==='acctchart'){ renderAcctBudgetChartPage(); return; }
@@ -10310,9 +10591,14 @@ async function persistInvPlatform(p){
   await syncWrite('pd_inv_platforms','upsert',{id:p.id, name:p.name, out_acc:p.outAcc, in_acc:p.inAcc, profit_acc:p.profitAcc, stmt_cash_usd:(p.stmtCashUsd===''||p.stmtCashUsd===undefined)?null:p.stmtCashUsd, stmt_date:p.stmtDate||null, is_robo:!!p.isRobo, robo_value:(p.roboValue===''||p.roboValue===undefined)?null:p.roboValue, robo_value_date:p.roboValueDate||null}, base);
   persistLocal();
 }
+// v5.16.1 (#90): every position write sends the whole row: the database checks a partial upsert as an insert
+// first, and a position's name is required, so a partial row (old wallet-unit save) always failed.
+function invPositionRow(p){
+  return {id:p.id, platform_id:p.platformId, name:p.name, ticker:p.ticker||'', asset_class:p.assetClass, currency:p.currency, status:p.status, stmt_units:(p.stmtUnits===''||p.stmtUnits===undefined)?null:p.stmtUnits, stmt_date:p.stmtDate||null};
+}
 async function persistInvPosition(p){
   const base = p.updated_at||null; p.updated_at = nowISO();
-  await syncWrite('pd_inv_positions','upsert',{id:p.id, platform_id:p.platformId, name:p.name, ticker:p.ticker||'', asset_class:p.assetClass, currency:p.currency, status:p.status, stmt_units:(p.stmtUnits===''||p.stmtUnits===undefined)?null:p.stmtUnits, stmt_date:p.stmtDate||null}, base);
+  await syncWrite('pd_inv_positions','upsert',invPositionRow(p), base);
   persistLocal();
 }
 async function persistInvTransaction(t){
@@ -11983,7 +12269,7 @@ async function saveInvWalletUnits(platformId){
   const ops = r.rows.map(x=>{
     x.pos.stmtUnits = Math.round(x.wallet*1e8)/1e8; x.pos.stmtDate = date;
     const base = x.pos.updated_at||null; x.pos.updated_at = nowISO();
-    return {table:'pd_inv_positions', kind:'upsert', row:{id:x.pos.id, stmt_units:x.pos.stmtUnits, stmt_date:date}, base};
+    return {table:'pd_inv_positions', kind:'upsert', row:invPositionRow(x.pos), base};
   });
   await syncWriteMany(ops); persistLocal();
   delete invWalletResults[platformId];
