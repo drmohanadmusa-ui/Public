@@ -8111,6 +8111,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV518UnusedProvisionsToIncome();
   await testV518PerCoinPriceLinksAndPricesTab();
   await testV518AppLogo();
+  await testV519MakePlansMatch();
+  await testV519SplashStyles();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11177,54 +11179,56 @@ async function testV517MonthReviewActualVsPlan(){
   assert(!cats.some(c=>c.cat==='Insurance'), 'Nothing planned or booked: not listed');
   const st = sb.mrSettings();
   assert(st.pct===10 && st.sar===200 && st.months===12 && st.round===10, 'Defaults 10% / SAR 200 / 12 months / round 10');
-  assert(!sb.mrFlag(1000, 1150, st) && !sb.mrFlag(10000, 10250, st) && sb.mrFlag(1000, 1250, st) && sb.mrFlag(0, 201, st) && !sb.mrFlag(0, 200, st), 'Flag only when off by more than both 10% and SAR 200');
-  await sb.mrSaveState({settings:{pct:5, sar:100, months:3, round:5}});
-  assert(sb.mrSettings().months===3 && sb.mrFlag(1000, 1150) && !sb.mrFlag(10000, 10150) && sb.__calls.some(c=>c.table==='pd_ui_prefs' && c.row.dismissals.monthReview.settings.pct===5), 'Settings are synced and used');
+  // v5.19 (#107g): either limit is enough; an empty SAR box means the % only
+  assert(sb.mrFlag(1000, 1150, st) && sb.mrFlag(10000, 10250, st) && !sb.mrFlag(10000, 10150, st) && !sb.mrFlag(1000, 1050, st) && sb.mrFlag(0, 5, st) && !sb.mrFlag(500, 500, st), 'Flag when off by more than 10% OR SAR 200');
+  await sb.mrSaveState({settings:{pct:10, sar:null, months:3, round:5}});
+  const st2 = sb.mrSettings();
+  assert(st2.sar===null && st2.months===3 && !sb.mrFlag(10000, 10250) && sb.mrFlag(1000, 1150) && sb.__calls.some(c=>c.table==='pd_ui_prefs' && c.row.dismissals.monthReview.settings.sar===null), 'SAR box empty: the 10% only; settings synced');
 }
 async function testV517MonthReviewSuggestions(){
+  // v5.19 (#107): the suggestion is the plain 12-month average; only accounts outside the limits are listed
   const sb = mrSandbox();
-  const sug = sb.mrSuggestions('2026-10');
-  const g = sug.find(r=>r.a.id===60101), ins = sug.find(r=>r.a.id===60102);
-  assert(!sug.some(r=>r.a.id===60103 || r.a.id===60104), 'Provision-planned accounts are left to step 3');
-  assert(g && g.usual===1000 && g.annual===4000 && g.suggested===1330 && g.plan===1000 && g.tick, 'Groceries: usual 1,000 + 4,000 ÷ 12 = 1,330 (rounded to 10), ticked, got ' + JSON.stringify(g && [g.usual, g.annual, g.suggested, g.plan, g.tick]));
-  assert(g.tags.some(t=>t.k==='spike'), 'One-off spike tag for October');
-  assert(ins && ins.usual===0 && ins.annual===2400 && ins.suggested===200, 'Insurance paid once in 12 months: 2,400 ÷ 12 = 200, got ' + JSON.stringify(ins && [ins.usual, ins.annual, ins.suggested]));
-  assert(ins.accrual && ins.accrual.capM===3 && ins.accrual.need===12, 'Accrual cap of 3 × 200 cannot hold 2,400: 12 months suggested, got ' + JSON.stringify(ins.accrual));
-  const spikeId = g.irregular[0].id;
-  await sb.mrToggleIrregular(spikeId, false);
-  const g2 = sb.mrSuggestions('2026-10').find(r=>r.a.id===60101);
-  assert(!g2 || (g2.annual===0 && g2.suggested===1000), 'Unticked as irregular: the 4,000 counts as normal spend and the suggestion is back to 1,000');
-  await sb.mrToggleIrregular(spikeId, true);
-  // seasonal / rising / new
   const D = vm.runInContext('D', sb);
-  D.ledger.push({id:900, jv:900, date:'2025-11-20', acc:60101, amt:3500, descr:'x'});
-  await sb.mrToggleIrregular(900, false);
-  assert(sb.mrAccountStudy(D.accounts[0], '2026-10').tags.some(t=>t.k==='seasonal'), 'Last November was high: seasonal tag');
-  D.accounts.push({id:60105, name:'New club', category:'Health', acc_type:'Individual Account', status:'Active', forecast_category:'expense'});
+  D.accounts.push({id:60106, name:'Phone', category:'Bills', acc_type:'Individual Account', forecast_category:'expense'},
+    {id:60107, name:'Club', category:'Health', acc_type:'Individual Account', forecast_category:'expense'},
+    {id:60105, name:'New hobby', category:'Health', acc_type:'Individual Account', forecast_category:'expense'});
   sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
-  D.ledger.push({id:901, jv:901, date:'2026-10-02', acc:60105, amt:250, descr:'x'});
-  assert(sb.mrAccountStudy(D.accounts[5], '2026-10').tags.some(t=>t.k==='new'), 'Under 3 months of history: new');
+  for(let i=0;i<12;i++){ const m = new Date(Date.UTC(2025, 10+i, 1)).toISOString().slice(0,7); D.ledger.push({id:700+i, jv:700+i, date:m+'-09', acc:60106, amt:500, descr:'x'}); }
+  D.budget.push({id:30, acc:60106, date:'2026-11-01', amt:500}, {id:31, acc:60107, date:'2026-11-01', amt:300});
+  D.ledger.push({id:780, jv:780, date:'2026-09-02', acc:60105, amt:200, descr:'x'}, {id:781, jv:781, date:'2026-10-02', acc:60105, amt:300, descr:'x'});
+  const sug = sb.mrSuggestions('2026-10');
+  const g = sug.find(r=>r.a.id===60101), ins = sug.find(r=>r.a.id===60102), club = sug.find(r=>r.a.id===60107), hobby = sug.find(r=>r.a.id===60105);
+  assert(!sug.some(r=>r.a.id===60103 || r.a.id===60104), 'Provision-planned accounts are left to step 3');
+  assert(g && g.average===1333.33 && g.suggested===1330 && g.plan===1000 && g.months===12, 'Groceries: 16,000 over 12 months = 1,333 a month, suggested 1,330, got ' + JSON.stringify(g && [g.average, g.suggested, g.plan]));
+  assert(ins && ins.average===200 && ins.suggested===200 && ins.plan===0, 'Insurance paid once (2,400): 200 a month, got ' + JSON.stringify(ins && [ins.average, ins.suggested]));
+  assert(!sug.some(r=>r.a.id===60106) && sb.mrSuggestions('2026-10', true).some(r=>r.a.id===60106), 'Phone spends what it plans (500): within the limits, not listed');
+  assert(club && club.none && club.suggested===0 && club.plan===300, 'Club: nothing spent, plan 300: offered as clear the plan');
+  assert(hobby && hobby.months===2 && hobby.average===250, 'A newer account averages the months it has (2), got ' + JSON.stringify(hobby && [hobby.months, hobby.average]));
+  sb.renderMonthReview();
+  const app = sb.document.getElementById('app');
+  assert(app.querySelector('#mrSug_60101') && app.querySelector('#mrSug_60101').value==='1330' && app.querySelector('[data-mraccept="60107"]').textContent==='Clear plan', 'Each row has an editable box and its own Accept (Clear plan when nothing was spent)');
+  assert(!app.querySelector('[data-mrirr]') && !app.querySelector('.mr-acc') && /1 account looks fine/.test((app.querySelector('[data-mrfine]')||{}).textContent||''), 'No irregular list, nothing pre-ticked, a "looks fine" line');
 }
 async function testV517MonthReviewOverwriteBudget(){
   const sb = mrSandbox();
   const D = vm.runInContext('D', sb);
   sb.renderMonthReview();
   const app = sb.document.getElementById('app');
-  const box = app.querySelector('.mr-acc[data-acc="60101"]');
-  assert(box && box.checked && app.querySelector('[data-bptab="review"]').getAttribute('aria-selected')==='true', 'Month review tab: Groceries ticked');
-  assert(app.querySelector('[data-mraccrual="60102"]') && app.querySelectorAll('[data-mrrow].mr-flag').length>=3, 'Accrual note and flagged rows on the page');
-  app.querySelectorAll('.mr-acc').forEach(el=>{ el.checked = el.dataset.acc==='60101'; });
-  sb.mrOpenAccept();
+  assert(app.querySelector('[data-bptab="review"]').getAttribute('aria-selected')==='true' && app.querySelectorAll('[data-mrrow].mr-flag').length>=3, 'Month review tab with flagged rows');
+  app.querySelector('#mrSug_60101').value = '1,400';
+  sb.mrOpenAccept(60101);
   const modal = sb.document.getElementById('modalRoot').innerHTML;
   const row = sb.document.querySelector('#modalRoot [data-mracc="60101"]');
-  assert(row && row.querySelectorAll('td').length===13 && /1,?000 → <b>1,?330<\/b>/.test(row.innerHTML) && /—<\/span> → <b>1,?330<\/b>/.test(row.innerHTML), 'Preview: old → new for each of 12 months, got ' + (row && row.textContent));
-  assert(/Overwrite 1 account/.test(modal), 'Overwrite button names the count');
-  await sb.mrApply([60101]);
+  assert(row && row.querySelectorAll('td').length===13 && /1,?000 → <b>1,?400<\/b>/.test(row.innerHTML) && /—<\/span> → <b>1,?400<\/b>/.test(row.innerHTML), 'Preview: old → the typed 1,400 for each of 12 months, got ' + (row && row.textContent));
+  assert(/Overwrite 12 months/.test(modal), 'Overwrite button names the months');
+  await sb.mrApply(60101, 1400);
   const months = []; for(let i=0;i<12;i++) months.push(sb.shiftMonthKey('2026-11', i));
-  assert(months.every(m=>D.budget.filter(b=>b.acc===60101 && b.date.slice(0,7)===m).length===1 && sb.budgetPlanFor(60101, m)===1330), 'Every month Nov-26..Oct-27 is one row of 1,330');
+  assert(months.every(m=>D.budget.filter(b=>b.acc===60101 && b.date.slice(0,7)===m).length===1 && sb.budgetPlanFor(60101, m)===1400), 'Every month Nov-26..Oct-27 is one row of 1,400');
   assert(sb.budgetPlanFor(60101, '2026-10')===1000 && sb.budgetPlanFor(60101, '2027-11')===null, 'Months outside the 12 are untouched');
   const ops = sb.__calls.filter(c=>c.table==='pd_budget');
-  assert(ops.length===13 && ops.filter(c=>c.kind==='delete').length===1 && ops.some(c=>c.row.id===2 && c.row.amt===1330 && c.base===null), 'Synced: 1 update, 1 duplicate removed, 1 update, 10 new rows, got ' + ops.length);
+  assert(ops.length===13 && ops.filter(c=>c.kind==='delete').length===1 && ops.some(c=>c.row.id===2 && c.row.amt===1400 && c.base===null), 'Synced: 1 update, 1 duplicate removed, 1 update, 10 new rows, got ' + ops.length);
+  await sb.mrApply(60101, 0);
+  assert(months.every(m=>sb.budgetPlanFor(60101, m)===null), 'Clear plan (0) removes the budget for the 12 months');
 }
 async function testV517MonthReviewProvisionsAndToDo(){
   const sb = mrSandbox();
@@ -11246,6 +11250,7 @@ async function testV517MonthReviewProvisionsAndToDo(){
   const before = ds.dashboardTodoItems().filter(i=>/^Review /.test(i.title));
   await ds.mrMarkReviewed(ds.mrDueMonth(), true);
   assert(before.length===1 && before[0].onclick.includes("go('monthreview')") && !ds.dashboardTodoItems().some(i=>/^Review /.test(i.title)), 'Dashboard to-do until marked reviewed, opens the tab');
+  assert(String(ds.dashboardTodoItems.toString()).includes(`mrGoTo('mrStl')`) && String(ds.dashboardTodoItems.toString()).includes(`mrGoTo('mrConflicts')`), 'v5.19 (#105): the two other to-dos open their own box');
 }
 async function testV518MonthReviewIncomeColoursAndStatus(){
   const sb = mrSandbox();
@@ -11291,7 +11296,7 @@ async function testV518PlansThatDisagree(){
   Dd.forecastPlans[inc.id] = {'2026-11':-100};
   Dd.budget.push({id:777, acc:inc.id, date:'2026-11-01', amt:250});
   ds.rebuildIndex();
-  assert(ds.dashboardTodoItems().some(i=>/plans? that disagree/.test(i.title) && i.onclick.includes("go('monthreview')")), 'Dashboard to-do while plans disagree');
+  assert(ds.dashboardTodoItems().some(i=>/plans? that disagree/.test(i.title) && i.onclick.includes("mrGoTo('mrConflicts')")), 'Dashboard to-do while plans disagree');
 }
 async function testV518UnusedProvisionsToIncome(){
   const sb = mrSandbox();
@@ -11387,4 +11392,63 @@ async function testV518AppLogo(){
   await sb.setAppLogo('nope');
   assert(sb.getAppLogo()==='palm', 'Unknown choice ignored');
   assert(/data-logopick="\$\{k\}"/.test(fs.readFileSync(APP_HTML, 'utf8')) && Object.keys(vm.runInContext('APP_LOGOS', sb)).join()==='ring,cards,palm', 'Settings offers Budget ring, Card fan, Growing palm');
+}
+async function testV519MakePlansMatch(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:30101, name:'Salary', category:'Regular Income', acc_type:'Individual Account', forecast_category:'income'});
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
+  D.forecastPlans[30101] = {'2026-11':-5000};
+  D.budget.push({id:20, acc:30101, date:'2026-11-01', amt:5200});
+  sb.renderMonthReview();
+  assert(sb.document.querySelector('[data-mruse="30101:forecast"]') && sb.document.querySelector('[data-mruse="30101:budget"]') && !sb.document.querySelector('[data-mruse="30101:provisions"]'), 'Step 4: a Use button for each figure the account has');
+  sb.mrOpenMatch(30101, 'forecast');
+  assert(/5,?200 → <b>5,?000<\/b>/.test(sb.document.getElementById('modalRoot').innerHTML), 'Preview: Budget 5,200 → 5,000');
+  await sb.mrApplyMatch(30101, 'forecast');
+  assert(sb.budgetPlanFor(30101, '2026-11')===5000 && !sb.mrPlanConflicts().some(c=>c.a.id===30101), 'Budget now matches the Forecast (its own sign kept); no longer listed');
+  D.budget.find(b=>b.id===20).amt = 5300;
+  await sb.mrApplyMatch(30101, 'budget');
+  assert(D.forecastPlans[30101]['2026-11']===-5300 && sb.__calls.some(c=>c.table==='pd_forecast_plans'), 'Use Budget: the Forecast becomes -5,300 (income stays negative), synced');
+  // provisions: one line → changed; two lines → left for Provisions
+  D.provisionGroups.push({id:9, name:'Food', lines:[{acc:60101, lineId:60101}], months:{'2026-12':{60101:900}}});
+  await sb.mrApplyMatch(60101, 'provisions');
+  assert(sb.budgetPlanFor(60101, '2026-12')===900 && D.budget.filter(b=>b.acc===60101 && b.date.slice(0,7)==='2026-12').length===1, 'Use Provisions: Budget Dec becomes one row of 900');
+  D.budget.find(b=>b.acc===60101 && b.date.slice(0,7)==='2026-12').amt = 1000;
+  await sb.mrApplyMatch(60101, 'budget');
+  assert(D.provisionGroups.find(g=>g.id===9).months['2026-12'][60101]===1000 && sb.__calls.some(c=>c.table==='pd_provisions' && c.row.id===9), 'Use Budget: the single provision line becomes 1,000, synced');
+  D.provisionGroups.push({id:10, name:'Extra', lines:[{acc:60101, lineId:60101}], months:{'2027-01':{60101:50}}});
+  D.budget.find(b=>b.acc===60101 && b.date.slice(0,7)==='2026-12').amt = 1100;
+  sb.mrOpenMatch(60101, 'budget');
+  const m = sb.document.getElementById('modalRoot').innerHTML;
+  assert(/more than one line/.test(m) && /goToProvisionLine\(9/.test(m) && !/Change \d+ figure/.test(m), 'Two provision lines: not changed here, Open Provisions offered');
+}
+async function testV519SplashStyles(){
+  const sb = makeSandbox();
+  sb.document.body.insertAdjacentHTML('afterbegin', '<div id="splashScreen"><div class="splash-art" id="splashArt"></div><div id="splashProgressPct"></div><div id="splashProgressFill"></div><div id="splashVersionTag"></div><button id="splashBypassBtn"></button></div>');
+  sb.matchMedia = () => ({matches:false});
+  const D = vm.runInContext('D', sb);
+  D.uiPrefs = {}; D.accounts = [{id:1},{id:2},{id:3}];
+  sb.__set('syncWrite', async()=>({ok:true})); sb.__set('renderSettings', ()=>{});
+  assert(sb.getSplashStyle()==='ledger', 'Default loading screen: Ledger balances');
+  sb.showSplash();
+  const el = sb.document.getElementById('splashScreen');
+  assert(el.classList.contains('style-ledger') && sb.document.querySelectorAll('[data-splashrow]').length===4 && /lgOs/.test(el.innerHTML), 'Ledger rows plus the app logo (Budget ring) for the ending');
+  sb.updateSplashProgress(50);
+  const rows = [...sb.document.querySelectorAll('[data-splashrow]')];
+  assert(rows.length===4 && rows[0].classList.contains('in') && rows[1].classList.contains('in') && !rows[2].classList.contains('in') && rows[0].lastElementChild.textContent==='3', 'At 50%: accounts and ledger lines are in, with real counts (3 accounts)');
+  sb.hideSplash();
+  assert(el.classList.contains('finishing') && !el.classList.contains('hidden'), 'Hiding plays the ending first');
+  await new Promise(r=>setTimeout(r, 1400));
+  assert(el.classList.contains('folded') && el.classList.contains('hidden'), 'Then folds into the logo and goes');
+  await sb.setSplashStyle('coins');
+  assert(sb.localStorage.getItem('splashStyle')==='coins' && D.uiPrefs.dismissals.splashStyle==='coins', 'Settings choice synced and kept on this device');
+  el.classList.remove('hidden'); sb.showSplash();
+  assert(sb.document.querySelectorAll('.splash-coin').length===3 && el.classList.contains('style-coins'), 'Coins stack');
+  await sb.setSplashStyle('ring'); sb.showSplash(); sb.updateSplashProgress(50);
+  const arc = sb.document.getElementById('splashRingArc');
+  assert(arc && Math.abs(Number(arc.style.strokeDashoffset)-39.25)<0.01, 'Ring fills up: half drawn at 50%');
+  sb.matchMedia = () => ({matches:true});
+  sb.hideSplash();
+  assert(el.classList.contains('hidden'), 'Reduced motion: hides straight away');
+  assert(/data-splashpick="\$\{k\}"/.test(fs.readFileSync(APP_HTML, 'utf8')) && !/splash-mark">₪/.test(fs.readFileSync(APP_HTML, 'utf8')), 'Settings offers the three styles; the old mark is gone');
 }
