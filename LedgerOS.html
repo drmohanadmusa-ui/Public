@@ -147,6 +147,31 @@ tfoot td{font-weight:700;border-top:2px solid var(--line);border-bottom:none}
 @keyframes glowHighlight{0%{box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent);background:color-mix(in srgb, var(--accent) 18%, var(--panel))}100%{box-shadow:0 0 0 0 transparent;background:var(--panel)}}
 #splashScreen{position:fixed;inset:0;z-index:9999;background:var(--head),radial-gradient(600px 600px at 50% 20%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:opacity .35s ease,visibility .35s ease}
 #splashScreen.hidden{opacity:0;visibility:hidden;pointer-events:none}
+/* v5.19 (#103/#104): the splash shows the app logo in one of three styles (Settings → Appearance → Loading screen) */
+.splash-art{position:relative;display:flex;align-items:center;justify-content:center;min-width:220px;min-height:110px}
+.splash-logo{width:84px;height:84px;filter:drop-shadow(0 6px 16px rgba(0,0,0,.18))}
+.splash-logo svg{width:100%;height:100%;display:block}
+.splash-a-arc{transition:stroke-dashoffset .35s ease}
+.splash-a-spark{transform-origin:24px 24px;transform:scale(0);transition:transform .4s cubic-bezier(.3,1.6,.5,1)}
+#splashScreen.style-ring .splash-progress-track{display:none}
+#splashScreen.style-ring.finishing .splash-a-spark{transform:scale(1)}
+.splash-coins{position:relative;width:110px;height:72px}
+.splash-coin{position:absolute;left:15px;width:80px;height:24px;border-radius:50%;background:linear-gradient(180deg,#f5c542,#d4a017);box-shadow:0 4px 0 #a97c0f;animation:splashCoinDrop .55s cubic-bezier(.3,1.4,.5,1) both}
+.splash-coin:nth-child(1){bottom:0}.splash-coin:nth-child(2){bottom:16px;animation-delay:.35s}.splash-coin:nth-child(3){bottom:32px;animation-delay:.7s}
+@keyframes splashCoinDrop{from{transform:translateY(-140px);opacity:0}to{transform:none;opacity:1}}
+#splashScreen.style-coins .splash-progress-fill{background:linear-gradient(90deg,#f5c542,#d4a017)}
+.splash-sheet{width:220px;font-family:var(--mono, ui-monospace, monospace);font-size:12.5px;display:grid;gap:4px;color:var(--text)}
+.splash-row{display:flex;justify-content:space-between;opacity:0;transform:translateX(-10px);transition:opacity .3s, transform .3s}
+.splash-row.in{opacity:1;transform:none}
+.splash-row span:first-child{color:var(--muted)}
+.splash-total{height:2px;background:var(--text);transform:scaleX(0);transform-origin:left;transition:transform .45s}
+.splash-sum{display:flex;justify-content:space-between;font-weight:700;opacity:0;transition:opacity .3s}
+#splashScreen.finishing .splash-total{transform:scaleX(1)} #splashScreen.finishing .splash-sum{opacity:1}
+.splash-end-logo{position:absolute;inset:0;margin:auto;opacity:0;transform:scale(.4) rotate(-30deg);transition:transform .5s cubic-bezier(.3,1.4,.5,1), opacity .35s}
+#splashScreen.folded .splash-sheet, #splashScreen.folded .splash-coins{transform:scale(.2);opacity:0;transition:transform .4s, opacity .35s}
+#splashScreen.folded .splash-end-logo{opacity:1;transform:none}
+#splashScreen.zoom .splash-logo{transform:scale(8);opacity:0;transition:transform .5s cubic-bezier(.7,0,.3,1), opacity .4s}
+@media (prefers-reduced-motion: reduce){ #splashScreen *{animation:none!important;transition:none!important} }
 .splash-ring{position:absolute;width:110px;height:110px;border-radius:50%;border:2px solid var(--accent);opacity:0;animation:splashRingPulse 2.2s ease-out infinite}
 @keyframes splashRingPulse{0%{transform:scale(0.6);opacity:.7}70%{opacity:0}100%{transform:scale(1.4);opacity:0}}
 .splash-mark{width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg, var(--accent), var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-weight:700;font-size:28px;box-shadow:var(--shadow-pop);opacity:0;animation:splashMarkBreathe 1.8s ease-in-out infinite, splashFadeIn .4s ease forwards}
@@ -541,10 +566,8 @@ body.still *,body.still *::before,body.still *::after{animation:none!important;t
 </head>
 <body>
 <div id="splashScreen">
-  <div class="splash-ring"></div>
-  <div class="splash-mark">₪</div>
+  <div class="splash-art" id="splashArt"></div>
   <h1 class="splash-title">LedgerOS</h1>
-  <div class="splash-dots"><span></span><span></span><span></span></div>
   <div class="splash-status" id="splashStatus">Loading…</div>
   <div class="splash-progress-pct" id="splashProgressPct">0%</div>
   <div class="splash-progress-track"><div class="splash-progress-fill" id="splashProgressFill"></div></div>
@@ -593,12 +616,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.18.0';
+const APP_VERSION = '5.19.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.19.0', date:'2026-11-14', changes:[
+    'New loading screen with the new logo. Ledger balances (your accounts, ledger lines, budgets and investments tick in as they load, a total line draws, then it folds into the logo) is the default; Ring fills up and Coins stack are in Settings \u2192 Appearance \u2192 Loading screen.',
+    'Month review, Suggested budget is much simpler: for each account planned in the Budget grid it shows your plan, your average monthly spend over the last 12 months and the difference. Only accounts outside the limits are listed; the rest are counted as looking fine. Type a different figure if you like, then Accept shows every month before it overwrites. An account with nothing spent in 12 months offers Clear plan. The irregular-items list is gone.',
+    'Month review limits: an account is flagged (step 1) or listed (step 2) when it is off by more than 10% or more than SAR 200. Leave the SAR box empty in the tab\u2019s Settings to use the % only.',
+    'Month review, Plans that disagree: Use Forecast / Use Budget / Use Provisions buttons copy that figure to the others for the months listed, after showing each change. Provisions are only changed when the account has a single provision line; otherwise you get a button to open Provisions.',
+    'The Dashboard reminders for unused provisions and for plans that disagree now open the Month review on their own box.',
+  ]},
   {version:'5.18.0', date:'2026-11-14', changes:[
     'New logo: the Budget ring replaces the L at the top of the side rail. Settings \u2192 Appearance \u2192 Logo can switch it to Card fan or Growing palm (synced).',
     'Month review: income now takes its plan from the Forecast (it showed 0 before). Income above plan is green and expense above plan red; the \u2691 flag is red, and category rows are larger on a shaded band.',
@@ -1827,6 +1857,8 @@ function showSplash(){
   if(vEl && !vEl.textContent) vEl.textContent = 'v'+APP_VERSION;
   const btn = document.getElementById('splashBypassBtn');
   if(btn) btn.classList.remove('show');
+  renderSplashArt();
+  applyAppLogo();   // the rail shows the chosen logo before the first sync too
   updateSplashProgress(0);
   if(navigator.onLine===false){
     if(btn) btn.classList.add('show');
@@ -1841,9 +1873,17 @@ function splashOfflineHandler(){
 }
 function hideSplash(){
   const el = document.getElementById('splashScreen');
-  if(el) el.classList.add('hidden');
   if(splashBypassTimer){ clearTimeout(splashBypassTimer); splashBypassTimer = null; }
   window.removeEventListener('offline', splashOfflineHandler);
+  if(!el || el.classList.contains('hidden') || el.classList.contains('finishing')) return;
+  // v5.19 (#104): a short ending (total line / spark, then the logo, then zoom out) before the app shows
+  updateSplashProgress(100);
+  const reduce = !window.matchMedia || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce || !document.getElementById('splashArt')){ el.classList.add('hidden'); return; }
+  el.classList.add('finishing');
+  const st = getSplashStyle();
+  const steps = st==='ledger'? [[500,'folded'],[1050,'zoom'],[1300,'hidden']] : st==='coins'? [[150,'folded'],[700,'zoom'],[950,'hidden']] : [[300,'zoom'],[550,'hidden']];
+  steps.forEach(([ms, c])=>setTimeout(()=>el.classList.add(c), ms));
 }
 function updateSplashStatus(text){
   const el = document.getElementById('splashStatus');
@@ -1855,6 +1895,7 @@ function updateSplashProgress(pct){
   if(el) el.style.width = clamped+'%';
   const pctEl = document.getElementById('splashProgressPct');
   if(pctEl) pctEl.textContent = clamped+'%';
+  splashArtProgress(clamped);
 }
 // Escape hatch: reveals the app immediately with whatever local/cached data exists, while the
 // real sync keeps trying quietly in the background (matching the existing lightweight sync
@@ -2590,7 +2631,7 @@ const LEDGEROS_KEYS = [
   'budgetCollapsedSections','statementSortDesc','driftDismissals','driftSettings',
   'hiddenPages','sidebarPinned','theme','invFxUsdSar','uiTheme','uiBackground','uiMotion','customAccentColor',
   'fontSize','fontFamily','contentWidthMode','contentWidthPreset',
-  'invView','invCcy','invPricesFetchedAt',
+  'invView','invCcy','invPricesFetchedAt','appLogo','splashStyle',
 ];
 const LS_ORIGIN_LIMIT_BYTES = 5 * 1024 * 1024; // browsers land near 5 MB; treated as approximate
 function isLedgerOsKey(k){
@@ -3428,10 +3469,45 @@ const APP_LOGOS = {
   cards: {label:'Card fan', svg:'<defs><linearGradient id="lgK" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3aed"/><stop offset="1" stop-color="#4338ca"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="url(#lgK)"/><rect x="9" y="15" width="24" height="16" rx="3.5" fill="#fff" opacity=".28" transform="rotate(-18 21 23)"/><rect x="11" y="16" width="24" height="16" rx="3.5" fill="#fff" opacity=".55" transform="rotate(-6 23 24)"/><rect x="13" y="18" width="24" height="16" rx="3.5" fill="#fff" transform="rotate(6 25 26)"/><rect x="16.5" y="22.5" width="5" height="4" rx="1" fill="#f5c542" transform="rotate(6 25 26)"/><rect x="16.5" y="29.5" width="12" height="1.8" rx=".9" fill="#4338ca" opacity=".5" transform="rotate(6 25 26)"/>'},
   palm:  {label:'Growing palm', svg:'<defs><linearGradient id="lgM" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e293b"/><stop offset="1" stop-color="#0f172a"/></linearGradient><linearGradient id="lgMg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fcd34d"/><stop offset="1" stop-color="#d4a017"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="url(#lgM)"/><path d="M24 30V17" stroke="#34d399" stroke-width="2.6" stroke-linecap="round"/><path d="M24 21c-1-5-5-7.5-10-7 .3 5 3.8 8 10 7z" fill="#34d399"/><path d="M24 18c1.2-5.5 5.5-8 11-7.2-.6 5.6-4.6 8.5-11 7.2z" fill="#10b981"/><ellipse cx="24" cy="34.5" rx="11" ry="3.6" fill="#b8860b"/><ellipse cx="24" cy="32" rx="11" ry="3.6" fill="url(#lgMg)"/>'},
 };
-function getAppLogo(){ const v = getUiDismissals().appLogo; return APP_LOGOS[v]? v : 'ring'; }
+function lsGetSafe(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function getAppLogo(){ const v = getUiDismissals().appLogo || lsGetSafe('appLogo'); return APP_LOGOS[v]? v : 'ring'; }
+// v5.19 (#104): loading-screen style, synced in dismissals.splashStyle and kept on this device too (the splash
+// shows before the synced settings arrive). Ledger balances by default.
+const SPLASH_STYLES = {ledger:'Ledger balances', ring:'Ring fills up', coins:'Coins stack'};
+function getSplashStyle(){ const v = getUiDismissals().splashStyle || lsGetSafe('splashStyle'); return SPLASH_STYLES[v]? v : 'ledger'; }
+async function setSplashStyle(key){
+  if(!SPLASH_STYLES[key]) return;
+  try{ localStorage.setItem('splashStyle', key); }catch(e){}
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {splashStyle:key}));
+  renderSettings();
+}
+const SPLASH_ROWS = [['accounts','Accounts',15], ['ledger','Ledger lines',40], ['budget','Budgets',65], ['invPositions','Investments',85]];
+function splashRingSvg(){
+  return '<svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="spA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#ea580c"/></linearGradient></defs><rect width="48" height="48" rx="12" fill="url(#spA)"/>'
+    + '<circle cx="24" cy="24" r="12.5" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width="5"/><circle id="splashRingArc" class="splash-a-arc" cx="24" cy="24" r="12.5" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="78.5" stroke-dashoffset="78.5" transform="rotate(-90 24 24)"/>'
+    + '<path class="splash-a-spark" d="M24 18.5l1.5 3.9 3.9 1.6-3.9 1.6-1.5 3.9-1.5-3.9-3.9-1.6 3.9-1.6z" fill="#fff"/></svg>';
+}
+function renderSplashArt(){
+  const el = document.getElementById('splashScreen'), art = document.getElementById('splashArt'); if(!el || !art) return;
+  const st = getSplashStyle(), logo = '<div class="splash-end-logo splash-logo">'+appLogoSvg(getAppLogo(), 's')+'</div>';
+  el.classList.remove('style-ring','style-coins','style-ledger','finishing','folded','zoom'); el.classList.add('style-'+st);
+  art.innerHTML = st==='ring'? '<div class="splash-logo">'+splashRingSvg()+'</div>'
+    : st==='coins'? '<div class="splash-coins"><div class="splash-coin"></div><div class="splash-coin"></div><div class="splash-coin"></div></div>'+logo
+    : '<div class="splash-sheet">'+SPLASH_ROWS.map(([k,l])=>'<div class="splash-row" data-splashrow="'+k+'"><span>'+l+'</span><span>\u2026</span></div>').join('')+'<div class="splash-total"></div><div class="splash-sum"><span>Balanced</span><span>\u2713</span></div></div>'+logo;
+}
+function splashArtProgress(pct){
+  const arc = document.getElementById('splashRingArc'); if(arc) arc.style.strokeDashoffset = String(78.5*(1-pct/100));
+  SPLASH_ROWS.forEach(([k,,at])=>{
+    const r = document.querySelector('[data-splashrow="'+k+'"]'); if(!r) return;
+    if(pct>=at) r.classList.add('in');
+    const n = Array.isArray(D && D[k])? D[k].length : 0;
+    if(r.classList.contains('in') && (n || pct>=100)) r.lastElementChild.textContent = n.toLocaleString();
+  });
+}
 function appLogoSvg(key, idSuffix){ const svg = APP_LOGOS[key].svg; return '<svg viewBox="0 0 48 48" aria-hidden="true">'+(idSuffix? svg.replace(/id="(lg\w+)"/g, 'id="$1'+idSuffix+'"').replace(/url\(#(lg\w+)\)/g, 'url(#$1'+idSuffix+')') : svg)+'</svg>'; }
 function applyAppLogo(){
   const key = getAppLogo();
+  try{ localStorage.setItem('appLogo', key); const sp = getUiDismissals().splashStyle; if(SPLASH_STYLES[sp]) localStorage.setItem('splashStyle', sp); }catch(e){}
   document.querySelectorAll('.brand .mark').forEach(el=>{
     if(el.dataset.logo===key) return;
     el.dataset.logo = key; el.classList.add('has-logo'); el.setAttribute('title', 'LedgerOS'); el.innerHTML = appLogoSvg(key);
@@ -5215,9 +5291,9 @@ function dashboardTodoItems(){
   const mrMk = mrDueMonth();
   if(!mrIsDone(mrMk) && (D.ledger||[]).length) items.push({tone:'warn', title:'Review '+monthLabel(mrMk), sub:'Month review: actual vs plan, suggested budgets, provisions', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
   const stlDue = mrStlDue();   // #95
-  if(stlDue.length) items.push({tone:'warn', title:stlDue.length+' unused provision amount'+(stlDue.length===1?'':'s')+' can move to income', sub:money(stlDue.reduce((s,x)=>s+x.amt,0))+' in '+accShort(mrSettings().stlAcc)+' for '+mrSettings().stlMonths+' months or more', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
+  if(stlDue.length) items.push({tone:'warn', title:stlDue.length+' unused provision amount'+(stlDue.length===1?'':'s')+' can move to income', sub:money(stlDue.reduce((s,x)=>s+x.amt,0))+' in '+accShort(mrSettings().stlAcc)+' for '+mrSettings().stlMonths+' months or more', label:'Review', onclick:"mrGoTo('mrStl')"});
   const planBad = mrPlanConflicts();   // #92
-  if(planBad.length) items.push({tone:'warn', title:planBad.length+' account'+(planBad.length===1?' has plans':'s have plans')+' that disagree', sub:'Forecast, Budget and Provisions should match. Opens the Month review', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
+  if(planBad.length) items.push({tone:'warn', title:planBad.length+' account'+(planBad.length===1?' has plans':'s have plans')+' that disagree', sub:'Forecast, Budget and Provisions should match. Opens the Month review', label:'Review', onclick:"mrGoTo('mrConflicts')"});
   const smsLook = smsNeedsLookCount();   // #59
   if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
@@ -8409,19 +8485,22 @@ function mrSettings(){
   const n = (v, d, lo, hi) => { const x = Number(v); return (v!==undefined && v!==null && v!=='' && x>=lo && x<=hi)? x : d; };
   const accOr = (v, fallback) => (v && ACC_BY_ID[Number(v)])? Number(v) : fallback;
   const otherIncome = (D.accounts||[]).find(a=>firstDigit(a.id)===3 && a.acc_type==='Individual Account' && /^other income$/i.test(String(accShort(a.id)).trim()));
-  return {pct:n(c.pct, MR_DEFAULTS.pct, 0, 1000), sar:n(c.sar, MR_DEFAULTS.sar, 0, 1e9), months:Math.round(n(c.months, MR_DEFAULTS.months, 1, 60)), round:n(c.round, MR_DEFAULTS.round, 0.01, 1e6),
+  // v5.19 (#107g): an empty SAR box (saved as null) means "the % only"
+  const sar = ('sar' in c && (c.sar===null || c.sar===''))? null : n(c.sar, MR_DEFAULTS.sar, 0, 1e9);
+  return {pct:n(c.pct, MR_DEFAULTS.pct, 0, 1000), sar, months:Math.round(n(c.months, MR_DEFAULTS.months, 1, 60)), round:n(c.round, MR_DEFAULTS.round, 0.01, 1e6),
     stlAcc: accOr(c.stlAcc, ACC_BY_ID[20106]? 20106 : null), stlIncomeAcc: accOr(c.stlIncomeAcc, otherIncome? otherIncome.id : null), stlMonths: Math.round(n(c.stlMonths, MR_DEFAULTS.stlMonths, 1, 36))};
 }
 function mrDueMonth(){ return prevMonthKey(todayStr().slice(0,7)); }
 function mrIsDone(mk){ return !!(mrState().done||{})[mk]; }
 function mrFillMonths(){ const cur = todayStr().slice(0,7), n = mrSettings().months, out = []; for(let i=0;i<n;i++) out.push(shiftMonthKey(cur, i)); return out; }
-// Off by more than BOTH thresholds (R1). Nothing planned: flagged once the actual is over the SAR threshold.
+// v5.19 (#107g/h): off by more than the % OR the SAR amount (either is enough); SAR box empty = the % only.
 function mrFlag(plan, actual, st){
   st = st || mrSettings();
   const diff = Math.abs(Math.abs(actual) - Math.abs(plan)), base = Math.abs(plan);
-  return diff > st.sar && (base < 0.005 || diff/base*100 > st.pct);
+  if(diff < 0.005) return false;
+  return (base < 0.005 || diff/base*100 > st.pct) || (st.sar!==null && diff > st.sar);
 }
-function mrMedian(a){ if(!a.length) return 0; const s = a.slice().sort((x,y)=>x-y), m = Math.floor(s.length/2); return s.length%2? s[m] : (s[m-1]+s[m])/2; }
+function mrLimitText(st){ st = st || mrSettings(); return 'more than '+st.pct+'%'+(st.sar!==null? ' or SAR '+money0(st.sar) : ''); }
 function mrRound(v, r){ return roundCents(Math.round(v/r)*r); }
 
 // Step 1
@@ -8441,102 +8520,73 @@ function mrActualVsPlan(mk){
     .sort((x,y)=> (x.income===y.income? 0 : x.income? -1 : 1) || (y.flag-x.flag) || Math.abs(y.diff)-Math.abs(x.diff));
 }
 
-// Step 2: one Budget-planned expense account
+// Step 2 (v5.19, #107): one Budget-planned expense account: the average month over the last 12 complete months
+// (fewer if the account is newer), rounded; listed only when it is outside the limits.
 function mrAccountStudy(a, mk){
-  const st = mrSettings(), ov = mrState().irregular || {}, cur = todayStr().slice(0,7);
+  const st = mrSettings(), cur = todayStr().slice(0,7);
   let first = null; D.ledger.forEach(l=>{ if(l.acc===a.id && (!first || l.date<first)) first = l.date; });
-  if(!first) return null;
-  const months = []; for(let i=11;i>=0;i--){ const m = shiftMonthKey(mk, -i); if(m>=first.slice(0,7)) months.push(m); }
-  if(!months.length) return null;
-  const txs = D.ledger.filter(l=>l.acc===a.id && l.date>=monthRange(months[0])[0] && l.date<=monthRange(mk)[1]);
-  const sumIn = (m, skip) => txs.filter(l=>monthOf(l.date)===m && !(skip && skip.has(l.id))).reduce((s,l)=>s+(Number(l.amt)||0), 0);
-  const totals = months.map(m=>sumIn(m));
-  const isNew = months.length < 3, m0 = mrMedian(totals), spendMonths = totals.filter(v=>Math.abs(v)>=0.005).length;
-  // R3: a payment over 3× the usual month, or spend in only 1–3 of the last 12 months
-  const auto = l => !isNew && Number(l.amt)>0 && ((months.length===12 && spendMonths<=3) || (m0>0.005 && Number(l.amt) > 3*m0));
-  const irregular = txs.filter(l=> ov[l.id]!==undefined? !!ov[l.id] : auto(l));
-  const irrIds = new Set(irregular.map(l=>l.id));
-  const usual = Math.max(0, roundCents(mrMedian(months.map(m=>sumIn(m, irrIds)))));
-  const annual = roundCents(irregular.reduce((s,l)=>s+(Number(l.amt)||0), 0));
-  const suggested = Math.max(0, mrRound(usual + annual/12, st.round));
-  // shown with an "irregular" tick: what is marked now, anything he changed, and other large payments he may want to mark
-  const candidates = txs.filter(l=>Number(l.amt)>0 && (irrIds.has(l.id) || ov[l.id]!==undefined || Number(l.amt) > 2*Math.max(usual, 1)));
+  const months = []; for(let i=11;i>=0;i--){ const m = shiftMonthKey(mk, -i); if(first && m>=first.slice(0,7)) months.push(m); }
   const plan = Math.abs(budgetPlanFor(a.id, cur)||0);
-  const tags = [];
-  if(isNew) tags.push({k:'new', t:'New: under 3 months of history'});
-  else {
-    const last3 = months.slice(-3).map((m,i)=>({act: totals[totals.length-3+i], plan: Math.abs(budgetPlanFor(a.id, m)||0)}));
-    if(last3.length===3 && last3.every(x=>x.plan>0.005 && x.act > x.plan+0.005)) tags.push({k:'rising', t:'Rising: above plan 3 months in a row'});
-    if(last3.length===3 && last3.every(x=>x.plan>0.005 && x.act < x.plan-0.005)) tags.push({k:'falling', t:'Under-used: under plan 3 months in a row'});
-    if(irregular.some(l=>monthOf(l.date)===mk)) tags.push({k:'spike', t:'One-off spike in '+monthLabel(mk)});
-    const ly = shiftMonthKey(mk, -11), lyTot = months.includes(ly)? sumIn(ly) : 0;
-    if(lyTot > st.sar && lyTot > 2*usual) tags.push({k:'seasonal', t:'Seasonal: '+monthLabel(ly)+' was high ('+money0(lyTot)+')'});
-  }
-  let accrual = null;
-  const map = (D.accrualMappings||[]).find(x=>x.category===a.category), capM = accrualCapMonths(map);
-  if(irregular.length && capM!==null){
-    const biggest = Math.max(...irregular.map(l=>Number(l.amt)||0));
-    const catBudget = Math.abs(accrualCategoryBudget(a.category, cur)) - plan + suggested;
-    if(catBudget>0.005 && capM*catBudget < biggest-0.005) accrual = {capM, need: Math.ceil(biggest/catBudget), biggest};
-  }
-  return {a, months, usual, annual, irregular, candidates, suggested, plan, tags, accrual, change: Math.abs(suggested-plan)>=0.005, tick: mrFlag(plan, suggested, st)};
+  if(!months.length) return plan>=0.005? {a, months:0, total:0, average:0, suggested:0, plan, show:true, none:true} : null;
+  const total = roundCents(D.ledger.filter(l=>l.acc===a.id && l.date>=monthRange(months[0])[0] && l.date<=monthRange(mk)[1]).reduce((s,l)=>s+(Number(l.amt)||0), 0));
+  const average = roundCents(Math.max(0, total/months.length));
+  const suggested = mrRound(average, st.round);
+  return {a, months:months.length, total, average, suggested, plan, none: Math.abs(total)<0.005, show: mrFlag(plan, suggested, st)};
 }
-function mrSuggestions(mk){
+function mrSuggestions(mk, all){
   const cur = todayStr().slice(0,7);
-  return D.accounts.filter(a=>firstDigit(a.id)===6 && a.acc_type==='Individual Account' && a.status!=='Inactive' && a.status!=='Deleted')   // #97: blank status = active
+  const rows = D.accounts.filter(a=>firstDigit(a.id)===6 && a.acc_type==='Individual Account' && a.status!=='Inactive' && a.status!=='Deleted')   // #97: blank status = active
     .filter(a=>{ const c = computeForecastCell(a, cur, cur); return c.source==='budget' || c.source==='budget-empty'; })
-    .map(a=>mrAccountStudy(a, mk)).filter(r=>r && (r.change || r.irregular.length || r.tags.length))
-    .sort((x,y)=> (y.tick-x.tick) || Math.abs(y.suggested-y.plan)-Math.abs(x.suggested-x.plan));
+    .map(a=>mrAccountStudy(a, mk)).filter(Boolean);
+  return all? rows : rows.filter(r=>r.show).sort((x,y)=>Math.abs(y.suggested-y.plan)-Math.abs(x.suggested-x.plan));
 }
-async function mrToggleIrregular(id, on){
-  const irr = Object.assign({}, mrState().irregular||{}); irr[id] = !!on;
-  await mrSaveState({irregular: irr});
-  renderMonthReview();
-}
-// The month-by-month old → new figures Accept would write (R4: overwrite).
-function mrAcceptPlan(accIds, mk){
-  const sug = {}; mrSuggestions(mk).forEach(r=>{ sug[r.a.id] = r.suggested; });
+// The month-by-month old → new figures an overwrite would write (R4).
+function mrAcceptPlan(items){
   const fill = mrFillMonths();
-  return accIds.filter(id=>sug[id]!==undefined).map(id=>({acc:id, value:sug[id], months: fill.map(m=>({m, old: budgetPlanFor(id, m), nw: sug[id]}))}));
+  return items.map(it=>({acc:it.acc, value:it.value, months: fill.map(m=>({m, old: budgetPlanFor(it.acc, m), nw: it.value}))}));
 }
-function mrOpenAccept(){
-  const ids = [...document.querySelectorAll('.mr-acc:checked')].map(el=>Number(el.dataset.acc));
-  if(!ids.length){ toast('Tick at least one account first', true); return; }
-  const plan = mrAcceptPlan(ids, mrMonth||mrDueMonth()), fill = mrFillMonths();
+// Accept on one row: the figure in its box (the suggestion unless he changed it).
+function mrOpenAccept(accId){
+  const box = document.getElementById('mrSug_'+accId);
+  const v = Number(String(box? box.value : '').replace(/,/g,''));
+  if(!box || !(v>=0) || String(box.value).trim()===''){ toast('Type a monthly amount first', true); return; }
+  const plan = mrAcceptPlan([{acc:accId, value:roundCents(v)}]), fill = mrFillMonths();
   const cell = x => (x.old===null? '<span class="mut">—</span>' : money0(Math.abs(x.old))) + ' → <b>' + money0(x.nw) + '</b>';
   showModal(`<h2>Overwrite the budget</h2>
-    <div class="mut" style="font-size:12.5px;margin-bottom:8px">Old → new, month by month. Every month shown is overwritten, including figures you typed yourself.</div>
+    <div class="mut" style="font-size:12.5px;margin-bottom:8px">${esc(accShort(accId))}: old → new, month by month. Every month shown is overwritten, including figures you typed yourself.</div>
     <div style="overflow-x:auto"><table class="mr-preview" style="font-size:12px"><thead><tr><th>Account</th>${fill.map(m=>`<th class="num">${esc(monthLabel(m))}</th>`).join('')}</tr></thead>
     <tbody>${plan.map(p=>`<tr data-mracc="${p.acc}"><td>${esc(accShort(p.acc))}</td>${p.months.map(x=>`<td class="num mono" style="white-space:nowrap">${cell(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
     <div class="row" style="gap:8px;margin-top:12px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn pri" onclick="mrApply(${esc(JSON.stringify(ids))})">Overwrite ${plan.length} account${plan.length===1?'':'s'}</button></div>`, true);
+      <button class="btn pri" onclick="mrApply(${accId}, ${roundCents(v)})">Overwrite ${fill.length} month${fill.length===1?'':'s'}</button></div>`, true);
+}
+// One month's Budget cell for an account becomes `value` (one row; extra rows removed; 0 removes them all).
+function mrBudgetMonthOps(acc, m, value, ops, nid){
+  const rows = D.budget.filter(b=>b.acc===acc && monthOf(b.date)===m);
+  const keep = Math.abs(value)>=0.005? rows[0] : null;
+  rows.filter(r=>r!==keep).forEach(r=>{ D.budget = D.budget.filter(b=>b!==r); ops.push({table:'pd_budget', kind:'delete', row:{id:r.id}, base:r.updated_at||null}); });
+  if(keep){
+    if(rows.length===1 && Math.abs(Number(keep.amt)-value)<0.005) return nid;
+    const base = keep.updated_at||null; keep.amt = value;
+    ops.push({table:'pd_budget', kind:'upsert', row:{id:keep.id, entry_date:keep.date, acc:keep.acc, descr:keep.descr, amt:keep.amt}, base});
+  } else if(Math.abs(value)>=0.005){
+    const row = {id:nid++, date:m+'-01', acc, descr:'Budget - '+monthLabel(m), amt:value};
+    D.budget.push(row);
+    ops.push({table:'pd_budget', kind:'upsert', row:{id:row.id, entry_date:row.date, acc:row.acc, descr:row.descr, amt:row.amt}, base:null});
+  }
+  return nid;
 }
 let mrApplyBusy = false;
-async function mrApply(accIds){
+async function mrApply(accId, value){
   if(blockIfSyncing() || mrApplyBusy) return;
   mrApplyBusy = true;
   try{
-    const plan = mrAcceptPlan(accIds, mrMonth||mrDueMonth()), ops = [];
-    let nid = nextBudgetId();
-    plan.forEach(p=>p.months.forEach(({m})=>{
-      const rows = D.budget.filter(b=>b.acc===p.acc && monthOf(b.date)===m);
-      const keep = p.value>=0.005? rows[0] : null;
-      rows.filter(r=>r!==keep).forEach(r=>{ D.budget = D.budget.filter(b=>b!==r); ops.push({table:'pd_budget', kind:'delete', row:{id:r.id}, base:r.updated_at||null}); });
-      if(keep){
-        if(Math.abs(Number(keep.amt)-p.value)<0.005) return;
-        const base = keep.updated_at||null; keep.amt = p.value;
-        ops.push({table:'pd_budget', kind:'upsert', row:{id:keep.id, entry_date:keep.date, acc:keep.acc, descr:keep.descr, amt:keep.amt}, base});
-      } else if(p.value>=0.005){
-        const row = {id:nid++, date:m+'-01', acc:p.acc, descr:'Budget - '+monthLabel(m), amt:p.value};
-        D.budget.push(row);
-        ops.push({table:'pd_budget', kind:'upsert', row:{id:row.id, entry_date:row.date, acc:row.acc, descr:row.descr, amt:row.amt}, base:null});
-      }
-    }));
+    const ops = []; let nid = nextBudgetId();
+    mrFillMonths().forEach(m=>{ nid = mrBudgetMonthOps(accId, m, value, ops, nid); });
     persistLocal();
     await syncWriteMany(ops);
     closeModal();
-    toast('Budget updated for '+plan.length+' account'+(plan.length===1?'':'s')+' ('+ops.length+' cell'+(ops.length===1?'':'s')+') ✓');
-    logActivity('action', 'Month review: budget overwritten for '+plan.map(p=>p.acc).join(', ')+' ('+ops.length+' changes)');
+    toast(accShort(accId)+': budget set to '+money0(value)+' a month ('+ops.length+' cell'+(ops.length===1?'':'s')+') ✓');
+    logActivity('action', 'Month review: budget for '+accId+' set to '+value+' ('+ops.length+' changes)');
     renderMonthReview();
   } finally { mrApplyBusy = false; }
 }
@@ -8640,6 +8690,60 @@ function mrStlBuildJV(){
   go('newjv');
   toast(due.length+' amount'+(due.length===1?'':'s')+' ready to move: check, then post');
 }
+// v5.19 (#106): make one account's plans match: the chosen source's figure is copied to the other figures that
+// month has, keeping each one's own sign. Provisions change only when the account has one provision line.
+function mrProvisionLineFor(acc){
+  const hits = []; (D.provisionGroups||[]).forEach(g=>{ ensureLineIds(g); g.lines.forEach(l=>{ if(Number(l.acc)===acc) hits.push({g, line:l}); }); });
+  return hits.length===1? hits[0] : (hits.length? {many:true, g:hits[0].g, line:hits[0].line} : null);
+}
+function mrMatchPlan(accId, src){
+  const c = mrPlanConflicts().find(x=>x.a.id===accId); if(!c) return null;
+  const pl = mrProvisionLineFor(accId), out = [];
+  c.months.forEach(x=>{
+    const v = x[src]; if(v===undefined || v===null) return;
+    ['forecast','budget','provisions'].filter(k=>k!==src && x[k]!==undefined && x[k]!==null).forEach(k=>{
+      const nw = roundCents((Math.sign(Number(x[k]))||1) * Math.abs(Number(v)));
+      if(Math.abs(nw-Number(x[k]))<0.005) return;
+      out.push({m:x.m, k, old:Number(x[k]), nw, blocked: k==='provisions' && !(pl && !pl.many)});
+    });
+  });
+  return {c, pl, changes: out};
+}
+function mrOpenMatch(accId, src){
+  const p = mrMatchPlan(accId, src); if(!p) return;
+  const names = {forecast:'Forecast', budget:'Budget', provisions:'Provisions'};
+  const ok = p.changes.filter(x=>!x.blocked), blocked = p.changes.filter(x=>x.blocked);
+  showModal(`<h2>Use the ${names[src]} figure</h2>
+    <div class="mut" style="font-size:12.5px;margin-bottom:8px">${esc(accShort(accId))}: old \u2192 new, month by month.</div>
+    ${ok.length? `<div style="overflow-x:auto"><table style="font-size:12px"><tbody>${ok.map(x=>`<tr data-mrmatch="${x.m}:${x.k}"><td>${esc(monthLabel(x.m))}</td><td>${names[x.k]}</td><td class="num mono">${money0(Math.abs(x.old))} \u2192 <b>${money0(Math.abs(x.nw))}</b></td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${blocked.length? `<div class="mut" style="font-size:12px;margin-top:8px">Provisions has more than one line for this account, so it isn\u2019t changed here. <button class="btn ghost sm" onclick="closeModal(); goToProvisionLine(${p.pl.g.id}, ${esc(JSON.stringify(p.pl.line.lineId))})">Open Provisions</button></div>` : ''}
+    <div class="row" style="gap:8px;margin-top:12px;justify-content:flex-end"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+      ${ok.length? `<button class="btn pri" onclick="mrApplyMatch(${accId}, '${src}')">Change ${ok.length} figure${ok.length===1?'':'s'}</button>` : ''}</div>`);
+}
+async function mrApplyMatch(accId, src){
+  if(blockIfSyncing()) return;
+  const p = mrMatchPlan(accId, src); if(!p) return;
+  const ok = p.changes.filter(x=>!x.blocked); if(!ok.length){ closeModal(); return; }
+  const ops = []; let nid = nextBudgetId(), fc = false, pv = false;
+  ok.forEach(x=>{
+    if(x.k==='budget') nid = mrBudgetMonthOps(accId, x.m, x.nw, ops, nid);
+    else if(x.k==='forecast'){ (D.forecastPlans[accId] = D.forecastPlans[accId] || {})[x.m] = x.nw; fc = true; }
+    else { p.pl.g.months[x.m] = Object.assign({}, p.pl.g.months[x.m], {[p.pl.line.lineId]: x.nw}); pv = true; }
+  });
+  if(fc) ops.push({table:'pd_forecast_plans', kind:'upsert', row:{id:1, plans:D.forecastPlans}, base:null});
+  persistLocal();
+  await syncWriteMany(ops);
+  if(pv) await persistProvisionGroup(p.pl.g);
+  closeModal();
+  toast(accShort(accId)+': '+ok.length+' figure'+(ok.length===1?'':'s')+' now match the '+src+' \u2713');
+  logActivity('action', 'Month review: '+accId+' plans matched to '+src+' ('+ok.length+' changes)');
+  renderMonthReview();
+}
+// v5.19 (#105): Dashboard to-dos open the review on their own box
+function mrGoTo(id){
+  mrMonth = null; go('monthreview');
+  requestAnimationFrame(()=>{ const el = document.getElementById(id); if(el){ if(el.scrollIntoView) el.scrollIntoView({block:'start'}); flashEl(el); } });
+}
 async function mrMarkReviewed(mk, on){
   const done = Object.assign({}, mrState().done||{});
   if(on) done[mk] = todayStr(); else delete done[mk];
@@ -8649,9 +8753,10 @@ async function mrMarkReviewed(mk, on){
 }
 async function mrSaveSettingsFromInputs(){
   const v = id => (document.getElementById(id)||{}).value;
-  const c = {pct:Number(v('mrPct')), sar:Number(v('mrSar')), months:Math.round(Number(v('mrMonths'))), round:Number(v('mrRound')),
+  const sarRaw = String(v('mrSar')===undefined? '' : v('mrSar')).trim();
+  const c = {pct:Number(v('mrPct')), sar: sarRaw===''? null : Number(sarRaw), months:Math.round(Number(v('mrMonths'))), round:Number(v('mrRound')),
     stlAcc:Number(v('mrStlAcc'))||null, stlIncomeAcc:Number(v('mrStlIncome'))||null, stlMonths:Math.round(Number(v('mrStlMonths')))||MR_DEFAULTS.stlMonths};
-  if(!(c.pct>=0 && c.pct<=1000) || !(c.sar>=0) || !(c.months>=1 && c.months<=60) || !(c.round>=0.01)){ toast('Check the numbers: months 1–60, rounding at least 0.01', true); return; }
+  if(!(c.pct>=0 && c.pct<=1000) || !(c.sar===null || c.sar>=0) || !(c.months>=1 && c.months<=60) || !(c.round>=0.01)){ toast('Check the numbers: months 1–60, rounding at least 0.01', true); return; }
   await mrSaveState({settings:c});
   toast('Month review settings saved ✓');
   renderMonthReview();
@@ -8674,13 +8779,18 @@ function renderMonthReview(){
     + c.rows.map(r=>`<tr class="${r.flag?'mr-flag':''}" data-mrrow="${r.a.id}"><td style="padding-left:22px;font-size:12px">${r.flag? flagIcon : ''}${esc(accShort(r.a.id))}</td><td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.actual)}</td><td class="num mono">${diffTxt(r.diff, c.income)}</td><td></td></tr>`).join('')).join('');
   const conflicts = mrPlanConflicts(), stl = mrStlDue();
   const figTxt = x => ['forecast','budget','provisions'].filter(k=>x[k]!==undefined && x[k]!==null).map(k=>({forecast:'Forecast', budget:'Budget', provisions:'Provisions'})[k]+' '+money0(Math.abs(x[k]))).join(' \u00b7 ');
-  const s4 = conflicts.map(c=>`<li data-mrconflict="${c.a.id}"><b>${esc(accShort(c.a.id))}</b>: ${esc(monthLabel(c.months[0].m))} ${esc(figTxt(c.months[0]))}${c.months.length>1? ` <span class="mut">(and ${c.months.length-1} more month${c.months.length===2?'':'s'})</span>` : ''}</li>`).join('');
+  const srcName = {forecast:'Forecast', budget:'Budget', provisions:'Provisions'};
+  const s4 = conflicts.map(c=>`<li data-mrconflict="${c.a.id}"><b>${esc(accShort(c.a.id))}</b>: ${esc(monthLabel(c.months[0].m))} ${esc(figTxt(c.months[0]))}${c.months.length>1? ` <span class="mut">(and ${c.months.length-1} more month${c.months.length===2?'':'s'})</span>` : ''}
+      <span class="noprint" style="white-space:nowrap">${['forecast','budget','provisions'].filter(k=>c.months.some(x=>x[k]!==undefined && x[k]!==null)).map(k=>`<button class="btn ghost sm" data-mruse="${c.a.id}:${k}" onclick="mrOpenMatch(${c.a.id}, '${k}')">Use ${srcName[k]}</button>`).join(' ')}</span></li>`).join('');
   const s5 = stl.map(x=>`<tr data-mrstl="${x.l.id}"><td class="mono">${esc(fmtDateShort(x.l.date))}</td><td>${esc(x.l.descr||'')}</td><td class="num mono">${money(x.amt)}</td><td class="mut">due ${esc(monthLabel(x.due))}</td></tr>`).join('');
-  const s2 = step2.map(r=>`<tr data-mrsug="${r.a.id}"><td><input type="checkbox" class="chk mr-acc" style="width:auto" data-acc="${r.a.id}" ${r.tick&&r.change?'checked':''} ${r.change?'':'disabled'} aria-label="Accept ${esc(accShort(r.a.id))}"></td>
-      <td>${esc(accShort(r.a.id))}<div class="mut" style="font-size:11px">${r.tags.map(t=>`<span class="badge" data-mrtag="${t.k}">${esc(t.t)}</span>`).join(' ')}</div>
-        ${r.candidates.length? `<div style="font-size:11px;margin-top:3px">${r.candidates.map(l=>`<label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px"><input type="checkbox" class="chk" style="width:auto" data-mrirr="${l.id}" ${r.irregular.includes(l)?'checked':''} onchange="mrToggleIrregular(${l.id}, this.checked)"> irregular: ${esc(fmtDateShort(l.date))} ${money0(l.amt)}</label>`).join('')}</div>` : ''}
-        ${r.accrual? `<div style="font-size:11px;color:var(--yellow)" data-mraccrual="${r.a.id}">Accrual cap ${r.accrual.capM} months can't hold the ${money0(r.accrual.biggest)} item; ${r.accrual.need} months would (Settings → Accrual Mappings)</div>` : ''}</td>
-      <td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.usual)}</td><td class="num mono">${money0(r.annual)}</td><td class="num mono"><b>${money0(r.suggested)}</b></td></tr>`).join('');
+  // v5.19 (#107): plan now → 12-month average, the difference, an editable box and Accept on each row
+  const s2 = step2.map(r=>{ const d = r.suggested - r.plan;
+    return `<tr data-mrsug="${r.a.id}"><td>${esc(accShort(r.a.id))}${r.none? `<div class="mut" style="font-size:11px">Nothing spent in 12 months: clear the plan?</div>` : r.months<12? `<div class="mut" style="font-size:11px">Average of ${r.months} month${r.months===1?'':'s'} (newer account)</div>` : ''}</td>
+      <td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.average)}</td>
+      <td class="num mono ${d>0?'r':'g'}">${d>0?'+':''}${money0(d)}</td>
+      <td class="num"><input id="mrSug_${r.a.id}" type="text" inputmode="decimal" class="num" style="width:90px" value="${r.suggested}" aria-label="New monthly budget for ${esc(accShort(r.a.id))}"></td>
+      <td><button class="btn pri sm" data-mraccept="${r.a.id}" onclick="mrOpenAccept(${r.a.id})">${r.none? 'Clear plan' : 'Accept'}</button></td></tr>`; }).join('');
+  const fine = mrSuggestions(mk, true).length - step2.length;
   const kindTxt = {missing:'Planned, nothing booked: paid in another month or skipped?', extra:'Booked with nothing planned this month', amount:'Amount differs from the plan'};
   const s3 = step3.map(x=> x.kind==='ending'
     ? `<li data-mrprov="ending">“${esc(x.g.name)}” ends in ${esc(monthLabel(x.last))}. <button class="btn ghost sm" onclick="provisionEditingId=${x.g.id}; go('provisions')">Open</button></li>`
@@ -8694,8 +8804,8 @@ function renderMonthReview(){
         : `<button class="btn pri sm" onclick="mrMarkReviewed('${mk}', true)">Mark month reviewed</button>`}</div>
       <details style="margin-top:8px"><summary class="mut" style="font-size:12px;cursor:pointer">⚙ Settings</summary>
         <div class="row" style="gap:10px;flex-wrap:wrap;align-items:end;margin-top:6px;font-size:12px">
-          <label>Flag over %<br><input id="mrPct" type="number" style="width:80px" value="${st.pct}"></label>
-          <label>and over SAR<br><input id="mrSar" type="number" style="width:90px" value="${st.sar}"></label>
+          <label>Outside the limits: over %<br><input id="mrPct" type="number" style="width:80px" value="${st.pct}"></label>
+          <label>or over SAR (blank = % only)<br><input id="mrSar" type="number" style="width:90px" value="${st.sar===null? '' : st.sar}"></label>
           <label>Months to fill<br><input id="mrMonths" type="number" style="width:70px" value="${st.months}"></label>
           <label>Round to<br><input id="mrRound" type="number" style="width:70px" value="${st.round}"></label>
           <label>Unused provisions account<br><input id="mrStlAcc" type="number" style="width:90px" value="${st.stlAcc||''}"></label>
@@ -8703,12 +8813,12 @@ function renderMonthReview(){
           <label>after months<br><input id="mrStlMonths" type="number" style="width:70px" value="${st.stlMonths}"></label>
           <button class="btn ghost sm" onclick="mrSaveSettingsFromInputs()">Save</button></div></details></div>
     <div class="panel"><h3>1 · Actual vs plan, ${esc(monthLabel(mk))}</h3>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">⚑ = off by more than ${st.pct}% and SAR ${money0(st.sar)}. ${flagged} account${flagged===1?'':'s'} flagged.</div>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">⚑ = off by ${esc(mrLimitText(st))}. ${flagged} account${flagged===1?'':'s'} flagged.</div>
       ${s1? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Category / account</th><th class="num">Plan</th><th class="num">Actual</th><th class="num">Difference</th><th></th></tr></thead><tbody>${s1}</tbody></table></div>` : '<div class="mut">Nothing planned or booked that month.</div>'}</div>
-    <div class="panel"><h3>2 · Suggested budget</h3>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">Accounts planned in the Budget grid. Suggested = usual month (median of the last 12, irregular items left out) + irregular items ÷ 12, rounded to ${money0(st.round)}. Tick to accept; it overwrites ${st.months} month${st.months===1?'':'s'} from ${esc(monthLabel(todayStr().slice(0,7)))}.</div>
-      ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th></th><th>Account</th><th class="num">Plan now</th><th class="num">Usual</th><th class="num">Irregular (12 mo)</th><th class="num">Suggested</th></tr></thead><tbody>${s2}</tbody></table></div>
-        <div class="row" style="margin-top:8px"><button class="btn pri sm" onclick="mrOpenAccept()">Review and overwrite…</button></div>` : '<div class="mut">No Budget-planned accounts with history.</div>'}</div>
+    <div class="panel" id="mrSuggest"><h3>2 · Suggested budget</h3>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">Your average monthly spend over the last 12 months, for accounts planned in the Budget grid, where it differs from the plan by ${esc(mrLimitText(st))}. Accept sets the next ${st.months} month${st.months===1?'':'s'} to the figure in the box (you see every month first).</div>
+      ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Account</th><th class="num">Plan now</th><th class="num">12-month average</th><th class="num">Difference</th><th class="num">New budget</th><th></th></tr></thead><tbody>${s2}</tbody></table></div>` : ''}
+      ${fine>0? `<div class="mut" style="font-size:12px;margin-top:6px" data-mrfine="${fine}">${s2? '' : 'Nothing to change. '}${fine} account${fine===1?' looks':'s look'} fine (within the limits).</div>` : s2? '' : '<div class="mut">No accounts planned in the Budget grid.</div>'}</div>
     <div class="panel"><h3>3 · Provisions</h3>
       ${s3? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s3}</ul>` : '<div class="mut">All provision lines matched last month.</div>'}</div>
     <div class="panel" id="mrConflicts"><h3>4 \u00b7 Plans that disagree</h3>
@@ -18106,6 +18216,8 @@ function renderSettings(){
             <div class="mut" style="font-size:11.5px;margin-top:6px">Tinted washes the page with the accent. Aurora &amp; glass adds a slow glow behind the page and turns the side rail and top bar into floating glass.</div></div>
           <div><label class="fl">Logo</label><div class="seg" role="group" aria-label="Logo">${Object.entries(APP_LOGOS).map(([k,v])=>`<button aria-pressed="${getAppLogo()===k}" data-logopick="${k}" onclick="setAppLogo('${k}')"><span class="logo-pick">${appLogoSvg(k, 'p')}${esc(v.label)}</span></button>`).join('')}</div>
             <div class="mut" style="font-size:11.5px;margin-top:6px">The mark at the top of the side rail. Synced to every device.</div></div>
+          <div><label class="fl">Loading screen</label><div class="seg" role="group" aria-label="Loading screen">${Object.entries(SPLASH_STYLES).map(([k,l])=>`<button aria-pressed="${getSplashStyle()===k}" data-splashpick="${k}" onclick="setSplashStyle('${k}')">${l}</button>`).join('')}</div>
+            <div class="mut" style="font-size:11.5px;margin-top:6px">What you see while LedgerOS syncs when it opens.</div></div>
           <div><label class="fl">Motion</label><div class="seg" role="group" aria-label="Motion"><button aria-pressed="${getUiMotion()}" onclick="setUiMotion(true)">On</button><button aria-pressed="${!getUiMotion()}" onclick="setUiMotion(false)">Off</button></div>
             <div class="mut" style="font-size:11.5px;margin-top:6px">Off always wins when your computer asks for reduced motion.</div></div>
         </div>
