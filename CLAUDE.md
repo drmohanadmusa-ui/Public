@@ -67,3 +67,9 @@ Muhannad uses it to decide when to move to a fresh session. If the conversation 
 - Come back to him only when there is no other way: a decision that is his (feedback mode, section 7, still applies), something only his phone or accounts can do (iPhone Shortcuts, signing up for a service), or access you don't have yet. Then ask once, with everything needed in one message, and say exactly why it can't be done from the session.
 - When access is missing, ask for it (he gives what's needed) rather than routing the work to him.
 
+
+## 9. Ponytail is on by default (Muhannad's standing rule, 2026-11-14, all apps)
+
+- Every session runs the Ponytail plugin (github.com/DietrichGebert/ponytail) at its default level: reuse what the app already has and make the smallest change that fully does the job. The cloud setup script installs it.
+- **Check at the start of every session:** the "PONYTAIL MODE ACTIVE" message appears when the session starts. If it is missing, install it with `claude plugin marketplace add DietrichGebert/ponytail` and `claude plugin install ponytail@ponytail`, tell him, and follow `/ponytail:ponytail` for the rest of the session.
+- **The app rules win where they ask for more.** Ponytail's "one small test" never replaces an app's own test, break-then-restore, CHANGELOG and ship rules, and it never overrides feedback mode (section 7).
