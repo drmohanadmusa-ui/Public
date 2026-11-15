@@ -142,6 +142,8 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 | 134 | 2026-11-15 | Astrofolio shows "Never checked" though he checked it. | closed | Checked (read-only): no statement units are saved on the server for that platform. "Checked" only appears after "Save wallet units as statement units"; his save on 14 Nov was hit by the sync bug fixed in 5.17 (#90) and didn't keep the units. The new button (#133) saves them in one click. |
 | 135 | 2026-11-15 | Trade window: enter the USD paid or the buy price per unit. | shipped 5.24.0 | "or price per unit (USD)" box: USD = price × units. |
 | 136 | 2026-11-15 | Investments value / cost / P&L / cash boxes: click to see every position by platform with value, cost and P&L. | shipped 5.24.0 | `openInvHoldingsPop` (All and Mine). |
+| 137 | 2026-11-15 | Investments: sell part of his own units of a coin to family members; the price defaults to his cost basis for that position, adjustable. | question asked | 137a–137c asked (how the family pays, one or several buyers, management fee). |
+| 138 | 2026-11-15 | Dashboard (rows layout): box contents should use the extra height, e.g. bigger charts, or be centred in the box (screenshots: Cash flow, Short Term Equity). | question asked | 138a asked. |
 
 ## Schema changes
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
