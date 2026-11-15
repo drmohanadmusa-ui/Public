@@ -8121,6 +8121,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV521EmptyPositionsOnPlatformPage();
   await testV522BankBoxLayouts();
   await testV522SellWithNoProceeds();
+  await testV523ReconLinesAndDepositChecks();
+  await testV523ExcludeSortPricesClear();
+  await testV523MonthReviewInvestments();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8814,7 +8817,9 @@ async function testDashboardBoxesStackIntoFreeSpace(){
   const cells = [...sb.document.querySelectorAll('.dash-grid .dash-cell')];
   cells.forEach((c,i)=>{ c.getBoundingClientRect = () => ({height: 100 + i*10}); });
   sb.layoutDashMasonry();
-  assert(cells.length>3 && cells.every((c,i)=>c.style.gridRowEnd==='span '+sb.dashRowSpan(100+i*10)), 'Every box spans rows matching its own height');
+  // v5.23 (#125): the Dashboard now lays boxes out in rows (tops and bottoms line up), so no per-box row spans
+  assert(cells.length>3 && sb.document.querySelector('.dash-grid.rows') && cells.every(c=>c.style.gridRowEnd===''), 'Rows layout: no packing spans');
+  assert(/\.dash-grid\.rows\{[^}]*grid-auto-rows:auto[^}]*align-items:stretch/.test(html) && /\.dash-grid\.rows \.dash-cell>\.panel\{flex:1\}/.test(html), 'Boxes in a row stretch to the tallest');
 }
 
 // ---- v5.1: feedback batch ----
@@ -11663,4 +11668,72 @@ async function testV522SellWithNoProceeds(){
   let msg = ''; sb.__set('toast', m=>{ msg = m; });
   await sb.saveInvTxNow();
   assert(/USD amount|greater than zero/.test(msg) && D.invTransactions.length===before+1, 'A buy still needs an amount');
+}
+async function testV523ReconLinesAndDepositChecks(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invSettings = Object.assign({}, D.invSettings||{}, {reconStartDate:'2026-09-01'});
+  const self = D.invOwners.find(o=>o.isSelf) || D.invOwners[0]; self.isSelf = true; self.outAcc = 70201; self.inAcc = 70202;
+  [70201, 70202, 70531, 70532].forEach(id=>{ if(!D.accounts.some(a=>a.id===id)) D.accounts.push({id, acc_type:'Individual Account', status:'Active'}); });
+  D.invCashMovements.push({id:89, platformId:2, date:'2026-09-05', kind:'deposit', usdAmount:100, owners:[{ownerId:self.id, usd:100, sar:375}]});   // cash held on Phantom
+  const base = sb.invOwnerReconciliation().find(r=>r.owner.id===self.id && !r.platform);
+  assert(base && !sb.invOwnerReconciliation().some(r=>r.platform), 'No platform has its own accounts yet: one line per person');
+  const phantom = D.invPlatforms.find(p=>p.id===2); phantom.outAcc = 70531; phantom.inAcc = 70532;
+  const rows = sb.invOwnerReconciliation();
+  const mine = rows.find(r=>r.owner.id===self.id && !r.platform), plat = rows.find(r=>r.platform && r.platform.id===2);
+  assert(plat && mine && Math.abs(plat.trackerCapital-937.5)<0.01 && Math.abs((base.trackerCapital - mine.trackerCapital) - 937.5)<0.01, 'Phantom (own accounts) gets its own line with your 562.50 of coins + 375 cash; it comes off your personal line, got ' + JSON.stringify([plat && plat.trackerCapital, base.trackerCapital, mine && mine.trackerCapital]));
+  D.ledger.push({id:900, jv:900, date:'2026-09-02', acc:70531, amt:937.5, descr:'to Phantom'});
+  assert((sb.invOwnerReconciliation().find(r=>r.platform && r.platform.id===2)||{}).ok, 'Phantom line matches once its In account has the money');
+  assert(Object.keys(sb.invOwnersAvailableSar()).length===D.invOwners.length, 'Contributions-available ignores the platform lines');
+  // #127a
+  D.ledger.push({id:901, jv:901, date:'2026-11-10', acc:70201, amt:1000, descr:'bought USDT'});
+  let u = sb.invUnmatchedPlatformDeposits().find(x=>x.personal);
+  assert(u && u.sar===1000 && u.date==='2026-11-10', 'Money on your own Invested account with no deposit is flagged');
+  const item = sb.invNeedsYouItems().find(i=>/^depme/.test(i.key));
+  assert(item && /_invDepPrefill=\{date:'2026-11-10', sar:1000\}/.test(item.act) && /invStartPlatformAction\('deposit'\)/.test(item.act), 'Needs you: Record deposit opens a deposit filled in');
+  D.invCashMovements.push({id:90, platformId:1, date:'2026-11-11', kind:'deposit', usdAmount:266.67, owners:[{ownerId:self.id, usd:266.67, sar:1000}]});
+  assert(!sb.invUnmatchedPlatformDeposits().some(x=>x.personal), 'A deposit a day later clears it');
+  // #127b
+  assert(sb.invDepositHasLedger(1, '2026-11-12', [self.id]) && !sb.invDepositHasLedger(1, '2026-12-25', [self.id]), 'Deposit check: ledger line within 5 days on the person\'s Invested account');
+}
+async function testV523ExcludeSortPricesClear(){
+  const sb = v56Sandbox({invValuations:[{id:1, positionId:1, date:'2026-09-10', price:2000}, {id:2, positionId:2, date:'2026-09-10', price:100}, {id:3, positionId:3, date:'2026-11-10', price:0.00005512}]});
+  const D = vm.runInContext('D', sb);
+  const h = () => sb.invOwnerHoldings('all', sb.invCashState(null).state).find(x=>x.platform.id===2);
+  const before = h().valueSar;
+  await sb.setInvExcluded(3, true);
+  const after = h();
+  assert(after.positions.find(r=>r.pos.id===3).excluded && Math.abs((before - after.valueSar) - 1000*0.00005512*3.75)<0.001, 'Excluded FROG stays listed but its value leaves the platform total');
+  assert(D.uiPrefs.dismissals.invExcluded.includes(3), 'Exclusion is synced');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvPositionModal(D.invPositions.find(p=>p.id===3));
+  assert(sb.document.querySelector('[data-excludepos="3"]').checked, 'Edit position has the Exclude from totals switch, on');
+  // #128 tiny prices in the position window (its window is stubbed in this sandbox, so check the source and the formatter)
+  const appHtml = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/invFmtPrice\(v2\.price\)/.test(appHtml) && /t\.units\? invFmtPrice\(t\.totalSar\/t\.units\)/.test(appHtml) && sb.invFmtPrice(0.00005512)==='0.00005512', 'Recent prices and per-unit cost show tiny prices in full');
+  // #123 sort
+  vm.runInContext('invPlatformPageId = 1', sb); sb.__set('invView', 'all');
+  sb.setInvPlatSort('value');
+  let order = [...sb.document.querySelectorAll('[data-posrow]')].map(r=>Number(r.dataset.posrow));
+  assert(order.length>=3 && order[0]===1, 'Sort by value: biggest first (ETH), got ' + order);
+  sb.setInvPlatSort('value');
+  order = [...sb.document.querySelectorAll('[data-posrow]')].map(r=>Number(r.dataset.posrow));
+  assert(order[order.length-1]===1 && /▴/.test(sb.document.querySelector('[data-sortcol="value"]').textContent), 'Click again: reversed, arrow shown');
+  // #129 clear filters
+  sb.setInvActivityFilter('coin', 'ETH'); sb.__set('invView', 'activity'); sb.renderInvestmentsPage();
+  assert(sb.document.querySelector('[data-actclear]'), 'Clear filters shows when a filter is set');
+  sb.clearInvActivityFilter();
+  assert(vm.runInContext('invActivityFilter.coin', sb)==='' && !sb.document.querySelector('[data-actclear]'), 'Clear empties every filter');
+}
+async function testV523MonthReviewInvestments(){
+  const sb = v56Sandbox();
+  sb.__set('renderMonthReview', ()=>{});
+  const rows = sb.mrInvRows();
+  const bin = rows.find(r=>r.p.id===1), robo = rows.find(r=>r.p.id===3);
+  assert(bin && !bin.robo && robo && robo.robo && robo.valueDate==='2026-11-01', 'One row per platform with holdings; robo shows its value date');
+  let html = sb.mrInvestHTML();
+  assert(/Refresh all prices/.test(html) && /openInvRoboValueModal\(3\)/.test(html) && /Enter units/.test(html) && /0 of \d+ platform/.test(html), 'Step 6: refresh, Update value for robo, Enter units for exchanges, count');
+  await sb.mrInvToggleDone(1, true);
+  assert(sb.mrInvRows().find(r=>r.p.id===1).done && /1 of \d+ platform/.test(sb.mrInvestHTML()), 'Done this month is ticked and counted');
+  assert(/data-mrrecon=/.test(sb.mrInvestHTML()) || !sb.invOwnerReconciliation().some(r=>r.linked), 'Reconcile lines listed with their difference');
 }
