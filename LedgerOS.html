@@ -621,12 +621,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.23.0';
+const APP_VERSION = '5.24.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.24.0', date:'2026-11-15', changes:[
+    'Investments: click the value / cost / P/L / cash boxes (All or Mine) to see every position by platform, with its value, cost and P/L.',
+    'Platform page: for a platform with a wallet address, \u21bb Update prices & units from wallet refreshes the prices, reads the wallet and saves its units (so it shows Checked today); any differences stay listed with + Log buy / sell.',
+    'Trade window: type the price per unit instead of the total; the USD total is worked out (price \u00d7 units).',
+    'Deposit window: a SAR box per person for the SAR actually paid, which sets that person\u2019s rate (instead of the standard rate).',
+    'Fixed false alarms in Needs you: rounding under 1 SAR no longer shows as contributions not collected, and a JV moving money from a platform with its own accounts (e.g. Raseed) onto your Invested account is no longer flagged as a missing deposit.',
+  ]},
   {version:'5.23.0', date:'2026-11-15', changes:[
     'Investments \u2192 Reconcile: a platform with its own In/Out ledger accounts (e.g. Raseed) gets its own line for your money on it, checked against those accounts, and is left out of your personal line. Family money stays on each person\u2019s line.',
     'Needs you: money paid into your own Invested into platform account with no deposit recorded on any platform (within 5 days) is flagged, with Record deposit filled in. Saving a deposit with no ledger entry within 5 days asks you to check first.',
@@ -11859,9 +11866,9 @@ function invNavHTML(){
 function invKpi(label, mainHtml, sub, cls, id){
   return `<div class="kpi"${id? ` id="${id}"`:''}><div class="l">${esc(label)}</div><div class="v ${cls||''}">${mainHtml}</div>${sub? `<div class="mut" style="font-size:11.5px;margin-top:4px">${sub}</div>` : ''}</div>`;
 }
-function invTotalsCardsHTML(t, labels){
+function invTotalsCardsHTML(t, labels, scope){
   const pl = t.valueSar - t.costSar;
-  return `<div class="cards">
+  return `<div class="cards${scope? ' click' : ''}"${scope? ` data-holdingspop="${esc(scope)}" style="cursor:pointer" title="See every position, its value, cost and P/L" onclick="openInvHoldingsPop('${esc(scope)}')"` : ''}>
     ${invKpi(labels.value, invDisp(t.valueSar), 'incl. cash', '', 'invKpiValue')}
     ${invKpi(labels.cost, invDisp(t.costSar), labels.costSub||'what it cost', '', 'invKpiCost')}
     ${invKpi('P/L', invDisp(pl), invPlPct(t.costSar, t.valueSar), moneyClass(pl), 'invKpiPl')}
@@ -12933,6 +12940,23 @@ async function invDeleteEmptyPosition(id){
   if(!confirm('Delete '+(p.ticker||p.name)+' from '+((invPlatformById(p.platformId)||{}).name||'this platform')+'? It has no transactions.')) return;
   await deleteInvPosition(id);
 }
+// v5.24 (#133): one button: refresh prices, read the wallet, save its units as statement units ("Checked" today).
+let invWalletUpdating = false;
+async function invUpdateFromWallet(pid){
+  if(invWalletUpdating) return;
+  invWalletUpdating = true;
+  try{
+    await refreshInvPrices({quiet:true});
+    await checkInvPlatformWallet(pid);
+    const r = invWalletResults[pid];
+    if(r && r.rows && r.rows.length && !r.error){
+      const keep = r;   // saveInvWalletUnits clears the result; keep it so the differences stay on screen
+      await saveInvWalletUnits(pid);
+      invWalletResults[pid] = keep;
+      toast('Prices refreshed and wallet units saved \u2713');
+    } else if(r && r.error) toast(r.error, true);
+  } finally { invWalletUpdating = false; renderInvestmentsPage(); }
+}
 function renderInvPlatformPage(nav, holdings){
   const h = holdings.find(x=>x.platform.id===invPlatformPageId);
   const app = document.getElementById('app');
@@ -12941,7 +12965,10 @@ function renderInvPlatformPage(nav, holdings){
   app.innerHTML = nav + `<div class="row noprint" style="gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn ghost sm" onclick="closeInvPlatformPage()">← All platforms</button>
       <span class="mut" style="font-size:12px">${h.robo? (h.stats.valueDate? 'Value as of '+esc(h.stats.valueDate) : 'No value logged') : `${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}`}</span></div>`
-    + invHoldingCardHTML(h, 'mine', true, false, true) + invEmptyPositionsHTML(h.platform.id);
+    + (!h.robo && invPlatformWallets(h.platform.id).length? `<div class="row noprint" style="gap:8px;align-items:center;margin:-4px 0 10px"><button class="btn pri sm" data-walletupdate="${h.platform.id}" onclick="invUpdateFromWallet(${h.platform.id})">\u21bb Update prices &amp; units from wallet</button><span class="mut" style="font-size:11.5px">Refreshes the prices, reads the wallet and saves its units as the statement units.</span></div>` : '')
+    + invHoldingCardHTML(h, 'mine', true, false, true)
+    + (!h.robo && invPlatformWallets(h.platform.id).length && invWalletResults[h.platform.id]? `<div class="panel">${invWalletPanelHTML(h.platform, true)}</div>` : '')
+    + invEmptyPositionsHTML(h.platform.id);
 }
 
 // ---------- Needs you (top of Investments, count on the rail) ----------
@@ -12969,7 +12996,10 @@ function invUnmatchedPlatformDeposits(){
       .map(m=>{ const o = (m.owners||[]).find(x=>x.ownerId===self.id); return {date:m.date, sar: Number(o.sar)||(Number(o.usd)||0)*fx, used:false}; })
       .concat((D.invTransactions||[]).filter(t=>t.kind==='buy' && t.cashSide==='bank' && (t.owners||[]).some(o=>o.ownerId===self.id) && !ownIds.includes((invPositionById(t.positionId)||{}).platformId))
         .map(t=>({date:t.date, sar:Number(t.totalSar)||0, used:false})));
-    (D.ledger||[]).filter(l=>l.acc===self.outAcc && l.date>=start && Number(l.amt)>0).slice().sort((a,b)=>a.date<b.date?-1:1).forEach(l=>{
+    // v5.24 (#132): skip a JV that also books one of those platforms' own accounts (money moved from e.g. Raseed, not from the bank)
+    const ownAccs = new Set(invOwnAccPlatforms().flatMap(p=>[p.outAcc, p.inAcc]).filter(Boolean).map(Number));
+    const movedJvs = new Set((D.ledger||[]).filter(x=>x.jv && ownAccs.has(Number(x.acc))).map(x=>x.jv));
+    (D.ledger||[]).filter(l=>l.acc===self.outAcc && l.date>=start && Number(l.amt)>0 && !movedJvs.has(l.jv)).slice().sort((a,b)=>a.date<b.date?-1:1).forEach(l=>{
       const amt = Number(l.amt);
       const m = deps.find(d=>!d.used && Math.abs(daysBetweenDates(d.date, l.date))<=5 && Math.abs(d.sar-amt) <= Math.max(5, amt*0.02));
       if(m){ m.used = true; return; }
@@ -12982,7 +13012,7 @@ function invNeedsYouItems(){
   const items = [];
   try{
     const avail = invOwnersAvailableSar();
-    const waiting = (D.invOwners||[]).filter(o=>(avail[o.id]||0)>0.005);
+    const waiting = (D.invOwners||[]).filter(o=>(avail[o.id]||0)>=1);   // v5.24 (#131): under 1 SAR is rounding
     if(waiting.length){
       const sum = waiting.reduce((s,o)=>s+avail[o.id],0);
       items.push({key:'collect', icon:'💰', text:`Contributions not collected yet: ${waiting.length} ${waiting.length===1?'person':'people'}, ${money(sum)} SAR in the ledger`, btn:'💰 Collect', act:"invStartPlatformAction('collect')"});
@@ -13107,7 +13137,7 @@ function renderInvMineView(nav){
   if(invPlatformPageId!==null){ renderInvPlatformPage(nav, holdings); return; }
   const t = invHoldingsTotals(holdings);
   const mine = holdings.filter(h=>h.hasAnything), empty = holdings.filter(h=>!h.hasAnything);
-  app.innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'My Value', cost:'My Cost', costSub:'what it cost you', cash:'My Cash'}) +
+  app.innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'My Value', cost:'My Cost', costSub:'what it cost you', cash:'My Cash'}, 'mine') +
     invPricesBarHTML() +
     (holdings.length? invBoxesHTML(mine.concat(empty)) : `<div class="panel empty">You don't hold anything yet — use + Add.</div>`);
 }
@@ -13145,13 +13175,22 @@ function renderInvPricesView(nav){
     <div class="mut" style="font-size:12px;margin-bottom:8px">One row per coin: everyone\u2019s units on every platform added up.${unpriced? ` ${unpriced} without a price (valued at cost), listed first.` : ''}</div>
     ${body? `<div style="overflow-x:auto"><table class="inv-prices-table" style="min-width:620px"><thead><tr><th>Coin</th><th class="num">Units</th><th class="num">Price</th><th class="num">Value</th><th>Last update</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : '<div class="empty">Nothing held yet.</div>'}</div>`;
 }
+// v5.24 (#136): clicking the value / cost / P/L / cash boxes opens every position by platform, with value, cost and P/L.
+function openInvHoldingsPop(scope){
+  const self = (D.invOwners||[]).find(o=>o.isSelf);
+  const holdings = invOwnerHoldings(scope==='mine'? (self? self.id : null) : 'all', invCashState(null).state).filter(h=>h.hasAnything);
+  const t = invHoldingsTotals(holdings), pl = t.valueSar - t.costSar;
+  showModal(`<div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">${scope==='mine'? 'My positions' : 'All positions'}</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
+    <div class="mut" style="font-size:12.5px;margin:4px 0 10px">Value <b class="mono">${invDisp(t.valueSar)}</b> \u00b7 Cost <b class="mono">${invDisp(t.costSar)}</b> \u00b7 P/L <b class="mono ${moneyClass(pl)}">${invDisp(pl)}</b> (${invPlPct(t.costSar, t.valueSar)})</div>
+    <div data-holdingspop-body="${esc(scope)}">${holdings.map(h=>invHoldingCardHTML(h, 'pop'+scope, true, true)).join('') || '<div class="mut">Nothing held.</div>'}</div>`, true);
+}
 function renderInvAllView(nav){
   const holdings = invOwnerHoldings('all', invCashState(null).state);
   if(invPlatformPageId!==null){ renderInvPlatformPage(nav, holdings); return; }
   const t = invHoldingsTotals(holdings);
   const any = holdings.filter(h=>h.hasAnything);
   // v5.18 (#99): All is the tab Investments opens on, so it carries Needs you and the prices bar too
-  document.getElementById('app').innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'Total Value', cost:'Total Cost', costSub:'everyone together', cash:'Total Cash'}) + invPricesBarHTML() +
+  document.getElementById('app').innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'Total Value', cost:'Total Cost', costSub:'everyone together', cash:'Total Cash'}, 'all') + invPricesBarHTML() +
     `<div class="mut" style="font-size:12px;margin:0 0 8px">Everyone together (you and family), so units match the platform or wallet totals.</div>` +
     (holdings.length? invBoxesHTML(any.concat(holdings.filter(h=>!h.hasAnything))) : `<div class="panel empty">Nothing held yet.</div>`);
 }
@@ -14502,7 +14541,8 @@ function renderInvTxModal(){
     <div class="row" style="gap:10px;margin-top:10px">
       <div style="flex:1"><label class="fl">Units</label><input type="number" step="any" value="${esc(d.units)}" oninput="window._invTxDraft.units=this.value; invTxRefreshDerived()"></div>
       ${invTxShowsUsdEntry(d, pos)
-        ? `<div style="flex:1"><label class="fl">USD ${d.kind==='sell'?'received':'paid'}</label><input type="text" inputmode="decimal" value="${esc(d.usdAmount)}" oninput="setInvTxUsd(this.value)" onblur="invTxUsdBlur(this)" placeholder="e.g. 105*10"></div>
+        ? `<div style="flex:1"><label class="fl">USD ${d.kind==='sell'?'received':'paid'}</label><input id="invTxUsd" type="text" inputmode="decimal" value="${esc(d.usdAmount)}" oninput="setInvTxUsd(this.value); invTxSyncPrice()" onblur="invTxUsdBlur(this)" placeholder="e.g. 105*10"></div>
+           <div style="flex:1"><label class="fl">or price per unit (USD)</label><input id="invTxPrice" type="text" inputmode="decimal" value="${(Number(d.usdAmount)>0 && Number(d.units)>0)? esc(String(Number(d.usdAmount)/Number(d.units))) : ''}" oninput="setInvTxPrice(this.value)" placeholder="price \u00d7 units = USD"></div>
            ${invTxIsCashBuy(d)? '' : `<div style="width:120px"><label class="fl">Rate (SAR/USD)</label><input id="invTxRate" type="number" step="0.0001" value="${esc(d.fxRate)}" oninput="setInvTxRate(this.value)"></div>`}
            <div style="flex:1"><label class="fl">Total SAR ${d.kind==='sell'?'received':'paid'}</label><input id="invTxSarDerived" type="number" step="0.01" value="${esc(invTxIsCashBuy(d)? (invTxCashBuyPreview(d).totalSar||d.totalSar) : d.totalSar)}" disabled title="${invTxIsCashBuy(d)? 'At each person\'s own cash rate on this platform' : 'USD × the rate'}"></div>`
         : `<div style="flex:1"><label class="fl">Total SAR ${d.kind==='sell'?'received':'paid'}</label><input type="number" step="0.01" value="${esc(d.totalSar)}" oninput="window._invTxDraft.totalSar=this.value; invTxRefreshDerived()"></div>`}
@@ -14579,6 +14619,20 @@ function setInvTxUsd(val){
     if(sarEl) sarEl.value = d.totalSar;
   }
   invTxRefreshDerived();
+}
+// v5.24 (#134): type the price per unit instead of the total: USD = price × units (and the other way round).
+function setInvTxPrice(val){
+  const d = window._invTxDraft; if(!d) return;
+  const px = Number(String(val).replace(/,/g,'')), units = Number(d.units)||0;
+  if(!(px>0) || !(units>0)) return;
+  const usd = Math.round(px*units*100)/100;
+  const el = document.getElementById('invTxUsd'); if(el) el.value = usd;
+  setInvTxUsd(String(usd));
+}
+function invTxSyncPrice(){
+  const d = window._invTxDraft; if(!d) return;
+  const el = document.getElementById('invTxPrice'), usd = Number(d.usdAmount), units = Number(d.units)||0;
+  if(el && document.activeElement!==el) el.value = (usd>0 && units>0)? String(usd/units) : '';
 }
 function invTxUsdBlur(el){
   const d = window._invTxDraft;
@@ -15057,7 +15111,7 @@ function invCashOwnerRows(d){
   return owners.map(o=>{
     const row = (d.owners||[]).find(x=>x.ownerId===o.id);
     return `<tr><td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}${by? `<div class="mut inv-cash-have" style="font-size:11px">has $${fmt2(Number((by[o.id]||{}).usd)||0)} here</div>` : ''}</td>
-      <td class="num"><input type="number" step="0.01" style="width:130px;text-align:right" value="${row&&row.usd!==''&&row.usd!==null&&row.usd!==undefined? esc(row.usd):''}" oninput="setInvCashOwnerUsd(${o.id}, this.value)"></td>${d.kind==='deposit'? `<td class="num mono" id="invCashSar_${o.id}">${row && row.sar!==undefined && row.sar!==null && row.sar!==''? money(row.sar) : '\u2014'}</td>` : ''}</tr>`;
+      <td class="num"><input type="number" step="0.01" style="width:130px;text-align:right" value="${row&&row.usd!==''&&row.usd!==null&&row.usd!==undefined? esc(row.usd):''}" oninput="setInvCashOwnerUsd(${o.id}, this.value)"></td>${d.kind==='deposit'? `<td class="num"><input id="invCashSar_${o.id}" type="number" step="0.01" style="width:120px;text-align:right" value="${row && row.sar!==undefined && row.sar!==null && row.sar!==''? esc(row.sar) : ''}" placeholder="SAR paid" aria-label="SAR paid by ${esc(o.name)}" oninput="setInvCashOwnerSar(${o.id}, this.value)"></td>` : ''}</tr>`;
   }).join('') || '<tr><td colspan="2" class="empty">Add owners first (Investments → Owners)</td></tr>';
 }
 function setInvCashOwnerUsd(ownerId, val){
@@ -15078,7 +15132,16 @@ function setInvCashOwnerUsd(ownerId, val){
   const rate = d.kind==='deposit'? d._rates[ownerId] : null;
   if(String(val).trim()!=='') d.owners.push(Object.assign({ownerId, usd:Number(val)||0}, rate? {sar:roundCents((Number(val)||0)*rate)} : {}));
   const cell = document.getElementById('invCashSar_'+ownerId);
-  if(cell){ const o = d.owners.find(x=>x.ownerId===ownerId); cell.textContent = o && o.sar!==undefined? money(o.sar) : '\u2014'; }
+  if(cell){ const o = d.owners.find(x=>x.ownerId===ownerId); cell.value = o && o.sar!==undefined? o.sar : ''; }
+  invCashRefreshDerived();
+}
+// v5.24 (#130): a deposit's SAR can be typed per person (the SAR actually paid), which sets that person's rate.
+function setInvCashOwnerSar(ownerId, val){
+  const d = window._invCashDraft; if(!d) return;
+  const o = (d.owners||[]).find(x=>x.ownerId===ownerId);
+  if(!o){ toast('Enter the USD amount for this person first', true); const c = document.getElementById('invCashSar_'+ownerId); if(c) c.value = ''; return; }
+  if(String(val).trim()===''){ delete o.sar; if(d._rates) delete d._rates[ownerId]; }
+  else { o.sar = roundCents(Number(val)||0); if(Number(o.usd)>0){ d._rates = d._rates || {}; d._rates[ownerId] = o.sar/Number(o.usd); } }
   invCashRefreshDerived();
 }
 function invCashAllocTotal(d){ return (d.owners||[]).reduce((s,o)=>s+(Number(o.usd)||0),0); }

@@ -8124,6 +8124,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV523ReconLinesAndDepositChecks();
   await testV523ExcludeSortPricesClear();
   await testV523MonthReviewInvestments();
+  await testV524FalseAlarmsAndDepositSar();
+  await testV524WalletButtonPricePerUnitAndHoldingsPop();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -10351,7 +10353,7 @@ async function testV510DepositEditKeepsEachPersonsRate(){
   await poolCollect(sb, 1, '2026-10-02', {1:400}, 100);
   const m = sb._D.invCashMovements[0];
   sb.openInvCashModal(1, 'deposit', m.id);
-  const cell = () => (sb.document.getElementById('invCashSar_1')||{}).textContent;
+  const cell = () => { const el = sb.document.getElementById('invCashSar_1'); return el? Number(el.value).toFixed(2) : ''; };   // v5.24 (#130): an input now
   assert(cell()==='400.00', 'The window shows each person\'s SAR, got ' + cell());
   sb.setInvCashOwnerUsd(1, '50');
   assert(cell()==='200.00', 'Lower USD: SAR recalculated at the logged rate, got ' + cell());
@@ -11736,4 +11738,63 @@ async function testV523MonthReviewInvestments(){
   await sb.mrInvToggleDone(1, true);
   assert(sb.mrInvRows().find(r=>r.p.id===1).done && /1 of \d+ platform/.test(sb.mrInvestHTML()), 'Done this month is ticked and counted');
   assert(/data-mrrecon=/.test(sb.mrInvestHTML()) || !sb.invOwnerReconciliation().some(r=>r.linked), 'Reconcile lines listed with their difference');
+}
+async function testV524FalseAlarmsAndDepositSar(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invSettings = Object.assign({}, D.invSettings||{}, {reconStartDate:'2026-09-01'});
+  const self = D.invOwners.find(o=>o.isSelf) || D.invOwners[0]; self.isSelf = true; self.outAcc = 70201; self.inAcc = 70202;
+  const phantom = D.invPlatforms.find(p=>p.id===2); phantom.outAcc = 70531; phantom.inAcc = 70532;
+  // #132: a JV moving money from Phantom (own accounts) onto your Invested account is not a missing deposit
+  D.ledger.push({id:950, jv:950, date:'2026-11-15', acc:70201, amt:5000, descr:'move'}, {id:951, jv:950, date:'2026-11-15', acc:70532, amt:-5000, descr:'move'});
+  assert(!sb.invUnmatchedPlatformDeposits().some(x=>x.personal && x.sar===5000), 'A Phantom → personal JV is not flagged as a missing deposit');
+  D.ledger.push({id:952, jv:952, date:'2026-11-16', acc:70201, amt:700, descr:'from bank'}, {id:953, jv:952, date:'2026-11-16', acc:10201, amt:-700, descr:'bank'});
+  assert(sb.invUnmatchedPlatformDeposits().some(x=>x.personal && x.sar===700), 'Money from the bank still is');
+  // #131: rounding (under 1 SAR) is not a contribution to collect
+  sb.__set('invOwnersAvailableSar', ()=>({[self.id]:0.02}));
+  assert(!sb.invNeedsYouItems().some(i=>i.key==='collect'), '0.02 SAR left over is not "contributions not collected"');
+  sb.__set('invOwnersAvailableSar', ()=>({[self.id]:250}));
+  assert(sb.invNeedsYouItems().some(i=>i.key==='collect'), '250 SAR still is');
+  // #130: SAR paid per person on a deposit
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvCashModal(1, 'deposit');
+  sb.setInvCashOwnerUsd(self.id, '2624.59');
+  const box = sb.document.getElementById('invCashSar_'+self.id);
+  assert(box && box.tagName==='INPUT', 'The deposit window has a SAR box per person');
+  sb.setInvCashOwnerSar(self.id, '10000.57');
+  const o = vm.runInContext('window._invCashDraft', sb).owners.find(x=>x.ownerId===self.id);
+  assert(o.sar===10000.57, 'Typed SAR is kept, got ' + o.sar);
+  sb.setInvCashOwnerUsd(self.id, '1312.295');
+  assert(Math.abs(vm.runInContext('window._invCashDraft', sb).owners.find(x=>x.ownerId===self.id).sar - 5000.29)<0.01, 'Changing USD afterwards keeps that rate');
+}
+async function testV524WalletButtonPricePerUnitAndHoldingsPop(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  // #134 price per unit
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvTxModal(1, null);
+  const d = vm.runInContext('window._invTxDraft', sb);
+  d.units = '2'; d.cashSide = 'bank'; sb.renderInvTxModal();
+  assert(sb.document.getElementById('invTxPrice'), 'The trade window has a price per unit box');
+  sb.setInvTxPrice('1500.5');
+  assert(Number(vm.runInContext('window._invTxDraft.usdAmount', sb))===3001 && sb.document.getElementById('invTxUsd').value==='3001', 'Price 1,500.50 × 2 units = USD 3,001, got ' + vm.runInContext('window._invTxDraft.usdAmount', sb));
+  // #133 wallet button only for platforms with a wallet address
+  await sb.saveInvPriceCfg({wallets:{2:[{chain:'solana', address:'So1anaWa11et111111111111111111111111111111'}]}});
+  vm.runInContext('invPlatformPageId = 2', sb); sb.__set('invView', 'all'); sb.renderInvestmentsPage();
+  assert(sb.document.querySelector('[data-walletupdate="2"]'), 'Platform with a wallet: Update prices & units button');
+  vm.runInContext('invPlatformPageId = 1', sb); sb.renderInvestmentsPage();
+  assert(!sb.document.querySelector('[data-walletupdate]'), 'Exchange without a wallet: no button');
+  let calls = [];
+  sb.__set('refreshInvPrices', async()=>{ calls.push('prices'); });
+  sb.__set('checkInvPlatformWallet', async pid=>{ calls.push('check'+pid); vm.runInContext('invWalletResults['+pid+'] = {rows:[{pos:D.invPositions[2], tracker:1000, wallet:990}]}', sb); });
+  sb.__set('saveInvWalletUnits', async pid=>{ calls.push('save'+pid); vm.runInContext('delete invWalletResults['+pid+']', sb); });
+  await sb.invUpdateFromWallet(2);
+  assert(calls.join()==='prices,check2,save2' && vm.runInContext('!!invWalletResults[2]', sb), 'One click: refresh prices, read the wallet, save its units; the differences stay on screen, got ' + calls.join());
+  // #136 KPI boxes open every position by platform
+  vm.runInContext('invPlatformPageId = null', sb); sb.renderInvestmentsPage();
+  const cards = sb.document.querySelector('.cards[data-holdingspop="all"]');
+  assert(cards && /openInvHoldingsPop\('all'\)/.test(cards.getAttribute('onclick')), 'All: the value/cost/P&L/cash boxes are clickable');
+  sb.openInvHoldingsPop('all');
+  const body = sb.document.querySelector('[data-holdingspop-body="all"]');
+  assert(body && body.querySelectorAll('.inv-card').length>=2 && /Cost/.test(body.innerHTML) && /P\/L/.test(body.innerHTML), 'The window lists each platform with its positions, value, cost and P/L');
 }
