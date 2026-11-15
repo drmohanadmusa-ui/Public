@@ -8113,6 +8113,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV518AppLogo();
   await testV519MakePlansMatch();
   await testV519SplashStyles();
+  await testV520MonthReviewDismissIgnoreAndAverages();
+  await testV520ProvisionEmptyMonthsAndTemplateSmart();
+  await testV520ActivityCoinFilter();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11451,4 +11454,86 @@ async function testV519SplashStyles(){
   sb.hideSplash();
   assert(el.classList.contains('hidden'), 'Reduced motion: hides straight away');
   assert(/data-splashpick="\$\{k\}"/.test(fs.readFileSync(APP_HTML, 'utf8')) && !/splash-mark">₪/.test(fs.readFileSync(APP_HTML, 'utf8')), 'Settings offers the three styles; the old mark is gone');
+}
+async function testV520MonthReviewDismissIgnoreAndAverages(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  // #112 averages and totals
+  const g = sb.mrAccountStudy(D.accounts[0], '2026-10');
+  assert(g.average===1333.33 && g.avg9===1444.44 && g.avg6===1666.67 && g.avg3===2333.33, 'Groceries: 12/9/6/3-month averages, got ' + JSON.stringify([g.average, g.avg9, g.avg6, g.avg3]));
+  sb.renderMonthReview();
+  let app = sb.document.getElementById('app');
+  const cell = app.querySelector('[data-mrsug="60101"] [data-mravg="3"]');
+  assert(cell && /2,?333/.test(cell.textContent) && /mrSug_60101'\); if\(b\)\{ b\.value='2330'/.test(cell.getAttribute('onclick')), 'Clicking the 3-month figure puts 2,330 in the box');
+  const listed = app.querySelector('[data-mrtotal="listed"]'), all = app.querySelector('[data-mrtotal="all"]');
+  assert(listed && all && /Total, accounts listed/.test(listed.textContent) && /every Budget-planned/.test(all.textContent), 'Two totals rows: listed accounts and every Budget-planned account');
+  // #110 ignore this month
+  D.accounts.push({id:30101, name:'Salary', category:'Regular Income', acc_type:'Individual Account', forecast_category:'income'});
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
+  D.forecastPlans[30101] = {'2026-11':-5000, '2026-12':-5000}; D.budget.push({id:20, acc:30101, date:'2026-11-01', amt:5200}, {id:21, acc:30101, date:'2026-12-01', amt:5200});
+  assert(sb.mrPlanConflicts().some(c=>c.a.id===30101), 'Salary disagrees');
+  await sb.mrIgnoreConflict(30101, true);
+  app = sb.document.getElementById('app');
+  assert(!sb.mrPlanConflicts().some(c=>c.a.id===30101) && app.querySelector('[data-mrignored="1"]'), 'Ignored this month: gone from the list, shown with Undo');
+  freezeDate(sb, '2026-12-02T08:00:00Z'); sb.__set('todayStr', ()=>'2026-12-02');
+  assert(sb.mrPlanConflicts().some(c=>c.a.id===30101), 'Next month it comes back');
+  sb.__set('todayStr', ()=>'2026-11-03');
+  await sb.mrIgnoreConflict(30101, false);
+  assert(sb.mrPlanConflicts().some(c=>c.a.id===30101), 'Undo brings it back now');
+  // #109 dismiss reminders
+  sb.__set('renderDashboard', ()=>{});
+  await sb.mrDismissTodo('review');
+  assert(sb.mrTodoHidden('review') && sb.__calls.some(c=>c.table==='pd_ui_prefs' && ((c.row.dismissals.monthReview||{}).todoHidden||{}).review==='2026-11') && !sb.mrIsDone('2026-10'), 'Review hidden for November only, not marked reviewed');
+  sb.__set('todayStr', ()=>'2026-12-01');
+  assert(!sb.mrTodoHidden('review'), 'December: the review reminder is back');
+  sb.__set('todayStr', ()=>'2026-11-03');
+  await sb.mrDismissTodo('conflicts');
+  assert(sb.mrTodoHidden('conflicts', sb.mrPlanConflicts()), 'Plans that disagree hidden');
+  D.provisionGroups.push({id:9, name:'Food', lines:[{acc:60101, lineId:60101}], months:{'2026-12':{60101:900}}});
+  assert(!sb.mrTodoHidden('conflicts', sb.mrPlanConflicts()), 'A new account disagrees: the reminder is back');
+  const ds = dashSandbox();
+  ds.__set('renderDashboard', ()=>{});
+  await ds.mrDismissTodo('review');
+  assert(!ds.dashboardTodoItems().some(i=>/^Review /.test(i.title)), 'Dashboard: dismissed review reminder gone');
+  const src = String(vm.runInContext('dashboardTodoItems', ds));
+  assert(/dismiss:"mrDismissTodo\('review'\)"/.test(src) && /dismiss:"mrDismissTodo\('stl'\)"/.test(src) && /dismiss:"mrDismissTodo\('conflicts'\)"/.test(src), 'All three reminders have Dismiss');
+}
+async function testV520ProvisionEmptyMonthsAndTemplateSmart(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  const g = D.provisionGroups[0];
+  g.months['2027-04'] = {60103:0}; g.months['2027-05'] = {60103:''};
+  assert(JSON.stringify(sb.provEmptyMonths(g))===JSON.stringify(['2027-04','2027-05']), 'Empty months: every cell 0 or blank, got ' + JSON.stringify(sb.provEmptyMonths(g)));
+  const g2 = {id:11, name:'Two lines', lines:[{acc:60103, lineId:1}, {acc:20111, lineId:2}], months:{'2027-01':{1:0, 2:500}, '2027-02':{1:0, 2:0}}};
+  assert(JSON.stringify(sb.provEmptyMonths(g2))==='["2027-02"]', 'A month with one non-zero line is not empty, got ' + JSON.stringify(sb.provEmptyMonths(g2)));
+  sb.confirm = () => true; sb.__set('renderProvisionGroupsList', ()=>{});
+  await sb.provDeleteMonths(7, ['2027-04']);
+  assert(!g.months['2027-04'] && g.months['2027-05'] && g.months['2026-11'] && sb.__calls.some(c=>c.table==='pd_provisions' && c.row.id===7), 'One month deleted, synced');
+  await sb.provDeleteAllEmpty(7);
+  assert(!g.months['2027-05'] && Object.keys(g.months).length===4, 'Delete all empty months: only the empty ones go');
+  sb.confirm = () => false; g.months['2027-06'] = {60103:0};
+  await sb.provDeleteAllEmpty(7);
+  assert(g.months['2027-06'], 'Cancelled: nothing deleted');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/data-provdel="\$\{k\}"/.test(html) && /data-provdelall="\$\{g\.id\}"/.test(html), 'Provisions grid has 🗑 per empty month and Delete all empty months');
+  assert(/<div style="display:flex;gap:4px;align-items:center"><input id="tplAmt_\$\{i\}"[^>]*>\s*<button class="btn ghost sm tpl-smart"/.test(html), 'Template: ⚡ Smart sits beside the amount on one line');
+}
+async function testV520ActivityCoinFilter(){
+  const sb = v56Sandbox({invPositions:[
+      {id:1, platformId:1, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:2, platformId:1, name:'Solana', ticker:'SOL', currency:'USD', assetClass:'Crypto', status:'Active'},
+      {id:7, platformId:2, name:'Ethereum', ticker:'eth', currency:'USD', assetClass:'Crypto', status:'Active'}],
+    invTransactions:[
+      {id:1, positionId:1, date:'2026-09-02', kind:'buy', units:1, totalSar:7500, owners:[{ownerId:1, units:1}], cashSide:'bank'},
+      {id:2, positionId:2, date:'2026-09-02', kind:'buy', units:10, totalSar:3750, owners:[{ownerId:1, units:10}], cashSide:'bank'},
+      {id:3, positionId:7, date:'2026-09-03', kind:'buy', units:0.5, totalSar:3750, owners:[{ownerId:1, units:0.5}], cashSide:'bank'}]});
+  const coins = sb.invActivityCoins();
+  assert(coins.length===2 && coins.some(c=>c[0]==='ETH') && coins.some(c=>c[0]==='SOL'), 'Coin list: one entry per coin, got ' + JSON.stringify(coins));
+  sb.setInvActivityFilter('coin', 'ETH');
+  const rows = sb.invActivityFiltered();
+  assert(rows.length===2 && rows.every(r=>r.coinKey==='ETH'), 'ETH filter: both platforms\' ETH buys, nothing else, got ' + rows.length);
+  sb.__set('invView', 'activity'); sb.renderInvestmentsPage();
+  assert(/All coins/.test(sb.document.getElementById('app').innerHTML) && sb.document.querySelectorAll('#invActivityTable tr[data-act]').length===2, 'Activity page has the Coin filter applied');
+  assert(/Ethereum/.test(sb.invActivityCsv()) && !/Solana/.test(sb.invActivityCsv()), 'CSV follows the filter');
+  sb.setInvActivityFilter('coin', '');
 }

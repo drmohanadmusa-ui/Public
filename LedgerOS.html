@@ -616,12 +616,20 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.19.0';
+const APP_VERSION = '5.20.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.20.0', date:'2026-11-15', changes:[
+    'Dashboard: the three Month review reminders have Dismiss. Review and Unused provisions come back next month (dismissing does not mark the month reviewed); Plans that disagree comes back when another account starts to disagree.',
+    'Month review, Plans that disagree: Ignore this month on each account; it comes back next month if it still disagrees, and Undo is listed under the box.',
+    'Month review, Suggested budget: 9, 6 and 3-month average columns next to the 12-month one (click one to put it in the New budget box), plus two totals rows: the accounts listed, and every account planned in the Budget grid.',
+    'Provisions: a month row where every cell is 0 has a \ud83d\uddd1 button, and Delete all empty months clears them in the open group (it lists the months first).',
+    'Investments \u2192 Activity: a Coin filter (one entry per coin across platforms); the CSV export follows it.',
+    'New Template window: the \u26a1 Smart button sits beside the amount, so the rows line up.',
+  ]},
   {version:'5.19.0', date:'2026-11-14', changes:[
     'New loading screen with the new logo. Ledger balances (your accounts, ledger lines, budgets and investments tick in as they load, a total line draws, then it folds into the logo) is the default; Ring fills up and Coins stack are in Settings \u2192 Appearance \u2192 Loading screen.',
     'Month review, Suggested budget is much simpler: for each account planned in the Budget grid it shows your plan, your average monthly spend over the last 12 months and the difference. Only accounts outside the limits are listed; the rest are counted as looking fine. Type a different figure if you like, then Accept shows every month before it overwrites. An account with nothing spent in 12 months offers Clear plan. The irregular-items list is gone.',
@@ -5289,11 +5297,11 @@ function dashboardTodoItems(){
     ccSt.dismissable? {dismiss:`dismissCcUtil(${c.id})`, dismissTitle:'Hide it; it comes back '+CC_UTIL_BACK[ccSt.back]} : {})));
   // v5.17 (#68): the month just closed waits for its review from the 1st until marked reviewed
   const mrMk = mrDueMonth();
-  if(!mrIsDone(mrMk) && (D.ledger||[]).length) items.push({tone:'warn', title:'Review '+monthLabel(mrMk), sub:'Month review: actual vs plan, suggested budgets, provisions', label:'Review', onclick:"mrMonth=null; go('monthreview')"});
+  if(!mrIsDone(mrMk) && !mrTodoHidden('review') && (D.ledger||[]).length) items.push({tone:'warn', title:'Review '+monthLabel(mrMk), sub:'Month review: actual vs plan, suggested budgets, provisions', label:'Review', onclick:"mrMonth=null; go('monthreview')", dismiss:"mrDismissTodo('review')", dismissTitle:'Hide until next month'});
   const stlDue = mrStlDue();   // #95
-  if(stlDue.length) items.push({tone:'warn', title:stlDue.length+' unused provision amount'+(stlDue.length===1?'':'s')+' can move to income', sub:money(stlDue.reduce((s,x)=>s+x.amt,0))+' in '+accShort(mrSettings().stlAcc)+' for '+mrSettings().stlMonths+' months or more', label:'Review', onclick:"mrGoTo('mrStl')"});
+  if(stlDue.length && !mrTodoHidden('stl')) items.push({dismiss:"mrDismissTodo('stl')", dismissTitle:'Hide until next month', tone:'warn', title:stlDue.length+' unused provision amount'+(stlDue.length===1?'':'s')+' can move to income', sub:money(stlDue.reduce((s,x)=>s+x.amt,0))+' in '+accShort(mrSettings().stlAcc)+' for '+mrSettings().stlMonths+' months or more', label:'Review', onclick:"mrGoTo('mrStl')"});
   const planBad = mrPlanConflicts();   // #92
-  if(planBad.length) items.push({tone:'warn', title:planBad.length+' account'+(planBad.length===1?' has plans':'s have plans')+' that disagree', sub:'Forecast, Budget and Provisions should match. Opens the Month review', label:'Review', onclick:"mrGoTo('mrConflicts')"});
+  if(planBad.length && !mrTodoHidden('conflicts', planBad)) items.push({dismiss:"mrDismissTodo('conflicts')", dismissTitle:'Hide until another account starts to disagree', tone:'warn', title:planBad.length+' account'+(planBad.length===1?' has plans':'s have plans')+' that disagree', sub:'Forecast, Budget and Provisions should match. Opens the Month review', label:'Review', onclick:"mrGoTo('mrConflicts')"});
   const smsLook = smsNeedsLookCount();   // #59
   if(smsLook) items.push({tone:'neg', title:smsLook+' SMS need'+(smsLook===1?'s':'')+' a look', sub:'Needs review or possibly missing. Opens the SMS inbox', label:'Open', onclick:"go('newjv'); openSmsInbox()"});
   dashboardBankAccounts().active.forEach(a=>{
@@ -8491,6 +8499,26 @@ function mrSettings(){
     stlAcc: accOr(c.stlAcc, ACC_BY_ID[20106]? 20106 : null), stlIncomeAcc: accOr(c.stlIncomeAcc, otherIncome? otherIncome.id : null), stlMonths: Math.round(n(c.stlMonths, MR_DEFAULTS.stlMonths, 1, 36))};
 }
 function mrDueMonth(){ return prevMonthKey(todayStr().slice(0,7)); }
+// v5.20 (#109): dismissed reminders: review and unused provisions come back next month; plans that disagree come
+// back when an account not in the dismissed list starts to disagree. (#110) accounts ignored for this month.
+function mrTodoHidden(kind, conflicts){
+  const h = mrState().todoHidden || {}, cur = todayStr().slice(0,7);
+  if(kind==='conflicts'){ const ids = (h.conflicts||[]).map(Number); return !!conflicts.length && conflicts.every(c=>ids.includes(c.a.id)); }
+  return h[kind]===cur;
+}
+async function mrDismissTodo(kind){
+  const h = Object.assign({}, mrState().todoHidden||{});
+  h[kind] = kind==='conflicts'? mrPlanConflicts().map(c=>c.a.id) : todayStr().slice(0,7);
+  await mrSaveState({todoHidden: h});
+  if(screen==='dashboard') renderDashboard();
+}
+function mrIgnored(accId){ return (mrState().ignore||{})[accId]===todayStr().slice(0,7); }
+async function mrIgnoreConflict(accId, on){
+  const ig = Object.assign({}, mrState().ignore||{});
+  if(on) ig[accId] = todayStr().slice(0,7); else delete ig[accId];
+  await mrSaveState({ignore: ig});
+  renderMonthReview();
+}
 function mrIsDone(mk){ return !!(mrState().done||{})[mk]; }
 function mrFillMonths(){ const cur = todayStr().slice(0,7), n = mrSettings().months, out = []; for(let i=0;i<n;i++) out.push(shiftMonthKey(cur, i)); return out; }
 // v5.19 (#107g/h): off by more than the % OR the SAR amount (either is enough); SAR box empty = the % only.
@@ -8527,11 +8555,15 @@ function mrAccountStudy(a, mk){
   let first = null; D.ledger.forEach(l=>{ if(l.acc===a.id && (!first || l.date<first)) first = l.date; });
   const months = []; for(let i=11;i>=0;i--){ const m = shiftMonthKey(mk, -i); if(first && m>=first.slice(0,7)) months.push(m); }
   const plan = Math.abs(budgetPlanFor(a.id, cur)||0);
-  if(!months.length) return plan>=0.005? {a, months:0, total:0, average:0, suggested:0, plan, show:true, none:true} : null;
-  const total = roundCents(D.ledger.filter(l=>l.acc===a.id && l.date>=monthRange(months[0])[0] && l.date<=monthRange(mk)[1]).reduce((s,l)=>s+(Number(l.amt)||0), 0));
+  if(!months.length) return plan>=0.005? {a, months:0, total:0, average:0, avg9:0, avg6:0, avg3:0, suggested:0, plan, show:true, none:true} : null;
+  const byMonth = {}; months.forEach(m=>{ byMonth[m] = 0; });
+  D.ledger.forEach(l=>{ if(l.acc===a.id){ const m = monthOf(l.date); if(byMonth[m]!==undefined) byMonth[m] += Number(l.amt)||0; } });
+  const total = roundCents(months.reduce((s,m)=>s+byMonth[m], 0));
   const average = roundCents(Math.max(0, total/months.length));
+  // v5.20 (#112): the same average over the last 9, 6 and 3 months (fewer when the account is newer)
+  const avgN = n => { const ms = months.slice(-n); return roundCents(Math.max(0, ms.reduce((s,m)=>s+byMonth[m], 0)/ms.length)); };
   const suggested = mrRound(average, st.round);
-  return {a, months:months.length, total, average, suggested, plan, none: Math.abs(total)<0.005, show: mrFlag(plan, suggested, st)};
+  return {a, months:months.length, total, average, avg9:avgN(9), avg6:avgN(6), avg3:avgN(3), suggested, plan, none: Math.abs(total)<0.005, show: mrFlag(plan, suggested, st)};
 }
 function mrSuggestions(mk, all){
   const cur = todayStr().slice(0,7);
@@ -8646,7 +8678,7 @@ async function mrApplyProvisionFix(gid, lineId){
 
 // v5.18 (#92): accounts whose plans disagree, this month and the next 12. Expense accounts compare Budget with
 // Provisions (the Forecast takes them from there); income and other planned accounts also compare the Forecast figure.
-function mrPlanConflicts(){
+function mrPlanConflicts(opts){
   const cur = todayStr().slice(0,7), months = []; for(let i=0;i<=12;i++) months.push(shiftMonthKey(cur, i));
   const own = !_forecastFastIndexes; if(own) beginForecastFastPath();
   try{
@@ -8660,6 +8692,7 @@ function mrPlanConflicts(){
         const vals = Object.values(fig).filter(v=>v!==null && v!==undefined).map(v=>Math.abs(Number(v)));
         if(vals.length>=2 && Math.max(...vals)-Math.min(...vals) > 0.5) bad.push(Object.assign({m}, fig));
       });
+      if(bad.length && !(opts && opts.withIgnored) && mrIgnored(a.id)) return;   // #110
       if(bad.length) out.push({a, months:bad});
     });
     return out;
@@ -8778,19 +8811,23 @@ function renderMonthReview(){
       <td style="font-size:11.5px">${c.cover? (c.cover.full? 'Covered by the accrual reserve' : money0(c.cover.covered)+' of it covered by accrual') : ''}</td></tr>`
     + c.rows.map(r=>`<tr class="${r.flag?'mr-flag':''}" data-mrrow="${r.a.id}"><td style="padding-left:22px;font-size:12px">${r.flag? flagIcon : ''}${esc(accShort(r.a.id))}</td><td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.actual)}</td><td class="num mono">${diffTxt(r.diff, c.income)}</td><td></td></tr>`).join('')).join('');
   const conflicts = mrPlanConflicts(), stl = mrStlDue();
+  const ignoredNow = mrPlanConflicts({withIgnored:true}).filter(c=>mrIgnored(c.a.id));
   const figTxt = x => ['forecast','budget','provisions'].filter(k=>x[k]!==undefined && x[k]!==null).map(k=>({forecast:'Forecast', budget:'Budget', provisions:'Provisions'})[k]+' '+money0(Math.abs(x[k]))).join(' \u00b7 ');
   const srcName = {forecast:'Forecast', budget:'Budget', provisions:'Provisions'};
   const s4 = conflicts.map(c=>`<li data-mrconflict="${c.a.id}"><b>${esc(accShort(c.a.id))}</b>: ${esc(monthLabel(c.months[0].m))} ${esc(figTxt(c.months[0]))}${c.months.length>1? ` <span class="mut">(and ${c.months.length-1} more month${c.months.length===2?'':'s'})</span>` : ''}
-      <span class="noprint" style="white-space:nowrap">${['forecast','budget','provisions'].filter(k=>c.months.some(x=>x[k]!==undefined && x[k]!==null)).map(k=>`<button class="btn ghost sm" data-mruse="${c.a.id}:${k}" onclick="mrOpenMatch(${c.a.id}, '${k}')">Use ${srcName[k]}</button>`).join(' ')}</span></li>`).join('');
+      <span class="noprint" style="white-space:nowrap"><button class="btn ghost sm" data-mrignore="${c.a.id}" onclick="mrIgnoreConflict(${c.a.id}, true)">Ignore this month</button> ${['forecast','budget','provisions'].filter(k=>c.months.some(x=>x[k]!==undefined && x[k]!==null)).map(k=>`<button class="btn ghost sm" data-mruse="${c.a.id}:${k}" onclick="mrOpenMatch(${c.a.id}, '${k}')">Use ${srcName[k]}</button>`).join(' ')}</span></li>`).join('');
   const s5 = stl.map(x=>`<tr data-mrstl="${x.l.id}"><td class="mono">${esc(fmtDateShort(x.l.date))}</td><td>${esc(x.l.descr||'')}</td><td class="num mono">${money(x.amt)}</td><td class="mut">due ${esc(monthLabel(x.due))}</td></tr>`).join('');
   // v5.19 (#107): plan now → 12-month average, the difference, an editable box and Accept on each row
   const s2 = step2.map(r=>{ const d = r.suggested - r.plan;
     return `<tr data-mrsug="${r.a.id}"><td>${esc(accShort(r.a.id))}${r.none? `<div class="mut" style="font-size:11px">Nothing spent in 12 months: clear the plan?</div>` : r.months<12? `<div class="mut" style="font-size:11px">Average of ${r.months} month${r.months===1?'':'s'} (newer account)</div>` : ''}</td>
       <td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.average)}</td>
+      ${[9,6,3].map(n=>`<td class="num mono click" style="cursor:pointer" data-mravg="${n}" title="Use this ${n}-month average" onclick="var b=document.getElementById('mrSug_${r.a.id}'); if(b){ b.value='${mrRound(r['avg'+n], st.round)}'; b.focus(); }">${money0(r['avg'+n])}</td>`).join('')}
       <td class="num mono ${d>0?'r':'g'}">${d>0?'+':''}${money0(d)}</td>
       <td class="num"><input id="mrSug_${r.a.id}" type="text" inputmode="decimal" class="num" style="width:90px" value="${r.suggested}" aria-label="New monthly budget for ${esc(accShort(r.a.id))}"></td>
       <td><button class="btn pri sm" data-mraccept="${r.a.id}" onclick="mrOpenAccept(${r.a.id})">${r.none? 'Clear plan' : 'Accept'}</button></td></tr>`; }).join('');
-  const fine = mrSuggestions(mk, true).length - step2.length;
+  const allSug = mrSuggestions(mk, true), fine = allSug.length - step2.length;
+  const totRow = (label, list, attr) => { const t = k => list.reduce((s,r)=>s+(Number(r[k])||0), 0);
+    return `<tr ${attr} style="font-weight:700;background:var(--chip)"><td>${label}</td><td class="num mono">${money0(t('plan'))}</td><td class="num mono">${money0(t('average'))}</td><td class="num mono">${money0(t('avg9'))}</td><td class="num mono">${money0(t('avg6'))}</td><td class="num mono">${money0(t('avg3'))}</td><td class="num mono">${(t('suggested')-t('plan'))>0?'+':''}${money0(t('suggested')-t('plan'))}</td><td class="num mono">${money0(t('suggested'))}</td><td></td></tr>`; };
   const kindTxt = {missing:'Planned, nothing booked: paid in another month or skipped?', extra:'Booked with nothing planned this month', amount:'Amount differs from the plan'};
   const s3 = step3.map(x=> x.kind==='ending'
     ? `<li data-mrprov="ending">“${esc(x.g.name)}” ends in ${esc(monthLabel(x.last))}. <button class="btn ghost sm" onclick="provisionEditingId=${x.g.id}; go('provisions')">Open</button></li>`
@@ -8816,14 +8853,16 @@ function renderMonthReview(){
       <div class="mut" style="font-size:12px;margin-bottom:6px">⚑ = off by ${esc(mrLimitText(st))}. ${flagged} account${flagged===1?'':'s'} flagged.</div>
       ${s1? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Category / account</th><th class="num">Plan</th><th class="num">Actual</th><th class="num">Difference</th><th></th></tr></thead><tbody>${s1}</tbody></table></div>` : '<div class="mut">Nothing planned or booked that month.</div>'}</div>
     <div class="panel" id="mrSuggest"><h3>2 · Suggested budget</h3>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">Your average monthly spend over the last 12 months, for accounts planned in the Budget grid, where it differs from the plan by ${esc(mrLimitText(st))}. Accept sets the next ${st.months} month${st.months===1?'':'s'} to the figure in the box (you see every month first).</div>
-      ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Account</th><th class="num">Plan now</th><th class="num">12-month average</th><th class="num">Difference</th><th class="num">New budget</th><th></th></tr></thead><tbody>${s2}</tbody></table></div>` : ''}
+      <div class="mut" style="font-size:12px;margin-bottom:6px">Your average monthly spend over the last 12 months, for accounts planned in the Budget grid, where it differs from the plan by ${esc(mrLimitText(st))}. Accept sets the next ${st.months} month${st.months===1?'':'s'} to the figure in the box (you see every month first). Click a 9, 6 or 3-month figure to put it in the box.</div>
+      ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Account</th><th class="num">Plan now</th><th class="num">12-month average</th><th class="num">9 months</th><th class="num">6 months</th><th class="num">3 months</th><th class="num">Difference</th><th class="num">New budget</th><th></th></tr></thead><tbody>${s2}</tbody>
+        <tfoot>${totRow('Total, accounts listed', step2, 'data-mrtotal="listed"')}${totRow('Total, every Budget-planned account', allSug, 'data-mrtotal="all"')}</tfoot></table></div>` : ''}
       ${fine>0? `<div class="mut" style="font-size:12px;margin-top:6px" data-mrfine="${fine}">${s2? '' : 'Nothing to change. '}${fine} account${fine===1?' looks':'s look'} fine (within the limits).</div>` : s2? '' : '<div class="mut">No accounts planned in the Budget grid.</div>'}</div>
     <div class="panel"><h3>3 · Provisions</h3>
       ${s3? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s3}</ul>` : '<div class="mut">All provision lines matched last month.</div>'}</div>
     <div class="panel" id="mrConflicts"><h3>4 \u00b7 Plans that disagree</h3>
       <div class="mut" style="font-size:12px;margin-bottom:6px">This month and the next 12: accounts where the Forecast, Budget and Provisions figures for a month are not the same.</div>
-      ${s4? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s4}</ul>` : '<div class="mut">All plans agree.</div>'}</div>
+      ${s4? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s4}</ul>` : '<div class="mut">All plans agree.</div>'}
+      ${ignoredNow.length? `<div class="mut" style="font-size:12px;margin-top:6px" data-mrignored="${ignoredNow.length}">Ignored this month: ${ignoredNow.map(c=>`${esc(accShort(c.a.id))} <button class="btn ghost sm" onclick="mrIgnoreConflict(${c.a.id}, false)">Undo</button>`).join(' ')}</div>` : ''}</div>
     <div class="panel" id="mrStl"><h3>5 \u00b7 Unused provisions to move to income</h3>
       ${!st.stlAcc? '<div class="mut">Set the unused provisions account in \u2699 Settings above.</div>'
         : s5? `<div class="mut" style="font-size:12px;margin-bottom:6px">Amounts in ${esc(accShort(st.stlAcc))} for ${st.stlMonths} months or more, not moved yet.</div>
@@ -9240,6 +9279,20 @@ function sortedMonthKeys(group){ return Object.keys(group.months||{}).sort(); }
 // the raw sortedMonthKeys(): current month through the Grid End Month setting only. Any data
 // that already exists in a historical month is left untouched in storage — just not shown,
 // validated, exported, or importable here.
+// v5.20 (#111): a month row where every line is 0 (or blank) can be deleted, one at a time or all at once (open group).
+function provEmptyMonths(g){
+  return Object.keys(g.months||{}).sort().filter(k=>(g.lines||[]).every(l=>Math.abs(Number(provCellVal(g,k,l.lineId)||0))<0.005));
+}
+async function provDeleteMonths(gid, keys){
+  if(blockIfSyncing()) return;
+  const g = findProvisionGroup(gid); if(!g || !keys.length) return;
+  if(!confirm('Delete '+keys.length+' empty month'+(keys.length===1?'':'s')+' from \u201c'+g.name+'\u201d?\n\n'+keys.map(monthLabel).join(', '))) return;
+  keys.forEach(k=>{ delete g.months[k]; });
+  await persistProvisionGroup(g);
+  renderProvisionGroupsList();
+  toast(keys.length+' empty month'+(keys.length===1?'':'s')+' deleted \u2713');
+}
+function provDeleteAllEmpty(gid){ const g = findProvisionGroup(gid); if(g) provDeleteMonths(gid, provEmptyMonths(g)); }
 function provisionsVisibleMonthKeys(group){
   const currentMonth = todayStr().slice(0,7);
   const endMonth = getGridEndMonth();
@@ -9728,9 +9781,10 @@ function provisionGroupBodyHTML(g, curMonth){
         const hl = provHighlight && provHighlight.gid===g.id && provHighlight.mk===k;
         return `<tr id="provRow_${g.id}_${k}" class="${k===curMonth?'cur':''}${hl?' hl':''}${bad?' bad':''}"><td class="mono">${esc(monthLabel(k))}</td>${g.lines.map((l,li)=>{ const v = provCellVal(g,k,l.lineId); return `<td class="num"><input id="provCell_${g.id}_${li}_${mi}" type="text" inputmode="decimal" class="num" aria-label="${esc(accShort(l.acc))}, ${esc(monthLabel(k))}" value="${v!==null?fmt2(v):''}" placeholder="—" data-raw="${v!==null?v:''}"
           onfocus="this.value=this.dataset.raw" onblur="if(this.value!==this.dataset.raw) setProvisionCell(${g.id},'${k}',${l.lineId},this.value); else this.value=this.dataset.raw? fmt2(this.dataset.raw) : ''" onkeydown="provCellKey(event,${g.id},${li},${mi},${nL},${nM})"></td>`; }).join('')}
-          <td class="num mono">${!any? '<span class="mut">—</span>' : (bad? `<span class="r">${money(net)}</span>` : `<span class="g">✓ 0.00</span>${mi<nM-1? ` <button class="btn ghost sm noprint" onclick="provCopyMonthForward(${g.id},'${k}')" title="Copy this month's amounts to every later month up to the last planned month">Copy ↓</button>` : ''}`)}</td></tr>`; }).join('') || `<tr><td colspan="${nL+2}" class="empty">No months planned from ${esc(monthLabel(curMonth))} onward. Add a month or use Bulk fill.</td></tr>`}</tbody>
+          <td class="num mono">${g.months[k] && g.lines.every(l=>Math.abs(Number(provCellVal(g,k,l.lineId)||0))<0.005)? `<button class="btn ghost sm noprint" data-provdel="${k}" title="Every cell is 0: delete this month" onclick="provDeleteMonths(${g.id}, ['${k}'])">\ud83d\uddd1</button> ` : ''}${!any? '<span class="mut">—</span>' : (bad? `<span class="r">${money(net)}</span>` : `<span class="g">✓ 0.00</span>${mi<nM-1? ` <button class="btn ghost sm noprint" onclick="provCopyMonthForward(${g.id},'${k}')" title="Copy this month's amounts to every later month up to the last planned month">Copy ↓</button>` : ''}`)}</td></tr>`; }).join('') || `<tr><td colspan="${nL+2}" class="empty">No months planned from ${esc(monthLabel(curMonth))} onward. Add a month or use Bulk fill.</td></tr>`}</tbody>
     </table></div>` : ''}
     <div class="row noprint" style="margin-top:12px;gap:8px">
+      ${provEmptyMonths(g).length? `<button class="btn ghost sm" data-provdelall="${g.id}" onclick="provDeleteAllEmpty(${g.id})">\ud83d\uddd1 Delete all empty months (${provEmptyMonths(g).length})</button>` : ''}
       <div class="autoc" style="position:relative;width:260px">
         <input id="provAddAcc_${g.id}" placeholder="Add account… (can repeat)" oninput="provAccInput(${g.id},this.value)" onfocus="provAccInput(${g.id},this.value)"
           onkeydown="provAccKey(event,${g.id})" onblur="setTimeout(()=>provCloseAcDrop(${g.id}),150)">
@@ -11566,7 +11620,7 @@ let invView = 'all';   // v5.18 (#99): the app always opens Investments on All
 let invCcy = (function(){ try{ return localStorage.getItem('invCcy')==='USD'? 'USD' : 'SAR'; }catch(e){ return 'SAR'; } })();
 let invShowDetails = false;
 const invCardsExpanded = new Set();
-let invActivityFilter = {platformId:'', ownerId:'', type:'', acc:'', from:'', to:'', limit:100};
+let invActivityFilter = {platformId:'', ownerId:'', coin:'', type:'', acc:'', from:'', to:'', limit:100};
 function setInvView(v){
   invView = INV_VIEWS.some(x=>x[0]===v)? v : 'all';
   try{ localStorage.setItem('invView', invView); }catch(e){}
@@ -13010,7 +13064,7 @@ function invActivityRows(){
     const fromP = src? invPlatformById(src.platformId) : null, toP = dst? invPlatformById(dst.platformId) : null;
     rows.push({key:'v'+out.id, kind:'coinmove', id:out.id, date:out.date||'', seq:0, type:'move', label:'Moved',
       platformId: src? src.platformId : null, platformIds:[src? src.platformId : null, dst? dst.platformId : null],
-      platformText:(fromP? fromP.name : '?')+' → '+(toP? toP.name : '?'), assetName: src? src.name : '?',
+      platformText:(fromP? fromP.name : '?')+' → '+(toP? toP.name : '?'), assetName: src? src.name : '?', coinKey: src? invCoinKey(src) : '',
       detail:(src? src.name : '?')+' · '+invFmtUnits(sent)+' sent → '+invFmtUnits(received)+' received, fee '+invFmtUnits(Math.max(0, sent-received)),
       perOwner: per, ownerIds: Object.keys(per).map(Number), people: Object.keys(per).map(k=>name(Number(k))).join(', '),
       usd:0, sar: Number(out.totalSar)||0, edit: dst? `openInvPosition(${dst.id})` : null, canDelete:true});
@@ -13020,7 +13074,7 @@ function invActivityRows(){
     const pos = invPositionById(t.positionId);
     const how = t.cashSide==='cash'? (t.kind==='sell'? ' → cash' : ' ← cash') : t.cashSide==='opening'? ' (opening)' : t.cashSide==='transfer'? ' (moved)' : '';
     rows.push({key:'t'+t.id, kind:'tx', id:t.id, date:t.date||'', seq:0, type: t.kind==='sell'? 'sell' : 'buy',
-      label:(t.kind==='sell'? 'Sell' : 'Buy')+how, platformId: pos? pos.platformId : null,
+      label:(t.kind==='sell'? 'Sell' : 'Buy')+how, platformId: pos? pos.platformId : null, coinKey: pos? invCoinKey(pos) : '',
       detail:(pos? pos.name : '?')+' · '+invFmtUnits(Number(t.units)||0)+' units',
       ownerIds:(t.owners||[]).map(o=>o.ownerId), people:(t.owners||[]).map(o=>name(o.ownerId)).join(', '),
       usd: Number(t.usdAmount)||0, sar: Number(t.totalSar)||0,
@@ -13030,7 +13084,7 @@ function invActivityRows(){
     if(m.kind==='costadj'){
       const pos = invPositionById(((m.owners||[])[0]||{}).positionId);
       const delta = (m.owners||[]).reduce((s,o)=>s+(Number(o.after)||0)-(Number(o.before)||0),0);
-      rows.push({key:'m'+m.id, kind:'move', id:m.id, date:m.date||'', seq:2, type:'adjustment', label:'Cost correction', platformId:m.platformId,
+      rows.push({key:'m'+m.id, kind:'move', id:m.id, date:m.date||'', seq:2, type:'adjustment', label:'Cost correction', platformId:m.platformId, coinKey: pos? invCoinKey(pos) : '',
         detail:(pos? pos.name : '?')+' · '+((m.owners||[]).map(o=>name(o.ownerId)+' '+money(o.before)+' → '+money(o.after)).join(' · ') || 'no change in cost'),
         note:m.note||'', ownerIds:(m.owners||[]).map(o=>o.ownerId), people:(m.owners||[]).map(o=>name(o.ownerId)).join(', '),
         usd:0, sar: Math.abs(delta)>0.005? delta : null, edit:null, canDelete:true});
@@ -13068,6 +13122,7 @@ function invActivityFiltered(){
     (!f.ownerId || r.ownerIds.includes(Number(f.ownerId))) &&
     (!f.type || r.type===f.type) &&
     (!f.acc || invActivityRowAccounts(r).has(Number(f.acc))) &&
+    (!f.coin || r.coinKey===f.coin) &&   // v5.20 (#113): one coin, every platform
     (!f.from || r.date>=f.from) && (!f.to || r.date<=f.to));
 }
 // Per-person SAR, USD and rate for one Activity row, from the same stored per-owner figures the engine uses.
@@ -13148,6 +13203,11 @@ async function invActivityDelete(kind, id){
   if(kind==='tx'){ await deleteInvTx(id); closeModal(); renderInvestmentsPage(); }
   else { await deleteInvCashMovement(id); }
 }
+function invActivityCoins(){
+  const seen = {};
+  (D.invPositions||[]).forEach(p=>{ const k = invCoinKey(p); if(k && !seen[k]) seen[k] = (p.ticker||p.name)+(p.ticker && p.name && p.name!==p.ticker? ' \u00b7 '+p.name : ''); });
+  return Object.entries(seen).sort((a,b)=>a[1].localeCompare(b[1]));
+}
 function renderInvActivityView(nav){
   const f = invActivityFilter;
   const all = invActivityFiltered();
@@ -13157,6 +13217,7 @@ function renderInvActivityView(nav){
     <div class="row noprint" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
       ${sel('platformId', [['','All platforms'], ...invPlatformsSorted().map(p=>[p.id, p.name])])}
       ${sel('ownerId', [['','Everyone'], ...(D.invOwners||[]).map(o=>[o.id, o.name+(o.isSelf?' (you)':'')])])}
+      ${sel('coin', [['','All coins'], ...invActivityCoins()])}
       ${sel('type', [['','All types'],['buy','Buys'],['sell','Sells'],['deposit','Deposits'],['withdrawal','Withdrawals'],['transfer','Cash moves'],['move','Coin moves'],['adjustment','Cost corrections']])}
       ${sel('acc', [['','Any ledger account'], ...invActivityLinkedAccounts().map(a=>[a, a+' \u2014 '+accShort(a)])])}
       <label class="row" style="gap:4px;font-size:12px;color:var(--muted)">From <input type="date" value="${esc(f.from)}" onchange="setInvActivityFilter('from', this.value)" style="width:auto"></label>
@@ -18663,7 +18724,7 @@ function renderTemplateModal(){
         <div class="acdrop" id="tplAcDrop_${i}"></div>
       </div></td>
       <td><input id="tplDescr_${i}" value="${esc(l.descr)}" oninput="window._tplDraft.lines[${i}].descr=this.value" placeholder="Description"></td>
-      <td>${l.amtRule? `<div class="mono click" style="font-size:11.5px;cursor:pointer" onclick="openTplLineRuleEditor(${i})" title="Click to edit"><span style="color:var(--accent)">⚡</span> ${esc(smartRuleExprLabel(l.amtRule))}<br><b class="${moneyClass(computedAmts[i])}">${money(computedAmts[i])}</b></div>` : `<input id="tplAmt_${i}" class="num" type="number" step="0.01" value="${l.amt}" oninput="window._tplDraft.lines[${i}].amt=this.value; updateTplTotal()" placeholder="0.00"><button class="btn ghost sm" style="margin-top:4px;font-size:10.5px;padding:2px 6px" onclick="openTplLineRuleEditor(${i})">⚡ Smart</button>`}</td>
+      <td>${l.amtRule? `<div class="mono click" style="font-size:11.5px;cursor:pointer" onclick="openTplLineRuleEditor(${i})" title="Click to edit"><span style="color:var(--accent)">⚡</span> ${esc(smartRuleExprLabel(l.amtRule))}<br><b class="${moneyClass(computedAmts[i])}">${money(computedAmts[i])}</b></div>` : `<div style="display:flex;gap:4px;align-items:center"><input id="tplAmt_${i}" class="num" type="number" step="0.01" value="${l.amt}" style="flex:1;min-width:0" oninput="window._tplDraft.lines[${i}].amt=this.value; updateTplTotal()" placeholder="0.00"><button class="btn ghost sm tpl-smart" style="font-size:10.5px;padding:2px 6px;white-space:nowrap" onclick="openTplLineRuleEditor(${i})">⚡ Smart</button></div>`}</td>
       <td>${grp!=null? `<button class="x" title="Ungroup" onclick="ungroupTplLine(${i})">⛓✕</button>` : ''}<button class="x" title="Remove line" onclick="window._tplDraft.lines.splice(${i},1); renderTemplateModal()">✕</button></td></tr>`;
     const subtotalRow = isLast? `<tr style="background:var(--chip);border-left:2px solid var(--accent);border-right:2px solid var(--accent);border-bottom:2px solid var(--accent)">
       <td></td><td colspan="2" style="font-size:11px;font-weight:600">Group total ${Math.abs(groupTotals[grp])<0.005? '✓' : '— must be 0.00'}</td>
