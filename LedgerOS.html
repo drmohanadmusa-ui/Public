@@ -147,6 +147,7 @@ tfoot td{font-weight:700;border-top:2px solid var(--line);border-bottom:none}
 @keyframes glowHighlight{0%{box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent);background:color-mix(in srgb, var(--accent) 18%, var(--panel))}100%{box-shadow:0 0 0 0 transparent;background:var(--panel)}}
 #splashScreen{position:fixed;inset:0;z-index:9999;background:var(--head),radial-gradient(600px 600px at 50% 20%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:opacity .35s ease,visibility .35s ease}
 #splashScreen.hidden{opacity:0;visibility:hidden;pointer-events:none}
+.bank-compact th,.bank-compact td{padding:4px 8px}   /* v5.22 (#119) compact Bank accounts box */
 /* v5.19 (#103/#104): the splash shows the app logo in one of three styles (Settings → Appearance → Loading screen) */
 .splash-art{position:relative;display:flex;align-items:center;justify-content:center;min-width:220px;min-height:110px}
 .splash-logo{width:84px;height:84px;filter:drop-shadow(0 6px 16px rgba(0,0,0,.18))}
@@ -616,12 +617,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.21.0';
+const APP_VERSION = '5.22.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.22.0', date:'2026-11-15', changes:[
+    'Dashboard Bank accounts box is compact: tighter rows, the account number under its name, a small \u2713 (\u2713 old when the statement is out of date) or the red difference, and the totals on one line. Two layouts, switched on the box in Edit layout: Two columns (side-by-side tables) or Narrow (one table that fits a half-width box; make the box narrower with \u2212).',
+    'Investments: a sale can be saved with 0 received, to remove units logged by mistake. The app asks first; the units leave at no money and their cost (if any) becomes a realised loss. Buys still need an amount.',
+  ]},
   {version:'5.21.0', date:'2026-11-15', changes:[
     'Loading screen: the animation now runs at its own steady pace and loops until the app has loaded (before, it followed the loading %, which jumps in under a second). When loading finishes it completes the cycle on screen, then plays the ending.',
     'Month review, Suggested budget totals: the Full budget row now matches the Budget grid\u2019s total for this month (every expense account, including the ones planned in Provisions). Under each average it shows the full budget if every listed account took that average, and under New budget the full budget with whatever is in the boxes, updated as you click or type. Negative budgets keep their sign (a -100 budget was counted as +100).',
@@ -5405,33 +5410,47 @@ function dashTodoHTML(){
     </div>`).join('')}</div>${all.length>DASH_TODO_LIMIT? `<div class="row" style="justify-content:center;margin-top:10px"><button class="btn ghost sm" onclick="toggleDashTodoAll()">${dashTodoShowAll? 'Show fewer' : 'Show all '+all.length}</button></div>` : ''}` : `<div class="mut" style="font-size:13px">Every bank account is reconciled, nothing is over budget and there are no drift alerts.</div>`}
   </div>`;
 }
+// v5.22 (#119): compact Bank accounts box in two layouts, switched in Dashboard → Edit layout (synced in
+// dismissals.bankBoxStyle): 'two' = two side-by-side tables, 'narrow' = one table that fits a half-width box.
+const BANK_BOX_STYLES = {two:'Two columns', narrow:'Narrow'};
+function getBankBoxStyle(){ const v = getUiDismissals().bankBoxStyle; return BANK_BOX_STYLES[v]? v : 'two'; }
+async function setBankBoxStyle(v){
+  if(!BANK_BOX_STYLES[v]) return;
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {bankBoxStyle:v}));
+  renderDashboard();
+}
+function dashBankRowHTML(a, nextId){
+  const {ledgerBal, isCC, noLimit, typedVal, hasStmt, variance, reconciled, reconciledFresh} = bankReconState(a);
+  const status = !hasStmt? '<span class="mut">—</span>'
+    : reconciled? `<span class="pill" title="Reconciled – ${esc(fmtDateShort(a.stmt_date))}" style="font-weight:600;color:${reconciledFresh?'var(--green)':'var(--red)'};background:${reconciledFresh?'var(--pos-soft)':'var(--neg-soft)'}">✓${reconciledFresh? '' : ' old'}</span>`
+    : `<span class="pill" style="cursor:pointer;font-weight:600;color:var(--red);background:var(--neg-soft)" onclick="startReconcile(${a.id})" title="Start a New JV to work off this variance">${money(variance)}</span>`;
+  return `<tr data-bankrow="${a.id}">
+      <td class="click" onclick="openStatement(${a.id})">${esc(accShort(a.id))}${isCC?' <span class="badge">card</span>':''}<div class="mono mut" style="font-size:10.5px">${a.id}</div></td>
+      <td class="num mono ${isCC? moneyClass(ledgerBal):''}">${isCC? money(ledgerBal) : absMoney(ledgerBal)}</td>
+      <td class="num noprint">${noLimit? `<input disabled class="num" style="width:100px;padding:3px 6px" placeholder="set limit first" title="Set a credit limit for this account in Accounts → edit">` : `
+      <input id="stmtBal_${a.id}" type="text" inputmode="decimal" class="num" style="width:100px;padding:3px 6px" value="${hasStmt? fmt2(typedVal) : ''}" placeholder="${isCC?'limit':'—'}" data-raw="${hasStmt? typedVal : ''}" aria-label="Statement balance for ${esc(accShort(a.id))}"
+        onfocus="this.value = this.dataset.raw"
+        onblur="this.value = this.dataset.raw? fmt2(this.dataset.raw) : ''"
+        onkeydown="if(event.key==='Enter'){ event.preventDefault(); saveStmtBalance(${a.id}, this.value, ${nextId||'null'}); }">`}</td>
+      <td class="num mono" style="white-space:nowrap">${status}</td></tr>`;
+}
 function dashBanksHTML(){
   const {all, active: bankAccs} = dashboardBankAccounts();
+  const style = getBankBoxStyle();
   const bankTotal = all.reduce((s,a)=>s+accountBalance(a.id),0);
-  return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Bank accounts</h2><span class="mut" style="font-size:12px">10101 – 10198</span></div>
-      <div class="mut" style="font-size:11.5px;margin-bottom:8px">Enter each account's balance from your latest bank statement to see what's still unreconciled. For credit cards, enter the card's <b>available limit</b> instead — the balance owed is calculated for you. Press Enter to move to the next account. Click a non-zero variance to jump into a New JV and work it off.</div>
-      <div style="overflow-x:auto">
-      <table class="sticky-table" style="min-width:600px"><thead><tr><th style="position:sticky;left:0;z-index:2;background:var(--panel)">Acc#</th><th style="position:sticky;left:52px;z-index:2;background:var(--panel)">Account</th><th class="num">Ledger Balance</th><th class="num" style="width:150px">Statement Balance</th><th class="num">Variance</th></tr></thead>
-      <tbody>${bankAccs.map((a,i)=>{
-        const {ledgerBal, isCC, noLimit, typedVal, hasStmt, variance, reconciled, reconciledFresh} = bankReconState(a);
-        const nextId = bankAccs[i+1]? bankAccs[i+1].id : null;
-        return `<tr>
-          <td class="mono click" style="position:sticky;left:0;z-index:1;background:var(--panel)" onclick="openStatement(${a.id})">${a.id}</td>
-          <td class="click" style="position:sticky;left:52px;z-index:1;background:var(--panel)" onclick="openStatement(${a.id})">${esc(accShort(a.id))}${isCC?' <span class="badge">credit card</span>':''}</td>
-          <td class="num mono ${isCC? moneyClass(ledgerBal):''}">${isCC? money(ledgerBal) : absMoney(ledgerBal)}</td>
-          <td class="num noprint">${noLimit? `<input disabled class="num" style="width:130px" placeholder="set limit first" title="Set a credit limit for this account in Accounts → edit">` : `
-          <input id="stmtBal_${a.id}" type="text" inputmode="decimal" class="num" style="width:130px" value="${hasStmt? fmt2(typedVal) : ''}" placeholder="${isCC?'avail. limit':'—'}" data-raw="${hasStmt? typedVal : ''}" aria-label="Statement balance for ${esc(accShort(a.id))}"
-            onfocus="this.value = this.dataset.raw"
-            onblur="this.value = this.dataset.raw? fmt2(this.dataset.raw) : ''"
-            onkeydown="if(event.key==='Enter'){ event.preventDefault(); saveStmtBalance(${a.id}, this.value, ${nextId||'null'}); }">`}</td>
-          <td class="num mono">${!hasStmt? '<span class="mut">—</span>' : (reconciled? `<span class="pill" style="font-weight:600;color:${reconciledFresh?'var(--green)':'var(--red)'};background:${reconciledFresh?'var(--pos-soft)':'var(--neg-soft)'}">Reconciled – ${fmtDateShort(a.stmt_date)}</span>` : `<span style="cursor:pointer;text-decoration:underline;color:var(--red)" onclick="startReconcile(${a.id})" title="Start a New JV to work off this variance">${money(variance)}</span>`)}</td>
-          </tr>`;
-      }).join('') || '<tr><td colspan="5" class="empty">No bank accounts found</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="2" style="position:sticky;left:0;z-index:1;background:var(--panel)">Total</td><td class="num mono">${absMoney(bankTotal)}</td>
-        <td class="num mono">${absMoney(bankAccs.reduce((s,a)=> s+(a.stmt_balance!=null&&a.stmt_balance!==''? Number(a.stmt_balance):0),0))}</td>
-        <td class="num mono ${moneyClass(bankAccs.reduce((s,a)=> s+((a.stmt_balance!=null&&a.stmt_balance!=='')? Number(a.stmt_balance)-accountBalance(a.id):0),0))}">${money(bankAccs.reduce((s,a)=> s+((a.stmt_balance!=null&&a.stmt_balance!=='')? Number(a.stmt_balance)-accountBalance(a.id):0),0))}</td>
-      </tr></tfoot></table>
-      </div>
+  const stmtTotal = bankAccs.reduce((s,a)=> s+(a.stmt_balance!=null&&a.stmt_balance!==''? Number(a.stmt_balance):0),0);
+  const diffTotal = bankAccs.reduce((s,a)=> s+((a.stmt_balance!=null&&a.stmt_balance!=='')? Number(a.stmt_balance)-accountBalance(a.id):0),0);
+  const toCheck = bankAccs.filter(a=>{ const st = bankReconState(a); return !st.noLimit && !st.reconciledFresh; }).length;
+  const table = list => `<table class="bank-compact" style="width:100%;font-size:12.5px"><thead><tr><th>Account</th><th class="num">Ledger</th><th class="num">Statement</th><th></th></tr></thead>
+      <tbody>${list.map(a=>dashBankRowHTML(a, (bankAccs[bankAccs.indexOf(a)+1]||{}).id||null)).join('')}</tbody></table>`;
+  const half = Math.ceil(bankAccs.length/2);
+  const body = !bankAccs.length? '<div class="empty">No bank accounts found</div>'
+    : style==='two'? `<div class="bank-two" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:0 22px">${table(bankAccs.slice(0, half))}${table(bankAccs.slice(half))}</div>`
+    : table(bankAccs);
+  return `<div class="panel" style="margin:0" data-bankstyle="${style}"><div class="dash-head"><h2>Bank accounts</h2><span class="mut" style="font-size:12px" title="Enter each account's balance from your latest bank statement; for credit cards, the available limit. Enter moves to the next account; click a red difference to work it off in a New JV.">${toCheck? toCheck+' to check' : 'all reconciled'}</span></div>
+      ${body}
+      <div class="row mut" style="justify-content:flex-end;gap:18px;flex-wrap:wrap;font-size:12px;margin-top:6px">
+        <span>Ledger <b class="mono">${absMoney(bankTotal)}</b></span><span>Statement <b class="mono">${absMoney(stmtTotal)}</b></span><span>Difference <b class="mono ${moneyClass(diffTotal)}">${money(diffTotal)}</b></span></div>
     </div>`;
 }
 function dashCashHTML(){
@@ -5485,6 +5504,7 @@ function renderDashboard(){
         <button class="btn ghost sm" onclick="moveDashWidget(${i},${nextI})" ${nextI===undefined?'disabled':''} aria-label="Move ${esc(boxTitle(w.id))} later">↓</button>
         <button class="btn ghost sm" onclick="toggleDashHidden(${i})" aria-label="Hide ${esc(boxTitle(w.id))}">Hide</button>
         <button class="btn ghost sm" onclick="resizeDashWidget(${i},${w.span-1})" aria-label="Narrower">−</button><button class="btn ghost sm" onclick="resizeDashWidget(${i},${w.span+1})" aria-label="Wider">+</button>
+        ${w.id==='banks'? `<span class="seg" role="group" aria-label="Bank accounts layout">${Object.entries(BANK_BOX_STYLES).map(([k,l])=>`<button class="btn ghost sm" data-bankstylepick="${k}" aria-pressed="${getBankBoxStyle()===k}" style="${getBankBoxStyle()===k?'border-color:var(--accent);font-weight:600':''}" onclick="setBankBoxStyle('${k}')">${l}</button>`).join('')}</span>` : ''}
         ${isBox? `<button class="btn del sm" onclick="removeDashPositionBox('${esc(w.id.slice(4)).replace(/'/g,'')}')">Remove</button>`:''}</div>
         <div class="dash-resize" role="separator" aria-label="Resize ${esc(boxTitle(w.id))}" title="Drag to resize" onmousedown="dashResizeStart(${i},event)"><span></span></div>` : ''}
       ${body || '<div class="panel mut" style="font-size:12.5px">Shows here when there is something to show.</div>'}
@@ -14399,6 +14419,7 @@ function renderInvTxModal(){
     ${d.cashSide==='bank' && pos && pos.currency==='USD'? `<div class="mut" style="font-size:11.5px;margin-top:6px">${esc(pos.name)} trades in USD, so the amount is entered in USD and converted to SAR at ${getInvFxRate()} for the actual bank movement.</div>`:''}
     <div class="mut" id="invTxFeeNote" style="font-size:11.5px;margin-top:6px">${invTxFeeText(d)}</div>
     <div class="mut" id="invTxPPU" style="font-size:11.5px;margin-top:6px">${invTxPpuText(d, pos)}</div>
+    ${d.kind==='sell'? `<div class="mut" style="font-size:11.5px;margin-top:6px" data-zerosell="1">A sale can be saved with 0 received (to remove units logged by mistake): the units leave at no money and their cost becomes a realised loss.</div>` : ''}
     <div class="row" style="justify-content:space-between;align-items:baseline;margin:16px 0 6px">
       <h3 style="font-size:13.5px;margin:0">Whose share?</h3>
       <div class="row" style="gap:4px;align-items:center">
@@ -14811,8 +14832,15 @@ async function saveInvTxNow(){
   // funding, or simply a USD-denominated position) the SAR field is derived and disabled — a
   // person seeing "Total SAR must be greater than zero" would have nowhere obvious to act on it.
   // The actionable field is USD.
-  if(invTxShowsUsdEntry(d, posForSave) && !(Number(d.usdAmount)>0)){ toast('Enter the USD amount', true); return; }
-  if(totalSar<=0){ toast('Total SAR must be greater than zero', true); return; }
+  // v5.22 (#120): a sale may have no proceeds (to take out units logged by mistake); their cost becomes a realised loss.
+  const zeroSell = d.kind==='sell' && !(Number(d.usdAmount)>0) && !(totalSar>0);
+  if(zeroSell){
+    if(d.splitMode==='sar'){ toast('A sale with no proceeds is split by units: switch Split by to Units', true); return; }
+    if(!confirm('Save this sale with no proceeds? The units leave at no money, and their cost (if any) becomes a realised loss.')) return;
+  } else {
+    if(invTxShowsUsdEntry(d, posForSave) && !(Number(d.usdAmount)>0)){ toast('Enter the USD amount', true); return; }
+    if(totalSar<=0){ toast('Total SAR must be greater than zero', true); return; }
+  }
   // In SAR mode the person allocates money and the units are derived from it; the stored record
   // is always units-based, so the ownership maths downstream is identical either way.
   let owners;

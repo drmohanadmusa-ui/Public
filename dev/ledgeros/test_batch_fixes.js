@@ -8119,6 +8119,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV521FullBudgetTotals();
   await testV521TradeSplitByShare();
   await testV521EmptyPositionsOnPlatformPage();
+  await testV522BankBoxLayouts();
+  await testV522SellWithNoProceeds();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11615,4 +11617,50 @@ async function testV521EmptyPositionsOnPlatformPage(){
   sb.confirm = () => true;
   await sb.invDeleteEmptyPosition(9);
   assert(!D.invPositions.some(p=>p.id===9) && sb._writes.some(w=>w.t==='pd_inv_positions' && w.op==='delete' && w.row.id===9), 'Deleted and synced');
+}
+async function testV522BankBoxLayouts(){
+  const sb = dashSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.find(a=>a.id===10101).stmt_balance = 48000;   // off by -250.50
+  const sav = D.accounts.find(a=>a.id===10102); sav.stmt_balance = 126400; sav.stmt_date = '2026-10-01';   // reconciled, 37 days old
+  sb.__set('syncWrite', async()=>({ok:true}));
+  assert(sb.getBankBoxStyle()==='two', 'Default layout: two columns');
+  let html = sb.dashBanksHTML();
+  const host = sb.document.createElement('div'); host.innerHTML = html;
+  assert(host.querySelector('[data-bankstyle="two"]') && host.querySelectorAll('table.bank-compact').length===2 && !/min-width:600px/.test(html), 'Two side-by-side tables, no forced 600px width');
+  const r1 = host.querySelector('[data-bankrow="10101"]'), r2 = host.querySelector('[data-bankrow="10102"]');
+  assert(r1 && /startReconcile\(10101\)/.test(r1.innerHTML) && /-?250\.50/.test(r1.textContent) && r2 && /✓ old/.test(r2.textContent) && /Reconciled/.test(r2.innerHTML), 'Difference chip opens the reconcile JV; an old reconciliation shows ✓ old');
+  const ids = [...host.querySelectorAll('[data-bankrow]')].map(r=>Number(r.dataset.bankrow));
+  const firstInput = host.querySelector('#stmtBal_'+ids[0]);
+  assert(ids.length>=2 && firstInput && new RegExp('saveStmtBalance\\('+ids[0]+', this.value, '+ids[1]+'\\)').test(firstInput.getAttribute('onkeydown')), 'Enter still moves to the next account');
+  await sb.setBankBoxStyle('narrow');
+  host.innerHTML = sb.dashBanksHTML();
+  assert(host.querySelector('[data-bankstyle="narrow"]') && host.querySelectorAll('table.bank-compact').length===1 && D.uiPrefs.dismissals.bankBoxStyle==='narrow', 'Narrow: one table; choice synced');
+  vm.runInContext('dashEditing = true', sb); sb.renderDashboard();
+  assert(sb.document.querySelector('[data-widget="banks"] [data-bankstylepick="two"]') && sb.document.querySelector('[data-bankstylepick="narrow"][aria-pressed="true"]'), 'Edit layout shows the Two columns / Narrow switch on the Bank accounts box');
+  vm.runInContext('dashEditing = false', sb);
+}
+async function testV522SellWithNoProceeds(){
+  const sb = v56Sandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvTxModal(1, null);
+  const d = vm.runInContext('window._invTxDraft', sb);
+  Object.assign(d, {kind:'sell', units:'0.2', usdAmount:'', totalSar:'', cashSide:'bank', splitMode:'units', owners:[{ownerId:1, units:0.2}]});
+  sb.renderInvTxModal();
+  assert(sb.document.querySelector('#modalRoot [data-zerosell]'), 'The sell window explains a sale can have no proceeds');
+  let asked = 0; sb.confirm = () => { asked++; return false; };
+  await sb.saveInvTxNow();
+  const D = vm.runInContext('D', sb), before = D.invTransactions.length;
+  assert(asked===1 && D.invTransactions.length===before, 'Asks first; cancelled = nothing saved');
+  sb.confirm = () => true;
+  await sb.saveInvTxNow();
+  const t = D.invTransactions[D.invTransactions.length-1];
+  assert(D.invTransactions.length===before+1 && t.kind==='sell' && Number(t.totalSar)===0 && Number(t.units)===0.2, 'Saved: a sale of 0.2 units for 0, got ' + JSON.stringify(t && [t.kind, t.totalSar, t.units]));
+  assert(Math.abs(sb.computePositionState(1).totalUnits-0.8)<1e-9, 'Units go down by 0.2');
+  sb.openInvTxModal(1, null);
+  const d2 = vm.runInContext('window._invTxDraft', sb);
+  Object.assign(d2, {kind:'buy', units:'1', usdAmount:'', totalSar:'', cashSide:'bank', owners:[{ownerId:1, units:1}]});
+  let msg = ''; sb.__set('toast', m=>{ msg = m; });
+  await sb.saveInvTxNow();
+  assert(/USD amount|greater than zero/.test(msg) && D.invTransactions.length===before+1, 'A buy still needs an amount');
 }
