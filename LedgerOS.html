@@ -633,12 +633,17 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.26.0';
+const APP_VERSION = '5.27.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.27.0', date:'2026-11-15', changes:[
+    'Investments \u2192 a coin\u2019s window: the Transactions table shows Total USD and Per unit USD, with the SAR figure in small grey text under each. Lines with no USD entered (moved in, opening) show their cost converted at their own rate.',
+    'Same window: a new Avg cost / unit box: everyone together on this platform (cost \u00f7 units), and your own average underneath (the price Sell to family starts from).',
+    'Platform page: a new Avg cost column next to Price, sortable. From All it is everyone\u2019s average; from Mine, yours.',
+  ]},
   {version:'5.26.0', date:'2026-11-15', changes:[
     'Investments \u2192 Sell to family: a new optional "% of their cash" box. It fills each family member\u2019s Pays with that share of their cash on the platform (rounded down to the cent); you can still type over any box.',
     'Side rail: every page has its own icon now (Accounts, Allocations and the chart pages no longer look alike), each on a soft chip in your theme colour; the open page\u2019s chip fills solid. Works with Aurora & glass, and the rail keeps its size.',
@@ -11966,17 +11971,17 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
   }
   const det = !!allCols || invShowDetails;   // #53: the Family pop-out always shows cost, price, realised
   const pc = !!showPrice && !det;   // v5.18 (#98): the platform page always shows the price
-  const cols = 5 + (det? 3 : 0) + (pc? 1 : 0);
+  const cols = 5 + (det? 3 : 0) + (pc? 2 : 0);
   // v5.23 (#123): on the platform page, click a header to sort (again to reverse); remembered on this device
   const srt = pc? invPlatSort() : null;
-  const sortKey = {name:r=>String(r.pos.name||'').toLowerCase(), units:r=>r.units, price:r=>r.hasValuation? r.price : -1, value:r=>r.valueSar, pl:r=>r.valueSar-r.costSar, pct:r=>r.costSar? (r.valueSar-r.costSar)/r.costSar : 0};
+  const sortKey = {name:r=>String(r.pos.name||'').toLowerCase(), units:r=>r.units, price:r=>r.hasValuation? r.price : -1, avg:r=>invAvgCostPerUnit(r.pos, r.costSar, r.units), value:r=>r.valueSar, pl:r=>r.valueSar-r.costSar, pct:r=>r.costSar? (r.valueSar-r.costSar)/r.costSar : 0};
   const sorted = srt? h.positions.slice().sort((a,b)=>{ const f = sortKey[srt.key]||sortKey.name, x = f(a), y = f(b); return (x<y? -1 : x>y? 1 : 0) * (srt.dir==='desc'? -1 : 1); }) : h.positions;
   const posRows = sorted.map(r=>{
     const rpl = r.valueSar - r.costSar;
     return `<tr class="click" style="cursor:pointer${r.excluded? ';opacity:.55' : ''}" data-posrow="${r.pos.id}" onclick="openInvPosition(${r.pos.id})">
       <td><b>${esc(r.pos.name)}</b>${r.pos.ticker? ` <span class="mut">${esc(r.pos.ticker)}</span>`:''}${r.excluded? ' <span class="badge" title="Not added to the totals">excluded</span>' : ''}${r.hasValuation? '' : ' <span class="mut" style="font-size:11px">(no price)</span>'}</td>
       <td class="num mono">${invFmtUnits(r.units)}</td>
-      ${pc? `<td class="num mono" data-posprice="${r.pos.id}">${r.hasValuation? invFmtPrice(r.price)+' '+esc(r.pos.currency||'') : '\u2014'}</td>` : ''}
+      ${pc? `<td class="num mono" data-posprice="${r.pos.id}">${r.hasValuation? invFmtPrice(r.price)+' '+esc(r.pos.currency||'') : '\u2014'}</td><td class="num mono" data-posavg="${r.pos.id}">${r.units>0? invFmtPrice(invAvgCostPerUnit(r.pos, r.costSar, r.units))+' '+esc(r.pos.currency||'') : '\u2014'}</td>` : ''}
       <td class="num mono">${invDisp(r.valueSar)}</td>
       <td class="num mono ${moneyClass(rpl)}">${invDisp(rpl)}</td>
       <td class="num mono ${moneyClass(rpl)}">${invPlPct(r.costSar, r.valueSar)}</td>
@@ -11988,7 +11993,7 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
     ...(Math.abs(h.cashUsd)>0.005? [{label:'USD', usd:h.cashUsd, sar:h.cashSar, onclick:`openInvPlatformCashOwners(${pid})`}] : []),
     ...h.stable.map(r=>({label:(r.pos.ticker||r.pos.name).toUpperCase(), usd:r.usd, sar:r.costSar, onclick:`openInvPosition(${r.pos.id})`}))
   ].map(c=>`<tr class="click inv-cash-line" style="cursor:pointer" onclick="${c.onclick}">
-      <td>💵 ${esc(c.label)} cash${Math.abs(c.usd)>1e-9? ` <span class="mut" style="font-size:11px" title="SAR per USD this cash cost">@ ${(c.sar/c.usd).toFixed(4)}</span>` : ''}</td><td class="num mono">$${fmt2(c.usd)}</td>${pc? '<td></td>' : ''}<td class="num mono">${invDisp(c.usd*fx)}</td>
+      <td>💵 ${esc(c.label)} cash${Math.abs(c.usd)>1e-9? ` <span class="mut" style="font-size:11px" title="SAR per USD this cash cost">@ ${(c.sar/c.usd).toFixed(4)}</span>` : ''}</td><td class="num mono">$${fmt2(c.usd)}</td>${pc? '<td></td><td></td>' : ''}<td class="num mono">${invDisp(c.usd*fx)}</td>
       <td class="num mono ${moneyClass(c.usd*fx-c.sar)}">${invDisp(c.usd*fx-c.sar)}</td><td class="num mono ${moneyClass(c.usd*fx-c.sar)}">${invPlPct(c.sar, c.usd*fx)}</td>
       ${det? `<td class="num mono">${invDisp(c.sar)}</td><td></td><td></td>` : ''}</tr>`).join('');
   const closed = h.closed.length? `<details style="margin-top:8px"><summary class="mut" style="cursor:pointer;font-size:12px">Closed positions (${h.closed.length})</summary>
@@ -12004,7 +12009,7 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
     </div>` : '';
   return `<div class="panel inv-card" data-card="${key}">${head}
     <div style="overflow-x:auto;margin-top:10px"><table style="min-width:${det? 720 : 460}px"><thead><tr>
-      ${pc? [['name','Position',''],['units','Units','num'],['price','Price','num'],['value','Value','num'],['pl','P/L','num'],['pct','%','num']].map(([k,l,c])=>`<th class="${c} click" style="cursor:pointer" data-sortcol="${k}" onclick="setInvPlatSort('${k}')">${l}${srt.key===k? (srt.dir==='desc'? ' \u25be' : ' \u25b4') : ''}</th>`).join('') : '<th>Position</th><th class="num">Units</th><th class="num">Value</th><th class="num">P/L</th><th class="num">%</th>'}
+      ${pc? [['name','Position',''],['units','Units','num'],['price','Price','num'],['avg','Avg cost','num'],['value','Value','num'],['pl','P/L','num'],['pct','%','num']].map(([k,l,c])=>`<th class="${c} click" style="cursor:pointer" data-sortcol="${k}" onclick="setInvPlatSort('${k}')">${l}${srt.key===k? (srt.dir==='desc'? ' \u25be' : ' \u25b4') : ''}</th>`).join('') : '<th>Position</th><th class="num">Units</th><th class="num">Value</th><th class="num">P/L</th><th class="num">%</th>'}
       ${det? '<th class="num">Cost</th><th class="num">Price</th><th class="num">Realised</th>' : ''}
     </tr></thead><tbody>${posRows || (cashRows? '' : `<tr><td colspan="${cols}" class="empty">Nothing held here right now</td></tr>`)}${cashRows}</tbody></table></div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px;flex-wrap:wrap;gap:6px">
@@ -14599,6 +14604,23 @@ async function saveInvOwner(){
 }
 
 /* ---- Investments: position detail + transactions ---- */
+// v5.27 (#144): cost per unit in the position's own currency (USD coins: SAR cost at the standard rate, as the boxes show it).
+function invAvgCostPerUnit(pos, costSar, units){ return units>0? (costSar/units) / ((pos.currency||'USD')==='USD'? getInvFxRate() : 1) : 0; }
+// v5.27 (#144): what one transaction cost or brought in, in USD: the USD entered on it, else its SAR at its own rate.
+function invTxUsd(t){ if(Number(t.usdAmount)>0) return Number(t.usdAmount); const a = invTxAttribution(t); return Math.abs(Number(t.totalSar)||0) / (a.txRate||getInvFxRate()); }
+// v5.27 (#144): Avg cost / unit box: everyone together (Cost / Units), and yours underneath.
+function invAvgCostCardHTML(pos, v){
+  const rate = getInvFxRate(), selfId = invSelfOwnerId();
+  if(!(v.totalUnits>0)) return invKpiCard('Avg cost / unit', '\u2014');
+  const allSar = v.totalCostSar / v.totalUnits;
+  const sl = selfId!==null? ownerSliceOfPosition(pos, selfId) : null;
+  const mine = sl && sl.units>0? sl.costSar/sl.units : null;
+  return `<div class="kpi" data-avgcost="${pos.id}"><div class="kpi-label">Avg cost / unit</div>
+    <div class="kpi-value">$${invFmtPrice(allSar/rate)}</div>
+    <div class="mut mono" style="font-size:11.5px;margin-top:2px">${invFmtPrice(allSar)} SAR \u00b7 everyone</div>
+    ${mine!==null? `<div class="mono" style="font-size:11.5px;margin-top:2px" data-avgcost-mine="1">Yours $${invFmtPrice(mine/rate)} \u00b7 ${invFmtPrice(mine)} SAR</div>` : ''}
+  </div>`;
+}
 function openInvPosition(posId){
   const pos = invPositionById(posId); if(!pos) return;
   const v = computePositionValuation(pos);
@@ -14615,6 +14637,7 @@ function openInvPosition(posId){
       ${invKpiCardDual('Cost', v.totalCostSar)}
       ${v.hasValuation? invKpiCardDual('Value', v.marketSar) : invKpiCard('Value', '—')}
       ${v.hasValuation? invKpiCardDual('Unrealised', v.unrealizedSar, moneyClass(v.unrealizedSar)) : invKpiCard('Unrealised', '—')}
+      ${invAvgCostCardHTML(pos, v)}
     </div>
     <div class="row" style="justify-content:space-between;align-items:center">
       <h3 style="margin:0;font-size:14px">Transactions</h3>
@@ -14625,13 +14648,13 @@ function openInvPosition(posId){
         <button class="btn pri sm" onclick="openInvTxModal(${posId}, null)">+ Transaction</button>
       </div>
     </div>
-    <div style="overflow-x:auto"><table style="min-width:600px"><thead><tr><th>Date</th><th>Type</th><th class="num">Units</th><th class="num">Total SAR</th><th class="num">Per unit</th><th>Owners</th><th class="noprint"></th></tr></thead>
+    <div style="overflow-x:auto"><table style="min-width:600px"><thead><tr><th>Date</th><th>Type</th><th class="num">Units</th><th class="num">Total USD</th><th class="num">Per unit USD</th><th>Owners</th><th class="noprint"></th></tr></thead>
     <tbody>${txs.map(t=>`<tr>
       <td class="mono">${esc(t.date)}</td>
       <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'🔁 Moved out':'🔁 Moved in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
       <td class="num mono">${Number(t.units).toLocaleString(undefined,{maximumFractionDigits:8})}</td>
-      <td class="num mono">${money(t.totalSar)}</td>
-      <td class="num mono">${t.units? invFmtPrice(t.totalSar/t.units):'—'}</td>
+      <td class="num mono" data-txusd="${t.id}">$${fmt2(invTxUsd(t))}<div class="mut" style="font-size:11px">${money(t.totalSar)} SAR</div></td>
+      <td class="num mono">${t.units? '$'+invFmtPrice(invTxUsd(t)/t.units)+`<div class="mut" style="font-size:11px">${invFmtPrice(t.totalSar/t.units)} SAR</div>`:'—'}</td>
       <td class="mut" style="font-size:11.5px">${(t.owners||[]).map(a=>{const o=invOwnerById(a.ownerId); return (o?esc(o.name):'?')+' '+Number(a.units).toLocaleString(undefined,{maximumFractionDigits:8});}).join(', ')||'—'}</td>
       <td class="noprint"><button class="btn ghost sm" onclick="openInvTxModal(${posId}, ${t.id})">✎</button></td>
     </tr>`).join('') || '<tr><td colspan="7" class="empty">No transactions yet</td></tr>'}</tbody></table></div>
