@@ -135,12 +135,20 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 | 127 | 2026-11-15 | Suggest ways to stop reconciliation gaps happening again. | shipped 5.23.0 | **2026-11-15:** all three. Proposals 127a–127c sent (flag ledger money on a person's own Invested account with no tracker deposit; warn when a deposit has no matching ledger line; show the Reconcile result in the Month review investments step). |
 | 128 | 2026-11-15 | A low-priced coin's price history shows 0.00. | shipped 5.23.0 | Recent prices and per-unit cost use the full small-price format. |
 | 129 | 2026-11-15 | Activity tab: a clear button for the filters. | shipped 5.23.0 | "✕ Clear filters" when any filter is set. |
+| 130 | 2026-11-15 | Deposit window: let a deposit carry the SAR actually paid (its real rate). | shipped 5.24.0 | SAR box per person on deposits (`setInvCashOwnerSar`); sets that person's rate. |
+| 131 | 2026-11-15 | Needs you showed a tiny rounding amount as contributions not collected. | shipped 5.24.0 | Same 1 SAR tolerance as Reconcile. |
+| 132 | 2026-11-15 | Needs you flagged the Raseed → personal JV as a missing deposit. | shipped 5.24.0 | A JV that also books a platform's own In/Out account is a move, not a deposit. |
+| 133 | 2026-11-15 | Platform page: a button to update prices and units for platforms with a wallet address. | shipped 5.24.0 | "↻ Update prices & units from wallet": refresh prices, read the wallet, save its units as statement units; differences stay with + Log buttons. |
+| 134 | 2026-11-15 | Astrofolio shows "Never checked" though he checked it. | closed | Checked (read-only): no statement units are saved on the server for that platform. "Checked" only appears after "Save wallet units as statement units"; his save on 14 Nov was hit by the sync bug fixed in 5.17 (#90) and didn't keep the units. The new button (#133) saves them in one click. |
+| 135 | 2026-11-15 | Trade window: enter the USD paid or the buy price per unit. | shipped 5.24.0 | "or price per unit (USD)" box: USD = price × units. |
+| 136 | 2026-11-15 | Investments value / cost / P&L / cash boxes: click to see every position by platform with value, cost and P&L. | shipped 5.24.0 | `openInvHoldingsPop` (All and Mine). |
 
 ## Schema changes
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
 - v5.4.0: new table `pd_sms_inbox` (#18). The SMS account map lives in `pd_ui_prefs.dismissals.smsMap` (no new column).
 
 ## Release notes
+- v5.24.0 (#130–#133, #135, #136) shipped 2026-11-15, merged by Claude.
 - v5.23.0 (#121–#125, #127–#129: per-platform Reconcile lines, deposit checks, Month review investments step, exclude coin, sort, rows Dashboard, small prices, clear filters) shipped 2026-11-15, merged by Claude.
 - v5.22.0 (#119 compact bank box, two layouts; #120 sell with 0 proceeds) shipped 2026-11-15, merged by Claude.
 - v5.21.0 (#114–#118: steady splash loop, full-budget totals + sign fix, 12-month clickable, split by share in the trade window, delete empty positions) shipped 2026-11-15, merged by Claude.
