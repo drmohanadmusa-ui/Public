@@ -406,7 +406,13 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 /* v5.23 (#125): rows: boxes in a row stretch to the tallest, so tops and bottoms line up */
 .dash-grid.rows{grid-auto-rows:auto;row-gap:20px;align-items:stretch}
 .dash-grid.rows .dash-cell{display:flex;flex-direction:column}
-.dash-grid.rows .dash-cell>.panel{flex:1}
+.dash-grid.rows .dash-cell>.panel{flex:1;display:flex;flex-direction:column}
+/* v5.25 (#138): with spare height, content sits centred between the header and the bottom; the Cash flow chart grows */
+.dash-grid.rows .dash-cell>.panel>:nth-child(2){margin-top:auto}
+.dash-grid.rows .dash-cell>.panel>:last-child{margin-bottom:auto}
+.dash-grid.rows .dash-cell>.panel>.cf-chart{flex:1;margin-top:0;margin-bottom:0}
+.dash-grid.rows .cf-chart .cf-col{height:100%;justify-content:flex-end}
+.dash-grid.rows .cf-chart .cf-bars{flex:1;height:auto;min-height:124px}
 .dash-cell{position:relative;min-width:0}
 .dash-cell>.panel{margin:0}
 .dash-grid.editing .dash-cell{outline:2px dashed color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:6px;border-radius:18px;cursor:grab}
@@ -621,12 +627,17 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.24.0';
+const APP_VERSION = '5.25.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.25.0', date:'2026-11-15', changes:[
+    'Investments: Sell to family (in a coin\u2019s window). Sell some of your units to one or more family members, paid from their cash on that platform (shown as you type). The price starts at your cost per unit and can be changed. Each person\u2019s payment covers the management fee first (it comes back to you as units, as on any family buy) and the rest buys your units. Saved as your sale into your platform cash and their cash-funded buy.',
+    'Dashboard: box contents use the box\u2019s full height. The Cash flow chart grows to fill its box, and lists sit centred instead of leaving empty space at the bottom.',
+    'Fixed: a platform box said coins were without a price when they had one and only the last refresh had failed; it now says how many weren\u2019t updated by the last refresh. Fixed: in the All tab the mine / family bar always showed 100% mine.',
+  ]},
   {version:'5.24.0', date:'2026-11-15', changes:[
     'Investments: click the value / cost / P/L / cash boxes (All or Mine) to see every position by platform, with its value, cost and P/L.',
     'Platform page: for a platform with a wallet address, \u21bb Update prices & units from wallet refreshes the prices, reads the wallet and saves its units (so it shows Checked today); any differences stay listed with + Log buy / sell.',
@@ -5478,7 +5489,7 @@ function dashCashHTML(){
   const max = Math.max(1, ...months.map(m=>Math.max(m.income, m.expense)));
   return `<div class="panel" style="margin:0"><div class="dash-head"><h2>Cash flow</h2><span class="legend"><span><i style="background:var(--accent)"></i>Income</span><span><i style="background:var(--bar2,color-mix(in srgb,var(--muted) 45%,var(--panel)))"></i>Expense</span></span></div>
     <div class="cf-chart" role="img" aria-label="Income and expense, last six months">${months.map((m,i)=>`<div class="cf-col${i===months.length-1?' cur':''}" title="${monthLabel(m.month)}: income ${money0(m.income)}, expense ${money0(m.expense)}">
-      <div class="cf-bars"><div class="cf-bar in grow-y" style="height:${Math.round(m.income/max*120)}px;animation-delay:${i*80}ms"></div><div class="cf-bar ex grow-y" style="height:${Math.round(m.expense/max*120)}px;animation-delay:${i*80+40}ms"></div></div>
+      <div class="cf-bars"><div class="cf-bar in grow-y" style="height:${(m.income/max*97).toFixed(1)}%;animation-delay:${i*80}ms"></div><div class="cf-bar ex grow-y" style="height:${(m.expense/max*97).toFixed(1)}%;animation-delay:${i*80+40}ms"></div></div>
       <div class="mono cf-net ${moneyClass(m.net)}">${m.net>=0?'+':''}${money0(m.net)}</div><div class="cf-m">${monthLabel(m.month)}</div>
     </div>`).join('')}</div></div>`;
 }
@@ -12823,14 +12834,15 @@ function invPlatformKind(platformId){
 function invBoxFreshness(h){
   const held = h.positions.map(r=>r.pos);
   const dates = held.map(p=>{ const v = invLatestValuation(p.id); return v? v.date : null; });
-  const missing = dates.filter(d=>!d).length + held.filter(p=>invPriceState.failed[p.id]).length;
+  const missing = dates.filter(d=>!d).length;   // v5.25 (#139): only coins with no price at all
+  const notRefreshed = held.filter((p,i)=>dates[i] && invPriceState.failed[p.id]).length;
   const known = dates.filter(Boolean).sort();
   const oldest = known[0]||null;
   const age = oldest? invDaysSince(oldest) : null;
   const plat = h.platform;
   const checks = [plat.stmtDate, ...invPositionsForPlatform(plat.id).map(p=>p.stmtDate)].filter(Boolean).sort();
   const checked = checks.length? checks[checks.length-1] : null;
-  return {age, oldest, missing, checked, stale: age!==null && age>INV_PRICE_STALE_DAYS};
+  return {age, oldest, missing, notRefreshed, checked, stale: age!==null && age>INV_PRICE_STALE_DAYS};
 }
 function invBoxHTML(h, ctx){
   const pid = h.platform.id;
@@ -12844,7 +12856,7 @@ function invBoxHTML(h, ctx){
   const prefs = ctx.prefs;
   const top = h.positions.filter(r=>!r.excluded).sort((a,b)=>b.valueSar-a.valueSar).slice(0,3);
   const total = ctx.totalFor(pid);
-  const minePct = total>0.005? Math.max(0, Math.min(100, h.valueSar/total*100)) : 100;
+  const minePct = total>0.005? Math.max(0, Math.min(100, (ctx.mineFor? ctx.mineFor(pid) : h.valueSar)/total*100)) : 100;
   const fr = invBoxFreshness(h);
   const kind = h.robo? 'Robo portfolio' : invPlatformKind(pid);
   const ageTxt = h.robo? (h.stats.valueDate? 'Value as of '+h.stats.valueDate : 'No value logged')
@@ -12878,7 +12890,7 @@ function invBoxHTML(h, ctx){
     ${h.robo? '' : `<div style="margin-top:10px"><div style="height:5px;border-radius:3px;background:var(--line);overflow:hidden"><div style="height:100%;width:${minePct.toFixed(1)}%;background:var(--accent)"></div></div>
       <div class="row mut" style="justify-content:space-between;font-size:11px;margin-top:3px"><span>${Math.round(minePct)}% mine</span><span>${Math.round(100-minePct)}% family</span></div></div>`}
     <div class="row inv-box-fresh" style="justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:11px;margin-top:8px">
-      <span class="${fr.stale || (h.robo && h.stats.valueDate && invDaysSince(h.stats.valueDate)>INV_ROBO_PROMPT_DAYS)? 'r' : 'mut'}">${ageTxt}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''}</span>
+      <span class="${fr.stale || (h.robo && h.stats.valueDate && invDaysSince(h.stats.valueDate)>INV_ROBO_PROMPT_DAYS)? 'r' : 'mut'}">${ageTxt}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''}${fr.notRefreshed? ` · ${fr.notRefreshed} not updated by the last refresh` : ''}</span>
       ${h.robo? '' : `<span class="mut">${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}</span>`}
     </div>
     <div class="row noprint inv-box-actions" style="gap:6px;flex-wrap:wrap;margin-top:10px">${actions}</div>
@@ -12911,11 +12923,17 @@ function invPricesBarHTML(){
       <button class="btn ghost sm ${invBoxEdit?'pri':''}" onclick="toggleInvBoxEdit()">${invBoxEdit? '✓ Done arranging' : '✎ Arrange boxes'}</button></div>
   </div>`;
 }
-function invBoxesHTML(holdings){
+function invBoxesHTML(holdings, scope){
   const prefs = getInvBoxPrefs();
   const state = invCashState(null).state;
   const totals = {};
   const ctx = {prefs, totalFor: pid => (totals[pid]!==undefined? totals[pid] : (totals[pid] = invPlatformTotalValueSar(pid, state)))};
+  // v5.25 (#140): All shows everyone, so "mine" must come from your own holdings, not the box's value
+  if(scope==='all'){
+    const self = (D.invOwners||[]).find(o=>o.isSelf);
+    const mine = {}; if(self) invOwnerHoldings(self.id, state).forEach(x=>{ mine[x.platform.id] = x.valueSar; });
+    ctx.mineFor = pid => mine[pid]||0;
+  }
   const ordered = invOrderedHoldings(holdings);
   const visible = ordered.filter(h=>!prefs.hidden.includes(h.platform.id));
   const own = visible.filter(h=>!prefs.grouped.includes(h.platform.id));
@@ -13184,6 +13202,76 @@ function openInvHoldingsPop(scope){
     <div class="mut" style="font-size:12.5px;margin:4px 0 10px">Value <b class="mono">${invDisp(t.valueSar)}</b> \u00b7 Cost <b class="mono">${invDisp(t.costSar)}</b> \u00b7 P/L <b class="mono ${moneyClass(pl)}">${invDisp(pl)}</b> (${invPlPct(t.costSar, t.valueSar)})</div>
     <div data-holdingspop-body="${esc(scope)}">${holdings.map(h=>invHoldingCardHTML(h, 'pop'+scope, true, true)).join('') || '<div class="mut">Nothing held.</div>'}</div>`, true);
 }
+// v5.25 (#137): sell some of your units of a coin to family members, paid from their cash on the same platform.
+// Each buyer's USD pays the management fee first (taken in units for you, as on any family buy) and the rest buys your
+// units at the price (default: your cost per unit). Recorded as two transactions: your sale into your platform cash,
+// and their cash-funded buy with the fee %, so cost basis, cash and fees all follow the existing rules.
+function invFamilySaleBase(posId){
+  const pos = invPositionById(posId), selfId = invSelfOwnerId();
+  const sl = pos && selfId!==null? ownerSliceOfPosition(pos, selfId) : null;
+  const myUnits = sl? sl.units : 0;
+  const rate = getInvFxRate();
+  const costUsd = sl && sl.units>0? (sl.costSar/sl.units) / (pos.currency==='USD'? rate : 1) : 0;
+  return {pos, selfId, myUnits, costUsd};
+}
+function openInvFamilySale(posId){
+  const b = invFamilySaleBase(posId);
+  if(!b.pos || b.selfId===null){ toast('Mark one owner as "This is me" first', true); return; }
+  if(!(b.myUnits>0)){ toast('You hold none of this coin here', true); return; }
+  window._invFamSale = {posId, date: todayStr(), price: b.costUsd>0? Number(b.costUsd.toPrecision(6)) : '', feePct: getInvMgmtFeePct(), buyers:{}};
+  renderInvFamilySale();
+}
+function invFamilySaleCalc(d){
+  const b = invFamilySaleBase(d.posId), price = Number(d.price)||0, r = Math.min(100, Math.max(0, Number(d.feePct)||0))/100;
+  const cash = invOwnerCashForSplit(b.pos.platformId, d.date, null);
+  const rows = (D.invOwners||[]).filter(o=>o.id!==b.selfId).map(o=>{
+    const usd = Number(d.buyers[o.id])||0;
+    return {o, cash: Number(cash[o.id])||0, usd, units: price>0? usd/price : 0, gets: price>0? usd*(1-r)/price : 0};
+  });
+  const usd = rows.reduce((s,x)=>s+x.usd, 0), units = rows.reduce((s,x)=>s+x.units, 0);
+  return {b, price, r, rows, usd: Math.round(usd*100)/100, units: invRoundUnits(units), keep: invRoundUnits(units*r)};
+}
+function renderInvFamilySale(){
+  const d = window._invFamSale, c = invFamilySaleCalc(d), cur = c.b.pos.currency||'USD';
+  showModal(`<div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">Sell to family \u2014 ${esc(c.b.pos.ticker||c.b.pos.name)}</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
+    <div class="mut" style="font-size:12px;margin:4px 0 10px">You hold <b class="mono">${invFmtUnits(c.b.myUnits)}</b> here at a cost of <b class="mono">${invFmtPrice(c.b.costUsd)} ${esc(cur)}</b> per unit. Each person pays from their cash on ${esc((invPlatformById(c.b.pos.platformId)||{}).name||'this platform')}: the management fee is taken first, the rest buys your units at the price below.</div>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <div><label class="fl">Date</label><input type="date" value="${esc(d.date)}" onchange="window._invFamSale.date=this.value; renderInvFamilySale()"></div>
+      <div><label class="fl">Price per unit (${esc(cur)})</label><input id="famSalePrice" type="text" inputmode="decimal" value="${esc(d.price)}" onchange="window._invFamSale.price=this.value; renderInvFamilySale()" style="width:160px"></div>
+      <div><label class="fl">Management fee %</label><input type="number" step="0.01" min="0" max="100" value="${esc(d.feePct)}" onchange="window._invFamSale.feePct=this.value; renderInvFamilySale()" style="width:110px"></div>
+    </div>
+    <table style="margin-top:10px;font-size:12.5px"><thead><tr><th>Family member</th><th class="num">Cash here</th><th class="num">Pays (USD)</th><th class="num">Gets (units)</th></tr></thead>
+    <tbody>${c.rows.map(x=>`<tr data-famrow="${x.o.id}"><td>${esc(x.o.name)}</td><td class="num mono ${x.usd>x.cash+0.005?'r':''}">$${fmt2(x.cash)}</td>
+      <td class="num"><input type="text" inputmode="decimal" style="width:110px;text-align:right" value="${d.buyers[x.o.id]!==undefined? esc(d.buyers[x.o.id]) : ''}" onchange="window._invFamSale.buyers[${x.o.id}]=this.value; renderInvFamilySale()" aria-label="USD ${esc(x.o.name)} pays"></td>
+      <td class="num mono" data-famgets="${x.o.id}">${x.gets>0? invFmtUnits(invRoundUnits(x.gets)) : '\u2014'}</td></tr>`).join('')}</tbody></table>
+    <div class="mut" style="font-size:12px;margin-top:8px" data-famsum="1">You sell <b class="mono">${invFmtUnits(c.units)}</b> units for <b class="mono">$${fmt2(c.usd)}</b> into your cash here${c.keep>0? `; the fee comes back to you as <b class="mono">${invFmtUnits(c.keep)}</b> units` : ''}.${c.units>c.b.myUnits+1e-9? ' <span class="r">More than you hold.</span>' : ''}</div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn pri" onclick="saveInvFamilySale()">Save sale</button></div>`, true);
+}
+async function saveInvFamilySale(){ return invOnce(saveInvFamilySaleNow); }
+async function saveInvFamilySaleNow(){
+  if(blockIfSyncing()) return;
+  const d = window._invFamSale; if(!d) return;
+  const c = invFamilySaleCalc(d), buyers = c.rows.filter(x=>x.usd>0);
+  if(!(c.price>0)){ toast('Enter the price per unit', true); return; }
+  if(!buyers.length){ toast('Enter what at least one family member pays', true); return; }
+  const short = buyers.filter(x=>x.usd > x.cash + 0.005);
+  if(short.length){ toast('Not enough cash on this platform for '+short.map(x=>x.o.name).join(', '), true); return; }
+  if(c.units > c.b.myUnits + 1e-9){ toast('That is more than the '+invFmtUnits(c.b.myUnits)+' units you hold here', true); return; }
+  const rate = getInvFxRate(), pos = c.b.pos;
+  const sale = {id: invNextId(D.invTransactions), positionId: pos.id, date: d.date, kind:'sell', units: c.units, totalSar: Math.round(c.usd*rate*100)/100,
+    owners:[{ownerId:c.b.selfId, units:c.units}], note:'Sold to family', cashSide:'cash', usdAmount: c.usd, feePct:0, updated_at:null};
+  D.invTransactions.push(sale);
+  const buyOwners = buyers.map(x=>({ownerId:x.o.id, units: invRoundUnits(x.units)}));
+  const snap = invCashBuyOwnerCost(pos.platformId, d.date, null, c.usd, buyOwners);
+  const buy = {id: invNextId(D.invTransactions), positionId: pos.id, date: d.date, kind:'buy', units: c.units, totalSar: snap.totalSar,
+    owners: snap.owners, note:'Bought from '+((invOwnerById(c.b.selfId)||{}).name||'you'), cashSide:'cash', usdAmount: c.usd, feePct: c.r*100, updated_at:null};
+  D.invTransactions.push(buy);
+  await persistInvTransaction(sale);
+  await persistInvTransaction(buy);
+  closeModal(); renderInvestmentsPage();
+  toast('Sold '+invFmtUnits(c.units)+' '+(pos.ticker||pos.name)+' to family for $'+fmt2(c.usd)+' \u2713');
+  logActivity('action', 'Investments: sold '+c.units+' of position '+pos.id+' to family ('+buyers.length+' people)');
+}
 function renderInvAllView(nav){
   const holdings = invOwnerHoldings('all', invCashState(null).state);
   if(invPlatformPageId!==null){ renderInvPlatformPage(nav, holdings); return; }
@@ -13192,7 +13280,7 @@ function renderInvAllView(nav){
   // v5.18 (#99): All is the tab Investments opens on, so it carries Needs you and the prices bar too
   document.getElementById('app').innerHTML = nav + invNeedsYouHTML() + invTotalsCardsHTML(t, {value:'Total Value', cost:'Total Cost', costSub:'everyone together', cash:'Total Cash'}, 'all') + invPricesBarHTML() +
     `<div class="mut" style="font-size:12px;margin:0 0 8px">Everyone together (you and family), so units match the platform or wallet totals.</div>` +
-    (holdings.length? invBoxesHTML(any.concat(holdings.filter(h=>!h.hasAnything))) : `<div class="panel empty">Nothing held yet.</div>`);
+    (holdings.length? invBoxesHTML(any.concat(holdings.filter(h=>!h.hasAnything)), 'all') : `<div class="panel empty">Nothing held yet.</div>`);
 }
 // ---- Family view ----
 function invFamilyPeople(){
@@ -14477,6 +14565,7 @@ function openInvPosition(posId){
       <div class="row noprint" style="gap:6px">
         <button class="btn ghost sm" onclick="openInvCostEditor(${posId})" title="Correct what each buy cost, per person">✎ Edit costs</button>
         <button class="btn ghost sm" onclick="closeModal(); openInvMoveAssets(${pos.platformId}, ${posId})" title="Move some or all units to another platform">🔁 Move</button>
+        <button class="btn ghost sm" data-familysale="${posId}" onclick="closeModal(); openInvFamilySale(${posId})" title="Sell some of your units to family members, paid from their cash on this platform">\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 Sell to family</button>
         <button class="btn pri sm" onclick="openInvTxModal(${posId}, null)">+ Transaction</button>
       </div>
     </div>
