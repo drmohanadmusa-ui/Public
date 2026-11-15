@@ -8129,6 +8129,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV525SellToFamily();
   await testV525DashboardBoxesUseTheirHeight();
   await testV525BoxPriceNoteAndAllMineBar();
+  await testV526SellToFamilyCashPct();
+  await testV526RailChips();
+  await testV526JvEditAllocOtherLeg();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11852,4 +11855,76 @@ async function testV525BoxPriceNoteAndAllMineBar(){
   const m = b1 && b1.textContent.match(/(\d+)% mine/);
   assert(m && Number(m[1])<100 && Number(m[1])>0, 'All tab: the bar shows your real share, not 100%, got ' + (m && m[1]));
   assert(/1 not updated by the last refresh/.test(b1.textContent) && /1 without a price/.test(b1.textContent) && !/2 without a price/.test(b1.textContent), 'The box counts them separately');
+}
+
+async function testV526SellToFamilyCashPct(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invOwners.forEach(o=>{ o.isSelf = o.id===1; });
+  D.invCashMovements.push({id:91, platformId:1, date:'2026-11-01', kind:'deposit', usdAmount:333.33, owners:[{ownerId:2, usd:333.33, sar:1250}]});
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvFamilySale(1);
+  const d = vm.runInContext('window._invFamSale', sb);
+  assert(sb.document.getElementById('famSaleCashPct') && sb.document.getElementById('famSaleCashPct').value==='', 'The % of their cash box is there and starts empty');
+  sb.invFamSaleApplyPct('40'); sb.renderInvFamilySale();
+  assert(d.buyers[2]==='133.33', '40% of $333.33 = $133.33 (rounded down to the cent), got ' + d.buyers[2]);
+  const inp = sb.document.querySelector('[data-famrow="2"] input');
+  assert(inp && inp.value==='133.33' && /0\.06/.test(sb.document.querySelector('[data-famgets="2"]').textContent), 'The Pays box shows it and Gets follows');
+  sb.invFamSaleApplyPct('100');
+  assert(d.buyers[2]==='333.33', '100% = all their cash, never more, got ' + d.buyers[2]);
+  d.buyers[2] = '50'; sb.invFamSaleApplyPct('');
+  assert(d.buyers[2]==='50', 'Empty % leaves typed boxes alone');
+  sb.invFamSaleApplyPct('25');
+  assert(!Object.keys(d.buyers).some(k=>k!=='2'), 'People with no cash here get no amount');
+}
+async function testV526RailChips(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  const sb = shellSandbox();
+  sb.__set('screen', 'investments');
+  sb.renderNav();
+  const btns = [...sb.document.getElementById('nav').querySelectorAll('button')];
+  assert(btns.length>=12 && btns.every(b=>b.querySelector('.nav-chip > svg.nav-svg')), 'Every rail icon sits in a tinted chip');
+  const icons = vm.runInContext('NAV_ICONS', sb);
+  const shown = ['dashboard','newjv','ledger','accounts','pnl','alloc','provisions','jamiah','forecast','loans','realestate','investments','settings'].map(k=>icons[k]);
+  assert(new Set(shown).size===shown.length, 'Every page has its own icon');
+  assert(/\.nav-chip\{width:24px;height:24px;margin:-3px;/.test(html) && /\.nav-svg\{width:18px;height:18px;flex:none\}/.test(html), 'The chip keeps the old 18px footprint, so rail sizes are unchanged');
+  assert(/nav button\.on \.nav-chip\{background:var\(--rail-on-fg\)/.test(html) && /body\.bg-aurora \.nav-chip\{background:var\(--accent-soft\)/.test(html) && /body\.bg-aurora nav button\.on \.nav-chip\{background:var\(--accent\)/.test(html), 'Chip colours come from the theme tokens, plain and Aurora');
+}
+async function testV526JvEditAllocOtherLeg(){
+  const sb = makeSandbox();
+  freezeDate(sb, '2026-11-15T10:00:00Z');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  const D = vm.runInContext('D', sb);
+  D.accounts = [{id:101, name:'Bank', status:'Active'},{id:102, name:'Payable', status:'Active'},{id:103, name:'Food', status:'Active'}];
+  const L = (id, jv, acc, descr, amt, alloc)=>({id, jv, date:'2026-11-10', acc, descr, amt, alloc, allocatable:true});
+  D.ledger = [
+    L(1, 50, 101, 'Rent', -900, null), L(2, 50, 102, 'Rent', 900, 7),          // JV 50: line 2 allocated in #7
+    L(3, 60, 102, 'Rent paid', -900, 7), L(4, 60, 101, 'Rent paid', 900, null), // its other leg in JV 60
+    L(5, 70, 102, 'Shop A', 100, 8), L(6, 70, 102, 'Shop B', 100, 8),           // #8: two same-amount lines
+    L(7, 71, 102, 'Shop A', -100, 8), L(8, 71, 102, 'Shop B', -100, 8),
+    L(9, 70, 101, 'x', -200, null), L(10, 71, 101, 'y', 200, null)];
+  const writes = []; sb.__set('syncWrite', async (t, op, row)=>{ writes.push(op+':'+row.id+':'+(row.alloc===undefined?'':row.alloc)); });
+  sb.__set('blockIfSyncing', ()=>false);
+  // pure rule
+  let f = sb.jvEditAllocFix([D.ledger[1]], [], new Set([2]));
+  assert(f.legs.length===1 && f.legs[0].id===3 && !f.notes.length, 'Deleted line: its one exact opposite in the allocation is the other leg');
+  f = sb.jvEditAllocFix([D.ledger[6]], [], new Set([7]));
+  assert(f.legs.length===1 && f.legs[0].id===5, 'Several opposites: the one with identical text, got ' + JSON.stringify(f.legs.map(l=>l.id)));
+  f = sb.jvEditAllocFix([{id:99, alloc:8, descr:'Other shop', amt:-100}], [], new Set([99]));
+  assert(!f.legs.length && f.notes.length===1 && !f.notes[0].leg, 'Several opposites and no identical text: nothing unallocated, a note to fix by hand');
+  f = sb.jvEditAllocFix([{id:98, alloc:8, descr:'Shop A', amt:-55}], [], new Set([98]));
+  assert(!f.legs.length && f.notes.length===1, 'No opposite amount: nothing unallocated, a note');
+  // end to end: delete line 2 from JV 50 (replaced by a new Payable line so the JV still balances)
+  sb.__set('jvEditDraft', {jv:50, date:'2026-11-10', origDate:'2026-11-10', lines:[{id:1, acc:101, descr:'Rent', amt:-900},{id:null, acc:103, descr:'Rent', amt:900}]});
+  await sb.saveJVEdit();
+  const g = id=>D.ledger.find(l=>l.id===id);
+  assert(!g(2) && g(3).alloc===null && writes.includes('upsert:3:null') && writes.includes('delete:2:'), 'Saving the edit deletes the line, unallocates its other leg and syncs it, got ' + writes.join());
+  assert(!sb.document.querySelector('[data-allocnote]'), 'A clean other-leg match needs no message');
+  // end to end: change an allocated line's amount → it leaves the allocation with its other leg, and a message shows
+  writes.length = 0;
+  sb.__set('jvEditDraft', {jv:70, date:'2026-11-10', origDate:'2026-11-10', lines:[{id:5, acc:102, descr:'Shop A', amt:120},{id:6, acc:102, descr:'Shop B', amt:100},{id:9, acc:101, descr:'x', amt:-220}]});
+  await sb.saveJVEdit();
+  assert(g(5).alloc===null && g(7).alloc===null && g(6).alloc===8 && g(8).alloc===8, 'Edited line and its text-matched other leg leave #8; the rest stays, got ' + JSON.stringify([5,6,7,8].map(i=>g(i).alloc)));
+  const note = sb.document.querySelector('[data-allocnote="8"]');
+  assert(note && /Changed line taken out/.test(note.textContent) && /onclick/.test(note.innerHTML) && /viewAllocGroup\(8\)/.test(note.innerHTML), 'A message names the allocation and offers Open');
 }
