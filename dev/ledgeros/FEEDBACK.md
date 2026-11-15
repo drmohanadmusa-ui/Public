@@ -142,14 +142,17 @@ Status: **open** (not discussed), **question asked**, **agreed** (ready to build
 | 134 | 2026-11-15 | Astrofolio shows "Never checked" though he checked it. | closed | Checked (read-only): no statement units are saved on the server for that platform. "Checked" only appears after "Save wallet units as statement units"; his save on 14 Nov was hit by the sync bug fixed in 5.17 (#90) and didn't keep the units. The new button (#133) saves them in one click. |
 | 135 | 2026-11-15 | Trade window: enter the USD paid or the buy price per unit. | shipped 5.24.0 | "or price per unit (USD)" box: USD = price × units. |
 | 136 | 2026-11-15 | Investments value / cost / P&L / cash boxes: click to see every position by platform with value, cost and P&L. | shipped 5.24.0 | `openInvHoldingsPop` (All and Mine). |
-| 137 | 2026-11-15 | Investments: sell part of his own units of a coin to family members; the price defaults to his cost basis for that position, adjustable. | question asked | 137a–137c asked (how the family pays, one or several buyers, management fee). |
-| 138 | 2026-11-15 | Dashboard (rows layout): box contents should use the extra height, e.g. bigger charts, or be centred in the box (screenshots: Cash flow, Short Term Equity). | question asked | 138a asked. |
+| 137 | 2026-11-15 | Investments: sell part of his own units of a coin to family members; the price defaults to his cost basis for that position, adjustable. | shipped 5.25.0 | 137a–137c asked (how the family pays, one or several buyers, management fee). **Answers 2026-11-15:** 137a from their cash on the same platform; 137b split across several family members, their cash shown; 137c yes: the fee is taken first, the rest buys his units. Shipped: Sell to family in the coin window (`openInvFamilySale`): his cash sale + their cash buy with the fee % (fee comes back to him as units, existing engine rule). |
+| 138 | 2026-11-15 | Dashboard (rows layout): box contents should use the extra height, e.g. bigger charts, or be centred in the box (screenshots: Cash flow, Short Term Equity). | shipped 5.25.0 | 138a asked. **138a 2026-11-15:** grow and centred. Shipped: rows-layout boxes centre their content; the Cash flow chart grows (bar heights in %). |
+| 139 | 2026-11-15 | Platform box says "13 without a price" although the prices are there. | shipped 5.25.0 | Bug: coins whose last refresh failed were counted as having no price. Now only coins never priced count as "without a price"; the others show as "not updated by the last refresh". |
+| 140 | 2026-11-15 | All tab: the mine / family bar always shows 100% mine (Mine tab is right). | shipped 5.25.0 | Bug: in All the box value is everyone's, so mine ÷ total was always 1. The All tab now compares your own value on that platform with everyone's. |
 
 ## Schema changes
 - v5.1.0: two new jsonb columns on `pd_ui_prefs`: `dismissals` (#3) and `forecast_notes` (#7).
 - v5.4.0: new table `pd_sms_inbox` (#18). The SMS account map lives in `pd_ui_prefs.dismissals.smsMap` (no new column).
 
 ## Release notes
+- v5.25.0 (#137–#140) shipped 2026-11-15, merged by Claude.
 - v5.24.0 (#130–#133, #135, #136) shipped 2026-11-15, merged by Claude.
 - v5.23.0 (#121–#125, #127–#129: per-platform Reconcile lines, deposit checks, Month review investments step, exclude coin, sort, rows Dashboard, small prices, clear filters) shipped 2026-11-15, merged by Claude.
 - v5.22.0 (#119 compact bank box, two layouts; #120 sell with 0 proceeds) shipped 2026-11-15, merged by Claude.

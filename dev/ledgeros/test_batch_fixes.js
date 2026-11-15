@@ -8126,6 +8126,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV523MonthReviewInvestments();
   await testV524FalseAlarmsAndDepositSar();
   await testV524WalletButtonPricePerUnitAndHoldingsPop();
+  await testV525SellToFamily();
+  await testV525DashboardBoxesUseTheirHeight();
+  await testV525BoxPriceNoteAndAllMineBar();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -8821,7 +8824,7 @@ async function testDashboardBoxesStackIntoFreeSpace(){
   sb.layoutDashMasonry();
   // v5.23 (#125): the Dashboard now lays boxes out in rows (tops and bottoms line up), so no per-box row spans
   assert(cells.length>3 && sb.document.querySelector('.dash-grid.rows') && cells.every(c=>c.style.gridRowEnd===''), 'Rows layout: no packing spans');
-  assert(/\.dash-grid\.rows\{[^}]*grid-auto-rows:auto[^}]*align-items:stretch/.test(html) && /\.dash-grid\.rows \.dash-cell>\.panel\{flex:1\}/.test(html), 'Boxes in a row stretch to the tallest');
+  assert(/\.dash-grid\.rows\{[^}]*grid-auto-rows:auto[^}]*align-items:stretch/.test(html) && /\.dash-grid\.rows \.dash-cell>\.panel\{flex:1/.test(html), 'Boxes in a row stretch to the tallest');
 }
 
 // ---- v5.1: feedback batch ----
@@ -11797,4 +11800,56 @@ async function testV524WalletButtonPricePerUnitAndHoldingsPop(){
   sb.openInvHoldingsPop('all');
   const body = sb.document.querySelector('[data-holdingspop-body="all"]');
   assert(body && body.querySelectorAll('.inv-card').length>=2 && /Cost/.test(body.innerHTML) && /P\/L/.test(body.innerHTML), 'The window lists each platform with its positions, value, cost and P/L');
+}
+async function testV525SellToFamily(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invOwners.forEach(o=>{ o.isSelf = o.id===1; });
+  D.invCashMovements.push({id:91, platformId:1, date:'2026-11-01', kind:'deposit', usdAmount:500, owners:[{ownerId:2, usd:500, sar:1875}]});
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.__set('renderInvestmentsPage', ()=>{});
+  const base = sb.invFamilySaleBase(1);
+  assert(Math.abs(base.myUnits-0.6)<1e-9 && Math.abs(base.costUsd-2000)<0.01, 'Your 0.6 ETH cost $2,000 a unit (the default price), got ' + JSON.stringify([base.myUnits, base.costUsd]));
+  sb.openInvFamilySale(1);
+  const d = vm.runInContext('window._invFamSale', sb);
+  assert(Math.abs(Number(d.price)-2000)<0.01 && sb.document.querySelector('[data-famrow="2"]') && !sb.document.querySelector('[data-famrow="1"]') && /\$500\.00/.test(sb.document.querySelector('[data-famrow="2"]').textContent), 'Family members listed with their cash here; you are not');
+  d.feePct = 10; d.buyers = {2:'300'}; sb.renderInvFamilySale();
+  assert(/0\.135/.test(sb.document.querySelector('[data-famgets="2"]').textContent), 'Pays $300: the 10% fee first, then 0.135 ETH at $2,000');
+  d.buyers = {2:'600'};
+  let msg = ''; sb.__set('toast', m=>{ msg = m; });
+  await sb.saveInvFamilySaleNow();
+  assert(/Not enough cash/.test(msg) && !D.invTransactions.some(t=>t.note==='Sold to family'), 'More than their cash: refused');
+  d.buyers = {2:'300'};
+  await sb.saveInvFamilySaleNow();
+  const sale = D.invTransactions.find(t=>t.note==='Sold to family'), buy = D.invTransactions.find(t=>/^Bought from/.test(t.note||''));
+  assert(sale && buy && sale.kind==='sell' && sale.cashSide==='cash' && Math.abs(sale.units-0.15)<1e-9 && buy.cashSide==='cash' && buy.feePct===10, 'Two transactions: your sale into cash, their cash buy with the fee');
+  const st = sb.computePositionState(1);
+  assert(Math.abs(st.byOwner[1].units-0.465)<1e-9 && Math.abs(st.byOwner[2].units-0.535)<1e-9, 'Units: you 0.6 − 0.15 + 0.015 fee = 0.465; them 0.4 + 0.135, got ' + JSON.stringify([st.byOwner[1].units, st.byOwner[2].units]));
+  const cash = sb.invPlatformCash(1).byOwner;
+  assert(Math.abs((cash[2]||{}).usd-200)<0.01 && Math.abs((cash[1]||{}).usd-300)<0.01, 'Cash: they paid $300 (200 left), you received $300, got ' + JSON.stringify([(cash[2]||{}).usd, (cash[1]||{}).usd]));
+}
+async function testV525DashboardBoxesUseTheirHeight(){
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\.dash-grid\.rows \.dash-cell>\.panel>:nth-child\(2\)\{margin-top:auto\}/.test(html) && /\.dash-grid\.rows \.dash-cell>\.panel>:last-child\{margin-bottom:auto\}/.test(html), 'Box contents centre in the spare height');
+  assert(/\.dash-grid\.rows \.dash-cell>\.panel>\.cf-chart\{flex:1/.test(html), 'The Cash flow chart grows to fill the box');
+  const sb = dashSandbox();
+  const box = sb.document.createElement('div'); box.innerHTML = sb.dashCashHTML();
+  const bars = [...box.querySelectorAll('.cf-bar')].map(b=>b.getAttribute('style'));
+  assert(bars.length && bars.every(s=>/height:[\d.]+%/.test(s)), 'Bar heights are a share of the chart, so they grow with it');
+}
+async function testV525BoxPriceNoteAndAllMineBar(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invOwners.forEach(o=>{ o.isSelf = o.id===1; });
+  // ETH (id 1): owner 1 holds 0.6, owner 2 holds 0.4; it has a saved price, but the last refresh failed
+  vm.runInContext('invPriceState.failed = {1:"no price found"}', sb);
+  const h = sb.invOwnerHoldings('all', sb.invCashState(null).state).find(x=>x.platform.id===1);
+  const fr = sb.invBoxFreshness(h);
+  assert(fr.missing===1 && fr.notRefreshed===1, 'ETH has a price but its refresh failed: not refreshed; only MINE (never priced) is without a price, got ' + JSON.stringify([fr.missing, fr.notRefreshed]));
+  const allHtml = sb.invBoxesHTML(sb.invOwnerHoldings('all', sb.invCashState(null).state).filter(x=>x.hasAnything), 'all');
+  const box = sb.document.createElement('div'); box.innerHTML = allHtml;
+  const b1 = box.querySelector('[data-box="1"]');
+  const m = b1 && b1.textContent.match(/(\d+)% mine/);
+  assert(m && Number(m[1])<100 && Number(m[1])>0, 'All tab: the bar shows your real share, not 100%, got ' + (m && m[1]));
+  assert(/1 not updated by the last refresh/.test(b1.textContent) && /1 without a price/.test(b1.textContent) && !/2 without a price/.test(b1.textContent), 'The box counts them separately');
 }
