@@ -403,6 +403,10 @@ main{background:none;padding:24px clamp(16px,2.4vw,32px) 48px;position:relative;
 .dash-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px}
 .btn.dashed{border:1px dashed var(--accent);background:var(--accent-soft);color:var(--nav-on-fg)}
 .dash-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:4px;column-gap:20px;row-gap:0;align-items:start}
+/* v5.23 (#125): rows: boxes in a row stretch to the tallest, so tops and bottoms line up */
+.dash-grid.rows{grid-auto-rows:auto;row-gap:20px;align-items:stretch}
+.dash-grid.rows .dash-cell{display:flex;flex-direction:column}
+.dash-grid.rows .dash-cell>.panel{flex:1}
 .dash-cell{position:relative;min-width:0}
 .dash-cell>.panel{margin:0}
 .dash-grid.editing .dash-cell{outline:2px dashed color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:6px;border-radius:18px;cursor:grab}
@@ -617,12 +621,21 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.22.0';
+const APP_VERSION = '5.23.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.23.0', date:'2026-11-15', changes:[
+    'Investments \u2192 Reconcile: a platform with its own In/Out ledger accounts (e.g. Raseed) gets its own line for your money on it, checked against those accounts, and is left out of your personal line. Family money stays on each person\u2019s line.',
+    'Needs you: money paid into your own Invested into platform account with no deposit recorded on any platform (within 5 days) is flagged, with Record deposit filled in. Saving a deposit with no ledger entry within 5 days asks you to check first.',
+    'Month review step 6, Investments: every platform with holdings, how fresh its prices and units (or robo value) are, the button that updates it (Refresh all prices, Check wallet, Enter units, Update value), a done-this-month tick, and each Reconcile line\u2019s difference.',
+    'Exclude a coin from totals: \u270e Edit position \u2192 Exclude from totals. It stays listed (greyed, marked excluded) but adds nothing to the platform or portfolio value.',
+    'Platform page: click a column header to sort (again to reverse). Tiny prices now show in full in a position\u2019s price history and per-unit cost.',
+    'Dashboard boxes now sit in rows: boxes in the same row stretch to the tallest, so tops and bottoms line up.',
+    'Investments \u2192 Activity: Clear filters button.',
+  ]},
   {version:'5.22.0', date:'2026-11-15', changes:[
     'Dashboard Bank accounts box is compact: tighter rows, the account number under its name, a small \u2713 (\u2713 old when the statement is out of date) or the red difference, and the totals on one line. Two layouts, switched on the box in Edit layout: Two columns (side-by-side tables) or Narrow (one table that fits a half-width box; make the box narrower with \u2212).',
     'Investments: a sale can be saved with 0 received, to remove units logged by mistake. The app asks first; the units leave at no money and their cost (if any) becomes a realised loss. Buys still need an amount.',
@@ -2647,7 +2660,7 @@ const LEDGEROS_KEYS = [
   'budgetCollapsedSections','statementSortDesc','driftDismissals','driftSettings',
   'hiddenPages','sidebarPinned','theme','invFxUsdSar','uiTheme','uiBackground','uiMotion','customAccentColor',
   'fontSize','fontFamily','contentWidthMode','contentWidthPreset',
-  'invView','invCcy','invPricesFetchedAt','appLogo','splashStyle',
+  'invView','invCcy','invPricesFetchedAt','appLogo','splashStyle','invPlatSort',
 ];
 const LS_ORIGIN_LIMIT_BYTES = 5 * 1024 * 1024; // browsers land near 5 MB; treated as approximate
 function isLedgerOsKey(k){
@@ -5518,7 +5531,7 @@ function renderDashboard(){
       <button class="btn ${dashEditing?'pri':'ghost'} sm" aria-pressed="${dashEditing}" onclick="toggleDashEditing()">${dashEditing? 'Done' : 'Edit layout'}</button>
     </div>
     ${dashEditing && layout.some(w=>w.hidden)? `<div class="panel dash-hidden noprint"><b>Hidden boxes</b>${layout.map((w,i)=>w.hidden? `<span class="chipbtn">${esc(boxTitle(w.id))} <button class="btn ghost sm" onclick="toggleDashHidden(${i})" aria-label="Show ${esc(boxTitle(w.id))}">Show</button></span>` : '').join('')}</div>` : ''}
-    <div class="dash-grid${dashEditing?' editing':''}">${cells}</div>`;
+    <div class="dash-grid rows${dashEditing?' editing':''}">${cells}</div>`;
   watchDashMasonry();
   animateKpiCountUps();
 }
@@ -5529,6 +5542,7 @@ const DASH_ROW_PX = 4, DASH_GAP_PX = 20;
 function dashRowSpan(heightPx){ return Math.max(1, Math.ceil(((Number(heightPx)||0) + DASH_GAP_PX) / DASH_ROW_PX)); }
 let _dashResizeObs = null;
 function layoutDashMasonry(){
+  if(document.querySelector('.dash-grid.rows')){ document.querySelectorAll('.dash-grid .dash-cell').forEach(c=>{ c.style.gridRowEnd = ''; }); return; }
   document.querySelectorAll('.dash-grid .dash-cell').forEach(c=>{ c.style.gridRowEnd = 'span '+dashRowSpan(c.getBoundingClientRect().height); });
 }
 function watchDashMasonry(){
@@ -8842,6 +8856,51 @@ function mrGoTo(id){
   mrMonth = null; go('monthreview');
   requestAnimationFrame(()=>{ const el = document.getElementById(id); if(el){ if(el.scrollIntoView) el.scrollIntoView({block:'start'}); flashEl(el); } });
 }
+// v5.23 (#122): investments in the Month review: every platform with something in it, how fresh its prices and
+// units / value are, the action that updates it, and a "done this month" tick (monthReview.invDone[YYYY-MM] = [ids]).
+// (#127c) plus each Reconcile line's difference.
+function mrInvRows(){
+  const hs = invOwnerHoldings('all', invCashState(null).state).filter(h=>h.hasAnything);
+  const done = (mrState().invDone||{})[todayStr().slice(0,7)] || [];
+  return hs.map(h=>{
+    const p = h.platform, fr = h.robo? null : invBoxFreshness(h), wallets = h.robo? [] : invPlatformWallets(p.id);
+    return {p, robo:h.robo, fr, wallet: wallets.length>0, done: done.map(Number).includes(p.id),
+      valueDate: h.robo? (p.roboValueDate||null) : null};
+  });
+}
+async function mrInvToggleDone(pid, on){
+  const mk = todayStr().slice(0,7), all = Object.assign({}, mrState().invDone||{});
+  const cur = new Set((all[mk]||[]).map(Number)); if(on) cur.add(pid); else cur.delete(pid);
+  all[mk] = [...cur];
+  await mrSaveState({invDone: all});
+  renderMonthReview();
+}
+function mrInvGoRecon(pid, check){
+  setInvView('recon'); go('investments');
+  if(check) checkInvPlatformWallet(pid);
+}
+async function mrInvRefreshAll(){ await refreshInvPrices(); if(screen==='monthreview') renderMonthReview(); }
+function mrInvestHTML(){
+  const rows = mrInvRows(), doneN = rows.filter(r=>r.done).length;
+  const recon = invOwnerReconciliation().filter(r=>r.linked);
+  const body = rows.map(r=>{
+    const prices = r.robo? (r.valueDate? 'Value as of '+esc(r.valueDate) : '<span class="r">No value logged</span>')
+      : (r.fr.oldest? `<span class="${r.fr.stale?'r':''}">Prices ${esc(r.fr.oldest)}</span>${r.fr.missing? ` <span class="r">\u00b7 ${r.fr.missing} without a price</span>` : ''}` : '<span class="r">No prices</span>');
+    const units = r.robo? '' : (r.fr.checked? 'Units checked '+esc(r.fr.checked) : '<span class="mut">Units never checked</span>');
+    const act = r.robo? `<button class="btn ghost sm" onclick="openInvRoboValueModal(${r.p.id})">\u270e Update value</button>`
+      : r.wallet? `<button class="btn ghost sm" onclick="mrInvGoRecon(${r.p.id}, true)">Check wallet</button>`
+      : `<button class="btn ghost sm" onclick="mrInvGoRecon(${r.p.id}, false)">Enter units</button>`;
+    return `<tr data-mrinv="${r.p.id}"${r.done? ' style="opacity:.6"' : ''}><td><input type="checkbox" class="chk" style="width:auto" ${r.done?'checked':''} onchange="mrInvToggleDone(${r.p.id}, this.checked)" aria-label="${esc(r.p.name)} done this month"></td>
+      <td><b>${esc(r.p.name)}</b> <span class="mut" style="font-size:11px">${r.robo? 'robo' : r.wallet? 'wallet' : 'exchange'}</span></td><td style="font-size:12px">${prices}</td><td style="font-size:12px">${units}</td><td class="noprint">${act}</td></tr>`;
+  }).join('');
+  const rc = recon.map(r=>`<li data-mrrecon="${r.platform? 'p'+r.platform.id : 'o'+r.owner.id}">${esc(r.platform? r.platform.name+' (your money)' : r.owner.name)}: ${r.ok? '<span class="g">\u2713 matches</span>' : `<span class="r">off by ${money(r.diff)}</span>`}</li>`).join('');
+  return `<div class="panel" id="mrInvest"><h3>6 \u00b7 Investments</h3>
+    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><button class="btn pri sm" onclick="mrInvRefreshAll()">\u21bb Refresh all prices</button>
+      <span class="mut" style="font-size:12px" data-mrinvcount="${doneN}">${doneN} of ${rows.length} platform${rows.length===1?'':'s'} updated this month</span></div>
+    ${body? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th></th><th>Platform</th><th>Prices / value</th><th>Units</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : '<div class="mut">No platforms with holdings.</div>'}
+    ${rc? `<div style="margin-top:10px"><b style="font-size:12.5px">Reconcile</b> <button class="btn ghost sm" onclick="setInvView('recon'); go('investments')">Open Reconcile</button><ul style="font-size:12.5px;line-height:1.8;margin:4px 0 0;padding-left:18px">${rc}</ul></div>` : ''}
+  </div>`;
+}
 async function mrMarkReviewed(mk, on){
   const done = Object.assign({}, mrState().done||{});
   if(on) done[mk] = todayStr(); else delete done[mk];
@@ -8939,7 +8998,7 @@ function renderMonthReview(){
         : s5? `<div class="mut" style="font-size:12px;margin-bottom:6px">Amounts in ${esc(accShort(st.stlAcc))} for ${st.stlMonths} months or more, not moved yet.</div>
           <div style="overflow-x:auto"><table style="font-size:12.5px"><tbody>${s5}</tbody></table></div>
           <div class="row" style="margin-top:8px"><button class="btn pri sm" onclick="mrStlBuildJV()">Move ${stl.length} to ${esc(st.stlIncomeAcc? accShort(st.stlIncomeAcc) : 'income')} in New JV</button></div>`
-        : '<div class="mut">Nothing due this month.</div>'}</div>`;
+        : '<div class="mut">Nothing due this month.</div>'}</div>` + mrInvestHTML();
   mrTotalsRefresh();
 }
 function pnlVarianceMagnitude(budget, actual){ return Math.abs(budget) - Math.abs(actual); }
@@ -10769,10 +10828,11 @@ function invPlatformCash(platformId, asOfDate){
   return {byOwner, totalUsd, profitUsd, totalSar};
 }
 // An owner's cash across every platform, in SAR.
-function invOwnerCashSar(ownerId, asOfDate){
+function invOwnerCashSar(ownerId, asOfDate, keep){
   const {state} = invCashState(asOfDate);
   let usd=0, profit=0, sar=0, profitSar=0;
   for(const pid in state){
+    if(keep && !keep(Number(pid))) continue;
     const c = state[pid][ownerId];
     if(!c) continue;
     usd += c.usd; profit += c.profitUsd; sar += c.sar; profitSar += c.profitSar;
@@ -10793,14 +10853,17 @@ function invOwnerCashSar(ownerId, asOfDate){
 // Sums an owner's tracker capital across every position/cash source, as of a given date (or
 // "now" when asOfDate is omitted). "Capital" excludes both retained profit AND opening-balance
 // cost — neither has a matching bank movement, ever, so both are subtracted the same way.
-function invOwnerCapitalAsOf(ownerId, asOfDate){
+// v5.23 (#124): opts.only = one platform; opts.except = platforms left out.
+function invOwnerCapitalAsOf(ownerId, asOfDate, opts){
+  const keep = pid => !opts || (opts.only!==undefined? pid===opts.only : !(opts.except||[]).includes(pid));
   let costSar=0, openingCostSar=0;
   for(const pos of (D.invPositions||[])){
+    if(!keep(pos.platformId)) continue;
     const st = computePositionState(pos.id, asOfDate);
     const o = st.byOwner[ownerId];
     if(o){ costSar += o.costSar; openingCostSar += o.openingCostSar; }
   }
-  const cash = invOwnerCashSar(ownerId, asOfDate);
+  const cash = invOwnerCashSar(ownerId, asOfDate, opts? keep : null);
   return {
     costSar, openingCostSar, cashSar: cash.cashSar, profitSar: cash.profitSar,
     capital: costSar - openingCostSar + cash.cashSar - cash.profitSar
@@ -10822,31 +10885,33 @@ function invOwnerCapitalAsOf(ownerId, asOfDate){
 // activity strictly after the start date) cancels out whatever was wrong before that date on
 // both sides equally, so the check becomes "is everything booked correctly from here on,"
 // without requiring the historical entries to ever be fixed.
+// v5.23 (#124): a non-robo platform with its own In/Out accounts (e.g. Raseed) gets its own line for YOUR money on it,
+// checked against those accounts, and is left out of your personal line. Family money stays on each person's line (124c).
+function invOwnAccPlatforms(){ return (D.invPlatforms||[]).filter(p=>!p.isRobo && (p.outAcc || p.inAcc)); }
+function invReconLine(o, opts, outAcc, inAcc, startDate, platform){
+  const now = invOwnerCapitalAsOf(o.id, null, opts);
+  let trackerCapital, ledgerNet;
+  if(startDate){
+    const before = invOwnerCapitalAsOf(o.id, shiftDate(startDate, -1), opts);
+    const outSince = outAcc? Math.abs(sumAcc(l=>l.acc===outAcc, startDate, '9999-12-31')) : 0;
+    const inSince  = inAcc?  Math.abs(sumAcc(l=>l.acc===inAcc,  startDate, '9999-12-31')) : 0;
+    trackerCapital = now.capital - before.capital;
+    ledgerNet = outSince - inSince;
+  } else {
+    trackerCapital = now.capital;
+    ledgerNet = (outAcc? Math.abs(accountBalance(outAcc)) : 0) - (inAcc? Math.abs(accountBalance(inAcc)) : 0);
+  }
+  const diff = trackerCapital - ledgerNet;
+  return {owner:o, platform: platform||null, trackerCost: now.costSar, cashSar: now.cashSar, retainedProfitSar: now.profitSar,
+          openingCostSar: now.openingCostSar, trackerCapital, ledgerNet, diff, sinceDate: startDate,
+          linked: !!(outAcc||inAcc), ok: Math.abs(diff)<1};
+}
 function invOwnerReconciliation(){
   const startDate = (D.invSettings||{}).reconStartDate || null;
-  return (D.invOwners||[]).map(o=>{
-    const now = invOwnerCapitalAsOf(o.id, null);
-    const outAll = o.outAcc? Math.abs(accountBalance(o.outAcc)) : 0;
-    const inAll  = o.inAcc?  Math.abs(accountBalance(o.inAcc))  : 0;
-    const ledgerNetAll = outAll - inAll;
-
-    let trackerCapital, ledgerNet, sinceDate = null;
-    if(startDate){
-      const before = invOwnerCapitalAsOf(o.id, shiftDate(startDate, -1));
-      const outSince = o.outAcc? Math.abs(sumAcc(l=>l.acc===o.outAcc, startDate, '9999-12-31')) : 0;
-      const inSince  = o.inAcc?  Math.abs(sumAcc(l=>l.acc===o.inAcc,  startDate, '9999-12-31')) : 0;
-      trackerCapital = now.capital - before.capital;
-      ledgerNet = outSince - inSince;
-      sinceDate = startDate;
-    } else {
-      trackerCapital = now.capital;
-      ledgerNet = ledgerNetAll;
-    }
-    const diff = trackerCapital - ledgerNet;
-    return {owner:o, trackerCost: now.costSar, cashSar: now.cashSar, retainedProfitSar: now.profitSar,
-            openingCostSar: now.openingCostSar, trackerCapital, ledgerNet, diff, sinceDate,
-            linked: !!(o.outAcc||o.inAcc), ok: Math.abs(diff)<1};
-  });
+  const own = invOwnAccPlatforms(), self = (D.invOwners||[]).find(o=>o.isSelf);
+  const rows = (D.invOwners||[]).map(o=>invReconLine(o, o.isSelf && own.length? {except: own.map(p=>p.id)} : null, o.outAcc, o.inAcc, startDate));
+  if(self) own.forEach(p=>rows.push(invReconLine(self, {only:p.id}, p.outAcc, p.inAcc, startDate, p)));
+  return rows;
 }
 // ---- Pooled monthly contributions (v4.54.0) ----
 // "Available to place" per owner: what their Invested into / Withdrawn from platform accounts say has gone
@@ -10856,7 +10921,7 @@ function invOwnerReconciliation(){
 // figure drops back to ~0 by itself once the contribution is collected. null = no Out account linked.
 function invOwnersAvailableSar(){
   const out = {};
-  invOwnerReconciliation().forEach(r=>{
+  invOwnerReconciliation().filter(r=>!r.platform).forEach(r=>{
     out[r.owner.id] = r.owner.outAcc? Math.round((r.ledgerNet - r.trackerCapital)*100)/100 : null;
   });
   return out;
@@ -11720,6 +11785,13 @@ function invSumOwners(byOwner){
   Object.values(byOwner||{}).forEach(o=>{ if(!o) return; any = true; out.units += Number(o.units)||0; out.costSar += Number(o.costSar)||0; out.realizedSar += Number(o.realizedSar)||0; });
   return any? out : null;
 }
+function invIsExcluded(posId){ return (getUiDismissals().invExcluded||[]).map(Number).includes(Number(posId)); }
+async function setInvExcluded(posId, on){
+  const cur = new Set((getUiDismissals().invExcluded||[]).map(Number));
+  if(on) cur.add(Number(posId)); else cur.delete(Number(posId));
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {invExcluded:[...cur]}));
+  renderInvestmentsPage();
+}
 function invOwnerHoldings(ownerId, cashState){
   const fx = getInvFxRate();
   const st = cashState || invCashState(null).state;
@@ -11744,7 +11816,7 @@ function invOwnerHoldings(ownerId, cashState){
       if(o.units>1e-12){
         const marketSar = o.units*v.price*v.fx;
         const row = {pos, units:o.units, costSar:o.costSar, realizedSar:o.realizedSar||0, price:v.price, priceDate:v.priceDate,
-          hasValuation:v.hasValuation, valueSar: v.hasValuation? marketSar : o.costSar};
+          hasValuation:v.hasValuation, valueSar: v.hasValuation? marketSar : o.costSar, excluded: invIsExcluded(pos.id)};
         if(invIsStablecoin(pos)) stable.push(Object.assign(row, {usd:o.units, valueSar:o.units*fx}));
         else positions.push(row);
       } else if(Math.abs(o.realizedSar||0)>0.005){
@@ -11753,8 +11825,10 @@ function invOwnerHoldings(ownerId, cashState){
     }
     const c = all? Object.values(st[p.id]||{}).reduce((a,x)=>({usd:a.usd+(Number(x.usd)||0), sar:a.sar+(Number(x.sar)||0)}), {usd:0, sar:0}) : ((st[p.id]||{})[ownerId] || {usd:0, sar:0});
     const stableUsd = stable.reduce((s,r)=>s+r.usd,0), stableSar = stable.reduce((s,r)=>s+r.costSar,0);
-    const costSar = positions.reduce((s,r)=>s+r.costSar,0) + c.sar + stableSar;
-    const valueSar = positions.reduce((s,r)=>s+r.valueSar,0) + (c.usd + stableUsd)*fx;
+    // v5.23 (#121): an excluded coin stays listed but adds nothing to the totals
+    const counted = positions.filter(r=>!r.excluded);
+    const costSar = counted.reduce((s,r)=>s+r.costSar,0) + c.sar + stableSar;
+    const valueSar = counted.reduce((s,r)=>s+r.valueSar,0) + (c.usd + stableUsd)*fx;
     out.push({platform:p, robo:false, positions, closed, stable, cashUsd:c.usd, cashSar:c.sar, stableUsd, stableSar, costSar, valueSar,
       hasAnything: positions.length>0 || stable.length>0 || Math.abs(c.usd)>0.005 || closed.length>0});
   }
@@ -11765,7 +11839,7 @@ function invHoldingsTotals(list){
   list.forEach(h=>{
     t.costSar += h.costSar; t.valueSar += h.valueSar;
     t.cashUsd += h.cashUsd + h.stableUsd; t.cashSar += h.cashSar + h.stableSar;
-    t.unpriced += h.positions.filter(r=>!r.hasValuation).length;
+    t.unpriced += h.positions.filter(r=>!r.hasValuation && !r.excluded).length;
   });
   return t;
 }
@@ -11796,6 +11870,13 @@ function invTotalsCardsHTML(t, labels){
 }
 // One platform as a compact card: a single summary line, expanding to a simple table.
 // scope 'mine' gets the action buttons; a family member's card is read-only.
+function invPlatSort(){ try{ const v = JSON.parse(localStorage.getItem('invPlatSort')||'null'); if(v && v.key) return v; }catch(e){} return {key:'name', dir:'asc'}; }
+function setInvPlatSort(key){
+  const cur = invPlatSort();
+  const next = {key, dir: cur.key===key && cur.dir==='asc'? 'desc' : (cur.key===key? 'asc' : (key==='name'? 'asc' : 'desc'))};
+  try{ localStorage.setItem('invPlatSort', JSON.stringify(next)); }catch(e){}
+  renderInvestmentsPage();
+}
 function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
   const key = scope+':'+h.platform.id;
   const open = !!forceOpen || invCardsExpanded.has(key);
@@ -11823,10 +11904,14 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
   const det = !!allCols || invShowDetails;   // #53: the Family pop-out always shows cost, price, realised
   const pc = !!showPrice && !det;   // v5.18 (#98): the platform page always shows the price
   const cols = 5 + (det? 3 : 0) + (pc? 1 : 0);
-  const posRows = h.positions.map(r=>{
+  // v5.23 (#123): on the platform page, click a header to sort (again to reverse); remembered on this device
+  const srt = pc? invPlatSort() : null;
+  const sortKey = {name:r=>String(r.pos.name||'').toLowerCase(), units:r=>r.units, price:r=>r.hasValuation? r.price : -1, value:r=>r.valueSar, pl:r=>r.valueSar-r.costSar, pct:r=>r.costSar? (r.valueSar-r.costSar)/r.costSar : 0};
+  const sorted = srt? h.positions.slice().sort((a,b)=>{ const f = sortKey[srt.key]||sortKey.name, x = f(a), y = f(b); return (x<y? -1 : x>y? 1 : 0) * (srt.dir==='desc'? -1 : 1); }) : h.positions;
+  const posRows = sorted.map(r=>{
     const rpl = r.valueSar - r.costSar;
-    return `<tr class="click" style="cursor:pointer" onclick="openInvPosition(${r.pos.id})">
-      <td><b>${esc(r.pos.name)}</b>${r.pos.ticker? ` <span class="mut">${esc(r.pos.ticker)}</span>`:''}${r.hasValuation? '' : ' <span class="mut" style="font-size:11px">(no price)</span>'}</td>
+    return `<tr class="click" style="cursor:pointer${r.excluded? ';opacity:.55' : ''}" data-posrow="${r.pos.id}" onclick="openInvPosition(${r.pos.id})">
+      <td><b>${esc(r.pos.name)}</b>${r.pos.ticker? ` <span class="mut">${esc(r.pos.ticker)}</span>`:''}${r.excluded? ' <span class="badge" title="Not added to the totals">excluded</span>' : ''}${r.hasValuation? '' : ' <span class="mut" style="font-size:11px">(no price)</span>'}</td>
       <td class="num mono">${invFmtUnits(r.units)}</td>
       ${pc? `<td class="num mono" data-posprice="${r.pos.id}">${r.hasValuation? invFmtPrice(r.price)+' '+esc(r.pos.currency||'') : '\u2014'}</td>` : ''}
       <td class="num mono">${invDisp(r.valueSar)}</td>
@@ -11856,7 +11941,7 @@ function invHoldingCardHTML(h, scope, forceOpen, allCols, showPrice){
     </div>` : '';
   return `<div class="panel inv-card" data-card="${key}">${head}
     <div style="overflow-x:auto;margin-top:10px"><table style="min-width:${det? 720 : 460}px"><thead><tr>
-      <th>Position</th><th class="num">Units</th>${pc? '<th class="num">Price</th>' : ''}<th class="num">Value</th><th class="num">P/L</th><th class="num">%</th>
+      ${pc? [['name','Position',''],['units','Units','num'],['price','Price','num'],['value','Value','num'],['pl','P/L','num'],['pct','%','num']].map(([k,l,c])=>`<th class="${c} click" style="cursor:pointer" data-sortcol="${k}" onclick="setInvPlatSort('${k}')">${l}${srt.key===k? (srt.dir==='desc'? ' \u25be' : ' \u25b4') : ''}</th>`).join('') : '<th>Position</th><th class="num">Units</th><th class="num">Value</th><th class="num">P/L</th><th class="num">%</th>'}
       ${det? '<th class="num">Cost</th><th class="num">Price</th><th class="num">Realised</th>' : ''}
     </tr></thead><tbody>${posRows || (cashRows? '' : `<tr><td colspan="${cols}" class="empty">Nothing held here right now</td></tr>`)}${cashRows}</tbody></table></div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px;flex-wrap:wrap;gap:6px">
@@ -12750,7 +12835,7 @@ function invBoxHTML(h, ctx){
   const pl = h.valueSar - h.costSar;
   const cashUsd = h.cashUsd + h.stableUsd;
   const prefs = ctx.prefs;
-  const top = h.positions.slice().sort((a,b)=>b.valueSar-a.valueSar).slice(0,3);
+  const top = h.positions.filter(r=>!r.excluded).sort((a,b)=>b.valueSar-a.valueSar).slice(0,3);
   const total = ctx.totalFor(pid);
   const minePct = total>0.005? Math.max(0, Math.min(100, h.valueSar/total*100)) : 100;
   const fr = invBoxFreshness(h);
@@ -12876,6 +12961,21 @@ function invUnmatchedPlatformDeposits(){
       out.push({platform:p, date:l.date, sar:amt, jv:l.jv});
     });
   });
+  // v5.23 (#127a): your own "Invested into platform" account too (platforms booked to your personal accounts)
+  const self = (D.invOwners||[]).find(o=>o.isSelf);
+  if(self && self.outAcc){
+    const ownIds = invOwnAccPlatforms().map(p=>p.id);
+    const deps = (D.invCashMovements||[]).filter(m=>m.kind==='deposit' && !ownIds.includes(m.platformId) && (m.owners||[]).some(o=>o.ownerId===self.id))
+      .map(m=>{ const o = (m.owners||[]).find(x=>x.ownerId===self.id); return {date:m.date, sar: Number(o.sar)||(Number(o.usd)||0)*fx, used:false}; })
+      .concat((D.invTransactions||[]).filter(t=>t.kind==='buy' && t.cashSide==='bank' && (t.owners||[]).some(o=>o.ownerId===self.id) && !ownIds.includes((invPositionById(t.positionId)||{}).platformId))
+        .map(t=>({date:t.date, sar:Number(t.totalSar)||0, used:false})));
+    (D.ledger||[]).filter(l=>l.acc===self.outAcc && l.date>=start && Number(l.amt)>0).slice().sort((a,b)=>a.date<b.date?-1:1).forEach(l=>{
+      const amt = Number(l.amt);
+      const m = deps.find(d=>!d.used && Math.abs(daysBetweenDates(d.date, l.date))<=5 && Math.abs(d.sar-amt) <= Math.max(5, amt*0.02));
+      if(m){ m.used = true; return; }
+      out.push({platform:null, personal:true, date:l.date, sar:amt, jv:l.jv});
+    });
+  }
   return out;
 }
 function invNeedsYouItems(){
@@ -12888,6 +12988,7 @@ function invNeedsYouItems(){
       items.push({key:'collect', icon:'💰', text:`Contributions not collected yet: ${waiting.length} ${waiting.length===1?'person':'people'}, ${money(sum)} SAR in the ledger`, btn:'💰 Collect', act:"invStartPlatformAction('collect')"});
     }
     invUnmatchedPlatformDeposits().forEach(u=>{
+      if(u.personal){ items.push({key:'depme'+u.date+u.sar, icon:'↓', text:`Your Invested into platform account shows ${money(u.sar)} SAR paid in on ${esc(u.date)}, with no deposit recorded on any platform`, btn:'↓ Record deposit', act:`window._invDepPrefill={date:'${u.date}', sar:${u.sar}}; invStartPlatformAction('deposit')`}); return; }
       items.push({key:'dep'+u.platform.id+u.date, icon:'↓', text:`${esc(u.platform.name)}: the ledger shows ${money(u.sar)} SAR paid in on ${esc(u.date)}, with no deposit recorded`, btn:'↓ Record deposit', act:`openInvDepositFromLedger(${u.platform.id}, '${u.date}', ${u.sar})`});
     });
     const fx = getInvFxRate();
@@ -13018,6 +13119,7 @@ function invPricesRows(){
     const k = invCoinKey(r.pos) || ('#'+r.pos.id);
     const c = coins[k] = coins[k] || {key:k, rep:r.pos, units:0, valueSar:0, price:null, priceDate:null, currency:r.pos.currency||'', platforms:new Set(), priced:false};
     c.units += r.units; c.valueSar += r.valueSar; c.platforms.add(h.platform.name);
+    if(r.excluded) c.excluded = true;
     if(r.hasValuation){ c.priced = true; if(!c.priceDate || String(r.priceDate||'') > c.priceDate){ c.price = r.price; c.priceDate = r.priceDate; c.currency = r.pos.currency||''; } }
   }));
   return Object.values(coins).sort((a,b)=> (a.priced===b.priced? 0 : a.priced? 1 : -1) || b.valueSar-a.valueSar);
@@ -13032,7 +13134,7 @@ function renderInvPricesView(nav){
   const rows = invPricesRows(), unpriced = rows.filter(r=>!r.priced).length;
   const body = rows.map(r=>{
     const l = invPriceLink(r.rep.id), old = r.priceDate && invDaysSince(r.priceDate) > 1;
-    return `<tr data-pricecoin="${esc(r.key)}"><td><b>${esc(r.rep.ticker||r.rep.name)}</b> <span class="mut" style="font-size:11px">${esc([...r.platforms].join(', '))}</span></td>
+    return `<tr data-pricecoin="${esc(r.key)}"${r.excluded? ' style="opacity:.55"' : ''}><td><b>${esc(r.rep.ticker||r.rep.name)}</b>${r.excluded? ' <span class="badge">excluded</span>' : ''} <span class="mut" style="font-size:11px">${esc([...r.platforms].join(', '))}</span></td>
       <td class="num mono">${invFmtUnits(r.units)}</td>
       <td class="num mono">${r.priced? invFmtPrice(r.price)+' '+esc(r.currency) : '\u2014'}</td>
       <td class="num mono">${invDisp(r.valueSar)}${r.priced? '' : ' <span class="mut" style="font-size:11px">at cost</span>'}</td>
@@ -13275,6 +13377,7 @@ function exportInvActivityCSV(){
   const blob = new Blob([invActivityCsv()], {type:'text/csv'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'investment-activity-'+todayStr()+'.csv'; a.click();
 }
+function clearInvActivityFilter(){ invActivityFilter = {platformId:'', ownerId:'', coin:'', type:'', acc:'', from:'', to:'', limit:100}; renderInvestmentsPage(); }
 function setInvActivityFilter(field, val){
   invActivityFilter[field] = val;
   if(field!=='limit') invActivityFilter.limit = 100;
@@ -13310,6 +13413,7 @@ function renderInvActivityView(nav){
       <label class="row" style="gap:4px;font-size:12px;color:var(--muted)">From <input type="date" value="${esc(f.from)}" onchange="setInvActivityFilter('from', this.value)" style="width:auto"></label>
       <label class="row" style="gap:4px;font-size:12px;color:var(--muted)">To <input type="date" value="${esc(f.to)}" onchange="setInvActivityFilter('to', this.value)" style="width:auto"></label>
       <span class="mut" style="font-size:12px;align-self:center">${all.length} item${all.length===1?'':'s'}</span>
+      ${['platformId','ownerId','coin','type','acc','from','to'].some(k=>f[k])? `<button class="btn ghost sm" data-actclear="1" onclick="clearInvActivityFilter()">\u2715 Clear filters</button>` : ''}
       <button class="btn ghost sm" style="margin-left:auto" onclick="exportInvActivityCSV()">\u2B07 Export CSV</button>
     </div>
     <div style="overflow-x:auto"><table id="invActivityTable" style="min-width:760px"><thead><tr>
@@ -13413,7 +13517,7 @@ function invOwnerReconPanelHTML(){
         ? 'Comparing CHANGE since the start date on both sides, rather than full history — set this way because older ledger entries are known to be booked incorrectly. Whatever was wrong before that date cancels out of the comparison, so this checks only that everything from the start date onward is booked correctly.'
         : 'The tracker\'s capital doesn\'t match the ledger (invested minus capital returned). One side is likely missing a transaction.'} Cash held on a platform counts as still invested; retained profit and any Opening balance cost (a holding declared with no funding source) are excluded, since neither has a matching bank movement.</div>
       <div style="overflow-x:auto"><table style="min-width:760px"><thead><tr><th>Owner</th><th class="num">Cost basis</th><th class="num">− Opening balance</th><th class="num">+ Platform cash</th><th class="num">− Retained profit</th><th class="num">= Tracker capital${(D.invSettings||{}).reconStartDate?' (Δ)':''}</th><th class="num">Ledger${(D.invSettings||{}).reconStartDate?' (Δ)':''}</th><th class="num">Difference</th></tr></thead>
-      <tbody>${recon.map(r=>`<tr><td>${esc(r.owner.name)}</td><td class="num mono">${money(r.trackerCost)}</td><td class="num mono">${money(r.openingCostSar)}</td><td class="num mono">${money(r.cashSar)}</td><td class="num mono">${money(r.retainedProfitSar)}</td><td class="num mono">${money(r.trackerCapital)}</td><td class="num mono">${money(r.ledgerNet)}</td><td class="num mono r">${money(r.diff)}</td></tr>`).join('')}</tbody></table></div>
+      <tbody>${recon.map(r=>`<tr${r.platform? ` data-reconplat="${r.platform.id}"` : ''}><td>${r.platform? `${esc(r.platform.name)} <span class="mut" style="font-size:11px">(your money, its own accounts)</span>` : esc(r.owner.name)}</td><td class="num mono">${money(r.trackerCost)}</td><td class="num mono">${money(r.openingCostSar)}</td><td class="num mono">${money(r.cashSar)}</td><td class="num mono">${money(r.retainedProfitSar)}</td><td class="num mono">${money(r.trackerCapital)}</td><td class="num mono">${money(r.ledgerNet)}</td><td class="num mono r">${money(r.diff)}</td></tr>`).join('')}</tbody></table></div>
     </div>` : '';
 }
 function renderInvClassicPage(tabs){
@@ -13845,7 +13949,7 @@ function invPlatformsSorted(){
 // there's only one platform to pick from), then the same underlying opener as before.
 const INV_PLATFORM_ACTIONS = {
   position:  {label:'+ Position',  open: platformId => openInvAddPosition(platformId)},
-  deposit:   {label:'↓ Deposit',   open: platformId => openInvCashModal(platformId,'deposit')},
+  deposit:   {label:'↓ Deposit',   open: platformId => { const pf = window._invDepPrefill; window._invDepPrefill = null; if(pf) openInvDepositFromLedger(platformId, pf.date, pf.sar); else openInvCashModal(platformId,'deposit'); }},
   collect:   {label:'💰 Collect Contributions', open: platformId => openInvCollectModal(platformId)},
   withdrawal:{label:'↑ Withdraw',  open: platformId => openInvCashModal(platformId,'withdrawal')},
   transfer:  {label:'⇄ Move cash',  open: platformId => openInvCashModal(platformId,'transfer')},
@@ -14217,6 +14321,7 @@ function openInvPositionModal(pos){
       <div style="flex:1"><label class="fl">Currency</label><select onchange="window._invPosDraft.currency=this.value"><option ${d.currency==='SAR'?'selected':''}>SAR</option><option ${d.currency==='USD'?'selected':''}>USD</option></select></div>
       <div style="flex:1"><label class="fl">Status</label><select onchange="window._invPosDraft.status=this.value"><option ${d.status==='Active'?'selected':''}>Active</option><option ${d.status==='Closed'?'selected':''}>Closed</option></select></div>
     </div>
+    ${d.id? `<label class="row" style="gap:6px;align-items:center;margin-top:12px;font-size:12.5px"><input type="checkbox" class="chk" style="width:auto" data-excludepos="${d.id}" ${invIsExcluded(d.id)?'checked':''} onchange="setInvExcluded(${d.id}, this.checked)"> Exclude from totals <span class="mut">(still listed and reconciled; its value isn\u2019t added to the platform or portfolio totals)</span></label>` : ''}
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
       ${d.id? `<button class="btn del sm" style="margin-right:auto" onclick="deleteInvPosition(${d.id})">Delete</button>`:''}
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
@@ -14342,13 +14447,13 @@ function openInvPosition(posId){
       <td>${t.cashSide==='transfer'? `<span class="mut">${t.kind==='sell'?'🔁 Moved out':'🔁 Moved in'}</span>` : (t.kind==='sell'?'<span class="r">Sell</span>':'<span class="g">Buy</span>')}${t.cashSide==='opening'?' <span class="mut">(opening)</span>':''}</td>
       <td class="num mono">${Number(t.units).toLocaleString(undefined,{maximumFractionDigits:8})}</td>
       <td class="num mono">${money(t.totalSar)}</td>
-      <td class="num mono">${t.units? money(t.totalSar/t.units):'—'}</td>
+      <td class="num mono">${t.units? invFmtPrice(t.totalSar/t.units):'—'}</td>
       <td class="mut" style="font-size:11.5px">${(t.owners||[]).map(a=>{const o=invOwnerById(a.ownerId); return (o?esc(o.name):'?')+' '+Number(a.units).toLocaleString(undefined,{maximumFractionDigits:8});}).join(', ')||'—'}</td>
       <td class="noprint"><button class="btn ghost sm" onclick="openInvTxModal(${posId}, ${t.id})">✎</button></td>
     </tr>`).join('') || '<tr><td colspan="7" class="empty">No transactions yet</td></tr>'}</tbody></table></div>
     <h3 style="font-size:14px;margin-top:16px">Recent prices</h3>
     <table><thead><tr><th>Date</th><th class="num">Price (${esc(pos.currency)})</th></tr></thead>
-    <tbody>${vals.map(v2=>`<tr><td class="mono">${esc(v2.date)}</td><td class="num mono">${money(v2.price)}</td></tr>`).join('') || '<tr><td colspan="2" class="empty">No prices logged</td></tr>'}</tbody></table>
+    <tbody>${vals.map(v2=>`<tr><td class="mono">${esc(v2.date)}</td><td class="num mono">${invFmtPrice(v2.price)}</td></tr>`).join('') || '<tr><td colspan="2" class="empty">No prices logged</td></tr>'}</tbody></table>
     <div class="row noprint" style="justify-content:flex-end;gap:8px;margin-top:14px">
       <button class="btn ghost" onclick="openInvPositionModal(invPositionById(${posId}))">✎ Edit position</button>
       <button class="btn pri" onclick="closeModal()">Done</button>
@@ -15088,6 +15193,12 @@ function renderInvCashModal(){
     </div>`, true);
   invCashRefreshDerived();
 }
+function invDepositHasLedger(platformId, date, ownerIds){
+  const p = invPlatformById(platformId) || {};
+  const accs = new Set([p.outAcc].concat((ownerIds||[]).map(id=>(invOwnerById(id)||{}).outAcc)).filter(Boolean).map(Number));
+  if(!accs.size) return true;   // nothing to compare with
+  return (D.ledger||[]).some(l=>accs.has(Number(l.acc)) && Number(l.amt)>0 && Math.abs(daysBetweenDates(l.date, date))<=5);
+}
 async function saveInvCashMovement(){ return invOnce(saveInvCashMovementNow); }
 async function saveInvCashMovementNow(){
   const d = window._invCashDraft;
@@ -15114,6 +15225,9 @@ async function saveInvCashMovementNow(){
     const already = d.id? Math.abs(Number((D.invCashMovements||[]).find(m=>m.id===d.id)?.usdAmount)||0) : 0;
     if(amt + fee - already > avail + 0.005) toast('Heads up: this takes the platform cash balance negative', true);
   }
+  // v5.23 (#127b): a deposit with no ledger entry on its In account or the people's own Invested accounts within ±5 days
+  if(d.kind==='deposit' && !invDepositHasLedger(d.platformId, d.date, owners.map(o=>o.ownerId))
+     && !confirm('No ledger entry found within 5 days of '+d.date+' for this deposit. Check the date (or post the JV) so Reconcile matches.\n\nSave anyway?')) return;
   const fields = {platformId:d.platformId, date:d.date, kind:d.kind, usdAmount:amt,
                   toPlatformId: d.kind==='transfer'? d.toPlatformId : null, feeUsd:fee,
                   capitalUsd:sp.capitalUsd, profitUsd:sp.profitUsd, owners, note:d.note||''};
