@@ -6642,7 +6642,7 @@ async function testMineTableHasFiveColumnsUntilDetailsAreShown(){
   vm.runInContext("invPlatformPageId = 1", sb);   // v5.6: the detail table is on the platform's own page
   let html = viewHtml(sb, 'mine');
   let head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
-  assert(head && (head[1].match(/<th/g)||[]).length===6 && /Price/.test(head[1]), 'v5.18 (#98): the platform page table has 6 columns, Price included, got ' + (head&&(head[1].match(/<th/g)||[]).length));
+  assert(head && (head[1].match(/<th/g)||[]).length===7 && /Price/.test(head[1]) && /Avg cost/.test(head[1]), 'v5.18 (#98) + v5.27 (#144): the platform page table has 7 columns, Price and Avg cost included, got ' + (head&&(head[1].match(/<th/g)||[]).length));
   sb.toggleInvDetails();
   html = sb.document.getElementById('app').innerHTML;
   head = html.match(/data-card="mine:1"[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
@@ -8132,6 +8132,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV526SellToFamilyCashPct();
   await testV526RailChips();
   await testV526JvEditAllocOtherLeg();
+  await testV527PositionUsdAndAvgCost();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11718,7 +11719,7 @@ async function testV523ExcludeSortPricesClear(){
   assert(sb.document.querySelector('[data-excludepos="3"]').checked, 'Edit position has the Exclude from totals switch, on');
   // #128 tiny prices in the position window (its window is stubbed in this sandbox, so check the source and the formatter)
   const appHtml = fs.readFileSync(APP_HTML, 'utf8');
-  assert(/invFmtPrice\(v2\.price\)/.test(appHtml) && /t\.units\? invFmtPrice\(t\.totalSar\/t\.units\)/.test(appHtml) && sb.invFmtPrice(0.00005512)==='0.00005512', 'Recent prices and per-unit cost show tiny prices in full');
+  assert(/invFmtPrice\(v2\.price\)/.test(appHtml) && /invFmtPrice\(t\.totalSar\/t\.units\)/.test(appHtml) && /invFmtPrice\(invTxUsd\(t\)\/t\.units\)/.test(appHtml) && sb.invFmtPrice(0.00005512)==='0.00005512', 'Recent prices and per-unit cost show tiny prices in full');
   // #123 sort
   vm.runInContext('invPlatformPageId = 1', sb); sb.__set('invView', 'all');
   sb.setInvPlatSort('value');
@@ -11927,4 +11928,36 @@ async function testV526JvEditAllocOtherLeg(){
   assert(g(5).alloc===null && g(7).alloc===null && g(6).alloc===8 && g(8).alloc===8, 'Edited line and its text-matched other leg leave #8; the rest stays, got ' + JSON.stringify([5,6,7,8].map(i=>g(i).alloc)));
   const note = sb.document.querySelector('[data-allocnote="8"]');
   assert(note && /Changed line taken out/.test(note.textContent) && /onclick/.test(note.innerHTML) && /viewAllocGroup\(8\)/.test(note.innerHTML), 'A message names the allocation and offers Open');
+}
+
+async function testV527PositionUsdAndAvgCost(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invOwners.forEach(o=>{ o.isSelf = o.id===1; });
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  D.invTransactions.push({id:901, positionId:1, date:'2026-11-02', kind:'buy', units:0.1, totalSar:1125, usdAmount:290, cashSide:'bank', owners:[{ownerId:2, units:0.1}], feePct:0});
+  const pos = sb.invPositionById(1), v = sb.computePositionValuation(pos);
+  const allUsd = v.totalCostSar / v.totalUnits / 3.75;
+  const sl = sb.ownerSliceOfPosition(pos, 1), mineUsd = sl.costSar / sl.units / 3.75;
+  assert(Math.abs(mineUsd-2000)<0.01 && Math.abs(allUsd-mineUsd)>1, 'Fixture: family bought at a different price, so everyone vs yours differ, got ' + JSON.stringify([allUsd, mineUsd]));
+  // poolSandbox stubs openInvPosition: test its box helper and its source
+  const wrap = sb.document.createElement('div'); wrap.innerHTML = sb.invAvgCostCardHTML(pos, v);
+  const appHtml = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/\$\{invAvgCostCardHTML\(pos, v\)\}/.test(appHtml), 'The coin window shows the Avg cost / unit box');
+  const box = wrap.querySelector('[data-avgcost="1"]');
+  assert(box && box.querySelector('.kpi-value') && box.querySelector('.kpi-value').textContent==='$'+sb.invFmtPrice(allUsd) && /everyone/.test(box.textContent), 'Avg cost / unit box: everyone together in USD, got ' + (box && box.textContent));
+  const mine = box && box.querySelector('[data-avgcost-mine]');
+  assert(mine && mine.textContent.indexOf('Yours $2,000.00')===0, 'Yours underneath, got ' + (mine && mine.textContent));
+  assert(Math.abs(sb.invTxUsd(D.invTransactions.find(t=>t.id===901))-290)<1e-9, 'A buy entered in USD shows the USD paid (290, not 1125 / 3.75)');
+  assert(/<th class="num">Total USD<\/th><th class="num">Per unit USD<\/th>/.test(appHtml) && /data-txusd="\$\{t\.id\}">\$\$\{fmt2\(invTxUsd\(t\)\)\}<div class="mut" style="font-size:11px">\$\{money\(t\.totalSar\)\} SAR/.test(appHtml), 'Transactions: USD first, SAR under it');
+  const noUsd = {totalSar:750, usdAmount:0, units:1, owners:[{ownerId:1, units:1}]};
+  assert(Math.abs(sb.invTxUsd(noUsd)-200)<0.01, 'A line with no USD entered (moved in, opening) converts its SAR at its rate, got ' + sb.invTxUsd(noUsd));
+  // platform page column follows the tab
+  sb.__set('renderInvestmentsPage', sb.renderInvestmentsPage);
+  vm.runInContext('invPlatformPageId = 1', sb); sb.__set('invView', 'mine'); sb.renderInvestmentsPage();
+  const m = sb.document.querySelector('[data-posavg="1"]');
+  assert(m && /2,000\.00 USD/.test(m.textContent) && sb.document.querySelector('[data-sortcol="avg"]'), 'Mine: the Avg cost column shows your cost per unit and sorts, got ' + (m && m.textContent));
+  sb.__set('invView', 'all'); sb.renderInvestmentsPage();
+  const a = sb.document.querySelector('[data-posavg="1"]');
+  assert(a && a.textContent.indexOf(sb.invFmtPrice(allUsd))===0, 'All: everyone\'s average, got ' + (a && a.textContent));
 }
