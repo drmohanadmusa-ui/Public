@@ -154,7 +154,7 @@ tfoot td{font-weight:700;border-top:2px solid var(--line);border-bottom:none}
 .splash-a-arc{transition:stroke-dashoffset .35s ease}
 .splash-a-spark{transform-origin:24px 24px;transform:scale(0);transition:transform .4s cubic-bezier(.3,1.6,.5,1)}
 #splashScreen.style-ring .splash-progress-track{display:none}
-#splashScreen.style-ring.finishing .splash-a-spark{transform:scale(1)}
+#splashScreen.style-ring.sparked .splash-a-spark{transform:scale(1)}
 .splash-coins{position:relative;width:110px;height:72px}
 .splash-coin{position:absolute;left:15px;width:80px;height:24px;border-radius:50%;background:linear-gradient(180deg,#f5c542,#d4a017);box-shadow:0 4px 0 #a97c0f;animation:splashCoinDrop .55s cubic-bezier(.3,1.4,.5,1) both}
 .splash-coin:nth-child(1){bottom:0}.splash-coin:nth-child(2){bottom:16px;animation-delay:.35s}.splash-coin:nth-child(3){bottom:32px;animation-delay:.7s}
@@ -166,7 +166,7 @@ tfoot td{font-weight:700;border-top:2px solid var(--line);border-bottom:none}
 .splash-row span:first-child{color:var(--muted)}
 .splash-total{height:2px;background:var(--text);transform:scaleX(0);transform-origin:left;transition:transform .45s}
 .splash-sum{display:flex;justify-content:space-between;font-weight:700;opacity:0;transition:opacity .3s}
-#splashScreen.finishing .splash-total{transform:scaleX(1)} #splashScreen.finishing .splash-sum{opacity:1}
+#splashScreen.totaled .splash-total{transform:scaleX(1)} #splashScreen.totaled .splash-sum{opacity:1}
 .splash-end-logo{position:absolute;inset:0;margin:auto;opacity:0;transform:scale(.4) rotate(-30deg);transition:transform .5s cubic-bezier(.3,1.4,.5,1), opacity .35s}
 #splashScreen.folded .splash-sheet, #splashScreen.folded .splash-coins{transform:scale(.2);opacity:0;transition:transform .4s, opacity .35s}
 #splashScreen.folded .splash-end-logo{opacity:1;transform:none}
@@ -616,12 +616,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.20.0';
+const APP_VERSION = '5.21.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.21.0', date:'2026-11-15', changes:[
+    'Loading screen: the animation now runs at its own steady pace and loops until the app has loaded (before, it followed the loading %, which jumps in under a second). When loading finishes it completes the cycle on screen, then plays the ending.',
+    'Month review, Suggested budget totals: the Full budget row now matches the Budget grid\u2019s total for this month (every expense account, including the ones planned in Provisions). Under each average it shows the full budget if every listed account took that average, and under New budget the full budget with whatever is in the boxes, updated as you click or type. Negative budgets keep their sign (a -100 budget was counted as +100).',
+    'Month review: the 12-month average figure can be clicked to put it in the box, like the 9, 6 and 3-month ones.',
+    'Investment transaction window: \u2696 Split by share fills each person\u2019s units (or SAR) from the total. A buy splits by each person\u2019s cash on the platform and lists everyone with their cash there; a sell splits by each person\u2019s units of this coin on this platform and lists only the people holding it. A Share column shows each %.',
+    'A platform\u2019s own page lists its positions with no units: Delete for one with no transactions (e.g. a coin added by mistake), Open for the rest.',
+  ]},
   {version:'5.20.0', date:'2026-11-15', changes:[
     'Dashboard: the three Month review reminders have Dismiss. Review and Unused provisions come back next month (dismissing does not mark the month reviewed); Plans that disagree comes back when another account starts to disagree.',
     'Month review, Plans that disagree: Ignore this month on each account; it comes back next month if it still disagrees, and Undo is listed under the box.',
@@ -1866,6 +1873,7 @@ function showSplash(){
   const btn = document.getElementById('splashBypassBtn');
   if(btn) btn.classList.remove('show');
   renderSplashArt();
+  splashStartCycle();
   applyAppLogo();   // the rail shows the chosen logo before the first sync too
   updateSplashProgress(0);
   if(navigator.onLine===false){
@@ -1883,15 +1891,11 @@ function hideSplash(){
   const el = document.getElementById('splashScreen');
   if(splashBypassTimer){ clearTimeout(splashBypassTimer); splashBypassTimer = null; }
   window.removeEventListener('offline', splashOfflineHandler);
-  if(!el || el.classList.contains('hidden') || el.classList.contains('finishing')) return;
-  // v5.19 (#104): a short ending (total line / spark, then the logo, then zoom out) before the app shows
+  if(!el || el.classList.contains('hidden')) return;
   updateSplashProgress(100);
   const reduce = !window.matchMedia || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if(reduce || !document.getElementById('splashArt')){ el.classList.add('hidden'); return; }
-  el.classList.add('finishing');
-  const st = getSplashStyle();
-  const steps = st==='ledger'? [[500,'folded'],[1050,'zoom'],[1300,'hidden']] : st==='coins'? [[150,'folded'],[700,'zoom'],[950,'hidden']] : [[300,'zoom'],[550,'hidden']];
-  steps.forEach(([ms, c])=>setTimeout(()=>el.classList.add(c), ms));
+  if(reduce || !splashCycle || !document.getElementById('splashArt')){ splashStopCycle(); el.classList.add('hidden'); return; }
+  splashCycle.wantHide = true;   // v5.21 (#114a B): finish the cycle on screen, then the ending (splashTick)
 }
 function updateSplashStatus(text){
   const el = document.getElementById('splashStatus');
@@ -1903,7 +1907,6 @@ function updateSplashProgress(pct){
   if(el) el.style.width = clamped+'%';
   const pctEl = document.getElementById('splashProgressPct');
   if(pctEl) pctEl.textContent = clamped+'%';
-  splashArtProgress(clamped);
 }
 // Escape hatch: reveals the app immediately with whatever local/cached data exists, while the
 // real sync keeps trying quietly in the background (matching the existing lightweight sync
@@ -3498,19 +3501,49 @@ function splashRingSvg(){
 function renderSplashArt(){
   const el = document.getElementById('splashScreen'), art = document.getElementById('splashArt'); if(!el || !art) return;
   const st = getSplashStyle(), logo = '<div class="splash-end-logo splash-logo">'+appLogoSvg(getAppLogo(), 's')+'</div>';
-  el.classList.remove('style-ring','style-coins','style-ledger','finishing','folded','zoom'); el.classList.add('style-'+st);
+  el.classList.remove('style-ring','style-coins','style-ledger','totaled','sparked','folded','zoom'); el.classList.add('style-'+st);
   art.innerHTML = st==='ring'? '<div class="splash-logo">'+splashRingSvg()+'</div>'
     : st==='coins'? '<div class="splash-coins"><div class="splash-coin"></div><div class="splash-coin"></div><div class="splash-coin"></div></div>'+logo
     : '<div class="splash-sheet">'+SPLASH_ROWS.map(([k,l])=>'<div class="splash-row" data-splashrow="'+k+'"><span>'+l+'</span><span>\u2026</span></div>').join('')+'<div class="splash-total"></div><div class="splash-sum"><span>Balanced</span><span>\u2713</span></div></div>'+logo;
 }
-function splashArtProgress(pct){
-  const arc = document.getElementById('splashRingArc'); if(arc) arc.style.strokeDashoffset = String(78.5*(1-pct/100));
-  SPLASH_ROWS.forEach(([k,,at])=>{
-    const r = document.querySelector('[data-splashrow="'+k+'"]'); if(!r) return;
-    if(pct>=at) r.classList.add('in');
-    const n = Array.isArray(D && D[k])? D[k].length : 0;
-    if(r.classList.contains('in') && (n || pct>=100)) r.lastElementChild.textContent = n.toLocaleString();
+// v5.21 (#114): the animation runs at its own fixed pace (one cycle every SPLASH_CYCLE_MS, rows / ring / coins
+// in step with the clock, not the loading %), loops until the app has loaded, then finishes the cycle it is in
+// and plays the ending.
+const SPLASH_CYCLE_MS = 3000;
+let splashCycle = null;
+function splashStartCycle(){
+  splashStopCycle();
+  splashCycle = {t0: Date.now(), idx: 0, wantHide: false, ending: false, timer: null};
+  splashCycle.timer = setInterval(()=>splashTick(Date.now()), 120);
+  splashTick(splashCycle.t0);
+}
+function splashStopCycle(){ if(splashCycle && splashCycle.timer) clearInterval(splashCycle.timer); splashCycle = null; }
+function splashRowsShow(el, upTo){
+  SPLASH_ROWS.forEach(([k], i)=>{
+    const r = el.querySelector('[data-splashrow="'+k+'"]'); if(!r) return;
+    const on = i < upTo; r.classList.toggle('in', on);
+    if(on){ const n = Array.isArray(D && D[k])? D[k].length : 0; r.lastElementChild.textContent = n? n.toLocaleString() : '\u2026'; }
   });
+}
+function splashTick(now){
+  const c = splashCycle, el = document.getElementById('splashScreen');
+  if(!c || !el || c.ending) return;
+  const t = Math.max(0, now - c.t0), idx = Math.floor(t / SPLASH_CYCLE_MS), ph = (t % SPLASH_CYCLE_MS) / SPLASH_CYCLE_MS;
+  const st = getSplashStyle();
+  if(idx !== c.idx){   // a full cycle has just been shown
+    c.idx = idx;
+    if(c.wantHide){ splashEnding(el, st); return; }
+    if(st==='coins'){ const box = el.querySelector('.splash-coins'); if(box) box.innerHTML = box.innerHTML; }   // drop again
+  }
+  if(st==='ledger'){ splashRowsShow(el, Math.min(SPLASH_ROWS.length, Math.floor(ph/0.17))); el.classList.toggle('totaled', ph >= 0.8); }
+  if(st==='ring'){ const arc = document.getElementById('splashRingArc'); if(arc) arc.style.strokeDashoffset = String(78.5*(1-Math.min(1, ph/0.8))); el.classList.toggle('sparked', ph >= 0.8); }
+}
+function splashEnding(el, st){
+  const c = splashCycle; if(c){ c.ending = true; if(c.timer) clearInterval(c.timer); }
+  if(st==='ledger'){ splashRowsShow(el, SPLASH_ROWS.length); el.classList.add('totaled'); }
+  if(st==='ring') el.classList.add('sparked');
+  const steps = st==='ring'? [[250,'zoom'],[500,'hidden']] : [[0,'folded'],[550,'zoom'],[800,'hidden']];
+  steps.forEach(([ms, k])=>setTimeout(()=>{ el.classList.add(k); if(k==='hidden') splashCycle = null; }, ms));
 }
 function appLogoSvg(key, idSuffix){ const svg = APP_LOGOS[key].svg; return '<svg viewBox="0 0 48 48" aria-hidden="true">'+(idSuffix? svg.replace(/id="(lg\w+)"/g, 'id="$1'+idSuffix+'"').replace(/url\(#(lg\w+)\)/g, 'url(#$1'+idSuffix+')') : svg)+'</svg>'; }
 function applyAppLogo(){
@@ -8530,6 +8563,18 @@ function mrFlag(plan, actual, st){
 }
 function mrLimitText(st){ st = st || mrSettings(); return 'more than '+st.pct+'%'+(st.sar!==null? ' or SAR '+money0(st.sar) : ''); }
 function mrRound(v, r){ return roundCents(Math.round(v/r)*r); }
+// v5.21 (#115): the Budget grid's total for a month: every expense account's plan (Provisions first, else Budget), signed.
+function mrFullBudget(mk){ return roundCents(expenseAccountsList().reduce((s,a)=>{ const c = resolvedBudgetCell(a.id, mk); return s + (Number(c.plan)||0); }, 0)); }
+function mrTotalsRefresh(){
+  const boxes = [...document.querySelectorAll('#mrSuggest input[id^="mrSug_"]')];
+  const lr = document.querySelector('[data-mrtotal="listed"]'), fr = document.querySelector('[data-mrtotal="full"]');
+  if(!lr || !fr) return;
+  const plan = Number(lr.dataset.plan)||0, full = Number(fr.dataset.full)||0;
+  const nw = roundCents(boxes.reduce((s,b)=>s+(Number(String(b.value).replace(/,/g,''))||0), 0));
+  const put = (id, v, signed) => { const el = document.getElementById(id); if(el) el.textContent = signed? (v>0?'+':'')+money0(v) : money0(v); };
+  put('mrTotNewListed', nw); put('mrTotDiffListed', nw-plan, true);
+  put('mrTotNewFull', full-plan+nw); put('mrTotDiffFull', nw-plan, true);
+}
 
 // Step 1
 function mrActualVsPlan(mk){
@@ -8554,8 +8599,8 @@ function mrAccountStudy(a, mk){
   const st = mrSettings(), cur = todayStr().slice(0,7);
   let first = null; D.ledger.forEach(l=>{ if(l.acc===a.id && (!first || l.date<first)) first = l.date; });
   const months = []; for(let i=11;i>=0;i--){ const m = shiftMonthKey(mk, -i); if(first && m>=first.slice(0,7)) months.push(m); }
-  const plan = Math.abs(budgetPlanFor(a.id, cur)||0);
-  if(!months.length) return plan>=0.005? {a, months:0, total:0, average:0, avg9:0, avg6:0, avg3:0, suggested:0, plan, show:true, none:true} : null;
+  const plan = budgetPlanFor(a.id, cur)||0;   // v5.21 (#115): keep its sign (a -100 budget stays -100)
+  if(!months.length) return Math.abs(plan)>=0.005? {a, months:0, total:0, average:0, avg9:0, avg6:0, avg3:0, suggested:0, plan, show:true, none:true} : null;
   const byMonth = {}; months.forEach(m=>{ byMonth[m] = 0; });
   D.ledger.forEach(l=>{ if(l.acc===a.id){ const m = monthOf(l.date); if(byMonth[m]!==undefined) byMonth[m] += Number(l.amt)||0; } });
   const total = roundCents(months.reduce((s,m)=>s+byMonth[m], 0));
@@ -8820,14 +8865,20 @@ function renderMonthReview(){
   // v5.19 (#107): plan now → 12-month average, the difference, an editable box and Accept on each row
   const s2 = step2.map(r=>{ const d = r.suggested - r.plan;
     return `<tr data-mrsug="${r.a.id}"><td>${esc(accShort(r.a.id))}${r.none? `<div class="mut" style="font-size:11px">Nothing spent in 12 months: clear the plan?</div>` : r.months<12? `<div class="mut" style="font-size:11px">Average of ${r.months} month${r.months===1?'':'s'} (newer account)</div>` : ''}</td>
-      <td class="num mono">${money0(r.plan)}</td><td class="num mono">${money0(r.average)}</td>
-      ${[9,6,3].map(n=>`<td class="num mono click" style="cursor:pointer" data-mravg="${n}" title="Use this ${n}-month average" onclick="var b=document.getElementById('mrSug_${r.a.id}'); if(b){ b.value='${mrRound(r['avg'+n], st.round)}'; b.focus(); }">${money0(r['avg'+n])}</td>`).join('')}
+      <td class="num mono">${money0(r.plan)}</td>
+      ${[[12,'average'],[9,'avg9'],[6,'avg6'],[3,'avg3']].map(([n,k])=>`<td class="num mono click" style="cursor:pointer" data-mravg="${n}" title="Use this ${n}-month average" onclick="var b=document.getElementById('mrSug_${r.a.id}'); if(b){ b.value='${mrRound(r[k], st.round)}'; b.focus(); mrTotalsRefresh(); }">${money0(r[k])}</td>`).join('')}
       <td class="num mono ${d>0?'r':'g'}">${d>0?'+':''}${money0(d)}</td>
-      <td class="num"><input id="mrSug_${r.a.id}" type="text" inputmode="decimal" class="num" style="width:90px" value="${r.suggested}" aria-label="New monthly budget for ${esc(accShort(r.a.id))}"></td>
+      <td class="num"><input id="mrSug_${r.a.id}" data-mrplan="${r.plan}" type="text" inputmode="decimal" class="num" style="width:90px" value="${r.suggested}" oninput="mrTotalsRefresh()" aria-label="New monthly budget for ${esc(accShort(r.a.id))}"></td>
       <td><button class="btn pri sm" data-mraccept="${r.a.id}" onclick="mrOpenAccept(${r.a.id})">${r.none? 'Clear plan' : 'Accept'}</button></td></tr>`; }).join('');
   const allSug = mrSuggestions(mk, true), fine = allSug.length - step2.length;
-  const totRow = (label, list, attr) => { const t = k => list.reduce((s,r)=>s+(Number(r[k])||0), 0);
-    return `<tr ${attr} style="font-weight:700;background:var(--chip)"><td>${label}</td><td class="num mono">${money0(t('plan'))}</td><td class="num mono">${money0(t('average'))}</td><td class="num mono">${money0(t('avg9'))}</td><td class="num mono">${money0(t('avg6'))}</td><td class="num mono">${money0(t('avg3'))}</td><td class="num mono">${(t('suggested')-t('plan'))>0?'+':''}${money0(t('suggested')-t('plan'))}</td><td class="num mono">${money0(t('suggested'))}</td><td></td></tr>`; };
+  // v5.21 (#115): totals for the listed accounts, and the full budget (the Budget grid's total for this month) with
+  // the listed accounts' plans swapped for each average, or for whatever is in the boxes (updated as he types).
+  const fullNow = mrFullBudget(todayStr().slice(0,7)), sumBy = k => step2.reduce((s,r)=>s+(k==='plan'? Number(r.plan)||0 : mrRound(Number(r[k])||0, st.round)), 0);
+  const listedPlan = sumBy('plan');
+  const avgCols = ['average','avg9','avg6','avg3'];
+  const sgn = v => (v>0?'+':'')+money0(v);
+  const totRows = `<tr data-mrtotal="listed" data-plan="${listedPlan}" style="font-weight:700;background:var(--chip)"><td>Total, accounts listed</td><td class="num mono">${money0(listedPlan)}</td>${avgCols.map(k=>`<td class="num mono">${money0(sumBy(k))}</td>`).join('')}<td class="num mono" id="mrTotDiffListed"></td><td class="num mono" id="mrTotNewListed"></td><td></td></tr>
+    <tr data-mrtotal="full" data-full="${fullNow}" style="font-weight:700;background:var(--chip)"><td>Full budget, ${esc(monthLabel(todayStr().slice(0,7)))} (Budget grid)</td><td class="num mono">${money0(fullNow)}</td>${avgCols.map(k=>`<td class="num mono" data-mrfull="${k}">${money0(fullNow - listedPlan + sumBy(k))}</td>`).join('')}<td class="num mono" id="mrTotDiffFull"></td><td class="num mono" id="mrTotNewFull"></td><td></td></tr>`;
   const kindTxt = {missing:'Planned, nothing booked: paid in another month or skipped?', extra:'Booked with nothing planned this month', amount:'Amount differs from the plan'};
   const s3 = step3.map(x=> x.kind==='ending'
     ? `<li data-mrprov="ending">“${esc(x.g.name)}” ends in ${esc(monthLabel(x.last))}. <button class="btn ghost sm" onclick="provisionEditingId=${x.g.id}; go('provisions')">Open</button></li>`
@@ -8853,9 +8904,9 @@ function renderMonthReview(){
       <div class="mut" style="font-size:12px;margin-bottom:6px">⚑ = off by ${esc(mrLimitText(st))}. ${flagged} account${flagged===1?'':'s'} flagged.</div>
       ${s1? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Category / account</th><th class="num">Plan</th><th class="num">Actual</th><th class="num">Difference</th><th></th></tr></thead><tbody>${s1}</tbody></table></div>` : '<div class="mut">Nothing planned or booked that month.</div>'}</div>
     <div class="panel" id="mrSuggest"><h3>2 · Suggested budget</h3>
-      <div class="mut" style="font-size:12px;margin-bottom:6px">Your average monthly spend over the last 12 months, for accounts planned in the Budget grid, where it differs from the plan by ${esc(mrLimitText(st))}. Accept sets the next ${st.months} month${st.months===1?'':'s'} to the figure in the box (you see every month first). Click a 9, 6 or 3-month figure to put it in the box.</div>
+      <div class="mut" style="font-size:12px;margin-bottom:6px">Your average monthly spend over the last 12 months, for accounts planned in the Budget grid, where it differs from the plan by ${esc(mrLimitText(st))}. Accept sets the next ${st.months} month${st.months===1?'':'s'} to the figure in the box (you see every month first). Click any average to put it in the box; the totals below follow the boxes.</div>
       ${s2? `<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Account</th><th class="num">Plan now</th><th class="num">12-month average</th><th class="num">9 months</th><th class="num">6 months</th><th class="num">3 months</th><th class="num">Difference</th><th class="num">New budget</th><th></th></tr></thead><tbody>${s2}</tbody>
-        <tfoot>${totRow('Total, accounts listed', step2, 'data-mrtotal="listed"')}${totRow('Total, every Budget-planned account', allSug, 'data-mrtotal="all"')}</tfoot></table></div>` : ''}
+        <tfoot>${totRows}</tfoot></table></div>` : ''}
       ${fine>0? `<div class="mut" style="font-size:12px;margin-top:6px" data-mrfine="${fine}">${s2? '' : 'Nothing to change. '}${fine} account${fine===1?' looks':'s look'} fine (within the limits).</div>` : s2? '' : '<div class="mut">No accounts planned in the Budget grid.</div>'}</div>
     <div class="panel"><h3>3 · Provisions</h3>
       ${s3? `<ul style="font-size:12.5px;line-height:1.9;margin:0;padding-left:18px">${s3}</ul>` : '<div class="mut">All provision lines matched last month.</div>'}</div>
@@ -8869,6 +8920,7 @@ function renderMonthReview(){
           <div style="overflow-x:auto"><table style="font-size:12.5px"><tbody>${s5}</tbody></table></div>
           <div class="row" style="margin-top:8px"><button class="btn pri sm" onclick="mrStlBuildJV()">Move ${stl.length} to ${esc(st.stlIncomeAcc? accShort(st.stlIncomeAcc) : 'income')} in New JV</button></div>`
         : '<div class="mut">Nothing due this month.</div>'}</div>`;
+  mrTotalsRefresh();
 }
 function pnlVarianceMagnitude(budget, actual){ return Math.abs(budget) - Math.abs(actual); }
 function renderPnL(){
@@ -12761,6 +12813,21 @@ function invBoxesHTML(holdings){
       ${own.map(h=>invBoxHTML(h, ctx)).join('')}${invOtherWalletsBoxHTML(grouped, ctx)}</div>
     ${hidden.length? `<div class="mut noprint" style="font-size:12px;margin-top:10px">Hidden: ${hidden.map(h=>`${esc(h.platform.name)} <button class="btn ghost sm" onclick="toggleInvBoxFlag(${h.platform.id}, 'hidden')">Show</button>`).join(' ')}</div>` : ''}`;
 }
+// v5.21 (#118): positions on this platform that hold no units (nobody's); Delete when it has no transactions.
+function invEmptyPositions(pid){ return invPositionsForPlatform(pid).filter(p=>computePositionState(p.id).totalUnits<=1e-12); }
+function invEmptyPositionsHTML(pid){
+  const list = invEmptyPositions(pid); if(!list.length) return '';
+  return `<div class="panel" id="invEmptyPositions"><h3 style="margin-top:0;font-size:14px">Positions with no units (${list.length})</h3>
+    <table style="font-size:12.5px"><tbody>${list.map(p=>{ const n = invTxForPosition(p.id).length;
+      return `<tr data-emptypos="${p.id}"><td><b>${esc(p.ticker||p.name)}</b> <span class="mut">${esc(p.ticker && p.name!==p.ticker? p.name : '')}</span></td>
+        <td class="mut">${n? n+' transaction'+(n===1?'':'s') : 'no transactions'}</td>
+        <td class="noprint">${n? `<button class="btn ghost sm" onclick="openInvPosition(${p.id})">Open</button>` : `<button class="btn del sm" data-delpos="${p.id}" onclick="invDeleteEmptyPosition(${p.id})">Delete</button>`}</td></tr>`; }).join('')}</tbody></table></div>`;
+}
+async function invDeleteEmptyPosition(id){
+  const p = invPositionById(id); if(!p) return;
+  if(!confirm('Delete '+(p.ticker||p.name)+' from '+((invPlatformById(p.platformId)||{}).name||'this platform')+'? It has no transactions.')) return;
+  await deleteInvPosition(id);
+}
 function renderInvPlatformPage(nav, holdings){
   const h = holdings.find(x=>x.platform.id===invPlatformPageId);
   const app = document.getElementById('app');
@@ -12769,7 +12836,7 @@ function renderInvPlatformPage(nav, holdings){
   app.innerHTML = nav + `<div class="row noprint" style="gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn ghost sm" onclick="closeInvPlatformPage()">← All platforms</button>
       <span class="mut" style="font-size:12px">${h.robo? (h.stats.valueDate? 'Value as of '+esc(h.stats.valueDate) : 'No value logged') : `${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}`}</span></div>`
-    + invHoldingCardHTML(h, 'mine', true, false, true);
+    + invHoldingCardHTML(h, 'mine', true, false, true) + invEmptyPositionsHTML(h.platform.id);
 }
 
 // ---------- Needs you (top of Investments, count on the rail) ----------
@@ -14300,6 +14367,7 @@ function renderInvTxModal(){
   const sarAllocTotal = sarAlloc.reduce((s,a)=>s+a.sar,0);
   const sarMismatch = Number(d.totalSar)>0 && Math.abs(sarAllocTotal-Number(d.totalSar))>0.005;
   const derived = d.splitMode==='sar'? invDeriveUnitsFromSar(unitsNum, sarAlloc, Number(d.totalSar)) : [];
+  const shareBasis = invTxShareBasis(d), shareTot = Object.values(shareBasis).reduce((s,v)=>s+v, 0);   // #117
   showModal(`
     <h3 style="margin-top:0">${d.id?'Edit':'New'} Transaction — ${esc(pos?pos.name:'')}</h3>
     <div class="row" style="gap:10px">
@@ -14334,6 +14402,7 @@ function renderInvTxModal(){
     <div class="row" style="justify-content:space-between;align-items:baseline;margin:16px 0 6px">
       <h3 style="font-size:13.5px;margin:0">Whose share?</h3>
       <div class="row" style="gap:4px;align-items:center">
+        <button class="btn ghost sm" data-sharesplit="1" title="${d.kind==='buy'? 'By each person\u2019s cash on this platform' : 'By each person\u2019s units of this coin here'}" onclick="applyInvTxShareSplit()">\u2696 Split by share</button>
         <span class="mut" style="font-size:11.5px">Split by</span>
         <button class="btn ghost sm" style="${d.splitMode!=='sar'?'border-color:var(--accent);background:var(--chip);font-weight:600':''}" onclick="setInvTxSplitMode('units')">Units</button>
         <button class="btn ghost sm" style="${d.splitMode==='sar'?'border-color:var(--accent);background:var(--chip);font-weight:600':''}" onclick="setInvTxSplitMode('sar')">SAR</button>
@@ -14343,20 +14412,22 @@ function renderInvTxModal(){
       ? 'Enter how much each person paid — the units are worked out from that. Any rounding remainder goes to the largest holder so the units always add up exactly.'
       : 'Split the units across owners. Ownership percentages are derived from this, so they stay correct as people buy in at different times.'}</div>
     <div id="invTxCashSplitPanelWrap">${invTxCashSplitPanel(d)}</div>
-    <table><thead><tr><th>Owner</th><th class="num">SAR</th><th class="num">Units</th></tr></thead>
-    <tbody>${owners.map(o=>{
+    <table><thead><tr><th>Owner</th>${d.kind==='buy'? '<th class="num">Cash here</th>' : ''}<th class="num">Share</th><th class="num">SAR</th><th class="num">Units</th></tr></thead>
+    <tbody>${owners.filter(o=> d.kind==='buy' || shareBasis[o.id]!==undefined || (d.owners||[]).some(x=>x.ownerId===o.id && Number(x.units)) || (d.ownersSar||{})[o.id]).map(o=>{
       const row = (d.owners||[]).find(x=>x.ownerId===o.id);
       const uVal = row? Number(row.units)||0 : 0;
       const sarVal = d.ownersSar? d.ownersSar[o.id] : '';
       const derivedUnits = derived.find(x=>x.ownerId===o.id);
-      return `<tr><td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}</td>
+      return `<tr data-txowner="${o.id}"><td>${esc(o.name)}${o.isSelf?' <span class="mut">(you)</span>':''}</td>
+        ${d.kind==='buy'? `<td class="num mono" data-txcash="${o.id}">${shareBasis[o.id]!==undefined? '$'+fmt2(shareBasis[o.id]) : '<span class="mut">$0.00</span>'}</td>` : ''}
+        <td class="num mono" data-txshare="${o.id}">${shareTot>0 && shareBasis[o.id]!==undefined? (shareBasis[o.id]/shareTot*100).toFixed(2)+'%' : '<span class="mut">\u2014</span>'}</td>
         <td class="num">${d.splitMode==='sar'
           ? `<input type="number" step="0.01" style="width:120px;text-align:right" value="${sarVal===undefined||sarVal===null?'':esc(sarVal)}" oninput="setInvTxOwnerSar(${o.id}, this.value)">`
           : `<span class="mono mut" id="invTxDeriv_${o.id}">${unitsNum>0&&Number(d.totalSar)>0? money(invSarForUnits(unitsNum, Number(d.totalSar), uVal)) : '—'}</span>`}</td>
         <td class="num">${d.splitMode==='sar'
           ? `<span class="mono mut" id="invTxDeriv_${o.id}">${derivedUnits? invFmtUnits(derivedUnits.units) : '—'}</span>`
           : `<input type="number" step="any" id="invTxOwnerUnits_${o.id}" style="width:120px;text-align:right" value="${row? esc(row.units):''}" oninput="setInvTxOwnerUnits(${o.id}, this.value)">`}</td></tr>`;
-    }).join('') || '<tr><td colspan="3" class="empty">Add owners first (Investments → Owners)</td></tr>'}</tbody></table>
+    }).join('') || `<tr><td colspan="${d.kind==='buy'?5:4}" class="empty">${(D.invOwners||[]).length? 'No one holds this coin on this platform' : 'Add owners first (Investments → Owners)'}</td></tr>`}</tbody></table>
     <div class="mut" id="invTxAllocSummary" style="font-size:11.5px;margin-top:6px;${(d.splitMode==='sar'?sarMismatch:mismatch)?'color:var(--red)':''}">${invTxAllocText(d)}</div>
     <label class="fl" style="margin-top:12px">Note</label><input value="${esc(d.note||'')}" oninput="window._invTxDraft.note=this.value">
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
@@ -14402,6 +14473,45 @@ function setInvTxKind(kind){
   d.kind = kind;
   if(kind==='sell' && d.cashSide==='opening') d.cashSide = 'bank';
   if(kind!=='buy' && d.cashSplit) d.cashSplit.active = false;
+  renderInvTxModal();
+}
+// ---- v5.21 (#117): Split by share ----
+// Buy: each person's share of the platform's cash (117c B). Sell: each person's share of this coin on this
+// platform (units held now; editing a sale adds that sale's own units back).
+function invTxShareBasis(d){
+  const pos = invPositionById(d.positionId); const out = {};
+  if(!pos) return out;
+  if(d.kind==='buy'){
+    const cash = invOwnerCashForSplit(pos.platformId, d.date, d.id||null);
+    (D.invOwners||[]).forEach(o=>{ const c = Number(cash[o.id])||0; if(c>0.005) out[o.id] = c; });
+  } else {
+    const t = d.id? (D.invTransactions||[]).find(x=>x.id===d.id) : null;
+    (D.invOwners||[]).forEach(o=>{
+      const sl = ownerSliceOfPosition(pos, o.id); let u = sl? sl.units : 0;
+      const own = t && t.kind==='sell'? (t.owners||[]).find(x=>x.ownerId===o.id) : null;
+      if(own) u += Number(own.units)||0;
+      if(u>1e-12) out[o.id] = u;
+    });
+  }
+  return out;
+}
+function applyInvTxShareSplit(){
+  const d = window._invTxDraft; if(!d) return;
+  const basis = invTxShareBasis(d), ids = Object.keys(basis).map(Number), tot = ids.reduce((s,k)=>s+basis[k], 0);
+  if(!(tot>0)){ toast(d.kind==='buy'? 'No one has cash on this platform as of this date' : 'No one holds this coin on this platform', true); return; }
+  if(d.splitMode==='sar'){
+    const cents = Math.round((Number(d.totalSar)||0)*100);
+    if(!(cents>0)){ toast('Enter the amount first', true); return; }
+    const parts = ids.map(id=>({id, c: Math.floor(cents*basis[id]/tot)}));
+    const big = parts.reduce((m,x)=>basis[x.id]>basis[m.id]? x : m, parts[0]);
+    big.c += cents - parts.reduce((s,x)=>s+x.c, 0);   // rounding remainder to the largest share
+    d.ownersSar = {}; parts.forEach(x=>{ if(x.c>0) d.ownersSar[x.id] = x.c/100; });
+    d.owners = parts.filter(x=>x.c>0).map(x=>({ownerId:x.id, units:''}));
+  } else {
+    const units = Number(d.units)||0;
+    if(!(units>0)){ toast('Enter the units first', true); return; }
+    d.owners = invDeriveUnitsFromSar(units, ids.map(id=>({ownerId:id, sar:basis[id]})), tot).filter(o=>o.units>0);
+  }
   renderInvTxModal();
 }
 // ---- Split by platform cash (v4.54.0) ----
