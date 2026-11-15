@@ -8116,6 +8116,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV520MonthReviewDismissIgnoreAndAverages();
   await testV520ProvisionEmptyMonthsAndTemplateSmart();
   await testV520ActivityCoinFilter();
+  await testV521FullBudgetTotals();
+  await testV521TradeSplitByShare();
+  await testV521EmptyPositionsOnPlatformPage();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11436,23 +11439,38 @@ async function testV519SplashStyles(){
   sb.showSplash();
   const el = sb.document.getElementById('splashScreen');
   assert(el.classList.contains('style-ledger') && sb.document.querySelectorAll('[data-splashrow]').length===4 && /lgOs/.test(el.innerHTML), 'Ledger rows plus the app logo (Budget ring) for the ending');
-  sb.updateSplashProgress(50);
-  const rows = [...sb.document.querySelectorAll('[data-splashrow]')];
-  assert(rows.length===4 && rows[0].classList.contains('in') && rows[1].classList.contains('in') && !rows[2].classList.contains('in') && rows[0].lastElementChild.textContent==='3', 'At 50%: accounts and ledger lines are in, with real counts (3 accounts)');
+  // v5.21 (#114): the rows follow the clock (one cycle = 3 s), not the loading %
+  const t0 = vm.runInContext('splashCycle.t0', sb), C = vm.runInContext('SPLASH_CYCLE_MS', sb);
+  sb.updateSplashProgress(95);
+  sb.splashTick(t0 + 0.1*C);
+  let rows = [...sb.document.querySelectorAll('[data-splashrow]')];
+  assert(rows.length===4 && !rows[0].classList.contains('in'), '95% loaded but only 0.3 s in: no rows yet (the % no longer drives it)');
+  sb.splashTick(t0 + 0.4*C);
+  assert(rows[0].classList.contains('in') && rows[1].classList.contains('in') && !rows[2].classList.contains('in') && rows[0].lastElementChild.textContent==='3', 'At 1.2 s: accounts and ledger lines are in, with real counts (3 accounts)');
+  sb.splashTick(t0 + 0.85*C);
+  assert(rows.every(r=>r.classList.contains('in')) && el.classList.contains('totaled'), 'End of the cycle: every row and the total line');
+  sb.splashTick(t0 + 1.1*C);
+  assert(!rows[0].classList.contains('in') && !el.classList.contains('totaled') && !el.classList.contains('hidden'), 'Still loading: the cycle starts again');
   sb.hideSplash();
-  assert(el.classList.contains('finishing') && !el.classList.contains('hidden'), 'Hiding plays the ending first');
-  await new Promise(r=>setTimeout(r, 1400));
-  assert(el.classList.contains('folded') && el.classList.contains('hidden'), 'Then folds into the logo and goes');
+  assert(!el.classList.contains('totaled') && !rows[3].classList.contains('in'), 'Loaded early in a cycle: no jump to the ending');
+  sb.splashTick(t0 + 1.5*C);
+  assert(!el.classList.contains('folded') && !el.classList.contains('hidden') && rows[1].classList.contains('in'), 'Loaded mid-cycle: the cycle carries on (114a B)');
+  sb.splashTick(t0 + 2.02*C);
+  assert(rows.every(r=>r.classList.contains('in')) && el.classList.contains('totaled'), 'Cycle finished: everything shown');
+  await new Promise(r=>setTimeout(r, 900));
+  assert(el.classList.contains('folded') && el.classList.contains('hidden') && vm.runInContext('splashCycle', sb)===null, 'Then folds into the logo, goes, and the loop stops');
   await sb.setSplashStyle('coins');
   assert(sb.localStorage.getItem('splashStyle')==='coins' && D.uiPrefs.dismissals.splashStyle==='coins', 'Settings choice synced and kept on this device');
   el.classList.remove('hidden'); sb.showSplash();
   assert(sb.document.querySelectorAll('.splash-coin').length===3 && el.classList.contains('style-coins'), 'Coins stack');
-  await sb.setSplashStyle('ring'); sb.showSplash(); sb.updateSplashProgress(50);
+  await sb.setSplashStyle('ring'); el.classList.remove('hidden'); sb.showSplash();
+  const t1 = vm.runInContext('splashCycle.t0', sb);
+  sb.splashTick(t1 + 0.4*C);
   const arc = sb.document.getElementById('splashRingArc');
-  assert(arc && Math.abs(Number(arc.style.strokeDashoffset)-39.25)<0.01, 'Ring fills up: half drawn at 50%');
+  assert(arc && Math.abs(Number(arc.style.strokeDashoffset)-39.25)<0.01, 'Ring fills up: half drawn at 1.2 s, got ' + (arc && arc.style.strokeDashoffset));
   sb.matchMedia = () => ({matches:true});
   sb.hideSplash();
-  assert(el.classList.contains('hidden'), 'Reduced motion: hides straight away');
+  assert(el.classList.contains('hidden') && vm.runInContext('splashCycle', sb)===null, 'Reduced motion: hides straight away');
   assert(/data-splashpick="\$\{k\}"/.test(fs.readFileSync(APP_HTML, 'utf8')) && !/splash-mark">₪/.test(fs.readFileSync(APP_HTML, 'utf8')), 'Settings offers the three styles; the old mark is gone');
 }
 async function testV520MonthReviewDismissIgnoreAndAverages(){
@@ -11465,8 +11483,8 @@ async function testV520MonthReviewDismissIgnoreAndAverages(){
   let app = sb.document.getElementById('app');
   const cell = app.querySelector('[data-mrsug="60101"] [data-mravg="3"]');
   assert(cell && /2,?333/.test(cell.textContent) && /mrSug_60101'\); if\(b\)\{ b\.value='2330'/.test(cell.getAttribute('onclick')), 'Clicking the 3-month figure puts 2,330 in the box');
-  const listed = app.querySelector('[data-mrtotal="listed"]'), all = app.querySelector('[data-mrtotal="all"]');
-  assert(listed && all && /Total, accounts listed/.test(listed.textContent) && /every Budget-planned/.test(all.textContent), 'Two totals rows: listed accounts and every Budget-planned account');
+  const listed = app.querySelector('[data-mrtotal="listed"]'), all = app.querySelector('[data-mrtotal="full"]');
+  assert(listed && all && /Total, accounts listed/.test(listed.textContent) && /Full budget/.test(all.textContent), 'Two totals rows: listed accounts and the full budget');
   // #110 ignore this month
   D.accounts.push({id:30101, name:'Salary', category:'Regular Income', acc_type:'Individual Account', forecast_category:'income'});
   sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
@@ -11536,4 +11554,65 @@ async function testV520ActivityCoinFilter(){
   assert(/All coins/.test(sb.document.getElementById('app').innerHTML) && sb.document.querySelectorAll('#invActivityTable tr[data-act]').length===2, 'Activity page has the Coin filter applied');
   assert(/Ethereum/.test(sb.invActivityCsv()) && !/Solana/.test(sb.invActivityCsv()), 'CSV follows the filter');
   sb.setInvActivityFilter('coin', '');
+}
+async function testV521FullBudgetTotals(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  D.accounts.push({id:60108, name:'Refunds', category:'Living', acc_type:'Individual Account', forecast_category:'expense'});
+  sb.__set('ACC_BY_ID', Object.fromEntries(D.accounts.map(a=>[a.id, a])));
+  D.budget.push({id:40, acc:60108, date:'2026-11-01', amt:-100});
+  assert(sb.mrFullBudget('2026-11')===3900, 'Full budget = the Budget grid total: Groceries 1,000 + Rent 3,000 (Provisions) − 100, got ' + sb.mrFullBudget('2026-11'));
+  const ref = sb.mrSuggestions('2026-10').find(r=>r.a.id===60108);
+  assert(ref && ref.plan===-100, 'A negative budget keeps its sign (-100), got ' + (ref && ref.plan));
+  sb.renderMonthReview();
+  const full = sb.document.querySelector('[data-mrtotal="full"]');
+  const c12 = full && full.querySelector('[data-mrfull="average"]');
+  // listed: Groceries 1,000 → 1,330, Insurance 0 → 200, Refunds -100 → 0
+  assert(full && Number(full.dataset.full)===3900 && c12 && /4,?530/.test(c12.textContent), 'Full budget if every listed account took its 12-month average: 3,900 − 900 + 1,530 = 4,530, got ' + (c12 && c12.textContent));
+  assert(/4,?530/.test(sb.document.getElementById('mrTotNewFull').textContent), 'New budget total starts at the boxes (same as 12 months)');
+  sb.document.getElementById('mrSug_60101').value = '1400';
+  sb.mrTotalsRefresh();
+  assert(/4,?600/.test(sb.document.getElementById('mrTotNewFull').textContent) && /1,?600/.test(sb.document.getElementById('mrTotNewListed').textContent), 'Typing 1,400 for Groceries: full 4,600, listed 1,600');
+  const c12row = sb.document.querySelector('[data-mrsug="60101"] [data-mravg="12"]');
+  assert(c12row && /b\.value='1330'/.test(c12row.getAttribute('onclick')) && /mrTotalsRefresh\(\)/.test(c12row.getAttribute('onclick')), '#116: the 12-month figure is clickable too and updates the totals');
+}
+async function testV521TradeSplitByShare(){
+  const sb = v56Sandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  sb.openInvTxModal(1, null);
+  const d = vm.runInContext('window._invTxDraft', sb);
+  d.kind = 'sell'; d.units = '0.5'; sb.renderInvTxModal();
+  let rows = sb.document.querySelectorAll('#modalRoot tr[data-txowner]');
+  assert(rows.length===2 && /60\.00%/.test(sb.document.querySelector('[data-txshare="1"]').textContent) && /40\.00%/.test(sb.document.querySelector('[data-txshare="2"]').textContent), 'Sell: only the two holders listed, with 60% / 40% shares');
+  sb.applyInvTxShareSplit();
+  const u = id => Number(((vm.runInContext('window._invTxDraft', sb).owners||[]).find(o=>o.ownerId===id)||{}).units);
+  assert(Math.abs(u(1)-0.3)<1e-9 && Math.abs(u(2)-0.2)<1e-9, 'Split by share: 0.3 / 0.2 units, got ' + [u(1), u(2)]);
+  sb.__set('invOwnerCashForSplit', ()=>({1:300, 2:100}));
+  d.kind = 'buy'; d.units = '4'; sb.renderInvTxModal();
+  rows = sb.document.querySelectorAll('#modalRoot tr[data-txowner]');
+  assert(rows.length===(vm.runInContext('D.invOwners.length', sb)) && /\$300\.00/.test(sb.document.querySelector('[data-txcash="1"]').textContent) && /75\.00%/.test(sb.document.querySelector('[data-txshare="1"]').textContent), 'Buy: everyone listed with their cash here; shares from platform cash (75%)');
+  sb.applyInvTxShareSplit();
+  assert(Math.abs(u(1)-3)<1e-9 && Math.abs(u(2)-1)<1e-9, 'Buy split by platform cash: 3 / 1 units');
+  d.splitMode = 'sar'; d.totalSar = 1000.01; sb.applyInvTxShareSplit();
+  const sar = vm.runInContext('window._invTxDraft.ownersSar', sb);
+  assert(sar[1]===750.01 && sar[2]===250, 'SAR mode: 750.01 / 250.00 (the cent goes to the largest share), got ' + JSON.stringify(sar));
+  sb.__set('invOwnerCashForSplit', ()=>({}));
+  let msg = ''; sb.__set('toast', (m)=>{ msg = m; });
+  sb.applyInvTxShareSplit();
+  assert(/No one has cash/.test(msg), 'No cash on the platform: says so');
+}
+async function testV521EmptyPositionsOnPlatformPage(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invPositions.push({id:9, platformId:2, name:'Virgo', ticker:'&VIRGO', currency:'USD', assetClass:'Crypto', status:'Active'},
+    {id:10, platformId:2, name:'Gone', ticker:'GONE', currency:'USD', assetClass:'Crypto', status:'Active'});
+  D.invTransactions.push({id:20, positionId:10, date:'2026-09-02', kind:'buy', units:5, totalSar:100, owners:[{ownerId:1, units:5}], cashSide:'bank'},
+    {id:21, positionId:10, date:'2026-09-05', kind:'sell', units:5, totalSar:120, owners:[{ownerId:1, units:5}], cashSide:'bank'});
+  assert(JSON.stringify(sb.invEmptyPositions(2).map(p=>p.id))==='[10,9]', 'Platform 2: two positions with no units, got ' + JSON.stringify(sb.invEmptyPositions(2).map(p=>p.id)));
+  vm.runInContext('invPlatformPageId = 2', sb); sb.__set('invView', 'all'); sb.renderInvestmentsPage();
+  const box = sb.document.getElementById('invEmptyPositions');
+  assert(box && box.querySelector('[data-delpos="9"]') && !box.querySelector('[data-delpos="10"]') && /Open/.test(box.querySelector('[data-emptypos="10"]').textContent), 'Delete only for the one with no transactions; Open for the other');
+  sb.confirm = () => true;
+  await sb.invDeleteEmptyPosition(9);
+  assert(!D.invPositions.some(p=>p.id===9) && sb._writes.some(w=>w.t==='pd_inv_positions' && w.op==='delete' && w.row.id===9), 'Deleted and synced');
 }
