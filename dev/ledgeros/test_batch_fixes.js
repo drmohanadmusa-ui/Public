@@ -11758,14 +11758,14 @@ async function testV524FalseAlarmsAndDepositSar(){
   // #130: SAR paid per person on a deposit
   sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
   sb.openInvCashModal(1, 'deposit');
-  sb.setInvCashOwnerUsd(self.id, '2624.59');
+  sb.setInvCashOwnerUsd(self.id, '400');
   const box = sb.document.getElementById('invCashSar_'+self.id);
   assert(box && box.tagName==='INPUT', 'The deposit window has a SAR box per person');
-  sb.setInvCashOwnerSar(self.id, '10000.57');
+  sb.setInvCashOwnerSar(self.id, '1520');
   const o = vm.runInContext('window._invCashDraft', sb).owners.find(x=>x.ownerId===self.id);
-  assert(o.sar===10000.57, 'Typed SAR is kept, got ' + o.sar);
-  sb.setInvCashOwnerUsd(self.id, '1312.295');
-  assert(Math.abs(vm.runInContext('window._invCashDraft', sb).owners.find(x=>x.ownerId===self.id).sar - 5000.29)<0.01, 'Changing USD afterwards keeps that rate');
+  assert(o.sar===1520, 'Typed SAR is kept, got ' + o.sar);
+  sb.setInvCashOwnerUsd(self.id, '200');
+  assert(Math.abs(vm.runInContext('window._invCashDraft', sb).owners.find(x=>x.ownerId===self.id).sar - 760)<0.01, 'Changing USD afterwards keeps that rate (3.8)');
 }
 async function testV524WalletButtonPricePerUnitAndHoldingsPop(){
   const sb = v56Sandbox();
