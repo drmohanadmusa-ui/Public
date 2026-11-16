@@ -633,12 +633,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.28.0';
+const APP_VERSION = '5.29.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.29.0', date:'2026-11-16', changes:[
+    'Forecast snapshots now look 36 months ahead by default (was 12), so Compare a snapshot can go up to 3 years out. The horizon in Forecast → Settings is now one setting for all your devices. Snapshots already taken keep the 12 months they captured.',
+  ]},
   {version:'5.28.0', date:'2026-11-16', changes:[
     'Forecast: the current month can now show three columns, Plan, Actual and Variance (actual − plan, red when it works against your cash), in 💰 Bank Accounts — Projected Cash Position and in every table below it, including their Total rows. Switch it on or off with "This month: plan, actual, variance" at the top of the Cash Position panel (remembered on this device).',
     'Forecast: fixed the Total row of a category with a reversed sign showing the opposite sign of its own rows.',
@@ -17489,9 +17492,9 @@ function renderForecastSettingsPage(){
     </div>
   `;
 }
-function saveForecastSnapshotHorizon(){
+async function saveForecastSnapshotHorizon(){
   const el = document.getElementById('snapHorizonInput');
-  const saved = setForecastSnapshotHorizon(el? el.value : 12);
+  const saved = await setForecastSnapshotHorizon(el? el.value : 36);
   if(el) el.value = saved;
   toast('Snapshot horizon set to '+saved+' month'+(saved===1?'':'s')+' ✓');
 }
@@ -17925,13 +17928,14 @@ function earliestLedgerMonth(){
 
    Size: ~500 bytes per captured month (5 numbers + one subrow per category), so even the
    default 12-month horizon, kept forever, is a few KB/year — not something that needs pruning. */
+// v5.29 (#148): synced in dismissals.snapshotHorizon (one value on every device), 36 months by default; the old per-device value is ignored.
 function getForecastSnapshotHorizon(){
-  const v = Number(localStorage.getItem('forecastSnapshotHorizon'));
-  return (v>0 && isFinite(v))? Math.round(v) : 12;
+  const v = Number(getUiDismissals().snapshotHorizon);
+  return (v>0 && isFinite(v))? Math.round(v) : 36;
 }
-function setForecastSnapshotHorizon(months){
-  const v = Math.max(1, Math.round(Number(months)||12));
-  localStorage.setItem('forecastSnapshotHorizon', String(v));
+async function setForecastSnapshotHorizon(months){
+  const v = Math.max(1, Math.round(Number(months)||36));
+  await saveUiDismissals(Object.assign({}, getUiDismissals(), {snapshotHorizon:v}));
   return v;
 }
 // Builds the {month, starting, inflow, outflow, change, closing, subrows} chain for `horizon`

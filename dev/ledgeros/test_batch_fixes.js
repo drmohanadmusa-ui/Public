@@ -2326,14 +2326,16 @@ function fcSnapSandbox(extra){
 
 async function testGetSetForecastSnapshotHorizonRoundTrips(){
   const sb = fcSnapSandbox();
-  const saved = sb.setForecastSnapshotHorizon('6');
+  const saved = await sb.setForecastSnapshotHorizon('6');
   assert(saved===6, 'Should normalize and return the saved horizon, got ' + saved);
   assert(sb.getForecastSnapshotHorizon()===6, 'Should read back what was saved, got ' + sb.getForecastSnapshotHorizon());
+  assert(sb.getUiDismissals().snapshotHorizon===6, 'v5.29 (#148): saved in the synced settings, so every device uses it');
 }
 
 async function testGetForecastSnapshotHorizonDefaultsToTwelve(){
   const sb = fcSnapSandbox();
-  assert(sb.getForecastSnapshotHorizon()===12, 'With nothing saved yet, should default to 12 months, got ' + sb.getForecastSnapshotHorizon());
+  sb.localStorage.setItem('forecastSnapshotHorizon', '12');   // an old per-device value
+  assert(sb.getForecastSnapshotHorizon()===36, 'v5.29 (#148): defaults to 36 months, and an old per-device value is ignored, got ' + sb.getForecastSnapshotHorizon());
 }
 
 async function testBuildForecastSnapshotMonthsCapturesExactlyTheHorizon(){
@@ -2459,7 +2461,7 @@ async function testForecastSnapshotTrendChartEmptyWithFewerThanTwoPoints(){
 
 async function testForecastSettingsPageIncludesSnapshotHorizonAndButton(){
   const sb = fcSnapSandbox();
-  sb.setForecastSnapshotHorizon(9);
+  await sb.setForecastSnapshotHorizon(9);
   sb.renderForecastSettingsPage();
   const html = sb.document.getElementById('app').innerHTML;
   assert(/Forecast Snapshots/.test(html), 'The Snapshots panel should be present');
