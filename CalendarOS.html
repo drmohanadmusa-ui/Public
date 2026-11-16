@@ -1484,21 +1484,50 @@ body.dark-mode .tag.tag-loc-moved{color:var(--brass);}
 .cal-cell.weekend{background:color-mix(in srgb, var(--brass) 8%, var(--paper-raised));}
 
 /* ============ DARK MODE THEME OVERRIDES ============ */
+/* v4.73.0: three night-mode styles (Settings -> Appearance -> Night Mode Style),
+   chosen on each device. Before this, night mode only swapped the page and text
+   colours, so gold/green/red and their soft fills kept their daytime values and
+   several parts drew white text on a near-white fill (measured 1.0-1.2:1).
+   Every style defines the FULL token set, including the accent family; the
+   shared component fixes are in the "NIGHT MODE COMPONENT FIXES" block at the
+   end of this stylesheet. Each style measured 0 text items below 4.5:1 across
+   12 pages at computer and phone size. Default = Warm Charcoal. */
 body.dark-mode{
-  --ink:#EDE9DD;
-  --ink-soft:#C7CCD6;
-  --paper:#181C22;
-  --paper-raised:#20252C;
-  --paper-dim:#2A3038;
-  --line:#3A4048;
-  --slate:#9CA3AF;
-  --slate-light:#6B7280;
+  --ink:#F3EEE5; --ink-soft:#BDB5A8; --ink-faint:#8A8378;
+  --slate:#B0A99D; --slate-light:#8A8378;
+  --paper:#15171B; --paper-raised:#1E2126; --paper-dim:#2A2E35; --line:#383D46; --sidebar:#0F1114;
+  --brass:#E0A84E; --brass-deep:#E8B866; --on-accent:#1A1206;
+  --teal:#5DBAAE; --teal-soft:#1D3533; --flag:#F2836B; --flag-soft:#3A2420; --accent-soft:#3A2F1C;
+  --completed-color:#5DBAAE; --completed-deep:#8FD0C6;
   --page-gradient:
-    radial-gradient(480px 480px at 100% 0%, #4A3A28 0%, transparent 70%),
-    radial-gradient(360px 360px at 0% 100%, #1F3B36 0%, transparent 70%),
-    linear-gradient(160deg, #1E1812 0%, #241C15 100%);
+    radial-gradient(480px 480px at 100% 0%, #33281A 0%, transparent 70%),
+    radial-gradient(360px 360px at 0% 100%, #18302C 0%, transparent 70%),
+    linear-gradient(160deg, #16181C 0%, #131518 100%);
 }
-body.dark-mode .sidebar{background:#0F1216;}
+/* True Black */
+body.dark-mode[data-dark-style="black"]{
+  --ink:#F7F7F8; --ink-soft:#B8BBC2; --ink-faint:#80848C;
+  --slate:#B0B3BA; --slate-light:#80848C;
+  --paper:#0A0A0B; --paper-raised:#151618; --paper-dim:#212327; --line:#2E3136; --sidebar:#000000;
+  --brass:#F5B941; --brass-deep:#F7C866; --on-accent:#141004;
+  --teal:#3DD6C3; --teal-soft:#0F2B28; --flag:#FF6E5E; --flag-soft:#301614; --accent-soft:#2E2410;
+  --completed-color:#3DD6C3; --completed-deep:#7FE6D9;
+  --page-gradient: #000000;
+}
+/* Midnight Slate */
+body.dark-mode[data-dark-style="slate"]{
+  --ink:#E9EDF5; --ink-soft:#AAB4C7; --ink-faint:#7C879C;
+  --slate:#A3ADC0; --slate-light:#7C879C;
+  --paper:#121826; --paper-raised:#1A2233; --paper-dim:#253048; --line:#34415C; --sidebar:#0B101B;
+  --brass:#F2B65A; --brass-deep:#F5C77E; --on-accent:#1A1206;
+  --teal:#5CC8B8; --teal-soft:#17323A; --flag:#FF8A7A; --flag-soft:#3A2230; --accent-soft:#3A3022;
+  --completed-color:#5CC8B8; --completed-deep:#93DCD1;
+  --page-gradient:
+    radial-gradient(480px 480px at 100% 0%, #22305A 0%, transparent 70%),
+    radial-gradient(360px 360px at 0% 100%, #173640 0%, transparent 70%),
+    linear-gradient(160deg, #121A2B 0%, #0E1320 100%);
+}
+body.dark-mode .sidebar{background:var(--sidebar, #0F1216);}
 body.dark-mode .ticket-title{color:var(--ink);}
 body.dark-mode input, body.dark-mode select, body.dark-mode textarea{
   background:var(--paper); color:var(--ink); border-color:var(--line);
@@ -1916,6 +1945,35 @@ body.dark-mode .splash-bypass:hover{ background:rgba(255,255,255,0.06); }
 .muscle-target-row .mt-name{flex:0 0 92px;}
 .muscle-target-row input.train-input{width:52px; min-height:34px; text-align:center;}
 .muscle-target-row .mt-sug{font-size:11px; color:var(--ink-soft); margin-left:auto;}
+/* ============ NIGHT MODE COMPONENT FIXES (v4.73.0) ============
+   Same in every night style. Kept at the very end of the stylesheet so they
+   win over the daytime component rules they correct. */
+body.dark-mode .btn:not(.secondary):not(.ghost):not(.brass):not(.danger){background:var(--brass);border-color:var(--brass);color:var(--on-accent);}
+body.dark-mode .btn.brass{color:var(--on-accent);}
+body.dark-mode .btn.ghost{color:var(--ink-soft);}
+body.dark-mode .btn.ghost:disabled,body.dark-mode .btn:disabled{color:var(--ink-faint);opacity:1;}
+body.dark-mode .chip-select button.active,body.dark-mode .radio-pill.active{background:var(--brass);border-color:var(--brass);color:var(--on-accent);}
+body.dark-mode .toast,body.dark-mode #newTaskHint,body.dark-mode .sync-block-banner{background:var(--paper-dim);color:var(--ink);border:1px solid var(--line);}
+body.dark-mode .nav-item{color:var(--ink-soft);}
+body.dark-mode .nav-item.active,body.dark-mode .nav-item.active .nav-count{color:var(--on-accent);}
+body.dark-mode .lists-toc-item.active{color:var(--on-accent);}
+body.dark-mode .tag{background:var(--paper-dim);color:var(--ink-soft);}
+body.dark-mode .tag.pri-High{background:var(--flag-soft);color:var(--flag);}
+body.dark-mode .tag.pri-Medium{background:var(--accent-soft);color:var(--brass);}
+body.dark-mode .tag.pri-Low{background:var(--paper-dim);color:var(--ink-soft);}
+body.dark-mode .stamp.overdue{color:var(--flag);background:var(--paper-raised);}
+body.dark-mode .ticket.overdue{border-color:color-mix(in srgb,var(--flag) 55%,transparent);background:linear-gradient(90deg,var(--flag-soft) 0%,var(--paper-raised) 90px);}
+body.dark-mode .ticket.missed{border-color:color-mix(in srgb,var(--brass) 45%,transparent);background:linear-gradient(90deg,var(--accent-soft) 0%,var(--paper-raised) 90px);}
+body.dark-mode .ticket.done .ticket-title{color:var(--ink-soft);}
+body.dark-mode table.log-table tr.log-row-active td{background:var(--accent-soft);color:var(--ink);}
+body.dark-mode .li-text,body.dark-mode .li-cat,body.dark-mode .icon-btn{color:var(--ink-soft);}
+body.dark-mode .dash-v2 .stat-card::after{opacity:0.9;}
+body.dark-mode .page-sub{color:var(--ink-soft);}
+body.dark-mode h3[style*="flag"],body.dark-mode .danger-zone h3{color:var(--flag);}
+body.dark-mode .toggle-yn button.active{color:var(--on-accent);}
+body.dark-mode .btn.danger{color:var(--on-accent);}
+body.dark-mode .notebook-line.done .li-text{color:var(--ink-soft);}
+body.dark-mode .week-task-chip.done{color:var(--ink-soft);opacity:1;}
 </style>
 </head>
 
@@ -2366,7 +2424,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.72.0';
+const APP_VERSION = '4.73.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2374,6 +2432,13 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.73.0', changes: [
+    'No SQL migration needed \u2014 front-end only. The night mode style is a display choice saved on each device, like Dark Mode itself.',
+    'NEW \u2014 Night Mode Style (Settings \u2192 Appearance, under Dark Mode): Warm Charcoal (the default), True Black, or Midnight Slate.',
+    'FIX \u2014 Night mode readability. Before, night mode only darkened the page and the text, so gold, green and red kept their daytime colours and some parts showed white text on a near-white fill. Now: selected pills (Today, All, filters, coffee options) and main buttons use the gold with dark text; the Health Log\u2019s highlighted history row is readable; completed task titles, list counts, grey icons and disabled buttons are lifted; overdue and missed cards get a dark tinted edge instead of a pale stripe.',
+    'CHANGED \u2014 At night, silo and repeat-type tags, and a custom accent or completed colour, are shown lighter so they stay readable on dark cards. The colours you picked in Settings are not changed.',
+    'CHANGED \u2014 With Dark Mode on, the night style\u2019s own colours are used instead of the Color Theme\u2019s (Ocean, Sage and so on). With Dark Mode off, nothing changes.',
+  ]},
   { v:'4.72.0', changes: [
     'No SQL migration needed \u2014 front-end only. The per-muscle targets are saved inside the existing synced weekly-band setting, and \u201cWeekdays\u201d is a new value in the existing repeat-type field.',
     'NEW \u2014 \u201cWeekdays\u201d repeat for recurring tasks. It repeats on every day that is not one of your Weekend days in Settings (Sunday to Thursday with Friday/Saturday as the weekend), and follows that setting if you change it. It has its own colour and appears in the Frequency filter. Like Daily, an unfinished one is marked missed when the day rolls over instead of piling up under Overdue. A device still on an older version will not show these tasks until it reloads.',
@@ -3275,6 +3340,7 @@ const DEFAULT_SETTINGS_EXTRAS = {
   rememberUnlock: true,
   healthCoreMetricsSeeded: false,
   darkMode: false,
+  darkStyle: 'charcoal', // v4.73.0: night mode style — 'charcoal' | 'black' | 'slate'. Local-only display preference, like darkMode.
   localPasscode: null, // used only when no Supabase sync is configured on this device
   // Local-only display preference (same treatment as darkMode) — never
   // synced to Supabase, since a wide-screen preference set on a desktop
@@ -5810,6 +5876,44 @@ function applyDynamicTheme(){
     }
   `;
   document.body.classList.toggle('dark-mode', !!state.settings.darkMode);
+  // v4.73.0: night mode style. Warm Charcoal is the plain body.dark-mode palette.
+  const ds = DARK_STYLES.some(d=>d.key===state.settings.darkStyle) ? state.settings.darkStyle : 'charcoal';
+  if(ds === 'charcoal') document.body.removeAttribute('data-dark-style');
+  else document.body.setAttribute('data-dark-style', ds);
+  // A custom accent / completed colour still shows at night, lightened so it
+  // stays readable on dark cards. The defaults use the night style's own colours.
+  if(state.settings.darkMode){
+    let extra = '';
+    if(accent.toLowerCase() !== '#b9862f') extra += `--brass:${nightTagColor(accent)}; --brass-deep:${nightTagColor(accent, 0.55)};`;
+    if(completed.toLowerCase() !== '#3c7a73') extra += `--completed-color:${nightTagColor(completed)}; --completed-deep:${nightTagColor(completed, 0.55)};`;
+    if(extra) styleEl.textContent += `\n    body.dark-mode, body.dark-mode[data-dark-style]{ ${extra} }\n`;
+  }
+}
+/* v4.73.0: the three night-mode styles (Settings -> Appearance). */
+const DARK_STYLES = [
+  { key:'charcoal', label:'Warm Charcoal', note:'Default. Warm gold on neutral charcoal.', bg:'#15171B', card:'#1E2126', accent:'#E0A84E' },
+  { key:'black', label:'True Black', note:'Pure black, strongest contrast. Saves battery on OLED phones.', bg:'#000000', card:'#151618', accent:'#F5B941' },
+  { key:'slate', label:'Midnight Slate', note:'Cool blue-grey, softer in a dark room.', bg:'#121826', card:'#1A2233', accent:'#F2B65A' },
+];
+function setDarkStyle(key){
+  if(!DARK_STYLES.some(d=>d.key===key)) return;
+  state.settings.darkStyle = key;
+  saveSettings();
+  render();
+}
+/* v4.73.0: at night, the silo / repeat-type / accent colours you picked are
+   mixed toward white so they stay readable on dark cards. Your stored colour
+   never changes; this is display-only and only applies in night mode. */
+function nightTagColor(c, amount){
+  const p = amount == null ? 0.45 : amount;
+  const m = /^#([0-9a-f]{6})$/i.exec(String(c||'').trim());
+  if(!m) return c;
+  const n = parseInt(m[1], 16);
+  const ch = [n>>16, (n>>8)&255, n&255].map(v=>Math.round(v + (255 - v) * p));
+  return '#' + ch.map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+function tagDisplayColor(c){
+  return state.settings.darkMode ? nightTagColor(c) : c;
 }
 function recurTypeColor(type){
   return (state.settings.recurTypeColors && state.settings.recurTypeColors[type]) || 'var(--teal)';
@@ -7517,11 +7621,11 @@ function renderTicket(row, opts){
   const onTimeStats = isRecurring ? computeOnTimeStats(t) : null;
 
   const typeTag = isRecurring
-    ? `<span class="tag recur" style="background:${recurTypeColor(t.type)}22; color:${recurTypeColor(t.type)};">${t.type} ↻</span>`
+    ? `<span class="tag recur" style="background:${tagDisplayColor(recurTypeColor(t.type))}22; color:${tagDisplayColor(recurTypeColor(t.type))};">${t.type} ↻</span>`
     : `<span class="tag tag-onetime">One-Time</span>`;
 
   const priTag = `<span class="tag pri-${t.priority}">${t.priority}</span>`;
-  const siloTag = `<span class="tag" style="background:${siloColor(t.silo)}22; color:${siloColor(t.silo)};">${escapeHtml(t.silo)}</span>`;
+  const siloTag = `<span class="tag" style="background:${tagDisplayColor(siloColor(t.silo))}22; color:${tagDisplayColor(siloColor(t.silo))};">${escapeHtml(t.silo)}</span>`;
   const resolvedLoc = taskLocationFor(t, dateForCompletion);
   const locRemapped = resolvedLoc !== t.location;
   const locTag = opts.hideLocation ? '' : `<span class="tag${locRemapped?' tag-loc-moved':''}"${locRemapped?` title="Normally ${escapeHtml(t.location)} — moved here by a weekend location rule"`:''}>${escapeHtml(resolvedLoc)}${locRemapped?' ↷':''}</span>`;
@@ -17902,6 +18006,21 @@ function renderSettingsAppearance(){
         </div>
 
         <div class="field">
+          <label>Night Mode Style</label>
+          <div class="page-sub" style="margin-bottom:10px;">How the app looks when Dark Mode is on. This device only.</div>
+          <div class="theme-swatch-row">
+            ${DARK_STYLES.map(d=>`
+              <button type="button" class="theme-swatch dark-style-swatch ${((DARK_STYLES.some(x=>x.key===state.settings.darkStyle)?state.settings.darkStyle:'charcoal')===d.key)?'selected':''}" onclick="setDarkStyle('${d.key}')" title="${escapeHtml(d.note)}">
+                <span class="theme-swatch-preview" style="background:${d.bg};">
+                  <span style="background:${d.accent};"></span>
+                </span>
+                <span class="theme-swatch-label">${d.label}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="field">
           <label>Content Width</label>
           <div class="radio-pills" style="margin-bottom:10px;">
             <button type="button" class="radio-pill ${state.settings.contentWidthMode!=='manual'?'active':''}" onclick="setContentWidthMode('auto')">Automatic (based on screen size)</button>
@@ -17928,7 +18047,7 @@ function renderSettingsAppearance(){
           <div class="color-row">
             <label>${type}</label>
             <input type="color" value="${recurTypeColor(type).startsWith('#')?recurTypeColor(type):'#3C7A73'}" onchange="setRecurTypeColor('${type}', this.value)">
-            <span class="tag recur" style="background:${recurTypeColor(type)}22; color:${recurTypeColor(type)};">${type} ↻</span>
+            <span class="tag recur" style="background:${tagDisplayColor(recurTypeColor(type))}22; color:${tagDisplayColor(recurTypeColor(type))};">${type} ↻</span>
           </div>
         `).join('')}
       </div>
@@ -17956,7 +18075,7 @@ function renderSettingsAppearance(){
           <div class="color-row">
             <label>${escapeHtml(silo)}</label>
             <input type="color" value="${siloColor(silo)}" onchange="setSiloColor('${escapeHtml(silo)}', this.value)">
-            <span class="tag" style="background:${siloColor(silo)}22; color:${siloColor(silo)};">${escapeHtml(silo)}</span>
+            <span class="tag" style="background:${tagDisplayColor(siloColor(silo))}22; color:${tagDisplayColor(siloColor(silo))};">${escapeHtml(silo)}</span>
           </div>
         `).join('')}
       </div>
