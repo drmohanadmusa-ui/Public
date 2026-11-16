@@ -633,12 +633,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.27.0';
+const APP_VERSION = '5.28.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.28.0', date:'2026-11-16', changes:[
+    'Forecast: the current month can now show three columns, Plan, Actual and Variance (actual − plan, red when it works against your cash), in 💰 Bank Accounts — Projected Cash Position and in every table below it, including their Total rows. Switch it on or off with "This month: plan, actual, variance" at the top of the Cash Position panel (remembered on this device).',
+    'Forecast: fixed the Total row of a category with a reversed sign showing the opposite sign of its own rows.',
+  ]},
   {version:'5.27.0', date:'2026-11-15', changes:[
     'Investments \u2192 a coin\u2019s window: the Transactions table shows Total USD and Per unit USD, with the SAR figure in small grey text under each. Lines with no USD entered (moved in, opening) show their cost converted at their own rate.',
     'Same window: a new Avg cost / unit box: everyone together on this platform (cost \u00f7 units), and your own average underneath (the price Sell to family starts from).',
@@ -2689,6 +2693,7 @@ async function saveBalanceStaleDaysFromInput(){
    (and vice versa — it's how LedgerOS's own 4.9 MB key went unnoticed from inside CalendarOS).
 */
 const LEDGEROS_KEYS = [
+  'forecastMonthPva',   // v5.28 (#147): Forecast current month as plan / actual / variance
   'ledgerData_v1','activityLog_v1','syncQueue_v1','jvDrafts_v1','ledgerLastChanged',
   'sb_url','sb_key','forecastSignFlips','forecastSectionOrder','forecastCollapsedSections',
   'budgetCollapsedSections','statementSortDesc','driftDismissals','driftSettings',
@@ -18067,10 +18072,42 @@ function computeMonthlyCashFlow(months, currentMonth){
     return {month:m, ...anchoredChain[m]};
   });
 }
+// v5.28 (#147): the current month can show three columns (plan, actual, variance) on the Forecast page; switch kept per device.
+function getForecastPva(){ return lsGetSafe('forecastMonthPva')!=='off'; }
+function setForecastPva(on){ safeSetItemWarn('forecastMonthPva', on? 'on' : 'off'); renderForecastBody(); }
+function fcPvaOn(m, currentMonth){ return m===currentMonth && getForecastPva(); }
+function fcMonthCols(months, currentMonth){ const c = `<col style="width:${FORECAST_MONTH_COL_WIDTH}px">`; return months.map(m=>fcPvaOn(m, currentMonth)? c+c+c : c).join(''); }
+function fcPvaExtraWidth(months, currentMonth){ return months.some(m=>fcPvaOn(m, currentMonth))? 2*FORECAST_MONTH_COL_WIDTH : 0; }
+function fcMonthHeads(months, currentMonth){
+  return months.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip)':''}">${esc(monthLabel(m))}${fcPvaOn(m, currentMonth)? ' plan' : ''}</th>`+
+    (fcPvaOn(m, currentMonth)? `<th class="num" style="background:var(--chip)" data-pva="actual">Actual</th><th class="num" style="background:var(--chip)" data-pva="var">Variance</th>` : '')).join('');
+}
+// Variance = actual − plan, the same as the cell's hover text; no plan → "—".
+function fcPvaTds(plan, actual){
+  const v = (plan===null || plan===undefined)? null : actual - plan;
+  return `<td class="num mono" style="background:var(--chip)" data-pvaact="1">${money0(actual)}</td><td class="num mono ${v===null? 'mut' : moneyClass(v)}" style="background:var(--chip)" data-pvavar="1">${v===null? '—' : money0(v)}</td>`;
+}
+// Actual counterpart of categoryMonthFlow (same accounts, same sign convention).
+function categoryMonthActual(catKey, monthKey, currentMonth){
+  let sum = 0;
+  forecastCategoryAccounts(catKey).forEach(a=>{
+    if(monthKey>=currentMonth && a.status==='Inactive') return;
+    sum += Number(computeForecastCell(a, monthKey, currentMonth).actual)||0;
+  });
+  return sum * categorySignMultiplier(catKey);
+}
+function cashFlowActualRow(r, currentMonth){
+  const subrows = {};
+  [...FORECAST_INFLOW_CATS, ...FORECAST_OUTFLOW_CATS].forEach(c=>{ subrows[c] = categoryMonthActual(c, r.month, currentMonth); });
+  const inflow = FORECAST_INFLOW_CATS.reduce((s,c)=>s+subrows[c],0), outflow = FORECAST_OUTFLOW_CATS.reduce((s,c)=>s+subrows[c],0);
+  return {starting: r.starting, subrows, inflow, outflow, change: inflow+outflow, closing: r.starting+inflow+outflow};
+}
 function renderCashFlowPanel(months, currentMonth){
   const rows = computeMonthlyCashFlow(months, currentMonth);
+  const pvRow = rows.find(r=>fcPvaOn(r.month, currentMonth)), pvAct = pvRow? cashFlowActualRow(pvRow, currentMonth) : null;
+  const pva = (r, f)=> pvAct && r===pvRow? fcPvaTds(f(r), f(pvAct)) : '';
   const anchored = getCashPositionAnchorToActual();
-  const catRow = (catKey) => `<tr><td class="mut click" style="position:sticky;left:0;z-index:1;background:var(--panel);padding-left:10px;cursor:pointer" onclick="jumpToForecastSection('${catKey}')" title="Jump to this section below">${esc(FORECAST_CATEGORIES[catKey].label)}${categorySignMultiplier(catKey)===-1?' <span class="badge neg" style="font-size:9px">reversed</span>':''}</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.subrows[catKey])} click" style="cursor:pointer" title="Click to see the source below" onclick="jumpToForecastCategoryMonth('${catKey}','${r.month}')">${money0(r.subrows[catKey])}</td>`).join('')}</tr>`;
+  const catRow = (catKey) => `<tr><td class="mut click" style="position:sticky;left:0;z-index:1;background:var(--panel);padding-left:10px;cursor:pointer" onclick="jumpToForecastSection('${catKey}')" title="Jump to this section below">${esc(FORECAST_CATEGORIES[catKey].label)}${categorySignMultiplier(catKey)===-1?' <span class="badge neg" style="font-size:9px">reversed</span>':''}</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.subrows[catKey])} click" style="cursor:pointer" title="Click to see the source below" onclick="jumpToForecastCategoryMonth('${catKey}','${r.month}')">${money0(r.subrows[catKey])}</td>`+pva(r, v=>v.subrows[catKey])).join('')}</tr>`;
   const signWarning = anyForecastSignFlipActive()? `<div class="mut" style="font-size:11.5px;margin-bottom:8px;color:var(--red)">⚠ One or more categories have a reversed sign convention active (Forecast Settings → Cash Position Sign Conventions) — this affects every column for that category, historical and current included, and flows through to Closing Balance.</div>` : '';
   return `<div class="panel">
     <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -18079,6 +18116,10 @@ function renderCashFlowPanel(months, currentMonth){
         <input type="checkbox" class="chk" ${anchored?'checked':''} onchange="setCashPositionAnchorToActual(this.checked); renderForecastBody()">
         Anchor current month to real balance
       </label>
+      <label class="noprint" style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:normal" title="Shows this month as Plan, Actual and Variance columns here and in every table below">
+        <input id="fcPvaToggle" type="checkbox" class="chk" ${getForecastPva()?'checked':''} onchange="setForecastPva(this.checked)">
+        This month: plan, actual, variance
+      </label>
     </div>
     <div class="mut" style="font-size:11.5px;margin:6px 0 8px">${anchored
       ? 'Current month\'s Starting Balance is your real ledger balance as of the end of last month — current and future months build forward from there. Past months still show the pure chain, untouched, so you can spot where any gap originates.'
@@ -18086,17 +18127,17 @@ function renderCashFlowPanel(months, currentMonth){
       Click any month's total for a full cash-flow breakdown. Numbers are rounded to whole units here — the export keeps full decimal precision.</div>
     ${signWarning}
     <div class="forecast-scroll" style="overflow-x:auto">
-    <table style="min-width:${FORECAST_LABEL_COL_WIDTH+months.length*FORECAST_MONTH_COL_WIDTH}px;table-layout:fixed" class="sticky-table">
-      <colgroup><col style="width:${FORECAST_LABEL_COL_WIDTH}px">${months.map(()=>`<col style="width:${FORECAST_MONTH_COL_WIDTH}px">`).join('')}</colgroup>
-      <thead><tr><th style="position:sticky;left:0;z-index:2;background:var(--panel)"></th>${months.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip)':''}">${esc(monthLabel(m))}</th>`).join('')}</tr></thead>
+    <table style="min-width:${FORECAST_LABEL_COL_WIDTH+months.length*FORECAST_MONTH_COL_WIDTH+fcPvaExtraWidth(months, currentMonth)}px;table-layout:fixed" class="sticky-table">
+      <colgroup><col style="width:${FORECAST_LABEL_COL_WIDTH}px">${fcMonthCols(months, currentMonth)}</colgroup>
+      <thead><tr><th style="position:sticky;left:0;z-index:2;background:var(--panel)"></th>${fcMonthHeads(months, currentMonth)}</tr></thead>
       <tbody>
-        <tr><td style="position:sticky;left:0;z-index:1;background:var(--panel)">Month Cash Starting Balance</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.starting)}">${money0(r.starting)}</td>`).join('')}</tr>
+        <tr><td style="position:sticky;left:0;z-index:1;background:var(--panel)">Month Cash Starting Balance</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.starting)}">${money0(r.starting)}</td>`+pva(r, v=>v.starting)).join('')}</tr>
         ${FORECAST_INFLOW_CATS.map(catRow).join('')}
-        <tr style="font-weight:700;background:var(--chip)"><td style="position:sticky;left:0;z-index:1;background:var(--chip);font-weight:700">Total Monthly Inflows</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.inflow)}">${money0(r.inflow)}</td>`).join('')}</tr>
+        <tr style="font-weight:700;background:var(--chip)"><td style="position:sticky;left:0;z-index:1;background:var(--chip);font-weight:700">Total Monthly Inflows</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.inflow)}">${money0(r.inflow)}</td>`+pva(r, v=>v.inflow)).join('')}</tr>
         ${FORECAST_OUTFLOW_CATS.map(catRow).join('')}
-        <tr style="font-weight:700;background:var(--chip)"><td style="position:sticky;left:0;z-index:1;background:var(--chip);font-weight:700">Total Monthly Outflows</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.outflow)}">${money0(r.outflow)}</td>`).join('')}</tr>
-        <tr style="font-weight:700"><td style="position:sticky;left:0;z-index:1;background:var(--panel);font-weight:700">Monthly Cash Change</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.change)}">${money0(r.change)}</td>`).join('')}</tr>
-        <tr style="font-weight:700;background:var(--chip)"><td style="position:sticky;left:0;z-index:1;background:var(--chip);font-weight:700">Closing Balance</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.closing)} click" style="cursor:pointer" onclick="openCashPositionBreakdown('${r.month}')">${money0(r.closing)}</td>`).join('')}</tr>
+        <tr style="font-weight:700;background:var(--chip)"><td style="position:sticky;left:0;z-index:1;background:var(--chip);font-weight:700">Total Monthly Outflows</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.outflow)}">${money0(r.outflow)}</td>`+pva(r, v=>v.outflow)).join('')}</tr>
+        <tr style="font-weight:700"><td style="position:sticky;left:0;z-index:1;background:var(--panel);font-weight:700">Monthly Cash Change</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.change)}">${money0(r.change)}</td>`+pva(r, v=>v.change)).join('')}</tr>
+        <tr style="font-weight:700;background:var(--chip)"><td style="position:sticky;left:0;z-index:1;background:var(--chip);font-weight:700">Closing Balance</td>${rows.map(r=>`<td class="num mono ${moneyClass(r.closing)} click" style="cursor:pointer" onclick="openCashPositionBreakdown('${r.month}')">${money0(r.closing)}</td>`+pva(r, v=>v.closing)).join('')}</tr>
       </tbody>
     </table>
     </div>
@@ -18187,13 +18228,18 @@ function toggleForecastSectionCollapse(catKey){
   safeSetItem('forecastCollapsedSections', JSON.stringify(collapsed));
   renderForecastBody();
 }
+function fcPvaAccountTds(a, m, currentMonth, reversed){
+  const c = computeForecastCell(a, m, currentMonth), sign = reversed? -1 : 1;
+  return fcPvaTds(c.plan===null || c.plan===undefined? null : c.plan*sign, (Number(c.actual)||0)*sign);
+}
 function renderForecastCategorySection(catKey, catDef, accs, months, currentMonth){
   const collapsed = getForecastCollapsedSections().includes(catKey);
   const reversed = categorySignMultiplier(catKey)===-1;
   // Totals go through categoryMonthFlow so this section's Total row always matches the Cash Flow
   // panel exactly, including the same Inactive-account handling (excluded from current/future
   // months, still counted in real past months for historical accuracy).
-  const totals = months.map(m=>categoryMonthFlow(catKey, m, currentMonth) * (reversed?-1:1));
+  // v5.28 (#147): categoryMonthFlow already applies the reversed sign; flipping it again made the Total row show the opposite sign of its rows.
+  const totals = months.map(m=>categoryMonthFlow(catKey, m, currentMonth));
   // Inactive accounts are hidden from the Forecast page entirely — they don't show as a row, and
   // their current balance doesn't contribute to the Current Balance total shown here.
   const visibleAccs = accs.filter(a=>a.status!=='Inactive');
@@ -18204,17 +18250,17 @@ function renderForecastCategorySection(catKey, catDef, accs, months, currentMont
       <span class="mut" style="font-size:12px">${collapsed?'▸ Expand':'▾ Collapse'}</span>
     </div>
     <div class="forecast-scroll" style="overflow-x:auto">
-    <table style="min-width:${FORECAST_LABEL_COL_WIDTH+months.length*FORECAST_MONTH_COL_WIDTH}px;margin-top:8px;table-layout:fixed" class="sticky-table">
-      <colgroup><col style="width:${FORECAST_ACCOUNT_COL_WIDTH}px"><col style="width:${FORECAST_BALANCE_COL_WIDTH}px">${months.map(()=>`<col style="width:${FORECAST_MONTH_COL_WIDTH}px">`).join('')}</colgroup>
-      <thead><tr><th style="position:sticky;left:0;z-index:2;background:var(--panel)">Account</th><th class="num" style="position:sticky;left:${FORECAST_ACCOUNT_COL_WIDTH}px;z-index:2;background:var(--panel)">Current Balance</th>${months.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip)':''}">${esc(monthLabel(m))}</th>`).join('')}</tr></thead>
+    <table style="min-width:${FORECAST_LABEL_COL_WIDTH+months.length*FORECAST_MONTH_COL_WIDTH+fcPvaExtraWidth(months, currentMonth)}px;margin-top:8px;table-layout:fixed" class="sticky-table">
+      <colgroup><col style="width:${FORECAST_ACCOUNT_COL_WIDTH}px"><col style="width:${FORECAST_BALANCE_COL_WIDTH}px">${fcMonthCols(months, currentMonth)}</colgroup>
+      <thead><tr><th style="position:sticky;left:0;z-index:2;background:var(--panel)">Account</th><th class="num" style="position:sticky;left:${FORECAST_ACCOUNT_COL_WIDTH}px;z-index:2;background:var(--panel)">Current Balance</th>${fcMonthHeads(months, currentMonth)}</tr></thead>
       <tbody>${collapsed? '' : visibleAccs.map(a=>`<tr>
         <td style="position:sticky;left:0;z-index:1;background:var(--panel)"><span class="click" style="cursor:pointer" onclick="openAccountStatsPopup(${a.id})" title="Click for historical averages">${esc(accShort(a.id))}</span></td>
         <td class="num mono" style="position:sticky;left:${FORECAST_ACCOUNT_COL_WIDTH}px;z-index:1;background:var(--panel)">${money0(accountBalance(a.id) * (reversed?-1:1))}</td>
-        ${months.map(m=>renderForecastCell(a, m, currentMonth, true, {reverse:reversed})).join('')}
+        ${months.map(m=>renderForecastCell(a, m, currentMonth, true, {reverse:reversed})+(fcPvaOn(m, currentMonth)? fcPvaAccountTds(a, m, currentMonth, reversed) : '')).join('')}
       </tr>`).join('')}</tbody>
       <tfoot><tr style="font-weight:700">
         <td style="position:sticky;left:0;z-index:1;background:var(--panel)">Total</td><td class="num mono" style="position:sticky;left:${FORECAST_ACCOUNT_COL_WIDTH}px;z-index:1;background:var(--panel)">${money0(balanceTotal)}</td>
-        ${totals.map((t,i)=>`<td class="num mono ${moneyClass(t)}" id="forecastSectionTotal_${catKey}_${months[i]}">${money0(t)}</td>`).join('')}
+        ${totals.map((t,i)=>`<td class="num mono ${moneyClass(t)}" id="forecastSectionTotal_${catKey}_${months[i]}">${money0(t)}</td>`+(fcPvaOn(months[i], currentMonth)? fcPvaTds(t, categoryMonthActual(catKey, months[i], currentMonth)) : '')).join('')}
       </tr></tfoot>
     </table>
     </div>
