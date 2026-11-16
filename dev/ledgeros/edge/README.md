@@ -96,7 +96,7 @@ new `index.ts` into Supabase (the main test suite fails while `index.ts` is out 
    `Logged …` or `Duplicate …`.
 
 ### 2. The iPhone (Shortcuts, about 10 minutes)
-Final set of automations: **Amount**, **مبلغ**, **شراء** (delete the `SAR` and `ائتمان` ones). In each of the three:
+Final set of automations: **Amount**, **مبلغ**, **شراء**, **حوالة** (delete the `SAR` and `ائتمان` ones; حوالة added 2026-11-16 because SNB transfer SMS contain none of the other three words). In each of the four:
 1. Shortcuts → **Automation** → open it. Keep *Run Immediately* on, turn **Notify When Run off**.
 2. Remove the old **Run Script** (Scriptable) action.
 3. Add **Get Contents of URL**:
