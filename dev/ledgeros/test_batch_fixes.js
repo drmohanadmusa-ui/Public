@@ -8133,6 +8133,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV526RailChips();
   await testV526JvEditAllocOtherLeg();
   await testV527PositionUsdAndAvgCost();
+  await testV528ForecastPlanActualVariance();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11960,4 +11961,45 @@ async function testV527PositionUsdAndAvgCost(){
   sb.__set('invView', 'all'); sb.renderInvestmentsPage();
   const a = sb.document.querySelector('[data-posavg="1"]');
   assert(a && a.textContent.indexOf(sb.invFmtPrice(allUsd))===0, 'All: everyone\'s average, got ' + (a && a.textContent));
+}
+async function testV528ForecastPlanActualVariance(){
+  const sb = makeSandbox();
+  const D = vm.runInContext('D', sb);
+  const cm = sb.todayStr().slice(0,7), nm = sb.nextMonthKeyPlain(cm);
+  D.accounts = [{id:30101, name:'Test Salary', acc_type:'Individual Account', status:'Active', category:'Income', forecast_category:'income'},
+                {id:30102, name:'Test Bonus', acc_type:'Individual Account', status:'Active', category:'Income', forecast_category:'income'}];
+  D.ledger = [{id:1, jv:1, date:cm+'-02', acc:30101, descr:'Pay', amt:-600, alloc:null}, {id:2, jv:1, date:cm+'-02', acc:10101, descr:'Pay', amt:600, alloc:null}];
+  D.forecastPlans = {30101:{[cm]:-1000, [nm]:-1000}};
+  const cat = sb.getForecastCategory(D.accounts[0]);
+  const html = ()=>{ const d = sb.document.createElement('div'); d.innerHTML = sb.renderForecastCategorySection(cat, vm.runInContext('FORECAST_CATEGORIES', sb)[cat], sb.forecastCategoryAccounts(cat), [cm, nm], cm); return d; };
+  const c = sb.computeForecastCell(D.accounts[0], cm, cm);
+  let d = html();
+  const heads = [...d.querySelectorAll('thead th')].map(t=>t.textContent);
+  assert(heads.includes('Actual') && heads.includes('Variance') && heads.some(h=>/plan$/.test(h)) && d.querySelectorAll('colgroup col').length===2+4, 'On by default: this month has Plan, Actual and Variance columns, next month one, got ' + heads.join('|'));
+  const row = d.querySelector('tbody tr');
+  const act = row && row.querySelector('[data-pvaact]'), vr = row && row.querySelector('[data-pvavar]');
+  assert(act && act.textContent===sb.money0(c.actual) && vr && vr.textContent===sb.money0(c.actual-c.plan), 'Account row: actual and variance = actual − plan, got ' + (act && act.textContent) + ' / ' + (vr && vr.textContent));
+  const row2 = d.querySelectorAll('tbody tr')[1];
+  const row2var = row2 && row2.querySelector('[data-pvavar]');
+  assert(row2var && row2var.textContent==='—','An account with no plan shows — as its variance');
+  const tot = d.querySelector('tfoot tr');
+  const tAct = tot && tot.querySelector('[data-pvaact]'), tVar = tot && tot.querySelector('[data-pvavar]');
+  assert(tAct && tAct.textContent===sb.money0(sb.categoryMonthActual(cat, cm, cm)) && tVar && tVar.textContent===sb.money0(sb.categoryMonthActual(cat, cm, cm)-sb.categoryMonthFlow(cat, cm, cm)), 'Total row carries actual and variance too');
+  // summary panel
+  const p = sb.document.createElement('div'); p.innerHTML = sb.renderCashFlowPanel([cm, nm], cm);
+  const sumRows = [...p.querySelectorAll('tbody tr')];
+  assert(p.querySelector('#fcPvaToggle') && p.querySelector('#fcPvaToggle').checked && sumRows.length && sumRows.every(r=>r.querySelector('[data-pvaact]') && r.querySelector('[data-pvavar]')), 'Projected Cash Position: every row (categories, totals, closing) gets Actual and Variance, with the switch on');
+  // switch off
+  sb.localStorage.setItem('forecastMonthPva', 'off');
+  d = html();
+  assert(!d.querySelector('[data-pva]') && !d.querySelector('[data-pvaact]') && d.querySelectorAll('colgroup col').length===2+2, 'Switch off: back to one column per month');
+  sb.localStorage.removeItem('forecastMonthPva');
+  assert(vm.runInContext('LEDGEROS_KEYS', sb).includes('forecastMonthPva'), 'The switch is a LedgerOS storage key');
+  // reversed category: the Total row has the same sign as its rows
+  sb.localStorage.setItem('forecastSignFlips', JSON.stringify({[cat]:true}));
+  sb.localStorage.setItem('forecastMonthPva', 'off');
+  d = html();
+  const nextCell = d.querySelector('tbody tr td:nth-child(4)'), nextTot = d.querySelector('tfoot td:nth-child(4)');
+  const cellVal = nextCell && ((nextCell.querySelector('input')||{}).value || nextCell.textContent.trim());
+  assert(cellVal==='1,000' && nextTot && nextTot.textContent==='1,000', 'Reversed category: row 1,000 and Total 1,000 (was −1,000), got ' + cellVal + ' / ' + (nextTot && nextTot.textContent));
 }
