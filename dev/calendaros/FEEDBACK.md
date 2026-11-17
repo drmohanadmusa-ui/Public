@@ -21,6 +21,14 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 | 9b | Big-step check, every machine: before adding weight, estimate reps at the new weight (Epley, keeping 2 in reserve). If that lands under the bottom of the range, keep the weight and raise the rep target (at most 3 above the top) until the jump fits. Same rule in the app (Next time screen, suggestions) and in the Review Pack prompt. | change | shipped (v4.74.0):  |
 | 9c | On AI plan import, show where the AI's weight differs from what the app's rule would pick. The AI's weight is kept. | change | shipped (v4.74.0):  |
 
+## Batch 2026-11-17 (2): Training -> Progress charts (v4.74.0)
+
+| # | Comment (his words, lightly tidied) | Type | Status |
+|---|---|---|---|
+| 10 | The graphs look way too big on the page. | change | shipped (v4.74.1) |
+| 11 | The graphs need to be interactive: hovering over a bar or a point shows its figures and label. | change | shipped (v4.74.1) |
+| 12 | The weight axis shouldn't run from the lowest to the highest weight; it should start at 0 and end 50% above the max weight. | change | shipped (v4.74.1) |
+
 ### Notes from the code (v4.73.0)
 
 - **Weight increase rule** (`doubleProgressionSuggestion`): double progression on the last *completed* session's working sets (warm-ups and failure-test sets excluded), judged at that session's heaviest weight.
