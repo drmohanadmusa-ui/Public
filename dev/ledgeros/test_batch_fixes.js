@@ -8137,6 +8137,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV527PositionUsdAndAvgCost();
   await testV528ForecastPlanActualVariance();
   await testV530CashBuyPicker();
+  await testEdgeBinanceBalances();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12026,4 +12027,21 @@ async function testV530CashBuyPicker(){
   assert(sb.document.querySelectorAll('[data-cashpick]').length===1, 'With one platform the list still shows (his choice)');
   const appHtml = fs.readFileSync(APP_HTML, 'utf8');
   assert(/cash waiting on platforms[^\n]*act:"openInvCashBuyPicker\(\)"/.test(appHtml), 'The Needs you cash item\'s Buy opens this list');
+}
+async function testEdgeBinanceBalances(){
+  // edge: binance-balances (#151): one signed read-only call; key and secret only from the function's env
+  const src = fs.readFileSync(path.join(__dirname, 'edge', 'binance-balances', 'index.ts'), 'utf8').replace(/^export /mg, '');
+  const fn = new Function('TextEncoder', src + '\nreturn {binanceBalances, hmacHex};')(TextEncoder);
+  const sig = await fn.hmacHex('NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j', 'symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559', crypto.subtle);
+  assert(sig==='c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71', 'edge: binance-balances signs exactly like Binance\'s documented example');
+  const calls = [];
+  const f = async (url, opt)=>{ calls.push({url, opt}); return {ok:true, status:200, text: async()=>JSON.stringify({balances:[{asset:'btc', free:'0.5', locked:'0.25'}, {asset:'USDT', free:'10', locked:'0'}, {asset:'DUST', free:'0', locked:'0'}]})}; };
+  let r = await fn.binanceBalances({BINANCE_API_KEY:'k1', BINANCE_API_SECRET:'s1'}, f, crypto.subtle, 1700000000000);
+  const body = JSON.parse(r.body);
+  assert(r.status===200 && body.balances.BTC===0.75 && body.balances.USDT===10 && !('DUST' in body.balances), 'edge: binance-balances adds free + locked per coin, upper-cases, drops zeros, got ' + r.body);
+  assert(calls.length===1 && calls[0].opt.method==='GET' && calls[0].opt.headers['X-MBX-APIKEY']==='k1' && /^https:\/\/api\.binance\.com\/api\/v3\/account\?omitZeroBalances=true&recvWindow=10000&timestamp=1700000000000&signature=[0-9a-f]{64}$/.test(calls[0].url) && !/s1/.test(calls[0].url), 'edge: one GET to the account endpoint, key in the header, signed, secret never sent, got ' + (calls[0] && calls[0].url));
+  r = await fn.binanceBalances({}, f, crypto.subtle, 1);
+  assert(r.status===400 && /BINANCE_API_KEY/.test(r.body) && calls.length===1, 'edge: no key set up → a clear message and no call to Binance');
+  r = await fn.binanceBalances({BINANCE_API_KEY:'k', BINANCE_API_SECRET:'s'}, async()=>({ok:false, status:451, text: async()=>'{"code":0,"msg":"Service unavailable from a restricted location"}'}), crypto.subtle, 1);
+  assert(r.status===502 && /451/.test(r.body) && /non-US region/.test(r.body), 'edge: a refused location says so, got ' + r.body);
 }
