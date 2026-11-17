@@ -3,6 +3,7 @@
 > **Deploys are done by Claude (2026-11-13).** Both functions are deployed and the schedule is set through the
 > Supabase Management API with Muhannad's scoped access token (project Anthropic-LedgerOS only; Edge Functions and
 > Database read-write, Project Settings and Logs read; saved as a network secret for `api.supabase.com`, 90 days).
+> `binance-balances` (#151, 2026-11-17) keeps `verify_jwt:true`: one signed read-only call (Binance Spot account balances) with the read-only key he saved as Edge Function secrets `BINANCE_API_KEY` / `BINANCE_API_SECRET` (never in the app or repo). Binance refuses US calls (451) and the project is in us-east-1, so callers must send `x-region: eu-central-1` (tested live 2026-11-17: Frankfurt 200, US 451).
 > The dashboard steps below are kept as the fallback. Deploy command (from this folder):
 > `curl -X POST "https://api.supabase.com/v1/projects/<ref>/functions/deploy?slug=<name>" -F 'metadata={"entrypoint_path":"index.ts","name":"<name>","verify_jwt":<true|false>};type=application/json' -F "file=@<name>/index.ts;type=application/typescript"`
 > `inv-daily-close` runs with `verify_jwt:false` (it only saves public prices and is safe to re-run), so the pg_cron job
