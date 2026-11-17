@@ -633,12 +633,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.29.0';
+const APP_VERSION = '5.30.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.30.0', date:'2026-11-17', changes:[
+    'Investments → Needs you, "cash waiting on platforms" → Buy: the list shows only platforms that hold cash (over $1), each with its amount in USD and SAR, most cash first.',
+  ]},
   {version:'5.29.0', date:'2026-11-16', changes:[
     'Forecast snapshots now look 36 months ahead by default (was 12), so Compare a snapshot can go up to 3 years out. The horizon in Forecast → Settings is now one setting for all your devices. Snapshots already taken keep the 12 months they captured.',
   ]},
@@ -13100,7 +13103,7 @@ function invNeedsYouItems(){
     const fx = getInvFxRate();
     const state = invCashState(null).state;
     const cashUsd = Object.keys(state).reduce((s,pid)=>s+Object.values(state[pid]||{}).reduce((a,o)=>a+(Number((o||{}).usd)||0),0),0);
-    if(cashUsd>1) items.push({key:'cash', icon:'💵', text:`$${fmt2(cashUsd)} cash waiting on platforms (${money(cashUsd*fx)} SAR)`, btn:'🔁 Buy', act:"invStartPlatformAction('trade')"});
+    if(cashUsd>1) items.push({key:'cash', icon:'💵', text:`$${fmt2(cashUsd)} cash waiting on platforms (${money(cashUsd*fx)} SAR)`, btn:'🔁 Buy', act:"openInvCashBuyPicker()"});
     const pricable = invPricablePositions();
     const stale = pricable.filter(p=>{ const v = invLatestValuation(p.id); return !v || invDaysSince(v.date)>INV_PRICE_STALE_DAYS; });
     const linkedStale = stale.filter(p=>invPriceLink(p.id));
@@ -14172,6 +14175,21 @@ function openInvPlatformPicker(action){
     <h3 style="margin-top:0">${esc(def.label)} — which platform?</h3>
     <div style="display:flex;flex-direction:column;gap:8px">
       ${platforms.map(p=>`<button class="btn ghost" style="justify-content:flex-start;text-align:left" onclick="invPlatformPickerChoose('${action}', ${p.id})">🏦 ${esc(p.name)}</button>`).join('')}
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Cancel</button></div>`, true);
+}
+// v5.30 (#149): Needs you "cash waiting" → Buy: only platforms holding over $1 of cash, with the amount, most cash first.
+function invPlatformsWithCash(){
+  const state = invCashState(null).state;
+  return (D.invPlatforms||[]).map(p=>({p, usd: Object.values(state[p.id]||{}).reduce((s,o)=>s+(Number((o||{}).usd)||0),0)}))
+    .filter(x=>x.usd>1).sort((a,b)=>b.usd-a.usd);
+}
+function openInvCashBuyPicker(){
+  const fx = getInvFxRate(), list = invPlatformsWithCash();
+  showModal(`
+    <h3 style="margin-top:0">🔁 Buy — which platform? <span class="mut" style="font-size:12px;font-weight:normal">(platforms with cash)</span></h3>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${list.map(x=>`<button class="btn ghost" style="justify-content:space-between;text-align:left;gap:12px" data-cashpick="${x.p.id}" onclick="invPlatformPickerChoose('trade', ${x.p.id})"><span>🏦 ${esc(x.p.name)}</span><span class="mono">$${fmt2(x.usd)} (${money(x.usd*fx)} SAR)</span></button>`).join('') || '<div class="mut">No platform has cash right now.</div>'}
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Cancel</button></div>`, true);
 }
