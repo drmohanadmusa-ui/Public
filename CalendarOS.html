@@ -742,6 +742,9 @@ body.mw-focus .main{ padding:0 !important; max-width:none !important; }
 .mw-target{ margin-top:12px; font-size:15px; color:#A1A5AD; }
 .mw-warn{ color:#FF7A59; font-weight:600; }
 .mw-banner{ margin-top:12px; padding:12px 14px; border-radius:16px; background:#2A1E1A; color:#FFB09B; font-size:14px; font-weight:600; }
+.mw-banner.mw-up{ background:color-mix(in srgb, var(--mw-accent, #D3F53D) 14%, #111317); color:var(--mw-accent, #D3F53D); }
+.mw-banner.mw-down{ background:#1C2330; color:#A9C4F5; }
+.mw-nw-last{ font-weight:400; opacity:.85; }
 .mw-sets{ margin-top:16px; }
 .mw-rir.tap{ cursor:pointer; -webkit-tap-highlight-color:transparent; }
 html:has(.mw-lock), body:has(.mw-lock){ overflow:hidden; overscroll-behavior:none; }
@@ -2424,7 +2427,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.73.0';
+const APP_VERSION = '4.74.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2432,6 +2435,16 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.74.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIX \u2014 Weight increases: when every working set reaches the top of the rep range, it now counts toward going heavier even if the sets felt too easy (3 or more reps left). Before, a \u201ctoo easy\u201d set blocked the increase, so the app kept saying \u201csame weight\u201d.',
+    'NEW \u2014 Big-jump check for every exercise. Before going heavier, the app estimates how many reps you would get at the new weight, keeping 2 in reserve. If that lands under the bottom of the rep range (for example a 10 kg step on leg press at 70 kg), it keeps the weight and raises the rep target first, up to 3 reps above the top of the range, then goes heavier. The Next time screen and the app\u2019s suggestions use this.',
+    'CHANGED \u2014 Review Pack: the AI gets the same two rules, with a worked leg press example, so its plans follow them.',
+    'NEW \u2014 AI plan import: where the AI\u2019s weight differs from what the app\u2019s rule would pick, the weight check before import lists both (for each exercise\u2019s first planned day). The AI\u2019s weight is the one imported.',
+    'NEW \u2014 Phone workout: a banner when today\u2019s planned weight is heavier (\u2191 New weight) or lighter (\u2193 Lighter) than the last time you did the exercise.',
+    'CHANGED \u2014 The rest timer chime is about 3 times louder. On iPhone, the silent switch still mutes it.',
+    'NEW \u2014 Training \u2192 Progress tab. Strength index: the average change in your estimated max across exercises vs 4 weeks earlier, with an 8-week line. Exercise progress: pick an exercise to see its heaviest working weight (line) over its volume, weight \u00d7 reps (bars), for the last 12 sessions. Warm-ups are excluded.',
+  ]},
   { v:'4.73.0', changes: [
     'No SQL migration needed \u2014 front-end only. The night mode style is a display choice saved on each device, like Dark Mode itself.',
     'NEW \u2014 Night Mode Style (Settings \u2192 Appearance, under Dark Mode): Warm Charcoal (the default), True Black, or Midnight Slate.',
@@ -9595,10 +9608,25 @@ function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
   const weights = working.map(s=>s.weightKg).filter(w=>w!=null && w>0);
   const topW = weights.length ? Math.max(...weights) : (sessionTarget.weightKg||null);
   const atTop = weights.length ? working.filter(s=>s.weightKg===topW) : working;
-  const allAtTop = atTop.every(s=> s.reps >= repsMax && (s.rir==null||s.rir<=2));
+  // v4.74.0: a set that reached the top of the range counts whatever its RIR
+  // ("too easy" sets used to block the increase forever).
+  const allAtTop = atTop.every(s=> s.reps >= repsMax);
   const anyBelowBottom = atTop.some(s=> s.reps < repsMin);
-  if(allAtTop) return { type:'addWeight', newWeightKg:(topW||0)+increment,
-    repsTarget:repsMin, message:`All sets hit ${repsMax} reps at RIR≤2 — try +${increment} kg, drop back to ${repsMin}` };
+  if(allAtTop){
+    const newW = (topW||0)+increment;
+    const maxReps = Math.max(...atTop.map(s=>s.reps||0));
+    // v4.74.0 big-jump check: estimate reps at the new weight (Epley, keeping
+    // 2 in reserve). If that lands under the bottom of the range, build reps
+    // first, up to 3 above the top; at that cap the weight goes up anyway.
+    const predicted = predictedRepsAtWeight(atTop, topW, newW);
+    if(topW && predicted != null && predicted < repsMin && maxReps < repsMax + 3){
+      const repsTarget = Math.min(maxReps + 1, repsMax + 3);
+      return { type:'addRep', newWeightKg:topW, repsTarget, bigJump:true,
+        message:`+${increment} kg is a big jump from ${cleanKg(topW)} kg (about ${Math.max(0, Math.floor(predicted))} reps) \u2014 build to ${repsTarget} reps first` };
+    }
+    return { type:'addWeight', newWeightKg:newW,
+      repsTarget:repsMin, message:`All sets hit ${repsMax} reps \u2014 try +${increment} kg, drop back to ${repsMin}` };
+  }
   if(anyBelowBottom) return { type:'hold', newWeightKg:topW,
     repsTarget:repsMin, message:`Hold the weight — didn't reach ${repsMin} reps on all sets` };
   const nextReps=Math.max(...atTop.map(s=>s.reps||0))+1;
@@ -9606,6 +9634,13 @@ function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
     repsTarget:Math.min(nextReps,repsMax), message:`Try ${Math.min(nextReps,repsMax)} reps at the same weight` };
 }
 
+/* v4.74.0: reps you could do at newW keeping 2 in reserve, from the weakest
+   set at topW (Epley: e1RM = w x (1 + (reps + RIR)/30); RIR unknown = 2). */
+function predictedRepsAtWeight(sets, topW, newW){
+  if(!topW || !newW || !sets || !sets.length) return null;
+  const e1 = Math.min(...sets.map(s=> topW * (1 + ((s.reps||0) + (Number.isFinite(s.rir) ? s.rir : 2)) / 30)));
+  return 30 * (e1 / newW - 1) - 2;
+}
 function getSetsForExercise(date, exId){
   return (state.training.sets||[]).filter(s=>s.date===date&&s.exerciseId===exId).sort((a,b)=>a.setNo-b.setNo);
 }
@@ -9702,8 +9737,9 @@ function _playTone(freq, durationMs, when, gain){
   osc.connect(g); g.connect(ctx.destination);
   osc.start(startAt); osc.stop(startAt+durationMs/1000+0.02);
 }
-function playRestTimerTick(){ _playTone(880, 90, 0, 0.12); }
-function playRestTimerDone(){ _playTone(660, 140, 0, 0.16); _playTone(990, 220, 0.15, 0.18); }
+// v4.74.0: 3x louder (was 0.12 / 0.16 / 0.18 of a 1.0 maximum).
+function playRestTimerTick(){ _playTone(880, 90, 0, 0.36); }
+function playRestTimerDone(){ _playTone(660, 140, 0, 0.48); _playTone(990, 220, 0.15, 0.54); }
 function startRestTimer(seconds,exId){
   if(_restTimerHandle) clearInterval(_restTimerHandle);
   if(_tipRotationHandle) clearInterval(_tipRotationHandle);
@@ -10588,6 +10624,7 @@ function renderTrainingView(){
     ['sessions','☰','Session Library'],
     ['exercises','⛊','Exercise Library'],
     ['resources','◈','Resources'],
+    ['trends','↗','Progress'],
   ];
   const sectionRenderers = {
     today: renderTrainingToday,
@@ -10596,6 +10633,7 @@ function renderTrainingView(){
     sessions: renderTrainingSessionsSubpage,
     exercises: renderTrainingExercisesSubpage,
     resources: renderTrainingResourcesSubpage,
+    trends: renderTrainingTrendsSubpage,
   };
   const active = sectionRenderers[state.trainingSection] ? state.trainingSection : 'today';
   const loggedDayCount = new Set(state.training.logs.map(l=>l.date)).size;
@@ -10848,6 +10886,7 @@ function renderMobileWorkout(){
       </div>
       ${targetBits ? `<div class="mw-target">Target ${escapeHtml(targetBits)}${below ? ` <span class="mw-warn">below your last ${floor.weightKg} kg</span>` : ''}</div>` : ''}
       ${failure ? `<div class="mw-banner">Failure day: push your last set to true failure, then mark it F.</div>` : ''}
+      ${mwNewWeightBanner(exId, date, suggested, isWalking)}
     </div>
     ${body}
     <div class="mw-dock">
@@ -10871,6 +10910,15 @@ function mwEmptyHtml(date, session){
       <button class="mw-ghost" onclick="openPlanDayModal('${date}')">Plan day</button>
     </div>
   </div>`;
+}
+/* v4.74.0: banner when today's planned weight differs from the last completed
+   session's top working weight. Numbers only (his choice). */
+function mwNewWeightBanner(exId, date, planned, isWalking){
+  if(isWalking || planned == null) return '';
+  const last = getLastCompletedSession(exId, date);
+  if(!last || last.topWeightKg == null || Math.abs(planned - last.topWeightKg) < 1e-9) return '';
+  const up = planned > last.topWeightKg;
+  return `<div class="mw-banner mw-newweight ${up?'mw-up':'mw-down'}">${up?'\u2191 New weight':'\u2193 Lighter'}: ${cleanKg(planned)} kg <span class="mw-nw-last">(last time ${cleanKg(last.topWeightKg)} kg)</span></div>`;
 }
 function mwSummaryData(date, ordered, blockMap){
   const done = (state.training.sets||[]).filter(s=>s.date===date && s.done && !s.isWarmup);
@@ -13293,6 +13341,97 @@ function renderTrainingHistorySubpage(){
   `;
 }
 
+/* ---------- Subpage: Progress (v4.74.0) ----------
+   Working sets only (done, warm-ups excluded). Per exercise: heaviest working
+   weight (line) over session volume = weight x reps (bars). Strength index:
+   average change in estimated max (Epley, reps 1-20) vs 4 weeks earlier. */
+function exerciseSessionStats(exId){
+  const by = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId!==exId || !s.done || s.isWarmup) return;
+    (by[s.date] || (by[s.date]=[])).push(s);
+  });
+  return Object.keys(by).sort().map(date=>{
+    const ss = by[date];
+    const loaded = ss.filter(s=>(s.weightKg||0) > 0);
+    const e1s = loaded.filter(s=>s.reps>0 && s.reps<=20).map(s=>s.weightKg*(1+s.reps/30));
+    return { date, topKg: loaded.length ? Math.max(...loaded.map(s=>s.weightKg)) : 0,
+      volume: Math.round(ss.reduce((t,s)=>t+(s.weightKg||0)*(s.reps||0), 0)),
+      e1: e1s.length ? Math.max(...e1s) : null };
+  });
+}
+function strengthIndexAt(asOf){
+  const cutoff = addDays(asOf, -28), oldest = addDays(asOf, -56);
+  const latestIn = (rows, from, to)=>{ const r = rows.filter(x=>x.e1 && x.date > from && x.date <= to); return r.length ? r[r.length-1].e1 : null; };
+  const changes = [];
+  (state.training.exercises||[]).forEach(ex=>{
+    if(ex.category==='walking') return;
+    const rows = exerciseSessionStats(ex.id);
+    const cur = latestIn(rows, cutoff, asOf), base = latestIn(rows, oldest, cutoff);
+    if(cur && base) changes.push(cur/base - 1);
+  });
+  if(!changes.length) return null;
+  return { pct: Math.round(changes.reduce((a,b)=>a+b,0)/changes.length*1000)/10, n: changes.length };
+}
+function svgWeightVolumeChart(rows, opts={}){
+  const width = opts.width||320, height = opts.height||150;
+  const padL=34, padR=34, padT=10, padB=26;
+  const W = width-padL-padR, H = height-padT-padB, n = rows.length;
+  if(n < 2) return `<div class="page-sub" style="padding:16px 0;text-align:center;">Log this exercise on at least 2 days to see a trend.</div>`;
+  const maxVol = Math.max(1, ...rows.map(r=>r.volume));
+  const kgs = rows.map(r=>r.topKg), lo = Math.min(...kgs), hi = Math.max(...kgs), span = (hi-lo) || 1;
+  const step = W/n, barW = Math.max(4, step*0.6);
+  const xs = i => padL + step*i + step/2;
+  const yKg = v => padT + H - ((v-lo)/span)*H*0.8 - H*0.1;
+  const bars = rows.map((r,i)=>{ const h = Math.round(r.volume/maxVol*H); return `<rect x="${xs(i)-barW/2}" y="${padT+H-h}" width="${barW}" height="${h}" rx="2" fill="var(--teal)" fill-opacity="0.55"><title>${r.date}: ${r.volume.toLocaleString()} kg volume</title></rect>`; }).join('');
+  const line = rows.map((r,i)=>`${xs(i)},${yKg(r.topKg)}`).join(' ');
+  const dots = rows.map((r,i)=>`<circle cx="${xs(i)}" cy="${yKg(r.topKg)}" r="3" fill="var(--brass)"><title>${r.date}: ${cleanKg(r.topKg)} kg top weight</title></circle>`).join('');
+  const t = (x,y,txt,anchor)=>`<text x="${x}" y="${y}" text-anchor="${anchor}" font-size="9" fill="var(--ink-soft)">${txt}</text>`;
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" xmlns="http://www.w3.org/2000/svg" class="wv-chart">
+    <line x1="${padL}" y1="${padT+H}" x2="${padL+W}" y2="${padT+H}" stroke="var(--line)" stroke-width="1"/>
+    ${bars}
+    <polyline points="${line}" fill="none" stroke="var(--brass)" stroke-width="2"/>${dots}
+    ${t(padL-4, yKg(hi)+3, cleanKg(hi)+'kg', 'end')}${hi!==lo ? t(padL-4, yKg(lo)+3, cleanKg(lo)+'kg', 'end') : ''}
+    ${t(padL+W+4, padT+8, maxVol>=1000 ? Math.round(maxVol/100)/10+'t' : maxVol+'kg', 'start')}
+    ${t(xs(0), padT+H+14, rows[0].date.slice(5), 'middle')}${t(xs(n-1), padT+H+14, rows[n-1].date.slice(5), 'middle')}
+  </svg>`;
+}
+function renderTrainingTrendsSubpage(){
+  const today = todayStr();
+  const exs = (state.training.exercises||[]).filter(e=>e.category!=='walking')
+    .map(e=>({ e, rows: exerciseSessionStats(e.id) })).filter(x=>x.rows.length);
+  const idxNow = strengthIndexAt(today);
+  const weekly = [];
+  for(let k=7;k>=0;k--){ const d = addDays(today, -7*k); const v = strengthIndexAt(d); if(v) weekly.push({ label:d, value:v.pct }); }
+  if(!exs.some(x=>x.e.id===state.trainingTrendExId)){
+    const recent = exs.slice().sort((a,b)=> a.rows[a.rows.length-1].date < b.rows[b.rows.length-1].date ? 1 : -1)[0];
+    state.trainingTrendExId = recent ? recent.e.id : null;
+  }
+  const sel = exs.find(x=>x.e.id===state.trainingTrendExId);
+  const rows = sel ? sel.rows.slice(-12) : [];
+  return `
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head"><h2>Strength index</h2><span class="page-sub" style="font-size:11.5px;">Average change in your estimated max vs 4 weeks earlier</span></div>
+      <div class="card" style="padding:12px 14px;">
+        ${idxNow ? `<div class="strength-index-now" style="font-family:var(--font-mono); font-size:26px; font-weight:600; color:${idxNow.pct>=0?'var(--teal)':'var(--flag)'};">${idxNow.pct>0?'+':''}${idxNow.pct}%</div>
+          <div class="page-sub" style="font-size:12px; margin-bottom:8px;">Across ${idxNow.n} exercise${idxNow.n===1?'':'s'} trained both in the last 4 weeks and the 4 weeks before.</div>`
+          : `<div class="page-sub" style="padding:8px 0;">Needs exercises logged both in the last 4 weeks and the 4 weeks before.</div>`}
+        ${weekly.length >= 2 ? svgLineChart(weekly, { width:320, height:120, valueSuffix:'%', title:'Strength index, last 8 weeks' }) : ''}
+      </div>
+    </div>
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head"><h2>Exercise progress</h2></div>
+      <div class="card" style="padding:12px 14px;">
+        ${exs.length ? `<select id="trainingTrendEx" onchange="state.trainingTrendExId=this.value; renderMain();" style="font-size:13px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--paper); color:var(--ink); margin-bottom:8px; max-width:100%;">
+            ${exs.slice().sort((a,b)=>a.e.name.localeCompare(b.e.name)).map(x=>`<option value="${x.e.id}" ${sel&&x.e.id===sel.e.id?'selected':''}>${escapeHtml(x.e.name)}</option>`).join('')}
+          </select>
+          ${svgWeightVolumeChart(rows)}
+          <div class="page-sub" style="font-size:11.5px; margin-top:6px;"><span style="color:var(--brass);">\u25cf</span> Heaviest working weight (line) \u00b7 <span style="color:var(--teal);">\u25a0</span> Volume = weight \u00d7 reps (bars). Working sets only, warm-ups excluded. Last ${rows.length} session${rows.length===1?'':'s'}.</div>`
+          : `<div class="page-sub" style="padding:8px 0;">Log sets on the Training page to see your progress here.</div>`}
+      </div>
+    </div>`;
+}
+
 /* ---------- Subpage: Session Library ---------- */
 function renderTrainingSessionsSubpage(){
   return `
@@ -15526,7 +15665,7 @@ RULES for the plan:
 - Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
 - ONE working weight per exercise per day: every working set of an exercise on a given day uses the same weight — I aim all sets at that weight, only the warm-up differs and the app calculates the warm-up itself at about 60%. Never write ramping or pyramid weights, and put exactly one "suggested starting weight: Xkg" in each block's notes.
-- Weight never goes backward: the suggested weight for an exercise must be at least the weight I last completed successfully — lastCompleted.topWeightKg in the exercise library above is the heaviest weight across my done working sets in my most recent completed session (ignore it only if lastCompleted.date is more than 4 weeks old). Hold that weight if I did not reach the bottom of the rep range on all sets; add one weightIncrementKg when I reached the top of the range at RIR 2 or lower. Across the weeks of this plan, a later week's weight for the same exercise must be at least the earlier week's. If you deliberately want a lighter deload, say so explicitly in your summary — the app flags every below-last-weight suggestion at import and I decide whether to keep it.
+- Weight never goes backward: the suggested weight for an exercise must be at least the weight I last completed successfully — lastCompleted.topWeightKg in the exercise library above is the heaviest weight across my done working sets in my most recent completed session (ignore it only if lastCompleted.date is more than 4 weeks old). Hold that weight if I did not reach the bottom of the rep range on all sets. When every working set reached the top of the range, that counts toward an increase however many reps I had left (a set that felt too easy counts too). BIG-JUMP CHECK before adding one weightIncrementKg (this matters most on machines with big steps, e.g. 10 kg on a leg press): estimate my max from the weakest set at that weight with Epley, e1RM = weight × (1 + (reps + RIR) / 30), taking RIR as 2 when it is missing; then the reps I could do at the new weight keeping 2 in reserve = 30 × (e1RM / new weight − 1) − 2. If that is at least the bottom of the rep range, add the increment and drop back to the bottom of the range. If it is below, keep the weight and raise the rep target by one instead (at most 3 reps above the top of the range); once I reach that cap, add the increment anyway. Example: 70 kg × 12 at RIR 2 on 8-12 with a 10 kg step predicts about 6 reps at 80 kg, so stay at 70 kg and aim for 13; at 70 kg × 14 at RIR 2 it predicts about 8, so go to 80 kg. My app applies exactly this rule and shows me wherever your weight differs from it. Across the weeks of this plan, a later week's weight for the same exercise must be at least the earlier week's. If you deliberately want a lighter deload, say so explicitly in your summary — the app flags every below-last-weight suggestion at import and I decide whether to keep it.
 - Use every strength exercise in my library once per calendar week (Sunday through Saturday) across the weeks this plan covers: each exercise should appear on exactly one training day per week, and only appear a second time in the same week if that is genuinely necessary to reach a muscle's weekly set floor — and in that case choose a different exercise for that muscle first. exerciseUsageCurrentWeek in the data pack shows, for the current week, how many days each exercise has already been done (doneDays — fixed, count these toward the once-per-week target) and how many days it is currently planned (currentlyPlannedDays — that is the old plan, which your new plan replaces for any day not already logged, so ignore it). If some exercises genuinely cannot fit in a week, list which ones and why in your summary rather than silently dropping them.
 - Rep target framing, for both planning and reviewing past sessions in your summary: the TOP of a range is what I'm aiming for, not a bar I have to clear. Landing under it at real effort (roughly RIR 1-3) is a normal, expected outcome — I'm firmly in the intended effort zone — not a shortfall, don't flag it as underperformance (e.g. a target of 15 and I land at 12 is fine on its own). The one exception: the first session after a weight increase on an exercise (this session's weight is higher than that exercise's prior session), where the BOTTOM of the range is what's actually expected and appropriate — that's the point of dropping back down after adding weight, so hitting the bottom of the range right after a bump is the success case there, not a miss. Only flag a genuine concern when reps land meaningfully below even the bottom of the range, or a stall pattern per the Flags section above.
 - Within a single week, prefer varying WHICH exercise targets a given muscle across different training days rather than repeating the identical exercise every time that muscle comes up — e.g. two chest days in a week should generally use two different chest exercises/machines, not the same one twice, unless there's a genuine reason not to (limited equipment options for that muscle in my library, or a specific weakness being deliberately grooved with repetition). This is about variety of stimulus, not frequency — training the same MUSCLE multiple times a week is expected and good; this rule is only about not defaulting to the identical movement each time.
@@ -15962,6 +16101,35 @@ function computeImportWeightCorrections(res){
   const list = Object.values(changes).map(ch=>Object.assign({}, ch, { dates:[...ch.dates].sort() }));
   return { changes:list, fallbackChanges };
 }
+/* v4.74.0: where the AI's weight differs from what the app's own rule
+   (doubleProgressionSuggestion, incl. the big-jump check) would pick, for each
+   exercise's FIRST planned date in the imported plan. Later dates depend on
+   sets not done yet, so they are not compared. Display only: the AI's weight
+   is what gets imported. */
+function computeImportRuleDifferences(res){
+  const sessIdx = {};
+  (res.sessions||[]).forEach((item,i)=>{ sessIdx[item.importedId] = i; });
+  const first = {};
+  (res.calendar||[]).filter(c=>c && c.date && c.sessionId && sessIdx[c.sessionId]!=null)
+    .sort((a,b)=> a.date<b.date?-1:a.date>b.date?1:0)
+    .forEach(c=>{
+      (res.sessions[sessIdx[c.sessionId]].fields.blocks||[]).forEach(b=>{
+        if(b && b.exerciseId && !first[b.exerciseId]) first[b.exerciseId] = { date:c.date, block:b };
+      });
+    });
+  const out = [];
+  Object.entries(first).forEach(([exId, f])=>{
+    const ai = parseSuggestedWeightKg(f.block.notes);
+    const r = parseRepRange(f.block.reps);
+    if(ai == null || !r.min || !r.top) return;
+    const last = getLastCompletedSession(exId, f.date);
+    if(!last || last.topWeightKg == null || daysBetween(last.date, f.date) > WEIGHT_FLOOR_WINDOW_DAYS) return;
+    const prog = doubleProgressionSuggestion(exId, { repsMin:r.min, repsMax:r.top, weightKg:last.topWeightKg }, last.sets);
+    if(!prog || prog.newWeightKg == null || Math.abs(prog.newWeightKg - ai) < 1e-9) return;
+    out.push({ exId, date:f.date, ai, app:prog.newWeightKg, why:prog.message });
+  });
+  return out;
+}
 function applyImportWeightCorrections(res, result){
   result.changes.forEach(ch=>{
     const b = (res.sessions[ch.i].fields.blocks||[])[ch.j];
@@ -15977,6 +16145,8 @@ function openImportWeightCorrectionsModal(res, result){
   const reasonText = r => r.kind==='increment' ? `snapped to the ${r.inc} kg step`
     : r.kind==='floor-history' ? `last completed ${r.kg} kg on ${humanDateNoRelative(r.date)}`
     : `earlier in this plan: ${r.kg} kg on ${humanDateNoRelative(r.date)}`;
+  const diffs = result.ruleDiffs || [];
+  const hasCorrections = !!(result.changes.length || result.fallbackChanges.length);
   const regress = result.changes.filter(ch=>ch.reasons.some(r=>r.kind!=='increment'));
   const snapOnly = result.changes.filter(ch=>ch.reasons.every(r=>r.kind==='increment'));
   const line = ch => `<div style="padding:5px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
@@ -15992,14 +16162,21 @@ function openImportWeightCorrectionsModal(res, result){
     <div class="modal wide" style="padding:0 20px 0;">
       <div style="position:sticky; top:0; z-index:2; background:var(--paper-raised); padding:16px 0 8px;">
         <h3>Weight check before import</h3>
-        <div class="page-sub">Corrections are applied automatically unless you choose to import as written.</div>
+        <div class="page-sub">${hasCorrections ? 'Corrections are applied automatically unless you choose to import as written.' : 'Nothing needs correcting. Below is where the AI\u2019s weights differ from the app\u2019s own rule.'}</div>
       </div>
       ${regress.length ? `<div style="font-weight:700; color:var(--flag,#D95B5B); margin:10px 0 2px;">⚠ Below your last completed weight (${regress.length})</div>${regress.map(line).join('')}` : ''}
       ${snapOnly.length ? `<div style="font-weight:700; margin:12px 0 2px;">Not on the machine's increment (${snapOnly.length})</div>${snapOnly.map(line).join('')}` : ''}
       ${result.fallbackChanges.length ? `<div style="font-weight:700; margin:12px 0 2px;">Starting-point suggestions snapped (${result.fallbackChanges.length})</div>${result.fallbackChanges.map(f=>`<div style="padding:4px 0; border-bottom:1px solid var(--line); font-size:12.5px;"><b>${escapeHtml(exName(f.exId))}</b> <span style="font-family:var(--font-mono,monospace);">${f.from} → <b>${f.to} kg</b></span> <span class="page-sub">(${f.inc} kg step)</span></div>`).join('')}` : ''}
+      ${diffs.length ? `<div style="font-weight:700; margin:12px 0 2px;">AI vs the app\u2019s rule (${diffs.length})</div>
+        <div class="page-sub" style="font-size:12px;">The AI\u2019s weight is the one imported. Shown for the first planned day of each exercise.</div>
+        ${diffs.map(d=>`<div class="rule-diff-row" style="padding:5px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
+          <b>${escapeHtml(exName(d.exId))}</b> <span class="page-sub">\u00b7 ${escapeHtml(humanDateNoRelative(d.date))}</span><br>
+          <span style="font-family:var(--font-mono,monospace);">AI <b>${d.ai} kg</b> \u00b7 App ${d.app} kg</span> <span class="page-sub">(${escapeHtml(d.why)})</span>
+        </div>`).join('')}` : ''}
       <div class="modal-actions" style="flex-direction:column; align-items:stretch; gap:8px; position:sticky; bottom:0; background:var(--paper-raised); padding:12px 0 16px; margin-top:8px;">
-        <button class="btn brass" onclick="resolveImportWeightCorrections('apply')">Apply corrections &amp; continue</button>
-        <button class="btn secondary" onclick="resolveImportWeightCorrections('asis')">Import as written (no corrections)</button>
+        ${hasCorrections ? `<button class="btn brass" onclick="resolveImportWeightCorrections('apply')">Apply corrections &amp; continue</button>
+        <button class="btn secondary" onclick="resolveImportWeightCorrections('asis')">Import as written (no corrections)</button>`
+        : `<button class="btn brass" onclick="resolveImportWeightCorrections('asis')">Continue import</button>`}
         <button class="btn ghost" onclick="resolveImportWeightCorrections('cancel')">Cancel this import</button>
       </div>
     </div>
@@ -16016,7 +16193,8 @@ function resolveImportWeightCorrections(choice){
 }
 function proceedWithImportApply(res){
   const result = computeImportWeightCorrections(res);
-  if(result.changes.length || result.fallbackChanges.length){
+  result.ruleDiffs = computeImportRuleDifferences(res);
+  if(result.changes.length || result.fallbackChanges.length || result.ruleDiffs.length){
     openImportWeightCorrectionsModal(res, result);
     return;
   }
