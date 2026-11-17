@@ -8,7 +8,7 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 
 | # | Comment (his words, lightly tidied) | Type | Status |
 |---|---|---|---|
-| 1 | When a day's exercise uses a new weight, a banner should tell me. | change | agreed: shows when the planned weight differs from last time (↑ heavier / ↓ lighter), numbers only, no reason; phone workout only. Showing the app's own number when it differs from the AI's (see 6) is a question. |
+| 1 | When a day's exercise uses a new weight, a banner should tell me. | change | agreed: shows when the planned weight differs from last time (↑ heavier / ↓ lighter), numbers only, no reason; phone workout only. |
 | 2 | What is the rationale for increasing weight? | question | answered |
 | 3 | What are the parameters of the AI Review Pack, and what is given to it? | question | answered |
 | 4 | Increase the rest chime volume. | change | agreed: about 3× louder, no slider |
@@ -16,7 +16,10 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 | 6 | Can the logic be built into the app, so the app plans and the AI only reviews occasionally? | change (large) | parked as a future feature. When it differs, the AI's weight wins but the difference is shown. |
 | 7 | Graphs of session average weight and total volume without warm-ups, to track progress. Brainstorm better ways. | change | agreed: per-exercise double graph (top working weight line + working-set volume bars, warm-ups excluded) + an overall strength index (average e1RM change vs 4 weeks ago); in a new tab on the Training page |
 | 8 | How does the AI's weight-increase logic compare with the app's? | question | answered |
-| 9 | Leg press moves in 10 kg steps; at 70 kg I finish each set with 2+ RIR. Shouldn't big-step machines have a different rule (bigger increase, different parameters)? | question + change | question asked |
+| 9 | Leg press moves in 10 kg steps; at 70 kg I finish each set with 2+ RIR. Shouldn't big-step machines have a different rule (bigger increase, different parameters)? | change | agreed (see 9a-9c) |
+| 9a | Fix the gap: "too easy" sets (top of range reached with RIR 3+) must count toward a weight increase. Keep the rest of the current rule. | change | agreed: every set at the top of the range counts, whatever the RIR |
+| 9b | Big-step check, every machine: before adding weight, estimate reps at the new weight (Epley, keeping 2 in reserve). If that lands under the bottom of the range, keep the weight and raise the rep target (at most 3 above the top) until the jump fits. Same rule in the app (Next time screen, suggestions) and in the Review Pack prompt. | change | agreed |
+| 9c | On AI plan import, show where the AI's weight differs from what the app's rule would pick. The AI's weight is kept. | change | agreed |
 
 ### Notes from the code (v4.73.0)
 
