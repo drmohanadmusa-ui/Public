@@ -25,9 +25,9 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 
 | # | Comment (his words, lightly tidied) | Type | Status |
 |---|---|---|---|
-| 10 | The graphs look way too big on the page. | change | mockup shown, waiting for his OK |
-| 11 | The graphs need to be interactive: hovering over a bar or a point shows its figures and label. | change | mockup shown, waiting for his OK |
-| 12 | The weight axis shouldn't run from the lowest to the highest weight; it should start at 0 and end 50% above the max weight. | change | mockup shown, waiting for his OK |
+| 10 | The graphs look way too big on the page. | change | shipped (v4.74.1) |
+| 11 | The graphs need to be interactive: hovering over a bar or a point shows its figures and label. | change | shipped (v4.74.1) |
+| 12 | The weight axis shouldn't run from the lowest to the highest weight; it should start at 0 and end 50% above the max weight. | change | shipped (v4.74.1) |
 
 ### Notes from the code (v4.73.0)
 

@@ -1948,6 +1948,13 @@ body.dark-mode .splash-bypass:hover{ background:rgba(255,255,255,0.06); }
 .muscle-target-row .mt-name{flex:0 0 92px;}
 .muscle-target-row input.train-input{width:52px; min-height:34px; text-align:center;}
 .muscle-target-row .mt-sug{font-size:11px; color:var(--ink-soft); margin-left:auto;}
+/* v4.74.1: Progress tab charts */
+.pc-chart{position:relative; max-width:680px; margin-top:8px;}
+.pc-chart svg{display:block; width:100%; height:auto; touch-action:pan-y;}
+.pc-tip{position:absolute; pointer-events:none; z-index:2; transform:translate(-50%,-100%); white-space:nowrap;
+  background:var(--paper-raised); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 10px;
+  font-size:12px; line-height:1.45; box-shadow:var(--shadow-card);}
+.pc-tip .k{color:var(--ink-soft);}
 /* ============ NIGHT MODE COMPONENT FIXES (v4.73.0) ============
    Same in every night style. Kept at the very end of the stylesheet so they
    win over the daytime component rules they correct. */
@@ -2427,7 +2434,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.74.0';
+const APP_VERSION = '4.74.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2435,6 +2442,12 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.74.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIX \u2014 Training \u2192 Progress charts were far too big on a computer screen. They now keep a fixed, readable size (at most 680 px wide) and their text no longer grows with the page.',
+    'NEW \u2014 The charts are interactive: hover (computer) or tap (phone) a point or bar to see its date and figures \u2014 heaviest weight and volume, or the strength index %.',
+    'CHANGED \u2014 Axes start at 0. The weight axis runs to 1.5 \u00d7 the heaviest weight shown; volume (right axis) and the strength index also start at 0. Both axes are labelled with light grid lines, and the last date is no longer cut off.',
+  ]},
   { v:'4.74.0', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIX \u2014 Weight increases: when every working set reaches the top of the rep range, it now counts toward going heavier even if the sets felt too easy (3 or more reps left). Before, a \u201ctoo easy\u201d set blocked the increase, so the app kept saying \u201csame weight\u201d.',
@@ -13373,28 +13386,76 @@ function strengthIndexAt(asOf){
   if(!changes.length) return null;
   return { pct: Math.round(changes.reduce((a,b)=>a+b,0)/changes.length*1000)/10, n: changes.length };
 }
-function svgWeightVolumeChart(rows, opts={}){
-  const width = opts.width||320, height = opts.height||150;
-  const padL=34, padR=34, padT=10, padB=26;
-  const W = width-padL-padR, H = height-padT-padB, n = rows.length;
-  if(n < 2) return `<div class="page-sub" style="padding:16px 0;text-align:center;">Log this exercise on at least 2 days to see a trend.</div>`;
-  const maxVol = Math.max(1, ...rows.map(r=>r.volume));
-  const kgs = rows.map(r=>r.topKg), lo = Math.min(...kgs), hi = Math.max(...kgs), span = (hi-lo) || 1;
-  const step = W/n, barW = Math.max(4, step*0.6);
-  const xs = i => padL + step*i + step/2;
-  const yKg = v => padT + H - ((v-lo)/span)*H*0.8 - H*0.1;
-  const bars = rows.map((r,i)=>{ const h = Math.round(r.volume/maxVol*H); return `<rect x="${xs(i)-barW/2}" y="${padT+H-h}" width="${barW}" height="${h}" rx="2" fill="var(--teal)" fill-opacity="0.55"><title>${r.date}: ${r.volume.toLocaleString()} kg volume</title></rect>`; }).join('');
-  const line = rows.map((r,i)=>`${xs(i)},${yKg(r.topKg)}`).join(' ');
-  const dots = rows.map((r,i)=>`<circle cx="${xs(i)}" cy="${yKg(r.topKg)}" r="3" fill="var(--brass)"><title>${r.date}: ${cleanKg(r.topKg)} kg top weight</title></circle>`).join('');
-  const t = (x,y,txt,anchor)=>`<text x="${x}" y="${y}" text-anchor="${anchor}" font-size="9" fill="var(--ink-soft)">${txt}</text>`;
-  return `<svg viewBox="0 0 ${width} ${height}" width="100%" xmlns="http://www.w3.org/2000/svg" class="wv-chart">
-    <line x1="${padL}" y1="${padT+H}" x2="${padL+W}" y2="${padT+H}" stroke="var(--line)" stroke-width="1"/>
-    ${bars}
-    <polyline points="${line}" fill="none" stroke="var(--brass)" stroke-width="2"/>${dots}
-    ${t(padL-4, yKg(hi)+3, cleanKg(hi)+'kg', 'end')}${hi!==lo ? t(padL-4, yKg(lo)+3, cleanKg(lo)+'kg', 'end') : ''}
-    ${t(padL+W+4, padT+8, maxVol>=1000 ? Math.round(maxVol/100)/10+'t' : maxVol+'kg', 'start')}
-    ${t(xs(0), padT+H+14, rows[0].date.slice(5), 'middle')}${t(xs(n-1), padT+H+14, rows[n-1].date.slice(5), 'middle')}
-  </svg>`;
+/* v4.74.1: one chart renderer for the Progress tab (his mockup sign-off).
+   Fixed readable size (max 680px wide; text no longer scales with the card),
+   axes start at 0 (the line axis tops out at 1.5 x its max), and hover / tap
+   on a column shows that point's figures (progressChartShow). */
+function _niceStep(max, n){
+  const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  return [1,2,2.5,5,10].map(m=>m*p).find(v=>v>=raw) || raw || 1;
+}
+function svgProgressChart(o){
+  const n = o.labels.length;
+  const vw = (typeof window!=='undefined' && window.innerWidth) || 1024;
+  const W = vw <= 860 ? Math.max(280, Math.min(680, vw - 64)) : 680, H = 220;
+  const padL = 46, padR = o.bars ? 46 : 14, padT = 14, padB = 30;
+  const cw = W-padL-padR, ch = H-padT-padB;
+  const lineMin = Math.min(0, ...o.line), lineMax = Math.max(0, ...o.line) * 1.5 || 1;
+  const lStep = _niceStep(lineMax - lineMin, 4), lTop = Math.ceil(lineMax / lStep) * lStep, lBot = Math.floor(lineMin / lStep) * lStep;
+  const barMax = o.bars ? Math.max(1, ...o.bars) : 1;
+  const bStep = _niceStep(barMax * 1.15, 4), bTop = Math.ceil(barMax * 1.15 / bStep) * bStep;
+  const step = cw / n, x = i => padL + step*i + step/2;
+  const yL = v => padT + ch - (v - lBot) / (lTop - lBot) * ch;
+  const yB = v => padT + ch - v / bTop * ch;
+  const fmtV = v => v >= 1000 ? (Math.round(v/100)/10)+'t' : String(Math.round(v));
+  const t = (X, Y, txt, a) => `<text x="${X}" y="${Y}" text-anchor="${a}" font-size="11" fill="var(--ink-soft)" font-family="var(--font-mono)">${txt}</text>`;
+  let grid = '';
+  for(let v = lBot; v <= lTop + 1e-9; v += lStep){
+    grid += `<line x1="${padL}" x2="${padL+cw}" y1="${yL(v)}" y2="${yL(v)}" stroke="var(--line)" stroke-width="1"${Math.abs(v)<1e-9?'':' stroke-dasharray="3 4"'}/>`;
+    grid += t(padL-6, yL(v)+4, cleanKg(v)+o.unit, 'end');
+  }
+  if(o.bars) for(let v = 0; v <= bTop + 1e-9; v += bStep) grid += t(padL+cw+6, yB(v)+4, fmtV(v), 'start');
+  const bw = Math.max(6, step*0.58);
+  const bars = o.bars ? o.bars.map((v,i)=>`<rect class="pc-bar" data-i="${i}" x="${x(i)-bw/2}" y="${yB(v)}" width="${bw}" height="${padT+ch-yB(v)}" rx="3" fill="var(--teal)" fill-opacity="0.45"/>`).join('') : '';
+  const pts = o.line.map((v,i)=>`${x(i)},${yL(v)}`).join(' ');
+  const base = yL(Math.max(0, lineMin));
+  const area = o.area ? `<polygon points="${x(0)},${base} ${pts} ${x(n-1)},${base}" fill="${o.colour}" fill-opacity="0.12"/>` : '';
+  const dots = o.line.map((v,i)=>`<circle class="pc-dot" data-i="${i}" cx="${x(i)}" cy="${yL(v)}" r="3.5" fill="${o.colour}"/>`).join('');
+  const every = Math.ceil(n / Math.max(2, Math.floor(cw/70)));
+  const xl = o.labels.map((l,i)=> ((i % every === 0 && n-1-i >= every) || i === n-1) ? t(x(i), H-9, escapeHtml(l), 'middle') : '').join('');
+  const hits = o.labels.map((_,i)=>{
+    const top = Math.min(yL(o.line[i]), o.bars ? yB(o.bars[i]) : Infinity);
+    return `<rect class="pc-hit" data-i="${i}" data-x="${x(i)}" data-y="${top}" data-tip="${escapeHtml(o.tips[i])}" x="${padL+step*i}" y="${padT}" width="${step}" height="${ch}" fill="transparent" onpointerenter="progressChartShow(this)" onclick="progressChartShow(this)"/>`;
+  }).join('');
+  return `<div class="pc-chart"><svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg" class="${o.cls||''}" role="img" aria-label="${escapeHtml(o.aria)}" onpointerleave="if(event.pointerType==='mouse') progressChartHide(this)">
+    ${grid}${bars}${area}<line class="pc-guide" x1="0" x2="0" y1="${padT}" y2="${padT+ch}" stroke="var(--ink-soft)" stroke-width="1" stroke-dasharray="2 3" visibility="hidden"/>
+    <polyline points="${pts}" fill="none" stroke="${o.colour}" stroke-width="2.25" stroke-linejoin="round"/>${dots}${xl}${hits}</svg><div class="pc-tip" hidden></div></div>`;
+}
+function progressChartShow(hit){
+  const box = hit.closest('.pc-chart'); if(!box) return;
+  const svg = box.querySelector('svg'), tip = box.querySelector('.pc-tip'), guide = svg.querySelector('.pc-guide');
+  const i = Number(hit.dataset.i), X = Number(hit.dataset.x), Y = Number(hit.dataset.y);
+  const vb = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal.width : 680;
+  const w = svg.getBoundingClientRect().width || vb, k = w / vb;
+  guide.setAttribute('x1', X); guide.setAttribute('x2', X); guide.setAttribute('visibility', 'visible');
+  svg.querySelectorAll('.pc-dot').forEach(d=>d.setAttribute('r', Number(d.dataset.i)===i ? 6 : 3.5));
+  svg.querySelectorAll('.pc-bar').forEach(b=>b.setAttribute('fill-opacity', Number(b.dataset.i)===i ? 0.8 : 0.45));
+  tip.innerHTML = hit.dataset.tip; tip.hidden = false;
+  tip.style.left = Math.min(Math.max(X*k, 80), Math.max(80, w-80)) + 'px';
+  tip.style.top = (Y*k - 10) + 'px';
+}
+function progressChartHide(svg){
+  const box = svg.closest('.pc-chart'); if(!box) return;
+  box.querySelector('.pc-tip').hidden = true;
+  svg.querySelector('.pc-guide').setAttribute('visibility', 'hidden');
+  svg.querySelectorAll('.pc-dot').forEach(d=>d.setAttribute('r', 3.5));
+  svg.querySelectorAll('.pc-bar').forEach(b=>b.setAttribute('fill-opacity', 0.45));
+}
+function svgWeightVolumeChart(rows){
+  if(rows.length < 2) return `<div class="page-sub" style="padding:16px 0;text-align:center;">Log this exercise on at least 2 days to see a trend.</div>`;
+  return svgProgressChart({ cls:'wv-chart', labels: rows.map(r=>r.date.slice(5)), line: rows.map(r=>r.topKg), bars: rows.map(r=>r.volume),
+    unit:' kg', colour:'var(--brass)', aria:'Heaviest working weight and volume per session',
+    tips: rows.map(r=>`<b>${humanDateNoRelative(r.date)}</b><br><span class="k">Heaviest weight</span> <b>${cleanKg(r.topKg)} kg</b><br><span class="k">Volume</span> <b>${r.volume.toLocaleString()} kg</b>`) });
 }
 function renderTrainingTrendsSubpage(){
   const today = todayStr();
@@ -13416,7 +13477,8 @@ function renderTrainingTrendsSubpage(){
         ${idxNow ? `<div class="strength-index-now" style="font-family:var(--font-mono); font-size:26px; font-weight:600; color:${idxNow.pct>=0?'var(--teal)':'var(--flag)'};">${idxNow.pct>0?'+':''}${idxNow.pct}%</div>
           <div class="page-sub" style="font-size:12px; margin-bottom:8px;">Across ${idxNow.n} exercise${idxNow.n===1?'':'s'} trained both in the last 4 weeks and the 4 weeks before.</div>`
           : `<div class="page-sub" style="padding:8px 0;">Needs exercises logged both in the last 4 weeks and the 4 weeks before.</div>`}
-        ${weekly.length >= 2 ? svgLineChart(weekly, { width:320, height:120, valueSuffix:'%', title:'Strength index, last 8 weeks' }) : ''}
+        ${weekly.length >= 2 ? `<div class="page-sub" style="font-size:12px;">Strength index, last 8 weeks</div>${svgProgressChart({ cls:'si-chart', labels: weekly.map(w=>w.label.slice(5)), line: weekly.map(w=>w.value), unit:'%', colour:'var(--teal)', area:true, aria:'Strength index over the last 8 weeks',
+          tips: weekly.map(w=>`<b>Week to ${humanDateNoRelative(w.label)}</b><br><span class="k">Strength index</span> <b>${w.value>0?'+':''}${w.value}%</b>`) })}` : ''}
       </div>
     </div>
     <div class="section" style="margin-bottom:20px;">
@@ -13426,7 +13488,7 @@ function renderTrainingTrendsSubpage(){
             ${exs.slice().sort((a,b)=>a.e.name.localeCompare(b.e.name)).map(x=>`<option value="${x.e.id}" ${sel&&x.e.id===sel.e.id?'selected':''}>${escapeHtml(x.e.name)}</option>`).join('')}
           </select>
           ${svgWeightVolumeChart(rows)}
-          <div class="page-sub" style="font-size:11.5px; margin-top:6px;"><span style="color:var(--brass);">\u25cf</span> Heaviest working weight (line) \u00b7 <span style="color:var(--teal);">\u25a0</span> Volume = weight \u00d7 reps (bars). Working sets only, warm-ups excluded. Last ${rows.length} session${rows.length===1?'':'s'}.</div>`
+          <div class="page-sub" style="font-size:11.5px; margin-top:6px;"><span style="color:var(--brass);">\u25cf</span> Heaviest working weight (line, left) \u00b7 <span style="color:var(--teal);">\u25a0</span> Volume = weight \u00d7 reps (bars, right). Hover or tap a session for its figures. Working sets only, warm-ups excluded. Last ${rows.length} session${rows.length===1?'':'s'}.</div>`
           : `<div class="page-sub" style="padding:8px 0;">Log sets on the Training page to see your progress here.</div>`}
       </div>
     </div>`;
