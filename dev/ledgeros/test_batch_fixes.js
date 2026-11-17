@@ -8138,6 +8138,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV528ForecastPlanActualVariance();
   await testV530CashBuyPicker();
   await testEdgeBinanceBalances();
+  await testV531BinanceUnitsAndCash();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11795,7 +11796,11 @@ async function testV524WalletButtonPricePerUnitAndHoldingsPop(){
   vm.runInContext('invPlatformPageId = 2', sb); sb.__set('invView', 'all'); sb.renderInvestmentsPage();
   assert(sb.document.querySelector('[data-walletupdate="2"]'), 'Platform with a wallet: Update prices & units button');
   vm.runInContext('invPlatformPageId = 1', sb); sb.renderInvestmentsPage();
+  const binBtn = sb.document.querySelector('[data-walletupdate="1"]');
+  assert(binBtn && /from Binance/.test(binBtn.textContent), 'v5.31 (#151): the Binance platform gets an Update from Binance button');
+  vm.runInContext("D.invPlatforms.find(p=>p.id===1).name = 'Test Exchange'", sb); sb.renderInvestmentsPage();
   assert(!sb.document.querySelector('[data-walletupdate]'), 'Exchange without a wallet: no button');
+  vm.runInContext("D.invPlatforms.find(p=>p.id===1).name = 'Binance'", sb);
   let calls = [];
   sb.__set('refreshInvPrices', async()=>{ calls.push('prices'); });
   sb.__set('checkInvPlatformWallet', async pid=>{ calls.push('check'+pid); vm.runInContext('invWalletResults['+pid+'] = {rows:[{pos:D.invPositions[2], tracker:1000, wallet:990}]}', sb); });
@@ -12044,4 +12049,43 @@ async function testEdgeBinanceBalances(){
   assert(r.status===400 && /BINANCE_API_KEY/.test(r.body) && calls.length===1, 'edge: no key set up → a clear message and no call to Binance');
   r = await fn.binanceBalances({BINANCE_API_KEY:'k', BINANCE_API_SECRET:'s'}, async()=>({ok:false, status:451, text: async()=>'{"code":0,"msg":"Service unavailable from a restricted location"}'}), crypto.subtle, 1);
   assert(r.status===502 && /451/.test(r.body) && /non-US region/.test(r.body), 'edge: a refused location says so, got ' + r.body);
+}
+async function testV531BinanceUnitsAndCash(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  // LD (Simple Earn flexible) folding: stablecoins and this platform's coins only
+  const fold = sb.invBinanceFold({LDUSDT:5, USDT:10, LDO:3, LDETH:0.1, ETH:1}, new Set(['ETH']));
+  assert(fold.USDT===15 && fold.LDO===3 && Math.abs(fold.ETH-1.1)<1e-12 && !('LDUSDT' in fold), 'LDUSDT counts as USDT, LDETH as ETH; a real coin like LDO is left alone, got ' + JSON.stringify(fold));
+  // the request: through the Edge Function, outside the US
+  sb.localStorage.setItem('sb_url', 'https://test.example.co/'); sb.localStorage.setItem('sb_key', 'anon-test');
+  let seen = null;
+  sb.fetch = async (url, opt)=>{ seen = {url, opt}; return {ok:false, status:502, json: async()=>({error:'Binance said 451: refused'})}; };
+  let err = ''; try{ await sb.invBinanceBalances(); }catch(e){ err = String(e.message); }
+  assert(seen && seen.url==='https://test.example.co/functions/v1/binance-balances' && seen.opt.headers['x-region']==='eu-central-1' && seen.opt.headers.apikey==='anon-test', 'Calls binance-balances with x-region eu-central-1, got ' + JSON.stringify(seen && [seen.url, seen.opt.headers]));
+  assert(/451/.test(err), 'The function\'s own error reaches the screen, got ' + err);
+  // read: rows per position, USDT position takes the USDT, the rest (USDC) is cash
+  sb.__set('invBinanceBalances', async ()=>({ETH:1.2, LDUSDT:50, USDT:100, USDC:20, BTC:1}));
+  const r = await sb.invReadBinance(1);
+  const eth = r.rows.find(x=>x.pos.ticker==='ETH'), usdt = r.rows.find(x=>x.pos.ticker==='USDT');
+  assert(r.binance && !r.error && eth && Math.abs(eth.wallet-1.2)<1e-12 && usdt && usdt.wallet===150 && r.cashUsd===20 && r.untracked===1, 'Units per coin; USDT held as a position counts there, USDC is the cash; BTC is not in the tracker, got ' + JSON.stringify({eth: eth && eth.wallet, usdt: usdt && usdt.wallet, cash:r.cashUsd, untracked:r.untracked, err:r.error}));
+  // the panel shows the cash line and the Binance save button
+  const div = sb.document.createElement('div'); div.innerHTML = sb.invWalletPanelHTML(sb.invPlatformById(1), true);
+  const cashRow = div.querySelector('[data-binancecash="1"]');
+  assert(div.querySelector('[data-binance="1"]') && cashRow && /\$20\.00/.test(cashRow.textContent) && /Save Binance units and cash/.test(div.textContent), 'Binance panel: Check Binance, a cash row, save units and cash');
+  // save: units as statement units, cash as the platform's statement cash
+  await sb.saveInvWalletUnits(1);
+  const p1 = sb.invPlatformById(1), ethPos = D.invPositions.find(p=>p.ticker==='ETH' && p.platformId===1);
+  assert(p1.stmtCashUsd===20 && p1.stmtDate===sb.todayStr() && ethPos.stmtUnits===1.2, 'Saved: ETH statement units 1.2 and Binance statement cash $20, got ' + JSON.stringify([ethPos.stmtUnits, p1.stmtCashUsd]));
+  // a failed read shows the reason and saves nothing
+  sb.__set('invBinanceBalances', async ()=>{ throw new Error('not connected to Supabase on this device'); });
+  const bad = await sb.invReadBinance(1);
+  assert(bad.error==='Binance: not connected to Supabase on this device' && !bad.rows.length, 'A failed read shows why');
+  assert(!sb.invIsBinance({name:'Binance', isRobo:true}) && !sb.invIsBinance({name:'Kraken'}) && sb.invIsBinance({name:'My binance'}), 'Binance is found by platform name (not robo)');
+  // Check Binance (and the platform page's Update button) reads Binance, not the wallet-address editor
+  sb.__set('invBinanceBalances', async ()=>({ETH:2}));
+  vm.runInContext('delete invWalletResults[1]', sb);
+  await sb.checkInvPlatformWallet(1);
+  const chk = vm.runInContext('invWalletResults[1]', sb);
+  assert(chk && chk.binance && chk.rows.some(x=>x.pos.ticker==='ETH' && x.wallet===2), 'Check Binance on the Binance platform reads Binance');
 }
