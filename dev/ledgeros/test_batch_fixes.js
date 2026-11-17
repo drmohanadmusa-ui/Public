@@ -8136,6 +8136,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV526JvEditAllocOtherLeg();
   await testV527PositionUsdAndAvgCost();
   await testV528ForecastPlanActualVariance();
+  await testV530CashBuyPicker();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12004,4 +12005,25 @@ async function testV528ForecastPlanActualVariance(){
   const nextCell = d.querySelector('tbody tr td:nth-child(4)'), nextTot = d.querySelector('tfoot td:nth-child(4)');
   const cellVal = nextCell && ((nextCell.querySelector('input')||{}).value || nextCell.textContent.trim());
   assert(cellVal==='1,000' && nextTot && nextTot.textContent==='1,000', 'Reversed category: row 1,000 and Total 1,000 (was −1,000), got ' + cellVal + ' / ' + (nextTot && nextTot.textContent));
+}
+async function testV530CashBuyPicker(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  D.invCashMovements = [
+    {id:91, platformId:1, date:'2026-11-01', kind:'deposit', usdAmount:100, owners:[{ownerId:2, usd:100, sar:375}]},
+    {id:92, platformId:2, date:'2026-11-01', kind:'deposit', usdAmount:300, owners:[{ownerId:1, usd:200, sar:750}, {ownerId:2, usd:100, sar:375}]},
+    {id:93, platformId:3, date:'2026-11-01', kind:'deposit', usdAmount:0.5, owners:[{ownerId:1, usd:0.5, sar:1.88}]}];
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  const list = sb.invPlatformsWithCash();
+  assert(list.length===2 && list[0].p.id===2 && Math.abs(list[0].usd-300)<0.01 && list[1].p.id===1, 'Only platforms with over $1 of cash, most cash first, got ' + JSON.stringify(list.map(x=>[x.p.id, x.usd])));
+  sb.openInvCashBuyPicker();
+  const picks = [...sb.document.querySelectorAll('[data-cashpick]')];
+  assert(picks.length===2 && picks[0].getAttribute('data-cashpick')==='2' && /\$300\.00 \(1,125\.00 SAR\)/.test(picks[0].textContent), 'Each platform shows its cash in USD and SAR, got ' + picks.map(p=>p.textContent.replace(/\s+/g,' ')).join(' | '));
+  assert(/invPlatformPickerChoose\('trade', 2\)/.test(picks[0].getAttribute('onclick')||''), 'Picking a platform opens its Buy / Sell');
+  // one platform with cash: the list still shows
+  D.invCashMovements = D.invCashMovements.filter(m=>m.id===91);
+  sb.openInvCashBuyPicker();
+  assert(sb.document.querySelectorAll('[data-cashpick]').length===1, 'With one platform the list still shows (his choice)');
+  const appHtml = fs.readFileSync(APP_HTML, 'utf8');
+  assert(/cash waiting on platforms[^\n]*act:"openInvCashBuyPicker\(\)"/.test(appHtml), 'The Needs you cash item\'s Buy opens this list');
 }
