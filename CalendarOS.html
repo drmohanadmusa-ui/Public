@@ -742,6 +742,9 @@ body.mw-focus .main{ padding:0 !important; max-width:none !important; }
 .mw-target{ margin-top:12px; font-size:15px; color:#A1A5AD; }
 .mw-warn{ color:#FF7A59; font-weight:600; }
 .mw-banner{ margin-top:12px; padding:12px 14px; border-radius:16px; background:#2A1E1A; color:#FFB09B; font-size:14px; font-weight:600; }
+.mw-banner.mw-up{ background:color-mix(in srgb, var(--mw-accent, #D3F53D) 14%, #111317); color:var(--mw-accent, #D3F53D); }
+.mw-banner.mw-down{ background:#1C2330; color:#A9C4F5; }
+.mw-nw-last{ font-weight:400; opacity:.85; }
 .mw-sets{ margin-top:16px; }
 .mw-rir.tap{ cursor:pointer; -webkit-tap-highlight-color:transparent; }
 html:has(.mw-lock), body:has(.mw-lock){ overflow:hidden; overscroll-behavior:none; }
@@ -1484,21 +1487,50 @@ body.dark-mode .tag.tag-loc-moved{color:var(--brass);}
 .cal-cell.weekend{background:color-mix(in srgb, var(--brass) 8%, var(--paper-raised));}
 
 /* ============ DARK MODE THEME OVERRIDES ============ */
+/* v4.73.0: three night-mode styles (Settings -> Appearance -> Night Mode Style),
+   chosen on each device. Before this, night mode only swapped the page and text
+   colours, so gold/green/red and their soft fills kept their daytime values and
+   several parts drew white text on a near-white fill (measured 1.0-1.2:1).
+   Every style defines the FULL token set, including the accent family; the
+   shared component fixes are in the "NIGHT MODE COMPONENT FIXES" block at the
+   end of this stylesheet. Each style measured 0 text items below 4.5:1 across
+   12 pages at computer and phone size. Default = Warm Charcoal. */
 body.dark-mode{
-  --ink:#EDE9DD;
-  --ink-soft:#C7CCD6;
-  --paper:#181C22;
-  --paper-raised:#20252C;
-  --paper-dim:#2A3038;
-  --line:#3A4048;
-  --slate:#9CA3AF;
-  --slate-light:#6B7280;
+  --ink:#F3EEE5; --ink-soft:#BDB5A8; --ink-faint:#8A8378;
+  --slate:#B0A99D; --slate-light:#8A8378;
+  --paper:#15171B; --paper-raised:#1E2126; --paper-dim:#2A2E35; --line:#383D46; --sidebar:#0F1114;
+  --brass:#E0A84E; --brass-deep:#E8B866; --on-accent:#1A1206;
+  --teal:#5DBAAE; --teal-soft:#1D3533; --flag:#F2836B; --flag-soft:#3A2420; --accent-soft:#3A2F1C;
+  --completed-color:#5DBAAE; --completed-deep:#8FD0C6;
   --page-gradient:
-    radial-gradient(480px 480px at 100% 0%, #4A3A28 0%, transparent 70%),
-    radial-gradient(360px 360px at 0% 100%, #1F3B36 0%, transparent 70%),
-    linear-gradient(160deg, #1E1812 0%, #241C15 100%);
+    radial-gradient(480px 480px at 100% 0%, #33281A 0%, transparent 70%),
+    radial-gradient(360px 360px at 0% 100%, #18302C 0%, transparent 70%),
+    linear-gradient(160deg, #16181C 0%, #131518 100%);
 }
-body.dark-mode .sidebar{background:#0F1216;}
+/* True Black */
+body.dark-mode[data-dark-style="black"]{
+  --ink:#F7F7F8; --ink-soft:#B8BBC2; --ink-faint:#80848C;
+  --slate:#B0B3BA; --slate-light:#80848C;
+  --paper:#0A0A0B; --paper-raised:#151618; --paper-dim:#212327; --line:#2E3136; --sidebar:#000000;
+  --brass:#F5B941; --brass-deep:#F7C866; --on-accent:#141004;
+  --teal:#3DD6C3; --teal-soft:#0F2B28; --flag:#FF6E5E; --flag-soft:#301614; --accent-soft:#2E2410;
+  --completed-color:#3DD6C3; --completed-deep:#7FE6D9;
+  --page-gradient: #000000;
+}
+/* Midnight Slate */
+body.dark-mode[data-dark-style="slate"]{
+  --ink:#E9EDF5; --ink-soft:#AAB4C7; --ink-faint:#7C879C;
+  --slate:#A3ADC0; --slate-light:#7C879C;
+  --paper:#121826; --paper-raised:#1A2233; --paper-dim:#253048; --line:#34415C; --sidebar:#0B101B;
+  --brass:#F2B65A; --brass-deep:#F5C77E; --on-accent:#1A1206;
+  --teal:#5CC8B8; --teal-soft:#17323A; --flag:#FF8A7A; --flag-soft:#3A2230; --accent-soft:#3A3022;
+  --completed-color:#5CC8B8; --completed-deep:#93DCD1;
+  --page-gradient:
+    radial-gradient(480px 480px at 100% 0%, #22305A 0%, transparent 70%),
+    radial-gradient(360px 360px at 0% 100%, #173640 0%, transparent 70%),
+    linear-gradient(160deg, #121A2B 0%, #0E1320 100%);
+}
+body.dark-mode .sidebar{background:var(--sidebar, #0F1216);}
 body.dark-mode .ticket-title{color:var(--ink);}
 body.dark-mode input, body.dark-mode select, body.dark-mode textarea{
   background:var(--paper); color:var(--ink); border-color:var(--line);
@@ -1916,6 +1948,42 @@ body.dark-mode .splash-bypass:hover{ background:rgba(255,255,255,0.06); }
 .muscle-target-row .mt-name{flex:0 0 92px;}
 .muscle-target-row input.train-input{width:52px; min-height:34px; text-align:center;}
 .muscle-target-row .mt-sug{font-size:11px; color:var(--ink-soft); margin-left:auto;}
+/* v4.74.1: Progress tab charts */
+.pc-chart{position:relative; max-width:680px; margin-top:8px;}
+.pc-chart svg{display:block; width:100%; height:auto; touch-action:pan-y;}
+.pc-tip{position:absolute; pointer-events:none; z-index:2; transform:translate(-50%,-100%); white-space:nowrap;
+  background:var(--paper-raised); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 10px;
+  font-size:12px; line-height:1.45; box-shadow:var(--shadow-card);}
+.pc-tip .k{color:var(--ink-soft);}
+/* ============ NIGHT MODE COMPONENT FIXES (v4.73.0) ============
+   Same in every night style. Kept at the very end of the stylesheet so they
+   win over the daytime component rules they correct. */
+body.dark-mode .btn:not(.secondary):not(.ghost):not(.brass):not(.danger){background:var(--brass);border-color:var(--brass);color:var(--on-accent);}
+body.dark-mode .btn.brass{color:var(--on-accent);}
+body.dark-mode .btn.ghost{color:var(--ink-soft);}
+body.dark-mode .btn.ghost:disabled,body.dark-mode .btn:disabled{color:var(--ink-faint);opacity:1;}
+body.dark-mode .chip-select button.active,body.dark-mode .radio-pill.active{background:var(--brass);border-color:var(--brass);color:var(--on-accent);}
+body.dark-mode .toast,body.dark-mode #newTaskHint,body.dark-mode .sync-block-banner{background:var(--paper-dim);color:var(--ink);border:1px solid var(--line);}
+body.dark-mode .nav-item{color:var(--ink-soft);}
+body.dark-mode .nav-item.active,body.dark-mode .nav-item.active .nav-count{color:var(--on-accent);}
+body.dark-mode .lists-toc-item.active{color:var(--on-accent);}
+body.dark-mode .tag{background:var(--paper-dim);color:var(--ink-soft);}
+body.dark-mode .tag.pri-High{background:var(--flag-soft);color:var(--flag);}
+body.dark-mode .tag.pri-Medium{background:var(--accent-soft);color:var(--brass);}
+body.dark-mode .tag.pri-Low{background:var(--paper-dim);color:var(--ink-soft);}
+body.dark-mode .stamp.overdue{color:var(--flag);background:var(--paper-raised);}
+body.dark-mode .ticket.overdue{border-color:color-mix(in srgb,var(--flag) 55%,transparent);background:linear-gradient(90deg,var(--flag-soft) 0%,var(--paper-raised) 90px);}
+body.dark-mode .ticket.missed{border-color:color-mix(in srgb,var(--brass) 45%,transparent);background:linear-gradient(90deg,var(--accent-soft) 0%,var(--paper-raised) 90px);}
+body.dark-mode .ticket.done .ticket-title{color:var(--ink-soft);}
+body.dark-mode table.log-table tr.log-row-active td{background:var(--accent-soft);color:var(--ink);}
+body.dark-mode .li-text,body.dark-mode .li-cat,body.dark-mode .icon-btn{color:var(--ink-soft);}
+body.dark-mode .dash-v2 .stat-card::after{opacity:0.9;}
+body.dark-mode .page-sub{color:var(--ink-soft);}
+body.dark-mode h3[style*="flag"],body.dark-mode .danger-zone h3{color:var(--flag);}
+body.dark-mode .toggle-yn button.active{color:var(--on-accent);}
+body.dark-mode .btn.danger{color:var(--on-accent);}
+body.dark-mode .notebook-line.done .li-text{color:var(--ink-soft);}
+body.dark-mode .week-task-chip.done{color:var(--ink-soft);opacity:1;}
 </style>
 </head>
 
@@ -2366,7 +2434,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.72.0';
+const APP_VERSION = '4.74.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2374,6 +2442,29 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.74.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIX \u2014 Training \u2192 Progress charts were far too big on a computer screen. They now keep a fixed, readable size (at most 680 px wide) and their text no longer grows with the page.',
+    'NEW \u2014 The charts are interactive: hover (computer) or tap (phone) a point or bar to see its date and figures \u2014 heaviest weight and volume, or the strength index %.',
+    'CHANGED \u2014 Axes start at 0. The weight axis runs to 1.5 \u00d7 the heaviest weight shown; volume (right axis) and the strength index also start at 0. Both axes are labelled with light grid lines, and the last date is no longer cut off.',
+  ]},
+  { v:'4.74.0', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIX \u2014 Weight increases: when every working set reaches the top of the rep range, it now counts toward going heavier even if the sets felt too easy (3 or more reps left). Before, a \u201ctoo easy\u201d set blocked the increase, so the app kept saying \u201csame weight\u201d.',
+    'NEW \u2014 Big-jump check for every exercise. Before going heavier, the app estimates how many reps you would get at the new weight, keeping 2 in reserve. If that lands under the bottom of the rep range (for example a 10 kg step on leg press at 70 kg), it keeps the weight and raises the rep target first, up to 3 reps above the top of the range, then goes heavier. The Next time screen and the app\u2019s suggestions use this.',
+    'CHANGED \u2014 Review Pack: the AI gets the same two rules, with a worked leg press example, so its plans follow them.',
+    'NEW \u2014 AI plan import: where the AI\u2019s weight differs from what the app\u2019s rule would pick, the weight check before import lists both (for each exercise\u2019s first planned day). The AI\u2019s weight is the one imported.',
+    'NEW \u2014 Phone workout: a banner when today\u2019s planned weight is heavier (\u2191 New weight) or lighter (\u2193 Lighter) than the last time you did the exercise.',
+    'CHANGED \u2014 The rest timer chime is about 3 times louder. On iPhone, the silent switch still mutes it.',
+    'NEW \u2014 Training \u2192 Progress tab. Strength index: the average change in your estimated max across exercises vs 4 weeks earlier, with an 8-week line. Exercise progress: pick an exercise to see its heaviest working weight (line) over its volume, weight \u00d7 reps (bars), for the last 12 sessions. Warm-ups are excluded.',
+  ]},
+  { v:'4.73.0', changes: [
+    'No SQL migration needed \u2014 front-end only. The night mode style is a display choice saved on each device, like Dark Mode itself.',
+    'NEW \u2014 Night Mode Style (Settings \u2192 Appearance, under Dark Mode): Warm Charcoal (the default), True Black, or Midnight Slate.',
+    'FIX \u2014 Night mode readability. Before, night mode only darkened the page and the text, so gold, green and red kept their daytime colours and some parts showed white text on a near-white fill. Now: selected pills (Today, All, filters, coffee options) and main buttons use the gold with dark text; the Health Log\u2019s highlighted history row is readable; completed task titles, list counts, grey icons and disabled buttons are lifted; overdue and missed cards get a dark tinted edge instead of a pale stripe.',
+    'CHANGED \u2014 At night, silo and repeat-type tags, and a custom accent or completed colour, are shown lighter so they stay readable on dark cards. The colours you picked in Settings are not changed.',
+    'CHANGED \u2014 With Dark Mode on, the night style\u2019s own colours are used instead of the Color Theme\u2019s (Ocean, Sage and so on). With Dark Mode off, nothing changes.',
+  ]},
   { v:'4.72.0', changes: [
     'No SQL migration needed \u2014 front-end only. The per-muscle targets are saved inside the existing synced weekly-band setting, and \u201cWeekdays\u201d is a new value in the existing repeat-type field.',
     'NEW \u2014 \u201cWeekdays\u201d repeat for recurring tasks. It repeats on every day that is not one of your Weekend days in Settings (Sunday to Thursday with Friday/Saturday as the weekend), and follows that setting if you change it. It has its own colour and appears in the Frequency filter. Like Daily, an unfinished one is marked missed when the day rolls over instead of piling up under Overdue. A device still on an older version will not show these tasks until it reloads.',
@@ -3275,6 +3366,7 @@ const DEFAULT_SETTINGS_EXTRAS = {
   rememberUnlock: true,
   healthCoreMetricsSeeded: false,
   darkMode: false,
+  darkStyle: 'charcoal', // v4.73.0: night mode style — 'charcoal' | 'black' | 'slate'. Local-only display preference, like darkMode.
   localPasscode: null, // used only when no Supabase sync is configured on this device
   // Local-only display preference (same treatment as darkMode) — never
   // synced to Supabase, since a wide-screen preference set on a desktop
@@ -5810,6 +5902,44 @@ function applyDynamicTheme(){
     }
   `;
   document.body.classList.toggle('dark-mode', !!state.settings.darkMode);
+  // v4.73.0: night mode style. Warm Charcoal is the plain body.dark-mode palette.
+  const ds = DARK_STYLES.some(d=>d.key===state.settings.darkStyle) ? state.settings.darkStyle : 'charcoal';
+  if(ds === 'charcoal') document.body.removeAttribute('data-dark-style');
+  else document.body.setAttribute('data-dark-style', ds);
+  // A custom accent / completed colour still shows at night, lightened so it
+  // stays readable on dark cards. The defaults use the night style's own colours.
+  if(state.settings.darkMode){
+    let extra = '';
+    if(accent.toLowerCase() !== '#b9862f') extra += `--brass:${nightTagColor(accent)}; --brass-deep:${nightTagColor(accent, 0.55)};`;
+    if(completed.toLowerCase() !== '#3c7a73') extra += `--completed-color:${nightTagColor(completed)}; --completed-deep:${nightTagColor(completed, 0.55)};`;
+    if(extra) styleEl.textContent += `\n    body.dark-mode, body.dark-mode[data-dark-style]{ ${extra} }\n`;
+  }
+}
+/* v4.73.0: the three night-mode styles (Settings -> Appearance). */
+const DARK_STYLES = [
+  { key:'charcoal', label:'Warm Charcoal', note:'Default. Warm gold on neutral charcoal.', bg:'#15171B', card:'#1E2126', accent:'#E0A84E' },
+  { key:'black', label:'True Black', note:'Pure black, strongest contrast. Saves battery on OLED phones.', bg:'#000000', card:'#151618', accent:'#F5B941' },
+  { key:'slate', label:'Midnight Slate', note:'Cool blue-grey, softer in a dark room.', bg:'#121826', card:'#1A2233', accent:'#F2B65A' },
+];
+function setDarkStyle(key){
+  if(!DARK_STYLES.some(d=>d.key===key)) return;
+  state.settings.darkStyle = key;
+  saveSettings();
+  render();
+}
+/* v4.73.0: at night, the silo / repeat-type / accent colours you picked are
+   mixed toward white so they stay readable on dark cards. Your stored colour
+   never changes; this is display-only and only applies in night mode. */
+function nightTagColor(c, amount){
+  const p = amount == null ? 0.45 : amount;
+  const m = /^#([0-9a-f]{6})$/i.exec(String(c||'').trim());
+  if(!m) return c;
+  const n = parseInt(m[1], 16);
+  const ch = [n>>16, (n>>8)&255, n&255].map(v=>Math.round(v + (255 - v) * p));
+  return '#' + ch.map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+function tagDisplayColor(c){
+  return state.settings.darkMode ? nightTagColor(c) : c;
 }
 function recurTypeColor(type){
   return (state.settings.recurTypeColors && state.settings.recurTypeColors[type]) || 'var(--teal)';
@@ -7517,11 +7647,11 @@ function renderTicket(row, opts){
   const onTimeStats = isRecurring ? computeOnTimeStats(t) : null;
 
   const typeTag = isRecurring
-    ? `<span class="tag recur" style="background:${recurTypeColor(t.type)}22; color:${recurTypeColor(t.type)};">${t.type} ↻</span>`
+    ? `<span class="tag recur" style="background:${tagDisplayColor(recurTypeColor(t.type))}22; color:${tagDisplayColor(recurTypeColor(t.type))};">${t.type} ↻</span>`
     : `<span class="tag tag-onetime">One-Time</span>`;
 
   const priTag = `<span class="tag pri-${t.priority}">${t.priority}</span>`;
-  const siloTag = `<span class="tag" style="background:${siloColor(t.silo)}22; color:${siloColor(t.silo)};">${escapeHtml(t.silo)}</span>`;
+  const siloTag = `<span class="tag" style="background:${tagDisplayColor(siloColor(t.silo))}22; color:${tagDisplayColor(siloColor(t.silo))};">${escapeHtml(t.silo)}</span>`;
   const resolvedLoc = taskLocationFor(t, dateForCompletion);
   const locRemapped = resolvedLoc !== t.location;
   const locTag = opts.hideLocation ? '' : `<span class="tag${locRemapped?' tag-loc-moved':''}"${locRemapped?` title="Normally ${escapeHtml(t.location)} — moved here by a weekend location rule"`:''}>${escapeHtml(resolvedLoc)}${locRemapped?' ↷':''}</span>`;
@@ -9491,10 +9621,25 @@ function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
   const weights = working.map(s=>s.weightKg).filter(w=>w!=null && w>0);
   const topW = weights.length ? Math.max(...weights) : (sessionTarget.weightKg||null);
   const atTop = weights.length ? working.filter(s=>s.weightKg===topW) : working;
-  const allAtTop = atTop.every(s=> s.reps >= repsMax && (s.rir==null||s.rir<=2));
+  // v4.74.0: a set that reached the top of the range counts whatever its RIR
+  // ("too easy" sets used to block the increase forever).
+  const allAtTop = atTop.every(s=> s.reps >= repsMax);
   const anyBelowBottom = atTop.some(s=> s.reps < repsMin);
-  if(allAtTop) return { type:'addWeight', newWeightKg:(topW||0)+increment,
-    repsTarget:repsMin, message:`All sets hit ${repsMax} reps at RIR≤2 — try +${increment} kg, drop back to ${repsMin}` };
+  if(allAtTop){
+    const newW = (topW||0)+increment;
+    const maxReps = Math.max(...atTop.map(s=>s.reps||0));
+    // v4.74.0 big-jump check: estimate reps at the new weight (Epley, keeping
+    // 2 in reserve). If that lands under the bottom of the range, build reps
+    // first, up to 3 above the top; at that cap the weight goes up anyway.
+    const predicted = predictedRepsAtWeight(atTop, topW, newW);
+    if(topW && predicted != null && predicted < repsMin && maxReps < repsMax + 3){
+      const repsTarget = Math.min(maxReps + 1, repsMax + 3);
+      return { type:'addRep', newWeightKg:topW, repsTarget, bigJump:true,
+        message:`+${increment} kg is a big jump from ${cleanKg(topW)} kg (about ${Math.max(0, Math.floor(predicted))} reps) \u2014 build to ${repsTarget} reps first` };
+    }
+    return { type:'addWeight', newWeightKg:newW,
+      repsTarget:repsMin, message:`All sets hit ${repsMax} reps \u2014 try +${increment} kg, drop back to ${repsMin}` };
+  }
   if(anyBelowBottom) return { type:'hold', newWeightKg:topW,
     repsTarget:repsMin, message:`Hold the weight — didn't reach ${repsMin} reps on all sets` };
   const nextReps=Math.max(...atTop.map(s=>s.reps||0))+1;
@@ -9502,6 +9647,13 @@ function doubleProgressionSuggestion(exId, sessionTarget, lastSets){
     repsTarget:Math.min(nextReps,repsMax), message:`Try ${Math.min(nextReps,repsMax)} reps at the same weight` };
 }
 
+/* v4.74.0: reps you could do at newW keeping 2 in reserve, from the weakest
+   set at topW (Epley: e1RM = w x (1 + (reps + RIR)/30); RIR unknown = 2). */
+function predictedRepsAtWeight(sets, topW, newW){
+  if(!topW || !newW || !sets || !sets.length) return null;
+  const e1 = Math.min(...sets.map(s=> topW * (1 + ((s.reps||0) + (Number.isFinite(s.rir) ? s.rir : 2)) / 30)));
+  return 30 * (e1 / newW - 1) - 2;
+}
 function getSetsForExercise(date, exId){
   return (state.training.sets||[]).filter(s=>s.date===date&&s.exerciseId===exId).sort((a,b)=>a.setNo-b.setNo);
 }
@@ -9598,8 +9750,9 @@ function _playTone(freq, durationMs, when, gain){
   osc.connect(g); g.connect(ctx.destination);
   osc.start(startAt); osc.stop(startAt+durationMs/1000+0.02);
 }
-function playRestTimerTick(){ _playTone(880, 90, 0, 0.12); }
-function playRestTimerDone(){ _playTone(660, 140, 0, 0.16); _playTone(990, 220, 0.15, 0.18); }
+// v4.74.0: 3x louder (was 0.12 / 0.16 / 0.18 of a 1.0 maximum).
+function playRestTimerTick(){ _playTone(880, 90, 0, 0.36); }
+function playRestTimerDone(){ _playTone(660, 140, 0, 0.48); _playTone(990, 220, 0.15, 0.54); }
 function startRestTimer(seconds,exId){
   if(_restTimerHandle) clearInterval(_restTimerHandle);
   if(_tipRotationHandle) clearInterval(_tipRotationHandle);
@@ -10484,6 +10637,7 @@ function renderTrainingView(){
     ['sessions','☰','Session Library'],
     ['exercises','⛊','Exercise Library'],
     ['resources','◈','Resources'],
+    ['trends','↗','Progress'],
   ];
   const sectionRenderers = {
     today: renderTrainingToday,
@@ -10492,6 +10646,7 @@ function renderTrainingView(){
     sessions: renderTrainingSessionsSubpage,
     exercises: renderTrainingExercisesSubpage,
     resources: renderTrainingResourcesSubpage,
+    trends: renderTrainingTrendsSubpage,
   };
   const active = sectionRenderers[state.trainingSection] ? state.trainingSection : 'today';
   const loggedDayCount = new Set(state.training.logs.map(l=>l.date)).size;
@@ -10744,6 +10899,7 @@ function renderMobileWorkout(){
       </div>
       ${targetBits ? `<div class="mw-target">Target ${escapeHtml(targetBits)}${below ? ` <span class="mw-warn">below your last ${floor.weightKg} kg</span>` : ''}</div>` : ''}
       ${failure ? `<div class="mw-banner">Failure day: push your last set to true failure, then mark it F.</div>` : ''}
+      ${mwNewWeightBanner(exId, date, suggested, isWalking)}
     </div>
     ${body}
     <div class="mw-dock">
@@ -10767,6 +10923,15 @@ function mwEmptyHtml(date, session){
       <button class="mw-ghost" onclick="openPlanDayModal('${date}')">Plan day</button>
     </div>
   </div>`;
+}
+/* v4.74.0: banner when today's planned weight differs from the last completed
+   session's top working weight. Numbers only (his choice). */
+function mwNewWeightBanner(exId, date, planned, isWalking){
+  if(isWalking || planned == null) return '';
+  const last = getLastCompletedSession(exId, date);
+  if(!last || last.topWeightKg == null || Math.abs(planned - last.topWeightKg) < 1e-9) return '';
+  const up = planned > last.topWeightKg;
+  return `<div class="mw-banner mw-newweight ${up?'mw-up':'mw-down'}">${up?'\u2191 New weight':'\u2193 Lighter'}: ${cleanKg(planned)} kg <span class="mw-nw-last">(last time ${cleanKg(last.topWeightKg)} kg)</span></div>`;
 }
 function mwSummaryData(date, ordered, blockMap){
   const done = (state.training.sets||[]).filter(s=>s.date===date && s.done && !s.isWarmup);
@@ -13189,6 +13354,146 @@ function renderTrainingHistorySubpage(){
   `;
 }
 
+/* ---------- Subpage: Progress (v4.74.0) ----------
+   Working sets only (done, warm-ups excluded). Per exercise: heaviest working
+   weight (line) over session volume = weight x reps (bars). Strength index:
+   average change in estimated max (Epley, reps 1-20) vs 4 weeks earlier. */
+function exerciseSessionStats(exId){
+  const by = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(s.exerciseId!==exId || !s.done || s.isWarmup) return;
+    (by[s.date] || (by[s.date]=[])).push(s);
+  });
+  return Object.keys(by).sort().map(date=>{
+    const ss = by[date];
+    const loaded = ss.filter(s=>(s.weightKg||0) > 0);
+    const e1s = loaded.filter(s=>s.reps>0 && s.reps<=20).map(s=>s.weightKg*(1+s.reps/30));
+    return { date, topKg: loaded.length ? Math.max(...loaded.map(s=>s.weightKg)) : 0,
+      volume: Math.round(ss.reduce((t,s)=>t+(s.weightKg||0)*(s.reps||0), 0)),
+      e1: e1s.length ? Math.max(...e1s) : null };
+  });
+}
+function strengthIndexAt(asOf){
+  const cutoff = addDays(asOf, -28), oldest = addDays(asOf, -56);
+  const latestIn = (rows, from, to)=>{ const r = rows.filter(x=>x.e1 && x.date > from && x.date <= to); return r.length ? r[r.length-1].e1 : null; };
+  const changes = [];
+  (state.training.exercises||[]).forEach(ex=>{
+    if(ex.category==='walking') return;
+    const rows = exerciseSessionStats(ex.id);
+    const cur = latestIn(rows, cutoff, asOf), base = latestIn(rows, oldest, cutoff);
+    if(cur && base) changes.push(cur/base - 1);
+  });
+  if(!changes.length) return null;
+  return { pct: Math.round(changes.reduce((a,b)=>a+b,0)/changes.length*1000)/10, n: changes.length };
+}
+/* v4.74.1: one chart renderer for the Progress tab (his mockup sign-off).
+   Fixed readable size (max 680px wide; text no longer scales with the card),
+   axes start at 0 (the line axis tops out at 1.5 x its max), and hover / tap
+   on a column shows that point's figures (progressChartShow). */
+function _niceStep(max, n){
+  const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  return [1,2,2.5,5,10].map(m=>m*p).find(v=>v>=raw) || raw || 1;
+}
+function svgProgressChart(o){
+  const n = o.labels.length;
+  const vw = (typeof window!=='undefined' && window.innerWidth) || 1024;
+  const W = vw <= 860 ? Math.max(280, Math.min(680, vw - 64)) : 680, H = 220;
+  const padL = 46, padR = o.bars ? 46 : 14, padT = 14, padB = 30;
+  const cw = W-padL-padR, ch = H-padT-padB;
+  const lineMin = Math.min(0, ...o.line), lineMax = Math.max(0, ...o.line) * 1.5 || 1;
+  const lStep = _niceStep(lineMax - lineMin, 4), lTop = Math.ceil(lineMax / lStep) * lStep, lBot = Math.floor(lineMin / lStep) * lStep;
+  const barMax = o.bars ? Math.max(1, ...o.bars) : 1;
+  const bStep = _niceStep(barMax * 1.15, 4), bTop = Math.ceil(barMax * 1.15 / bStep) * bStep;
+  const step = cw / n, x = i => padL + step*i + step/2;
+  const yL = v => padT + ch - (v - lBot) / (lTop - lBot) * ch;
+  const yB = v => padT + ch - v / bTop * ch;
+  const fmtV = v => v >= 1000 ? (Math.round(v/100)/10)+'t' : String(Math.round(v));
+  const t = (X, Y, txt, a) => `<text x="${X}" y="${Y}" text-anchor="${a}" font-size="11" fill="var(--ink-soft)" font-family="var(--font-mono)">${txt}</text>`;
+  let grid = '';
+  for(let v = lBot; v <= lTop + 1e-9; v += lStep){
+    grid += `<line x1="${padL}" x2="${padL+cw}" y1="${yL(v)}" y2="${yL(v)}" stroke="var(--line)" stroke-width="1"${Math.abs(v)<1e-9?'':' stroke-dasharray="3 4"'}/>`;
+    grid += t(padL-6, yL(v)+4, cleanKg(v)+o.unit, 'end');
+  }
+  if(o.bars) for(let v = 0; v <= bTop + 1e-9; v += bStep) grid += t(padL+cw+6, yB(v)+4, fmtV(v), 'start');
+  const bw = Math.max(6, step*0.58);
+  const bars = o.bars ? o.bars.map((v,i)=>`<rect class="pc-bar" data-i="${i}" x="${x(i)-bw/2}" y="${yB(v)}" width="${bw}" height="${padT+ch-yB(v)}" rx="3" fill="var(--teal)" fill-opacity="0.45"/>`).join('') : '';
+  const pts = o.line.map((v,i)=>`${x(i)},${yL(v)}`).join(' ');
+  const base = yL(Math.max(0, lineMin));
+  const area = o.area ? `<polygon points="${x(0)},${base} ${pts} ${x(n-1)},${base}" fill="${o.colour}" fill-opacity="0.12"/>` : '';
+  const dots = o.line.map((v,i)=>`<circle class="pc-dot" data-i="${i}" cx="${x(i)}" cy="${yL(v)}" r="3.5" fill="${o.colour}"/>`).join('');
+  const every = Math.ceil(n / Math.max(2, Math.floor(cw/70)));
+  const xl = o.labels.map((l,i)=> ((i % every === 0 && n-1-i >= every) || i === n-1) ? t(x(i), H-9, escapeHtml(l), 'middle') : '').join('');
+  const hits = o.labels.map((_,i)=>{
+    const top = Math.min(yL(o.line[i]), o.bars ? yB(o.bars[i]) : Infinity);
+    return `<rect class="pc-hit" data-i="${i}" data-x="${x(i)}" data-y="${top}" data-tip="${escapeHtml(o.tips[i])}" x="${padL+step*i}" y="${padT}" width="${step}" height="${ch}" fill="transparent" onpointerenter="progressChartShow(this)" onclick="progressChartShow(this)"/>`;
+  }).join('');
+  return `<div class="pc-chart"><svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg" class="${o.cls||''}" role="img" aria-label="${escapeHtml(o.aria)}" onpointerleave="if(event.pointerType==='mouse') progressChartHide(this)">
+    ${grid}${bars}${area}<line class="pc-guide" x1="0" x2="0" y1="${padT}" y2="${padT+ch}" stroke="var(--ink-soft)" stroke-width="1" stroke-dasharray="2 3" visibility="hidden"/>
+    <polyline points="${pts}" fill="none" stroke="${o.colour}" stroke-width="2.25" stroke-linejoin="round"/>${dots}${xl}${hits}</svg><div class="pc-tip" hidden></div></div>`;
+}
+function progressChartShow(hit){
+  const box = hit.closest('.pc-chart'); if(!box) return;
+  const svg = box.querySelector('svg'), tip = box.querySelector('.pc-tip'), guide = svg.querySelector('.pc-guide');
+  const i = Number(hit.dataset.i), X = Number(hit.dataset.x), Y = Number(hit.dataset.y);
+  const vb = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal.width : 680;
+  const w = svg.getBoundingClientRect().width || vb, k = w / vb;
+  guide.setAttribute('x1', X); guide.setAttribute('x2', X); guide.setAttribute('visibility', 'visible');
+  svg.querySelectorAll('.pc-dot').forEach(d=>d.setAttribute('r', Number(d.dataset.i)===i ? 6 : 3.5));
+  svg.querySelectorAll('.pc-bar').forEach(b=>b.setAttribute('fill-opacity', Number(b.dataset.i)===i ? 0.8 : 0.45));
+  tip.innerHTML = hit.dataset.tip; tip.hidden = false;
+  tip.style.left = Math.min(Math.max(X*k, 80), Math.max(80, w-80)) + 'px';
+  tip.style.top = (Y*k - 10) + 'px';
+}
+function progressChartHide(svg){
+  const box = svg.closest('.pc-chart'); if(!box) return;
+  box.querySelector('.pc-tip').hidden = true;
+  svg.querySelector('.pc-guide').setAttribute('visibility', 'hidden');
+  svg.querySelectorAll('.pc-dot').forEach(d=>d.setAttribute('r', 3.5));
+  svg.querySelectorAll('.pc-bar').forEach(b=>b.setAttribute('fill-opacity', 0.45));
+}
+function svgWeightVolumeChart(rows){
+  if(rows.length < 2) return `<div class="page-sub" style="padding:16px 0;text-align:center;">Log this exercise on at least 2 days to see a trend.</div>`;
+  return svgProgressChart({ cls:'wv-chart', labels: rows.map(r=>r.date.slice(5)), line: rows.map(r=>r.topKg), bars: rows.map(r=>r.volume),
+    unit:' kg', colour:'var(--brass)', aria:'Heaviest working weight and volume per session',
+    tips: rows.map(r=>`<b>${humanDateNoRelative(r.date)}</b><br><span class="k">Heaviest weight</span> <b>${cleanKg(r.topKg)} kg</b><br><span class="k">Volume</span> <b>${r.volume.toLocaleString()} kg</b>`) });
+}
+function renderTrainingTrendsSubpage(){
+  const today = todayStr();
+  const exs = (state.training.exercises||[]).filter(e=>e.category!=='walking')
+    .map(e=>({ e, rows: exerciseSessionStats(e.id) })).filter(x=>x.rows.length);
+  const idxNow = strengthIndexAt(today);
+  const weekly = [];
+  for(let k=7;k>=0;k--){ const d = addDays(today, -7*k); const v = strengthIndexAt(d); if(v) weekly.push({ label:d, value:v.pct }); }
+  if(!exs.some(x=>x.e.id===state.trainingTrendExId)){
+    const recent = exs.slice().sort((a,b)=> a.rows[a.rows.length-1].date < b.rows[b.rows.length-1].date ? 1 : -1)[0];
+    state.trainingTrendExId = recent ? recent.e.id : null;
+  }
+  const sel = exs.find(x=>x.e.id===state.trainingTrendExId);
+  const rows = sel ? sel.rows.slice(-12) : [];
+  return `
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head"><h2>Strength index</h2><span class="page-sub" style="font-size:11.5px;">Average change in your estimated max vs 4 weeks earlier</span></div>
+      <div class="card" style="padding:12px 14px;">
+        ${idxNow ? `<div class="strength-index-now" style="font-family:var(--font-mono); font-size:26px; font-weight:600; color:${idxNow.pct>=0?'var(--teal)':'var(--flag)'};">${idxNow.pct>0?'+':''}${idxNow.pct}%</div>
+          <div class="page-sub" style="font-size:12px; margin-bottom:8px;">Across ${idxNow.n} exercise${idxNow.n===1?'':'s'} trained both in the last 4 weeks and the 4 weeks before.</div>`
+          : `<div class="page-sub" style="padding:8px 0;">Needs exercises logged both in the last 4 weeks and the 4 weeks before.</div>`}
+        ${weekly.length >= 2 ? `<div class="page-sub" style="font-size:12px;">Strength index, last 8 weeks</div>${svgProgressChart({ cls:'si-chart', labels: weekly.map(w=>w.label.slice(5)), line: weekly.map(w=>w.value), unit:'%', colour:'var(--teal)', area:true, aria:'Strength index over the last 8 weeks',
+          tips: weekly.map(w=>`<b>Week to ${humanDateNoRelative(w.label)}</b><br><span class="k">Strength index</span> <b>${w.value>0?'+':''}${w.value}%</b>`) })}` : ''}
+      </div>
+    </div>
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head"><h2>Exercise progress</h2></div>
+      <div class="card" style="padding:12px 14px;">
+        ${exs.length ? `<select id="trainingTrendEx" onchange="state.trainingTrendExId=this.value; renderMain();" style="font-size:13px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--paper); color:var(--ink); margin-bottom:8px; max-width:100%;">
+            ${exs.slice().sort((a,b)=>a.e.name.localeCompare(b.e.name)).map(x=>`<option value="${x.e.id}" ${sel&&x.e.id===sel.e.id?'selected':''}>${escapeHtml(x.e.name)}</option>`).join('')}
+          </select>
+          ${svgWeightVolumeChart(rows)}
+          <div class="page-sub" style="font-size:11.5px; margin-top:6px;"><span style="color:var(--brass);">\u25cf</span> Heaviest working weight (line, left) \u00b7 <span style="color:var(--teal);">\u25a0</span> Volume = weight \u00d7 reps (bars, right). Hover or tap a session for its figures. Working sets only, warm-ups excluded. Last ${rows.length} session${rows.length===1?'':'s'}.</div>`
+          : `<div class="page-sub" style="padding:8px 0;">Log sets on the Training page to see your progress here.</div>`}
+      </div>
+    </div>`;
+}
+
 /* ---------- Subpage: Session Library ---------- */
 function renderTrainingSessionsSubpage(){
   return `
@@ -15422,7 +15727,7 @@ RULES for the plan:
 - Each exercise in my library lists primaryMuscles and secondaryMuscles. When choosing exercises for a muscle group, prefer ones where it's a primary target over ones where it's only secondary — especially for my priority muscle groups above.
 - Use double-progression rep ranges (e.g. "8-12") in blocks[].reps. Put the suggested starting weight in blocks[].notes as "suggested starting weight: Xkg" — the app will show this note while I log.
 - ONE working weight per exercise per day: every working set of an exercise on a given day uses the same weight — I aim all sets at that weight, only the warm-up differs and the app calculates the warm-up itself at about 60%. Never write ramping or pyramid weights, and put exactly one "suggested starting weight: Xkg" in each block's notes.
-- Weight never goes backward: the suggested weight for an exercise must be at least the weight I last completed successfully — lastCompleted.topWeightKg in the exercise library above is the heaviest weight across my done working sets in my most recent completed session (ignore it only if lastCompleted.date is more than 4 weeks old). Hold that weight if I did not reach the bottom of the rep range on all sets; add one weightIncrementKg when I reached the top of the range at RIR 2 or lower. Across the weeks of this plan, a later week's weight for the same exercise must be at least the earlier week's. If you deliberately want a lighter deload, say so explicitly in your summary — the app flags every below-last-weight suggestion at import and I decide whether to keep it.
+- Weight never goes backward: the suggested weight for an exercise must be at least the weight I last completed successfully — lastCompleted.topWeightKg in the exercise library above is the heaviest weight across my done working sets in my most recent completed session (ignore it only if lastCompleted.date is more than 4 weeks old). Hold that weight if I did not reach the bottom of the rep range on all sets. When every working set reached the top of the range, that counts toward an increase however many reps I had left (a set that felt too easy counts too). BIG-JUMP CHECK before adding one weightIncrementKg (this matters most on machines with big steps, e.g. 10 kg on a leg press): estimate my max from the weakest set at that weight with Epley, e1RM = weight × (1 + (reps + RIR) / 30), taking RIR as 2 when it is missing; then the reps I could do at the new weight keeping 2 in reserve = 30 × (e1RM / new weight − 1) − 2. If that is at least the bottom of the rep range, add the increment and drop back to the bottom of the range. If it is below, keep the weight and raise the rep target by one instead (at most 3 reps above the top of the range); once I reach that cap, add the increment anyway. Example: 70 kg × 12 at RIR 2 on 8-12 with a 10 kg step predicts about 6 reps at 80 kg, so stay at 70 kg and aim for 13; at 70 kg × 14 at RIR 2 it predicts about 8, so go to 80 kg. My app applies exactly this rule and shows me wherever your weight differs from it. Across the weeks of this plan, a later week's weight for the same exercise must be at least the earlier week's. If you deliberately want a lighter deload, say so explicitly in your summary — the app flags every below-last-weight suggestion at import and I decide whether to keep it.
 - Use every strength exercise in my library once per calendar week (Sunday through Saturday) across the weeks this plan covers: each exercise should appear on exactly one training day per week, and only appear a second time in the same week if that is genuinely necessary to reach a muscle's weekly set floor — and in that case choose a different exercise for that muscle first. exerciseUsageCurrentWeek in the data pack shows, for the current week, how many days each exercise has already been done (doneDays — fixed, count these toward the once-per-week target) and how many days it is currently planned (currentlyPlannedDays — that is the old plan, which your new plan replaces for any day not already logged, so ignore it). If some exercises genuinely cannot fit in a week, list which ones and why in your summary rather than silently dropping them.
 - Rep target framing, for both planning and reviewing past sessions in your summary: the TOP of a range is what I'm aiming for, not a bar I have to clear. Landing under it at real effort (roughly RIR 1-3) is a normal, expected outcome — I'm firmly in the intended effort zone — not a shortfall, don't flag it as underperformance (e.g. a target of 15 and I land at 12 is fine on its own). The one exception: the first session after a weight increase on an exercise (this session's weight is higher than that exercise's prior session), where the BOTTOM of the range is what's actually expected and appropriate — that's the point of dropping back down after adding weight, so hitting the bottom of the range right after a bump is the success case there, not a miss. Only flag a genuine concern when reps land meaningfully below even the bottom of the range, or a stall pattern per the Flags section above.
 - Within a single week, prefer varying WHICH exercise targets a given muscle across different training days rather than repeating the identical exercise every time that muscle comes up — e.g. two chest days in a week should generally use two different chest exercises/machines, not the same one twice, unless there's a genuine reason not to (limited equipment options for that muscle in my library, or a specific weakness being deliberately grooved with repetition). This is about variety of stimulus, not frequency — training the same MUSCLE multiple times a week is expected and good; this rule is only about not defaulting to the identical movement each time.
@@ -15858,6 +16163,35 @@ function computeImportWeightCorrections(res){
   const list = Object.values(changes).map(ch=>Object.assign({}, ch, { dates:[...ch.dates].sort() }));
   return { changes:list, fallbackChanges };
 }
+/* v4.74.0: where the AI's weight differs from what the app's own rule
+   (doubleProgressionSuggestion, incl. the big-jump check) would pick, for each
+   exercise's FIRST planned date in the imported plan. Later dates depend on
+   sets not done yet, so they are not compared. Display only: the AI's weight
+   is what gets imported. */
+function computeImportRuleDifferences(res){
+  const sessIdx = {};
+  (res.sessions||[]).forEach((item,i)=>{ sessIdx[item.importedId] = i; });
+  const first = {};
+  (res.calendar||[]).filter(c=>c && c.date && c.sessionId && sessIdx[c.sessionId]!=null)
+    .sort((a,b)=> a.date<b.date?-1:a.date>b.date?1:0)
+    .forEach(c=>{
+      (res.sessions[sessIdx[c.sessionId]].fields.blocks||[]).forEach(b=>{
+        if(b && b.exerciseId && !first[b.exerciseId]) first[b.exerciseId] = { date:c.date, block:b };
+      });
+    });
+  const out = [];
+  Object.entries(first).forEach(([exId, f])=>{
+    const ai = parseSuggestedWeightKg(f.block.notes);
+    const r = parseRepRange(f.block.reps);
+    if(ai == null || !r.min || !r.top) return;
+    const last = getLastCompletedSession(exId, f.date);
+    if(!last || last.topWeightKg == null || daysBetween(last.date, f.date) > WEIGHT_FLOOR_WINDOW_DAYS) return;
+    const prog = doubleProgressionSuggestion(exId, { repsMin:r.min, repsMax:r.top, weightKg:last.topWeightKg }, last.sets);
+    if(!prog || prog.newWeightKg == null || Math.abs(prog.newWeightKg - ai) < 1e-9) return;
+    out.push({ exId, date:f.date, ai, app:prog.newWeightKg, why:prog.message });
+  });
+  return out;
+}
 function applyImportWeightCorrections(res, result){
   result.changes.forEach(ch=>{
     const b = (res.sessions[ch.i].fields.blocks||[])[ch.j];
@@ -15873,6 +16207,8 @@ function openImportWeightCorrectionsModal(res, result){
   const reasonText = r => r.kind==='increment' ? `snapped to the ${r.inc} kg step`
     : r.kind==='floor-history' ? `last completed ${r.kg} kg on ${humanDateNoRelative(r.date)}`
     : `earlier in this plan: ${r.kg} kg on ${humanDateNoRelative(r.date)}`;
+  const diffs = result.ruleDiffs || [];
+  const hasCorrections = !!(result.changes.length || result.fallbackChanges.length);
   const regress = result.changes.filter(ch=>ch.reasons.some(r=>r.kind!=='increment'));
   const snapOnly = result.changes.filter(ch=>ch.reasons.every(r=>r.kind==='increment'));
   const line = ch => `<div style="padding:5px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
@@ -15888,14 +16224,21 @@ function openImportWeightCorrectionsModal(res, result){
     <div class="modal wide" style="padding:0 20px 0;">
       <div style="position:sticky; top:0; z-index:2; background:var(--paper-raised); padding:16px 0 8px;">
         <h3>Weight check before import</h3>
-        <div class="page-sub">Corrections are applied automatically unless you choose to import as written.</div>
+        <div class="page-sub">${hasCorrections ? 'Corrections are applied automatically unless you choose to import as written.' : 'Nothing needs correcting. Below is where the AI\u2019s weights differ from the app\u2019s own rule.'}</div>
       </div>
       ${regress.length ? `<div style="font-weight:700; color:var(--flag,#D95B5B); margin:10px 0 2px;">⚠ Below your last completed weight (${regress.length})</div>${regress.map(line).join('')}` : ''}
       ${snapOnly.length ? `<div style="font-weight:700; margin:12px 0 2px;">Not on the machine's increment (${snapOnly.length})</div>${snapOnly.map(line).join('')}` : ''}
       ${result.fallbackChanges.length ? `<div style="font-weight:700; margin:12px 0 2px;">Starting-point suggestions snapped (${result.fallbackChanges.length})</div>${result.fallbackChanges.map(f=>`<div style="padding:4px 0; border-bottom:1px solid var(--line); font-size:12.5px;"><b>${escapeHtml(exName(f.exId))}</b> <span style="font-family:var(--font-mono,monospace);">${f.from} → <b>${f.to} kg</b></span> <span class="page-sub">(${f.inc} kg step)</span></div>`).join('')}` : ''}
+      ${diffs.length ? `<div style="font-weight:700; margin:12px 0 2px;">AI vs the app\u2019s rule (${diffs.length})</div>
+        <div class="page-sub" style="font-size:12px;">The AI\u2019s weight is the one imported. Shown for the first planned day of each exercise.</div>
+        ${diffs.map(d=>`<div class="rule-diff-row" style="padding:5px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
+          <b>${escapeHtml(exName(d.exId))}</b> <span class="page-sub">\u00b7 ${escapeHtml(humanDateNoRelative(d.date))}</span><br>
+          <span style="font-family:var(--font-mono,monospace);">AI <b>${d.ai} kg</b> \u00b7 App ${d.app} kg</span> <span class="page-sub">(${escapeHtml(d.why)})</span>
+        </div>`).join('')}` : ''}
       <div class="modal-actions" style="flex-direction:column; align-items:stretch; gap:8px; position:sticky; bottom:0; background:var(--paper-raised); padding:12px 0 16px; margin-top:8px;">
-        <button class="btn brass" onclick="resolveImportWeightCorrections('apply')">Apply corrections &amp; continue</button>
-        <button class="btn secondary" onclick="resolveImportWeightCorrections('asis')">Import as written (no corrections)</button>
+        ${hasCorrections ? `<button class="btn brass" onclick="resolveImportWeightCorrections('apply')">Apply corrections &amp; continue</button>
+        <button class="btn secondary" onclick="resolveImportWeightCorrections('asis')">Import as written (no corrections)</button>`
+        : `<button class="btn brass" onclick="resolveImportWeightCorrections('asis')">Continue import</button>`}
         <button class="btn ghost" onclick="resolveImportWeightCorrections('cancel')">Cancel this import</button>
       </div>
     </div>
@@ -15912,7 +16255,8 @@ function resolveImportWeightCorrections(choice){
 }
 function proceedWithImportApply(res){
   const result = computeImportWeightCorrections(res);
-  if(result.changes.length || result.fallbackChanges.length){
+  result.ruleDiffs = computeImportRuleDifferences(res);
+  if(result.changes.length || result.fallbackChanges.length || result.ruleDiffs.length){
     openImportWeightCorrectionsModal(res, result);
     return;
   }
@@ -17902,6 +18246,21 @@ function renderSettingsAppearance(){
         </div>
 
         <div class="field">
+          <label>Night Mode Style</label>
+          <div class="page-sub" style="margin-bottom:10px;">How the app looks when Dark Mode is on. This device only.</div>
+          <div class="theme-swatch-row">
+            ${DARK_STYLES.map(d=>`
+              <button type="button" class="theme-swatch dark-style-swatch ${((DARK_STYLES.some(x=>x.key===state.settings.darkStyle)?state.settings.darkStyle:'charcoal')===d.key)?'selected':''}" onclick="setDarkStyle('${d.key}')" title="${escapeHtml(d.note)}">
+                <span class="theme-swatch-preview" style="background:${d.bg};">
+                  <span style="background:${d.accent};"></span>
+                </span>
+                <span class="theme-swatch-label">${d.label}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="field">
           <label>Content Width</label>
           <div class="radio-pills" style="margin-bottom:10px;">
             <button type="button" class="radio-pill ${state.settings.contentWidthMode!=='manual'?'active':''}" onclick="setContentWidthMode('auto')">Automatic (based on screen size)</button>
@@ -17928,7 +18287,7 @@ function renderSettingsAppearance(){
           <div class="color-row">
             <label>${type}</label>
             <input type="color" value="${recurTypeColor(type).startsWith('#')?recurTypeColor(type):'#3C7A73'}" onchange="setRecurTypeColor('${type}', this.value)">
-            <span class="tag recur" style="background:${recurTypeColor(type)}22; color:${recurTypeColor(type)};">${type} ↻</span>
+            <span class="tag recur" style="background:${tagDisplayColor(recurTypeColor(type))}22; color:${tagDisplayColor(recurTypeColor(type))};">${type} ↻</span>
           </div>
         `).join('')}
       </div>
@@ -17956,7 +18315,7 @@ function renderSettingsAppearance(){
           <div class="color-row">
             <label>${escapeHtml(silo)}</label>
             <input type="color" value="${siloColor(silo)}" onchange="setSiloColor('${escapeHtml(silo)}', this.value)">
-            <span class="tag" style="background:${siloColor(silo)}22; color:${siloColor(silo)};">${escapeHtml(silo)}</span>
+            <span class="tag" style="background:${tagDisplayColor(siloColor(silo))}22; color:${tagDisplayColor(siloColor(silo))};">${escapeHtml(silo)}</span>
           </div>
         `).join('')}
       </div>

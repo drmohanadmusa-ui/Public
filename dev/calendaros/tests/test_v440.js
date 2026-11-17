@@ -168,10 +168,12 @@ async function doubleProgressionLogic() {
   check('middle → add rep', addRep && addRep.type === 'addRep', addRep&&addRep.type);
   check('suggests 11 reps', addRep && addRep.repsTarget === 11, addRep&&addRep.repsTarget);
 
-  // RIR > 2 at top range → treat as hold, not addWeight
+  // v4.74.0 (his decision): a "too easy" set at the top of the range now
+  // counts toward an increase. This replaced the old v4.40 assertion that
+  // RIR > 2 at the top must NOT add weight, which was the gap he asked to fix.
   const tooEasy = atTop.map(s=>({...s, rir:4}));
-  const holdEasy = win.doubleProgressionSuggestion('E1', target, tooEasy);
-  check('high RIR at top → add rep rather than weight', holdEasy && holdEasy.type !== 'addWeight', holdEasy&&holdEasy.type);
+  const easy = win.doubleProgressionSuggestion('E1', target, tooEasy);
+  check('high RIR at top → add weight (v4.74.0)', easy && easy.type === 'addWeight', easy&&easy.type);
 }
 
 // ---------- 6. Suggestion stored and retrieved ----------
