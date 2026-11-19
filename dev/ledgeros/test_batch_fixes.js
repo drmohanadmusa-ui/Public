@@ -1418,8 +1418,11 @@ async function testSaveInvTxRequiresUsdAmountForOpeningBalance(){
   let toastMsg = null;
   sb.__set('toast', (msg)=>{ toastMsg = msg; });
   sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'10', totalSar:'', owners:[{ownerId:1,units:10}], note:'', splitMode:'units', ownersSar:{}, cashSide:'opening', usdAmount:'', feePct:''};
+  // v5.32 (#152): a buy with no amount is now a buy at $0, which asks first; cancelled = nothing saved
+  let asked = 0; sb.confirm = () => { asked++; return false; };
+  const before = vm.runInContext('(D.invTransactions||[]).length', sb);
   await sb.saveInvTx();
-  assert(toastMsg && /USD/.test(toastMsg), 'Should require a USD amount for an opening-balance buy, got: ' + toastMsg);
+  assert(asked===1 && vm.runInContext('(D.invTransactions||[]).length', sb)===before, 'An opening-balance buy with no amount asks before saving at $0, got: ' + toastMsg + ' / asked ' + asked);
   assert((sb._D.invTransactions||[]).length === 0, 'Nothing should be saved without the required USD amount');
 }
 
@@ -1522,8 +1525,11 @@ async function testSaveInvTxRequiresUsdForBankFundedUsdPosition(){
   let toastMsg = null;
   sb.__set('toast', (msg)=>{ toastMsg = msg; });
   sb._invTxDraft = {id:null, positionId:1, date:'2026-08-24', kind:'buy', units:'10', totalSar:'', owners:[{ownerId:1,units:10}], note:'', splitMode:'units', ownersSar:{}, cashSide:'bank', usdAmount:'', feePct:''};
+  // v5.32 (#152): a buy with no amount is now a buy at $0, which asks first; cancelled = nothing saved
+  let asked = 0; sb.confirm = () => { asked++; return false; };
+  const before = vm.runInContext('(D.invTransactions||[]).length', sb);
   await sb.saveInvTx();
-  assert(toastMsg && /USD/.test(toastMsg), 'Should require USD for a bank-funded USD position, got: ' + toastMsg);
+  assert(asked===1 && vm.runInContext('(D.invTransactions||[]).length', sb)===before, 'A bank-funded buy with no amount asks before saving at $0, got: ' + toastMsg + ' / asked ' + asked);
   assert((sb._D.invTransactions||[]).length === 0, 'Nothing should be saved without the required USD amount');
 }
 
@@ -8139,6 +8145,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV530CashBuyPicker();
   await testEdgeBinanceBalances();
   await testV531BinanceUnitsAndCash();
+  await testEdgeBinanceHistory();
+  await testV532BinanceFindTrades();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -11680,9 +11688,20 @@ async function testV522SellWithNoProceeds(){
   sb.openInvTxModal(1, null);
   const d2 = vm.runInContext('window._invTxDraft', sb);
   Object.assign(d2, {kind:'buy', units:'1', usdAmount:'', totalSar:'', cashSide:'bank', owners:[{ownerId:1, units:1}]});
-  let msg = ''; sb.__set('toast', m=>{ msg = m; });
+  // v5.32 (#152): a buy at $0 is allowed after a confirm (dust, airdrops)
+  let askedBuy = '';
+  sb.confirm = m => { askedBuy = m; return true; };
   await sb.saveInvTxNow();
-  assert(/USD amount|greater than zero/.test(msg) && D.invTransactions.length===before+1, 'A buy still needs an amount');
+  const tb = D.invTransactions[D.invTransactions.length-1];
+  assert(/buy at \$0/.test(askedBuy) && D.invTransactions.length===before+2 && tb.kind==='buy' && Number(tb.totalSar)===0 && Number(tb.units)===1, 'A buy at $0 asks, then saves 1 unit at no cost, got ' + JSON.stringify(tb && [tb.kind, tb.totalSar, tb.units]));
+  // dust: price × units below a cent keeps its amount (USD and SAR)
+  sb.openInvTxModal(1, null);
+  const d3 = vm.runInContext('window._invTxDraft', sb);
+  Object.assign(d3, {kind:'buy', units:'0.00199', usdAmount:'', totalSar:'', cashSide:'opening', owners:[{ownerId:1, units:0.00199}]});
+  sb.setInvTxPrice('0.008635');
+  assert(Number(d3.usdAmount)===Number((0.00199*0.008635).toPrecision(8)) && Number(d3.usdAmount)>0 && Number(d3.totalSar)>0 && Number(d3.totalSar)<0.01, 'Price 0.008635 × 0.00199 units = $0.0000172 (not rounded to $0), SAR kept too, got ' + JSON.stringify([d3.usdAmount, d3.totalSar]));
+  sb.setInvTxUsd('10');
+  assert(Number(d3.totalSar)===37.5, 'Normal amounts still round SAR to the halala');
 }
 async function testV523ReconLinesAndDepositChecks(){
   const sb = v56Sandbox();
@@ -12088,4 +12107,80 @@ async function testV531BinanceUnitsAndCash(){
   await sb.checkInvPlatformWallet(1);
   const chk = vm.runInContext('invWalletResults[1]', sb);
   assert(chk && chk.binance && chk.rows.some(x=>x.pos.ticker==='ETH' && x.wallet===2), 'Check Binance on the Binance platform reads Binance');
+}
+async function testEdgeBinanceHistory(){
+  // edge: binance-balances history (#154): allow-listed read endpoints only
+  const src = fs.readFileSync(path.join(__dirname, 'edge', 'binance-balances', 'index.ts'), 'utf8').replace(/^export /mg, '');
+  const fn = new Function('TextEncoder', src + '\nreturn {binanceHistory};')(TextEncoder);
+  const env = {BINANCE_API_KEY:'k1', BINANCE_API_SECRET:'s1'};
+  const calls = [];
+  const ok = body => async (url, opt)=>{ calls.push({url, opt}); return {ok:true, status:200, text: async()=>JSON.stringify(body)}; };
+  let r = await fn.binanceHistory(env, {action:'trades', symbol:'ETHUSDT', startTime:1000, endTime:2000}, ok([{time:1500, isBuyer:true, qty:'0.5', quoteQty:'1000', price:'2000', commission:'0.0005', commissionAsset:'ETH'}]), crypto.subtle, 9);
+  let b = JSON.parse(r.body);
+  assert(r.status===200 && b.rows.length===1 && b.rows[0].buy===true && b.rows[0].qty===0.5 && b.rows[0].quoteQty===1000 && b.rows[0].feeAsset==='ETH', 'edge: trades mapped (buy, qty, USD, fee), got ' + r.body);
+  assert(/^https:\/\/api\.binance\.com\/api\/v3\/myTrades\?symbol=ETHUSDT&startTime=1000&endTime=2000&limit=1000&recvWindow=10000&timestamp=9&signature=[0-9a-f]{64}$/.test(calls[0].url) && calls[0].opt.method==='GET', 'edge: one signed GET to myTrades, got ' + calls[0].url);
+  r = await fn.binanceHistory(env, {action:'trades', symbol:'ETHBTC', startTime:1, endTime:2}, ok([]), crypto.subtle, 9);
+  assert(r.status===400 && calls.length===1, 'edge: only coin/USDT or coin/USDC pairs, nothing sent');
+  r = await fn.binanceHistory(env, {action:'trades', symbol:'ETHUSDT', startTime:1, endTime:1+86400001}, ok([]), crypto.subtle, 9);
+  assert(r.status===400 && calls.length===1, 'edge: at most 24 hours of trades per call');
+  r = await fn.binanceHistory(env, {action:'order', startTime:1, endTime:2}, ok([]), crypto.subtle, 9);
+  assert(r.status===400 && /Unknown action/.test(r.body) && calls.length===1, 'edge: anything else (e.g. placing orders) is refused');
+  r = await fn.binanceHistory(env, {action:'trades', symbol:'FAKEUSDC', startTime:1, endTime:2}, async()=>({ok:false, status:400, text: async()=>'{"code":-1121,"msg":"Invalid symbol."}'}), crypto.subtle, 9);
+  assert(r.status===200 && JSON.parse(r.body).rows.length===0, 'edge: a pair that does not exist = no trades');
+  r = await fn.binanceHistory(env, {action:'deposits', startTime:1, endTime:2}, ok([{insertTime:5, coin:'USDT', amount:'100', status:1}, {insertTime:6, coin:'USDT', amount:'7', status:0}]), crypto.subtle, 9);
+  b = JSON.parse(r.body);
+  assert(b.rows.length===1 && b.rows[0].amount===100 && /capital\/deposit\/hisrec/.test(calls[calls.length-1].url), 'edge: deposits, successful ones only');
+  r = await fn.binanceHistory(env, {action:'withdrawals', startTime:1, endTime:2}, ok([{applyTime:'2026-11-18 10:00:00', coin:'USDT', amount:'50', transactionFee:'1', status:6}, {applyTime:'2026-11-18 11:00:00', coin:'USDT', amount:'9', status:1}]), crypto.subtle, 9);
+  b = JSON.parse(r.body);
+  assert(b.rows.length===1 && b.rows[0].fee===1 && b.rows[0].time===Date.parse('2026-11-18T10:00:00Z'), 'edge: withdrawals, completed ones only, with the fee');
+}
+async function testV532BinanceFindTrades(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  // fee rules
+  let e = sb.invBinanceTradeEffect({buy:true, qty:1, quoteQty:2000, fee:0.001, feeAsset:'ETH'}, 'ETH', 'USDT');
+  assert(Math.abs(e.units-0.999)<1e-12 && e.usd===2000, 'Buy with the fee in the coin: units less the fee, got ' + JSON.stringify(e));
+  e = sb.invBinanceTradeEffect({buy:false, qty:1, quoteQty:2000, fee:2, feeAsset:'USDT'}, 'ETH', 'USDT');
+  assert(e.units===-1 && e.usd===1998, 'Sell with the fee in USDT: USD received less the fee');
+  e = sb.invBinanceTradeEffect({buy:true, qty:1, quoteQty:2000, fee:0.01, feeAsset:'BNB'}, 'ETH', 'USDT');
+  assert(e.units===1 && e.usd===2000, 'A BNB fee changes neither');
+  // Binance shows 0.3 more ETH than the tracker; trades: today 0.2 ETH (USDT), 2 days ago 0.1 ETH (USDC), 5 days ago another (must not be read)
+  const tracker = sb.computePositionState(1).totalUnits;
+  const DAY = 86400000, now = vm.runInContext('Date.now()', sb), calls = [];   // the sandbox's own (frozen) clock
+  sb.__set('invBinanceCall', async (input)=>{
+    calls.push(input);
+    if(input.action==='trades'){
+      const day = Math.round((now - input.endTime)/DAY);
+      if(input.symbol==='ETHUSDT' && day===0) return {rows:[{time:now-3600000, buy:true, qty:0.2, quoteQty:400, price:2000, fee:0, feeAsset:'BNB'}]};
+      if(input.symbol==='ETHUSDC' && day===2) return {rows:[{time:now-2*DAY-3600000, buy:true, qty:0.1, quoteQty:190, price:1900, fee:0, feeAsset:'USDC'}]};
+      if(day===5) return {rows:[{time:now-5*DAY, buy:true, qty:9, quoteQty:1, price:1, fee:0, feeAsset:'USDT'}]};
+      return {rows:[]};
+    }
+    if(input.action==='deposits') return {rows:[{time:now-DAY, coin:'USDT', amount:300}, {time:now-DAY, coin:'BTC', amount:1}]};
+    return {rows:[]};
+  });
+  vm.runInContext('invWalletResults[1] = ' + JSON.stringify({binance:true, cashUsd:999, rows:[], untracked:0, error:''}), sb);
+  vm.runInContext(`invWalletResults[1].rows = [{pos: invPositionById(1), tracker: ${tracker}, wallet: ${tracker} + 0.3}]`, sb);
+  const f = await sb.invBinanceFindTrades(1);
+  const trades = f.rows.filter(x=>x.type==='trade');
+  assert(!f.error && trades.length===2 && trades[0].units===0.2 && trades[1].units===0.1 && trades[1].quote==='USDC', 'Finds the two trades that make up the 0.3 difference, newest first, got ' + JSON.stringify(f.rows.map(x=>[x.type, x.units, x.quote])) + ' ' + f.error);
+  assert(!calls.some(c=>c.action==='trades' && Math.round((now - c.endTime)/DAY)>=3), 'Stops looking once the difference is explained (no calls for day 3 and older)');
+  const dep = f.rows.filter(x=>x.type==='deposit');
+  assert(dep.length===1 && dep[0].usd===300, 'Cash differs: USDT deposits listed (not other coins)');
+  assert(!f.notes.length, 'Nothing left unexplained');
+  // Log it: trade window filled in, paid from platform cash
+  let opened = null; sb.__set('openInvTxModal', id=>{ opened = {id, p: vm.runInContext('window._invTxPreset', sb)}; });
+  const i0 = trades[0]? f.rows.indexOf(trades[0]) : -1;
+  sb.invBinanceLog(1, i0);
+  assert(opened && opened.id===1 && opened.p.kind==='buy' && opened.p.units===0.2 && opened.p.usdAmount===400 && opened.p.cashSide==='cash' && /Binance ETH\/USDT/.test(opened.p.note), 'Log it opens the trade window filled in, got ' + JSON.stringify(opened));
+  // looks logged once the tracker has it
+  D.invTransactions.push({id:950, positionId:1, date:(trades[0]||{}).date, kind:'buy', units:0.2, totalSar:1500, owners:[{ownerId:1, units:0.2}], cashSide:'cash', usdAmount:400});
+  const box = sb.document.createElement('div'); box.innerHTML = sb.invBinanceFoundHTML(1);
+  assert(box.querySelector(`[data-binrow="${i0}"]`) && /looks logged/.test(box.querySelector(`[data-binrow="${i0}"]`).textContent) && box.querySelector('[data-binlog]'), 'A trade already in the tracker shows "looks logged"; the others keep Log it');
+  // a difference that is not explained within 30 days is said plainly
+  calls.length = 0;
+  vm.runInContext(`invWalletResults[1].rows = [{pos: invPositionById(1), tracker: ${tracker}, wallet: ${tracker} + 50}]`, sb);
+  const g = await sb.invBinanceFindTrades(1);
+  assert(g.notes.length===1 && /ETH/.test(g.notes[0]) && calls.filter(c=>c.action==='trades').length===60, 'Not explained: looks back 30 days (2 pairs a day) and says so, got ' + JSON.stringify(g.notes) + ' calls ' + calls.length);
 }

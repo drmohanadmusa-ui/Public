@@ -633,12 +633,16 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.31.0';
+const APP_VERSION = '5.32.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.32.0', date:'2026-11-19', changes:[
+    'Investments \u2192 Binance: after a Binance check shows differences, \ud83d\udcdc Find the trades reads your Spot trades (coin/USDT and coin/USDC) newest first and stops as soon as they explain each coin\u2019s difference (at most 30 days back). When the cash differs it also lists USDT / USDC deposits and withdrawals. Each line has Log it, which opens the trade (or deposit / withdrawal) window filled in: date, units, USD and fee; lines already in the tracker show "looks logged".',
+    'Trade window: a price per unit now fills USD paid without rounding to the cent, so tiny (dust) amounts save; and a buy at $0 can be saved after a confirm (dust or an airdrop), like a sale with no proceeds.',
+  ]},
   {version:'5.31.0', date:'2026-11-17', changes:[
     'Investments → Binance: "↻ Update prices, units & cash from Binance" on the Binance platform page (and Check Binance in Reconcile) reads your Binance Spot balances with your read-only key, shows them next to the tracker’s units with + Log buttons for differences, and saves them as the statement units. USDT and USDC become the platform’s statement cash. Simple Earn (flexible) coins, shown by Binance as LDxxx, count as the coin itself.',
   ]},
@@ -12657,14 +12661,96 @@ function invBinanceFold(bal, tickers){
   }
   return out;
 }
-async function invBinanceBalances(){
+async function invBinanceCall(input){
   let url = '', key = '';
   try{ url = (localStorage.getItem('sb_url')||'').replace(/\/+$/, ''); key = localStorage.getItem('sb_key')||''; }catch(e){}
   if(!url || !key) throw new Error('not connected to Supabase on this device');
-  const r = await fetch(url+'/functions/v1/binance-balances', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key, 'x-region':'eu-central-1'}, body:'{}'});
+  const r = await fetch(url+'/functions/v1/binance-balances', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key, 'x-region':'eu-central-1'}, body: JSON.stringify(input||{})});
   const d = await r.json().catch(()=>({}));
-  if(!r.ok || !d || !d.balances) throw new Error((d && d.error) || ('the Binance check said '+r.status));
+  if(!r.ok || !d || d.error) throw new Error((d && d.error) || ('the Binance check said '+r.status));
+  return d;
+}
+async function invBinanceBalances(){
+  const d = await invBinanceCall({});
+  if(!d.balances) throw new Error('the Binance check sent no balances');
   return d.balances;
+}
+// v5.32 (#154): for each coin whose Binance units differ from the tracker, read its Spot trades (coin/USDT and coin/USDC),
+// newest day first, and stop as soon as the trades found add up to the difference (at most 30 days). If the cash differs,
+// list the last 30 days of USDT/USDC deposits and withdrawals. Each row gets Log it (window filled in); nothing is saved here.
+let invBinanceFound = {};   // platformId -> {loading, rows:[...], notes:[...], error}
+const INV_BINANCE_DAYS = 30, INV_DAY_MS = 86400000;
+function invLocalDate(ms){ const d = new Date(ms); return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10); }
+// One Binance trade as what it did to his units and cash: a buy adds units (less a fee taken in the coin) and costs the quote
+// (plus a fee taken in USDT/USDC); a sell is the other way round. A fee paid in BNB changes neither.
+function invBinanceTradeEffect(t, coin, quote){
+  const feeCoin = t.feeAsset===coin? Number(t.fee)||0 : 0, feeQuote = t.feeAsset===quote? Number(t.fee)||0 : 0;
+  return t.buy? {units: t.qty - feeCoin, usd: t.quoteQty + feeQuote} : {units: -(t.qty + feeCoin), usd: t.quoteQty - feeQuote};
+}
+async function invBinanceFindTrades(platformId){
+  const r = invWalletResults[platformId]; if(!r || !r.binance) return;
+  invBinanceFound[platformId] = {loading:true, rows:[], notes:[]};
+  if(screen==='investments') renderInvestmentsPage();
+  const found = {loading:false, rows:[], notes:[], error:''}, now = Date.now();
+  const tick = p=>String(p.ticker||p.name||'').trim().toUpperCase();
+  try{
+    for(const x of r.rows.filter(x=>!invIsStablecoin(x.pos) && invWalletDiffers(x))){
+      const coin = tick(x.pos), diff = x.wallet - x.tracker, tol = Math.max(1e-8, Math.abs(diff)*0.001);
+      let net = 0, n = 0;
+      for(let day = 0; day<INV_BINANCE_DAYS && !(n && Math.abs(net-diff)<=tol); day++){
+        for(const q of INV_STABLES){
+          const d = await invBinanceCall({action:'trades', symbol:coin+q, startTime: now-(day+1)*INV_DAY_MS, endTime: now-day*INV_DAY_MS});
+          (d.rows||[]).forEach(t=>{ const e = invBinanceTradeEffect(t, coin, q); net += e.units; n++;
+            found.rows.push({type:'trade', pos:x.pos, coin, quote:q, time:t.time, date:invLocalDate(t.time), buy:t.buy, units:Math.abs(e.units), usd:e.usd, price:t.price, bnbFee: t.feeAsset==='BNB'}); });
+        }
+      }
+      if(Math.abs(net-diff)>tol) found.notes.push(`${coin}: the trades found in the last ${INV_BINANCE_DAYS} days explain ${invFmtUnits(net)} of the ${invFmtUnits(diff)} difference.`);
+    }
+    if(typeof r.cashUsd==='number' && Math.abs(r.cashUsd - invPlatformCash(platformId).totalUsd)>=0.005){
+      for(const action of ['deposits','withdrawals']){
+        const d = await invBinanceCall({action, startTime: now-INV_BINANCE_DAYS*INV_DAY_MS, endTime: now});
+        (d.rows||[]).filter(m=>INV_STABLES.includes(String(m.coin).toUpperCase())).forEach(m=>found.rows.push({type: action==='deposits'? 'deposit' : 'withdrawal',
+          coin:String(m.coin).toUpperCase(), time:m.time, date:invLocalDate(m.time), usd: Number(m.amount) + (action==='withdrawals'? Number(m.fee)||0 : 0)}));
+      }
+    }
+    found.rows.sort((a,b)=>b.time-a.time);
+  }catch(e){ found.error = 'Binance: '+(e && e.message || e); }
+  invBinanceFound[platformId] = found;
+  if(screen==='investments') renderInvestmentsPage();
+  return found;
+}
+function invBinanceRowLogged(platformId, x){
+  if(x.type==='trade') return invTxLooksLogged(x.pos.id, x.date, x.units);
+  return (D.invCashMovements||[]).some(m=>m.platformId===platformId && m.kind===x.type && smsDaysApart(m.date, x.date)<=1 && Math.abs((Number(m.usdAmount)||0) - x.usd) <= Math.max(0.01, x.usd*0.01));
+}
+function invBinanceLog(platformId, i){
+  const x = ((invBinanceFound[platformId]||{}).rows||[])[i]; if(!x) return;
+  if(x.type==='trade'){
+    window._invTxPreset = {date:x.date, kind: x.buy? 'buy' : 'sell', units: Number(x.units.toPrecision(10)), usdAmount: Number(x.usd.toPrecision(8)), cashSide:'cash', note:'From Binance '+x.coin+'/'+x.quote};
+    openInvTxModal(x.pos.id);
+    return;
+  }
+  openInvCashModal(platformId, x.type);
+  const d = window._invCashDraft; if(!d) return;
+  d.date = x.date; d.usdAmount = Math.round(x.usd*100)/100;
+  if(d.owners && d.owners[0]) d.owners[0].usd = d.usdAmount;
+  d.note = 'From Binance ('+x.coin+')';
+  renderInvCashModal();
+}
+function invBinanceFoundHTML(platformId){
+  const st = invBinanceFound[platformId];
+  if(!st) return '';
+  if(st.loading) return '<div class="mut" style="font-size:12px;margin:6px 0">Reading your Binance trades\u2026</div>';
+  const rows = st.rows.map((x,i)=>`<tr data-binrow="${i}"><td class="mono" style="white-space:nowrap">${esc(x.date)}</td>
+      <td>${x.type==='trade'? `${x.buy? 'Buy' : 'Sell'} ${esc(x.coin)}` : `${x.type==='deposit'? 'Deposit' : 'Withdrawal'} ${esc(x.coin)}`}</td>
+      <td class="num mono">${x.type==='trade'? invFmtUnits(x.units) : ''}</td>
+      <td class="num mono">${x.type==='trade'? '@ '+invFmtPrice(x.price) : ''}</td>
+      <td class="num mono">$${fmt2(x.usd)}${x.bnbFee? ' <span class="mut" title="Fee paid in BNB, not in this amount">+BNB fee</span>' : ''}</td>
+      <td>${invBinanceRowLogged(platformId, x)? '<span class="mut" style="font-size:11px">looks logged</span>' : `<button class="btn ghost sm" data-binlog="${i}" onclick="invBinanceLog(${platformId}, ${i})">Log it</button>`}</td></tr>`).join('');
+  return `<div class="inv-binance-found" style="margin:6px 0"><div class="mut" style="font-size:11.5px">Binance Spot trades (USDT / USDC) behind the differences above, newest first; and USDT / USDC deposits and withdrawals when the cash differs. Log it opens the window filled in; nothing is saved until you save it.</div>
+    ${st.error? `<div class="r" style="font-size:12px">${esc(st.error)}</div>` : ''}
+    ${st.notes.map(t=>`<div class="mut" style="font-size:11.5px">\u26a0 ${esc(t)}</div>`).join('')}
+    ${rows? `<table style="font-size:12px;margin-top:4px"><tbody>${rows}</tbody></table>` : (st.error? '' : '<div class="mut" style="font-size:12px">No trades found.</div>')}</div>`;
 }
 async function invReadBinance(platformId){
   const positions = invPositionsForPlatform(platformId).filter(p=>p.status!=='Closed');
@@ -12890,8 +12976,9 @@ function invWalletPanelHTML(p, open){
     }).join('')}${bin && typeof r.cashUsd==='number'? (()=>{ const tc = invPlatformCash(p.id).totalUsd, d = r.cashUsd - tc, ok = Math.abs(d)<0.005;
       return `<tr data-binancecash="${p.id}"><td>Cash (USDT + USDC)</td><td class="num mono">$${fmt2(tc)}</td><td class="num mono">$${fmt2(r.cashUsd)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : '$'+fmt2(d)}</td></tr>`; })() : ''}</tbody></table>
     <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">${bin? 'Save Binance units and cash as statement figures' : 'Save wallet units as statement units'}</button>
+      ${bin? `<button class="btn ghost sm" data-binfind="${p.id}" onclick="invBinanceFindTrades(${p.id})">\ud83d\udcdc Find the trades</button>` : ''}
       ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other coin${r.untracked===1?'':'s'} ${bin? 'on Binance' : 'in this wallet'} aren't in the tracker.</span>` : ''}</div>` : '';
-  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + body + invWalletTxsHTML(p.id);
+  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + body + (bin? invBinanceFoundHTML(p.id) : invWalletTxsHTML(p.id));
 }
 
 // ---------- platform boxes (👤 Mine) ----------
@@ -14866,7 +14953,8 @@ function setInvTxUsd(val){
   d.usdAmount = val;
   const usd = Number(val);
   if(usd>0){
-    d.totalSar = Math.round(usd*invTxRate(d)*100)/100;
+    const sar = usd*invTxRate(d);
+    d.totalSar = sar>=0.005? Math.round(sar*100)/100 : Number(sar.toPrecision(8));   // v5.32 (#152): under half a halala stays exact
     const sarEl = document.getElementById('invTxSarDerived');
     if(sarEl) sarEl.value = d.totalSar;
   }
@@ -14877,7 +14965,7 @@ function setInvTxPrice(val){
   const d = window._invTxDraft; if(!d) return;
   const px = Number(String(val).replace(/,/g,'')), units = Number(d.units)||0;
   if(!(px>0) || !(units>0)) return;
-  const usd = Math.round(px*units*100)/100;
+  const usd = Number((px*units).toPrecision(8));   // v5.32 (#152): not rounded to the cent, so a dust buy keeps its amount
   const el = document.getElementById('invTxUsd'); if(el) el.value = usd;
   setInvTxUsd(String(usd));
 }
@@ -15244,10 +15332,11 @@ async function saveInvTxNow(){
   // person seeing "Total SAR must be greater than zero" would have nowhere obvious to act on it.
   // The actionable field is USD.
   // v5.22 (#120): a sale may have no proceeds (to take out units logged by mistake); their cost becomes a realised loss.
-  const zeroSell = d.kind==='sell' && !(Number(d.usdAmount)>0) && !(totalSar>0);
+  // v5.32 (#152): a buy may cost nothing too (dust, airdrops): the units come in at no cost.
+  const zeroSell = (d.kind==='sell' || d.kind==='buy') && !(Number(d.usdAmount)>0) && !(totalSar>0);
   if(zeroSell){
-    if(d.splitMode==='sar'){ toast('A sale with no proceeds is split by units: switch Split by to Units', true); return; }
-    if(!confirm('Save this sale with no proceeds? The units leave at no money, and their cost (if any) becomes a realised loss.')) return;
+    if(d.splitMode==='sar'){ toast((d.kind==='buy'? 'A buy at $0' : 'A sale with no proceeds')+' is split by units: switch Split by to Units', true); return; }
+    if(!confirm(d.kind==='buy'? 'Save this buy at $0? The units come in at no cost (for dust or an airdrop).' : 'Save this sale with no proceeds? The units leave at no money, and their cost (if any) becomes a realised loss.')) return;
   } else {
     if(invTxShowsUsdEntry(d, posForSave) && !(Number(d.usdAmount)>0)){ toast('Enter the USD amount', true); return; }
     if(totalSar<=0){ toast('Total SAR must be greater than zero', true); return; }
