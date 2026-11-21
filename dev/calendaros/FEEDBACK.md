@@ -89,11 +89,11 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 | 3 | 16 weight | He set the Weight metric to Number. Build: convert old text entries (e.g. "102 Kgs" -> 102). |
 | 4 | 16 | KEEP the "rested longer?" prompt: a set with more reps than an earlier RIR-0 set asks, answer saved on the set. |
 | 5 | 17 pairing | Dropped. |
-| 6 | 18 add-on weight | Explained, waiting for his answer. |
+| 6 | 18 add-on weight | Dropped (no machine has one). |
 | 7 | 19 photos | Reminder only (his own weekly reminder covers it, see Q24). |
 | 8 | 20 maintenance calc | Dropped. |
 | 9 | 21 RIR accuracy score | Dropped. |
-| 10 | 22 credit editor | Explained, waiting for his answer. |
+| 10 | 22 credit editor | No build. He checks each exercise's primary muscles himself (Exercise Library; a muscle only helped by an exercise moves to secondary). Guide given in chat 2026-11-21. |
 | 11 | 32 review rhythm | Done by him (recurring task in CalendarOS). Nothing to build. |
 | 12 | 31 week-2 weights | Ignore. Nothing to build or add to the prompt. |
 | 13 | 13 notes | BOTH on the phone: that day's note for the exercise (same as the computer log card) and the permanent exercise note. Both go into the Review Pack. |
@@ -104,7 +104,7 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 | 18 | 16 metric types | Match metrics by name, and ask him to confirm / select where unsure. |
 | 19 | 16 calorie check | Warn with "Save anyway", about 10% slack (protein x4 + carbs x4 + fat x9 vs calories). |
 | 20 | 16 day complete | "Day complete" box; unticked days are marked "partial" for the AI only (still counted in averages). |
-| 21 | 16 sleep | Simple, fast entry; stored in minutes. Meaning of old "6.34"-style entries: asked again. |
+| 21 | 16 sleep | Simple, fast hours + minutes entry; stored in minutes. Old "6.34"-style entries mean 6 h 34 min; "5:00" means 5 h. Convert them. |
 | 22 | 17 rest default | Keep 60 s. No compound/isolation switch. Actual rest still gets recorded (item 17). |
 | 23 | 18 | Don't show the machine step on the exercise screen. |
 | 24 | 19 check-in | He added a weekly reminder himself. In-app check-in dropped; weekly average weight / waist still go in the data pack (item 23). |
@@ -117,3 +117,19 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 | 31 | 28 | Accept: a 4th set is allowed instead of an extra day when it is the lower-fatigue option, justified in the rules check. |
 | 32 | 29 fallback plan | Ignore (dropped). |
 | 33 | build | One release. |
+
+### Build scope for the next session (one release, v4.75.0)
+
+Everything below is agreed. Items not listed were dropped or done by him (see the decisions table).
+
+1. **Notes on the phone workout (13):** a Notes button next to "+ Add set" / "- Remove last" opens a window with two fields: today's note for this exercise (the same `training_logs.notes` as the computer's log card) and the permanent exercise note (Edit Exercise -> Notes). Both go into the Review Pack (session detail and exercise library). The day note is not in the pack today.
+2. **Missed sessions (15):** the next time he opens the app, a one-tap sheet lists planned days that passed unlogged; reasons: work / sleep / energy / travel / other. Stored and synced; reasons go into the data pack.
+3. **Health Log entry checks (16):** match metrics to calories / protein / fat / carbs / fiber / sleep / weight / waist / steps by name, asking him to confirm where unsure; calorie check warns with "Save anyway" (protein x4 + carbs x4 + fat x9 > calories by more than ~10%); "Day complete" box, unticked days marked "partial" for the AI only; sleep entered fast as hours + minutes and stored in minutes, old entries converted ("6.34" = 6 h 34 min, "5:00" = 5 h); old text weights converted to numbers ("102 Kgs" -> 102).
+4. **"Rested longer?" (16):** when a set has more reps than an earlier set of the same exercise that day logged at RIR 0 (failure), ask once (Rested longer / Earlier effort was off / Other) and save the answer on the set.
+5. **Actual rest (17):** record `rest_taken_sec` (time from marking the previous set done to marking this one done); default rest stays 60 s.
+6. **Privacy (25):** move the goal weight and loss target out of the public code into Settings (private, synced); update `test_v440`'s goals-shape check.
+7. **Data pack (23):** drop session templates not used on the calendar in the pack's window; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan, exercise notes; failure sets carry RIR 0, not null.
+8. **Prompt (24-28):** a line at the top, "this prompt wins wherever my documents disagree"; one progression rule (double progression + big-jump check) stated once at the top; the priority-muscles section only when priorities are set; muscles with a single primary exercise may repeat it up to 3x/week, variety rule waived; a 4th set is allowed instead of an extra day when it is the lower-fatigue option, justified in the rules check (update `test_v4700` deliberately).
+9. **His Doc 2:** in the build session he pastes Doc 2; produce corrected text (per-muscle ranges, 60 s rest default, the single progression rule, failure tests as the app really picks them). The text stays in chat, never in the repo.
+
+Check before building: which of 1-5 need SQL (e.g. a reason field for missed days, a note on sets). State it clearly and wait for his "go".
