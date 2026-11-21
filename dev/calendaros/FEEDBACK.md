@@ -135,3 +135,12 @@ Everything below is agreed. Items not listed were dropped or done by him (see th
 **Shipped 2026-11-21 as v4.75.0:** items 1-8. SQL: four additive columns (`app_settings.training_skip_reasons`, `health_metric_defs.role`, `health_logs.day_complete`, `training_sets.note`). Item 9 (Doc 2) is chat-only and waits for him to paste Doc 2. Interpretations used: the missed-days sheet looks back 14 days; "partial" applies only from the first day he ticks "Day complete"; rest = time since the last set marked done that day (any exercise), gaps over 30 min not counted; currentPlan keeps sessions on the calendar from 30 days back to 14 days ahead.
 
 Check before building: which of 1-5 need SQL (e.g. a reason field for missed days, a note on sets). State it clearly and wait for his "go".
+
+## Batch 2026-11-21 (2): after v4.75.0
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 33 | "What each metric means": Resting Heart Rate and Sleep Score exist as metrics but aren't in the drop-down list of meanings. | change | question asked (Q34) |
+| 34 | (found while answering 33) "Sleep Score" was guessed as "sleep" because its name contains "sleep". | fix | question asked (Q35) |
+
+Facts (v4.75.0): the meanings list holds only the nine the app uses (calorie check, sleep h+min entry and conversion, weekly averages of weight / waist / calories / protein). Every metric, whether or not it has a meaning, already goes to the AI each day by its own name in `bodyMetrics`. A new meaning only changes something if the app then uses it, e.g. a weekly average in `weeklyHistory`. Adding meanings needs no SQL (`role` is a text column).
