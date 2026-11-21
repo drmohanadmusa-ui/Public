@@ -93,7 +93,7 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 | 7 | 19 photos | Reminder only (his own weekly reminder covers it, see Q24). |
 | 8 | 20 maintenance calc | Dropped. |
 | 9 | 21 RIR accuracy score | Dropped. |
-| 10 | 22 credit editor | No build. He checks each exercise's primary muscles himself (Exercise Library; a muscle only helped by an exercise moves to secondary). Guide given in chat 2026-11-21. |
+| 10 | 22 credit editor | No build. He checks each exercise's primary muscles himself (Exercise Library; a muscle only helped by an exercise moves to secondary). Guide given in chat 2026-11-21. He checked: the muscle setup is right, keep it as is for now. |
 | 11 | 32 review rhythm | Done by him (recurring task in CalendarOS). Nothing to build. |
 | 12 | 31 week-2 weights | Ignore. Nothing to build or add to the prompt. |
 | 13 | 13 notes | BOTH on the phone: that day's note for the exercise (same as the computer log card) and the permanent exercise note. Both go into the Review Pack. |
