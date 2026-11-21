@@ -35,26 +35,26 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 
 | # | Comment (lightly tidied) | Type | Status |
 |---|---|---|---|
-| 13 | Exercise note: a button next to "+ Add set" / "- Remove last" on the phone workout opens a window to type a note. | change | question asked (Q1-2) |
-| 14 | Leg press was listed with a 2.5 kg step; he corrected it to 10 kg in the app. Update whatever else needs it, and the AI's planning instructions. | fix | question asked (Q3) |
-| 15 | [P1 #1] Reason for every missed session (work / sleep / energy / travel / other, one tap); a "short on time" option keeping only the first 3-4 blocks; reasons in the data pack. | change | question asked (Q4-5) |
-| 16 | [P1 #2] Check entries when typed: protein x4 + fat x9 (+ carbs x4) above the day's calories -> warn/block; add carbs; "day complete" checkbox; sleep as a time picker stored in minutes; weight as a number; a set with more reps than an earlier RIR-0 set asks "rested longer?" and saves the answer as a note. | change | question asked (Q6-10) |
-| 17 | [P1 #3] Rest: defaults about 3 min for compounds and 2 min for isolation (editable per exercise); log actual rest automatically (done -> next set started) and send it in the pack; a deliberate pairing flag (e.g. curl + extension). | change | question asked (Q11-12) |
-| 18 | [P1 #4] Increments: show each machine's step on the exercise screen; allow an add-on weight where the machine has one; never suggest a weight off the grid. | change | question asked (Q13) |
-| 19 | [P1 #5] Weekly check-in on Friday morning: waist, photos monthly; app calculates 7-day average weight, weekly rate of loss, projected date to reach the goal weight. | change | question asked (Q14-15) |
-| 20 | [P1 #6] Adaptive calorie targets: estimate real maintenance from intake vs weight trend over 2-3 weeks; daily target for a chosen rate of loss (suggested 0.5-0.75 kg/week); daily progress bars for calories, protein, fat, fiber; a fat cap; a steps target (e.g. 8,000). | change (large) | question asked (Q16) |
-| 21 | [P1 #7] RIR accuracy score per exercise from failure tests (e.g. "you underestimate by about 8 reps"). | change | question asked (Q17) |
-| 22 | [P1 #8] Fairer volume: per-exercise partial credit per muscle (e.g. leg press quads 1, glutes 0.5, hamstrings 0.25); secondary credit on at half a set. | change | question asked (Q18) |
-| 23 | [P1 #9] Data pack: remove ~80 old session templates from currentPlan; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan; failure sets carry RIR 0, not null. | change | question asked (Q19) |
-| 24 | [P1 #10] One progression rule in both the app and his documents. | change | question asked (Q20) |
-| 25 | [P2 #1] Remove conflicts between his documents and the prompt (one 10-20 band, 60 s rest, simple progression, failure tests isolation-only), or state that the prompt wins. | change | question asked (Q20) |
-| 26 | [P2 #2] Only include rules that apply: the priority section only when priorities are set. | change | question asked (Q21: confirm) |
-| 27 | [P2 #3] Muscles with a single primary exercise may repeat it up to 3x/week; the variety rule doesn't apply to them. | change | question asked (Q21: confirm) |
-| 28 | [P2 #4] Extra day vs 4th set: prefer an extra day or a different exercise, but a 4th set is allowed when it is the lower-fatigue option, justified in the rules check (relaxes the v4.70 strict ladder). | change | question asked (Q22) |
-| 29 | [P2 #5] Fallback plan: if only 3 of the 5 days happen, which 3 sessions and what to merge so every muscle still gets >= 70% of its MIN. | change | question asked (Q23) |
-| 30 | [P2 #6] Nutrition targets in the prompt; an output section with next fortnight's targets, one nutrition change, and 3 measurable goals for the next review (a scorecard). | change | question asked (Q16) |
-| 31 | [P2 #7] Week 2 weights = week 1 as a floor; the app's live progression applies earned bumps. | change | question asked (Q24) |
-| 32 | [P2 #8] Review on a fixed rhythm: every 2 weeks, same weekday. | change | question asked (Q25) |
+| 13 | Exercise note: a button next to "+ Add set" / "- Remove last" on the phone workout opens a window to type a note. | change | shipped (v4.75.0) |
+| 14 | Leg press was listed with a 2.5 kg step; he corrected it to 10 kg in the app. Update whatever else needs it, and the AI's planning instructions. | fix | app part: nothing to build (the pack already sends the 10 kg step); Doc 2 text: waiting for his paste |
+| 15 | [P1 #1] Reason for every missed session (work / sleep / energy / travel / other, one tap); a "short on time" option keeping only the first 3-4 blocks; reasons in the data pack. | change | shipped (v4.75.0) |
+| 16 | [P1 #2] Check entries when typed: protein x4 + fat x9 (+ carbs x4) above the day's calories -> warn/block; add carbs; "day complete" checkbox; sleep as a time picker stored in minutes; weight as a number; a set with more reps than an earlier RIR-0 set asks "rested longer?" and saves the answer as a note. | change | shipped (v4.75.0) |
+| 17 | [P1 #3] Rest: defaults about 3 min for compounds and 2 min for isolation (editable per exercise); log actual rest automatically (done -> next set started) and send it in the pack; a deliberate pairing flag (e.g. curl + extension). | change | shipped (v4.75.0): actual rest recorded (pairing dropped, default rest stays 60 s) |
+| 18 | [P1 #4] Increments: show each machine's step on the exercise screen; allow an add-on weight where the machine has one; never suggest a weight off the grid. | change | dropped (Q6, Q23) |
+| 19 | [P1 #5] Weekly check-in on Friday morning: waist, photos monthly; app calculates 7-day average weight, weekly rate of loss, projected date to reach the goal weight. | change | dropped or done by him (see decisions) |
+| 20 | [P1 #6] Adaptive calorie targets: estimate real maintenance from intake vs weight trend over 2-3 weeks; daily target for a chosen rate of loss (suggested 0.5-0.75 kg/week); daily progress bars for calories, protein, fat, fiber; a fat cap; a steps target (e.g. 8,000). | change (large) | dropped or done by him (see decisions) |
+| 21 | [P1 #7] RIR accuracy score per exercise from failure tests (e.g. "you underestimate by about 8 reps"). | change | dropped or done by him (see decisions) |
+| 22 | [P1 #8] Fairer volume: per-exercise partial credit per muscle (e.g. leg press quads 1, glutes 0.5, hamstrings 0.25); secondary credit on at half a set. | change | dropped or done by him (see decisions) |
+| 23 | [P1 #9] Data pack: remove ~80 old session templates from currentPlan; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan; failure sets carry RIR 0, not null. | change | shipped (v4.75.0) |
+| 24 | [P1 #10] One progression rule in both the app and his documents. | change | shipped (v4.75.0) |
+| 25 | [P2 #1] Remove conflicts between his documents and the prompt (one 10-20 band, 60 s rest, simple progression, failure tests isolation-only), or state that the prompt wins. | change | shipped (v4.75.0) |
+| 26 | [P2 #2] Only include rules that apply: the priority section only when priorities are set. | change | shipped (v4.75.0) |
+| 27 | [P2 #3] Muscles with a single primary exercise may repeat it up to 3x/week; the variety rule doesn't apply to them. | change | shipped (v4.75.0) |
+| 28 | [P2 #4] Extra day vs 4th set: prefer an extra day or a different exercise, but a 4th set is allowed when it is the lower-fatigue option, justified in the rules check (relaxes the v4.70 strict ladder). | change | shipped (v4.75.0) |
+| 29 | [P2 #5] Fallback plan: if only 3 of the 5 days happen, which 3 sessions and what to merge so every muscle still gets >= 70% of its MIN. | change | dropped or done by him (see decisions) |
+| 30 | [P2 #6] Nutrition targets in the prompt; an output section with next fortnight's targets, one nutrition change, and 3 measurable goals for the next review (a scorecard). | change | dropped or done by him (see decisions) |
+| 31 | [P2 #7] Week 2 weights = week 1 as a floor; the app's live progression applies earned bumps. | change | dropped or done by him (see decisions) |
+| 32 | [P2 #8] Review on a fixed rhythm: every 2 weeks, same weekday. | change | dropped or done by him (see decisions) |
 
 ### Facts checked in the code (v4.74.1, 2026-11-21)
 
@@ -131,5 +131,7 @@ Everything below is agreed. Items not listed were dropped or done by him (see th
 7. **Data pack (23):** drop session templates not used on the calendar in the pack's window; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan, exercise notes; failure sets carry RIR 0, not null.
 8. **Prompt (24-28):** a line at the top, "this prompt wins wherever my documents disagree"; one progression rule (double progression + big-jump check) stated once at the top; the priority-muscles section only when priorities are set; muscles with a single primary exercise may repeat it up to 3x/week, variety rule waived; a 4th set is allowed instead of an extra day when it is the lower-fatigue option, justified in the rules check (update `test_v4700` deliberately).
 9. **His Doc 2:** in the build session he pastes Doc 2; produce corrected text (per-muscle ranges, 60 s rest default, the single progression rule, failure tests as the app really picks them). The text stays in chat, never in the repo.
+
+**Shipped 2026-11-21 as v4.75.0:** items 1-8. SQL: four additive columns (`app_settings.training_skip_reasons`, `health_metric_defs.role`, `health_logs.day_complete`, `training_sets.note`). Item 9 (Doc 2) is chat-only and waits for him to paste Doc 2. Interpretations used: the missed-days sheet looks back 14 days; "partial" applies only from the first day he ticks "Day complete"; rest = time since the last set marked done that day (any exercise), gaps over 30 min not counted; currentPlan keeps sessions on the calendar from 30 days back to 14 days ahead.
 
 Check before building: which of 1-5 need SQL (e.g. a reason field for missed days, a note on sets). State it clearly and wait for his "go".
