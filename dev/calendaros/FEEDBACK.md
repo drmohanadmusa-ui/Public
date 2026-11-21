@@ -29,6 +29,41 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 | 11 | The graphs need to be interactive: hovering over a bar or a point shows its figures and label. | change | shipped (v4.74.1) |
 | 12 | The weight axis shouldn't run from the lowest to the highest weight; it should start at 0 and end 50% above the max weight. | change | shipped (v4.74.1) |
 
+## Batch 2026-11-21: exercise notes, increments, and an AI coach's review (to build in a new session)
+
+Source: his own comments (13-14) plus feedback he received from an AI review of his data and the app (15-32, his numbering in brackets). Logged for a later build session; nothing built here.
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 13 | Exercise note: a button next to "+ Add set" / "- Remove last" on the phone workout opens a window to type a note. | change | question asked (Q1-2) |
+| 14 | Leg press was listed with a 2.5 kg step; he corrected it to 10 kg in the app. Update whatever else needs it, and the AI's planning instructions. | fix | question asked (Q3) |
+| 15 | [P1 #1] Reason for every missed session (work / sleep / energy / travel / other, one tap); a "short on time" option keeping only the first 3-4 blocks; reasons in the data pack. | change | question asked (Q4-5) |
+| 16 | [P1 #2] Check entries when typed: protein x4 + fat x9 (+ carbs x4) above the day's calories -> warn/block; add carbs; "day complete" checkbox; sleep as a time picker stored in minutes; weight as a number; a set with more reps than an earlier RIR-0 set asks "rested longer?" and saves the answer as a note. | change | question asked (Q6-10) |
+| 17 | [P1 #3] Rest: defaults about 3 min for compounds and 2 min for isolation (editable per exercise); log actual rest automatically (done -> next set started) and send it in the pack; a deliberate pairing flag (e.g. curl + extension). | change | question asked (Q11-12) |
+| 18 | [P1 #4] Increments: show each machine's step on the exercise screen; allow an add-on weight where the machine has one; never suggest a weight off the grid. | change | question asked (Q13) |
+| 19 | [P1 #5] Weekly check-in on Friday morning: waist, photos monthly; app calculates 7-day average weight, weekly rate of loss, projected date to reach the goal weight. | change | question asked (Q14-15) |
+| 20 | [P1 #6] Adaptive calorie targets: estimate real maintenance from intake vs weight trend over 2-3 weeks; daily target for a chosen rate of loss (suggested 0.5-0.75 kg/week); daily progress bars for calories, protein, fat, fiber; a fat cap; a steps target (e.g. 8,000). | change (large) | question asked (Q16) |
+| 21 | [P1 #7] RIR accuracy score per exercise from failure tests (e.g. "you underestimate by about 8 reps"). | change | question asked (Q17) |
+| 22 | [P1 #8] Fairer volume: per-exercise partial credit per muscle (e.g. leg press quads 1, glutes 0.5, hamstrings 0.25); secondary credit on at half a set. | change | question asked (Q18) |
+| 23 | [P1 #9] Data pack: remove ~80 old session templates from currentPlan; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan; failure sets carry RIR 0, not null. | change | question asked (Q19) |
+| 24 | [P1 #10] One progression rule in both the app and his documents. | change | question asked (Q20) |
+| 25 | [P2 #1] Remove conflicts between his documents and the prompt (one 10-20 band, 60 s rest, simple progression, failure tests isolation-only), or state that the prompt wins. | change | question asked (Q20) |
+| 26 | [P2 #2] Only include rules that apply: the priority section only when priorities are set. | change | question asked (Q21: confirm) |
+| 27 | [P2 #3] Muscles with a single primary exercise may repeat it up to 3x/week; the variety rule doesn't apply to them. | change | question asked (Q21: confirm) |
+| 28 | [P2 #4] Extra day vs 4th set: prefer an extra day or a different exercise, but a 4th set is allowed when it is the lower-fatigue option, justified in the rules check (relaxes the v4.70 strict ladder). | change | question asked (Q22) |
+| 29 | [P2 #5] Fallback plan: if only 3 of the 5 days happen, which 3 sessions and what to merge so every muscle still gets >= 70% of its MIN. | change | question asked (Q23) |
+| 30 | [P2 #6] Nutrition targets in the prompt; an output section with next fortnight's targets, one nutrition change, and 3 measurable goals for the next review (a scorecard). | change | question asked (Q16) |
+| 31 | [P2 #7] Week 2 weights = week 1 as a floor; the app's live progression applies earned bumps. | change | question asked (Q24) |
+| 32 | [P2 #8] Review on a fixed rhythm: every 2 weeks, same weekday. | change | question asked (Q25) |
+
+### Facts checked in the code (v4.74.1, 2026-11-21)
+
+- Per-day, per-exercise notes already exist on the computer's log card (`training_logs.notes`, synced, in the Review Pack). The phone workout has no way to edit them yet.
+- The Review Pack sends each exercise's own `weightIncrementKg` from the library (fallback 2.5 only when unset), so his 10 kg correction flows into the next pack automatically. His own plan documents ("Doc 1/2") are outside the app.
+- The rest timer default is a flat 60 s (`defaultRestSec`); a per-exercise `restSec` overrides it. Sets already have a `restTakenSec` field.
+- Health metrics (calories, protein, fat, sleep, weight, ...) are user-defined Health Log metrics; the app does not know which metric is which yet.
+- The app does **not** apply earned weight bumps to planned weights (item 6, parked), so P2 #7's "the app's live progression applies earned bumps" is not true today.
+
 ### Notes from the code (v4.73.0)
 
 - **Weight increase rule** (`doubleProgressionSuggestion`): double progression on the last *completed* session's working sets (warm-ups and failure-test sets excluded), judged at that session's heaviest weight.
