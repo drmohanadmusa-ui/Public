@@ -58,9 +58,10 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 
 ### Facts checked in the code (v4.74.1, 2026-11-21)
 
-- Per-day, per-exercise notes already exist on the computer's log card (`training_logs.notes`, synced, in the Review Pack). The phone workout has no way to edit them yet.
+- Per-day, per-exercise notes already exist on the computer's log card (`training_logs.notes`, synced). The phone workout has no way to edit them yet. **Correction (review 2026-11-21): the Review Pack does NOT send these notes** (`buildTrainingReviewPack` only uses `training_logs` to count logged days), so item 13 must also add them to the session detail.
 - The Review Pack sends each exercise's own `weightIncrementKg` from the library (fallback 2.5 only when unset), so his 10 kg correction flows into the next pack automatically. His own plan documents ("Doc 1/2") are outside the app.
-- The rest timer default is a flat 60 s (`defaultRestSec`); a per-exercise `restSec` overrides it. Sets already have a `restTakenSec` field.
+- The rest timer default is a flat 60 s (`defaultRestSec`); a per-exercise `restSec` overrides it. **Correction:** sets have a synced `rest_taken_sec` column, but **nothing ever writes it** (always null). Item 17 must start recording it (from marking a set done to the next set).
+- **Compound vs isolation:** the Lift Type switch was removed in v4.59. `isIsolationExercise` uses an old `liftType` if present, else guesses from muscles (anything touching chest, traps, lats, shoulders, quads, hamstrings or glutes counts as compound). Failure tests only pick "isolation" exercises, so e.g. lateral raises and leg curls are never tested. Item 25's claim that "the app also tests compounds" does not match the code.
 - Health metrics (calories, protein, fat, sleep, weight, ...) are user-defined Health Log metrics; the app does not know which metric is which yet.
 - The app does **not** apply earned weight bumps to planned weights (item 6, parked), so P2 #7's "the app's live progression applies earned bumps" is not true today.
 
@@ -78,3 +79,41 @@ Source: his own comments (13-14) plus feedback he received from an AI review of 
 - **AI vs app weight rule:** the Review Pack prompt gives the AI the same rule in words (hold if under the bottom of the range; add one increment when the top is reached "at RIR 2 or lower"; never below the last completed top weight; on the increment grid). The AI can also deload on purpose (it must say so), and it is asked to flag stalls (same weight ≥ 2 sessions with RIR > 2).
 - **Gap in both (found 2026-11-17):** the increase needs every set at the top of the range **and RIR ≤ 2**. Reaching the top with RIR 3+ (too easy) does **not** count, so the app says "same weight" forever. The AI gets the same wording and would only catch it as a stall.
 - **Big steps:** the increment is per exercise (`weightIncrementKg`), but the rule is the same for every machine. On leg press, 70 → 80 kg is +14%. By the app's own e1RM formula (Epley), 70 kg × 12 at RIR 2 predicts about 6 reps at 80 kg with 2 in reserve, which is under the bottom of 8–12. At 70 kg × 14 reps at RIR 2, 80 kg predicts about 8 reps, so the jump lands inside the range.
+
+### Decisions 2026-11-21 (his answers to Q1-33)
+
+| Q | Item | Decision |
+|---|---|---|
+| 1 | review | Tracker corrections applied (above). |
+| 2 | 16 carbs | Done by him (Carbs metric added). Nothing to build. |
+| 3 | 16 weight | He set the Weight metric to Number. Build: convert old text entries (e.g. "102 Kgs" -> 102). |
+| 4 | 16 | KEEP the "rested longer?" prompt: a set with more reps than an earlier RIR-0 set asks, answer saved on the set. |
+| 5 | 17 pairing | Dropped. |
+| 6 | 18 add-on weight | Explained, waiting for his answer. |
+| 7 | 19 photos | Reminder only (his own weekly reminder covers it, see Q24). |
+| 8 | 20 maintenance calc | Dropped. |
+| 9 | 21 RIR accuracy score | Dropped. |
+| 10 | 22 credit editor | Explained, waiting for his answer. |
+| 11 | 32 review rhythm | Done by him (recurring task in CalendarOS). Nothing to build. |
+| 12 | 31 week-2 weights | Ignore. Nothing to build or add to the prompt. |
+| 13 | 13 notes | BOTH on the phone: that day's note for the exercise (same as the computer log card) and the permanent exercise note. Both go into the Review Pack. |
+| 14 | 13 | No last-session note reminder. |
+| 15 | 14/24/25 documents | BOTH: one line at the top of the prompt ("this prompt wins where my documents disagree"), and in the build session he pastes Doc 2 for corrected text. |
+| 16 | 15 missed days | Ask the next time he opens the app: one-tap sheet listing missed planned days (work / sleep / energy / travel / other). Reasons go into the data pack. |
+| 17 | 15 short on time | Ignore (dropped). |
+| 18 | 16 metric types | Match metrics by name, and ask him to confirm / select where unsure. |
+| 19 | 16 calorie check | Warn with "Save anyway", about 10% slack (protein x4 + carbs x4 + fat x9 vs calories). |
+| 20 | 16 day complete | "Day complete" box; unticked days are marked "partial" for the AI only (still counted in averages). |
+| 21 | 16 sleep | Simple, fast entry; stored in minutes. Meaning of old "6.34"-style entries: asked again. |
+| 22 | 17 rest default | Keep 60 s. No compound/isolation switch. Actual rest still gets recorded (item 17). |
+| 23 | 18 | Don't show the machine step on the exercise screen. |
+| 24 | 19 check-in | He added a weekly reminder himself. In-app check-in dropped; weekly average weight / waist still go in the data pack (item 23). |
+| 25 | 15 privacy | Move the goal weight / loss target out of the public code into Settings (private, synced). |
+| 26 | 20/30 nutrition targets | Ignore: he uses a separate food app. Dropped. |
+| 27 | 22 | Do NOT turn on secondary counting. |
+| 28 | 23 templates | Drop every session template not used (not on the calendar in the pack's window). |
+| 29 | 24 | One progression rule (double progression + big-jump check) stated at the top of the prompt. |
+| 30 | 26/27 | Accept both: priority section only when priorities are set; single-exercise muscles may repeat up to 3x/week, variety rule waived. |
+| 31 | 28 | Accept: a 4th set is allowed instead of an extra day when it is the lower-fatigue option, justified in the rules check. |
+| 32 | 29 fallback plan | Ignore (dropped). |
+| 33 | build | One release. |
