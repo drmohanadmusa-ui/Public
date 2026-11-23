@@ -8156,6 +8156,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV535RealEstateFeedsProvisions();
   await testEdgeExchangeBalances();
   await testV536ExchangeKeys();
+  await testV5361UnitsRounding();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12519,4 +12520,19 @@ async function testV536ExchangeKeys(){
   vm.runInContext("invWalletResults[1] = {rows:[{pos:D.invPositions.find(p=>p.platformId===1 && p.ticker==='ETH'), tracker:1, wallet:2}], binance:true}", sb);
   await sb.invBinanceFindTrades(1);
   assert(asked.length && asked.every(x=>x==='poloniex'), 'Find the trades asks Poloniex, got ' + JSON.stringify(asked.slice(0,3)));
+}
+
+// v5.36.1 (#166): ten owner shares that add up exactly (in decimals) to 12,188,891 units miss by one float step
+async function testV5361UnitsRounding(){
+  const sb = makeSandbox();
+  const u = [2848876.48099,97302.15634,2254958.95103,1398606.90121,611600.61018,69328.08545,401166.55387,715720.84115,226599.05075,3564731.36903];
+  const sum = u.reduce((a,b)=>a+b, 0);
+  assert(sum!==12188891 && Math.abs(sum-12188891)>1e-9, 'Fixture: the float sum really misses by more than 1e-9, got ' + (sum-12188891));
+  const d = {units:'12188891', owners:u.map((x,i)=>({ownerId:i+1, units:x}))};
+  assert(!/must match/.test(sb.invTxAllocText(d)), '#166: an exact split of millions of units is accepted, got ' + sb.invTxAllocText(d));
+  d.owners[0].units += 0.001;
+  assert(/must match/.test(sb.invTxAllocText(d)), 'A real difference (0.001 unit) is still refused');
+  assert(sb.invUnitsTol(0.5)===1e-9 && sb.invUnitsTol(12188891)>1e-6 && sb.invUnitsTol(12188891)<1e-4, 'Small amounts keep the old 1e-9; large ones get one millionth of a millionth');
+  const html = fs.readFileSync(APP_HTML, 'utf8');
+  assert((html.match(/invUnitsTol\(/g)||[]).length>=7, 'Every units check uses the shared allowance (trade window, save, held, Sell to family, Move coins)');
 }
