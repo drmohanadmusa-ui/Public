@@ -638,12 +638,19 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.34.0';
+const APP_VERSION = '5.35.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.35.0', date:'2026-11-23', changes:[
+    'Real Estate is now where you plan your buildings. Past months show the ledger; from this month on each row has a box to type in, and what you type is written into Provisions, so the Forecast and Generate JV follow. Under each row, \u201cMoney goes to\u201d lists the other side of the JV: one line or several, each with an amount a month, and one line takes the rest.',
+    'Real Estate: \u201cTake over from Provisions\u201d moves a building\u2019s existing Provisions groups onto the page in one click. Every figure stays as it is, past months included. Those groups are then locked in Provisions, with an \u201cEdit in Real Estate\u201d button.',
+    'Forecast and Real Estate: the \u21e5 quick copy now asks how many months ahead to copy the figure (counted from the next month), instead of filling to the end of the grid. It stops at the last month shown and says so.',
+    'Provisions: a group with nothing at all for the chosen month (a row of 0s is fine) now shows an alarm and blocks Generate JV, finished groups included, until the month is added or you press Skip this month. The Dashboard lists it from the 1st of the month.',
+    'Provisions: \u201cDelete all empty months\u201d now also sits at the top of an open group, beside Generate JV.',
+  ]},
   {version:'5.34.0', date:'2026-11-23', changes:[
     'Investments: one price per coin. Every platform holding a coin (same ticker) now reads the newest price saved for that coin, whichever platform saved it: refreshes, daily closes and prices typed by hand. A coin added to another platform shows its price, value and P/L straight away.',
   ]},
@@ -5433,6 +5440,8 @@ function dashboardTodoItems(){
   if(!mrIsDone(mrMk) && !mrTodoHidden('review') && (D.ledger||[]).length) items.push({tone:'warn', title:'Review '+monthLabel(mrMk), sub:'Month review: actual vs plan, suggested budgets, provisions', label:'Review', onclick:"mrMonth=null; go('monthreview')", dismiss:"mrDismissTodo('review')", dismissTitle:'Hide until next month'});
   const stlDue = mrStlDue();   // #95
   if(stlDue.length && !mrTodoHidden('stl')) items.push({dismiss:"mrDismissTodo('stl')", dismissTitle:'Hide until next month', tone:'warn', title:stlDue.length+' unused provision amount'+(stlDue.length===1?'':'s')+' can move to income', sub:money(stlDue.reduce((s,x)=>s+x.amt,0))+' in '+accShort(mrSettings().stlAcc)+' for '+mrSettings().stlMonths+' months or more', label:'Review', onclick:"mrGoTo('mrStl')"});
+  const provMiss = provMissingGroups(todayStr().slice(0,7));   // v5.35 (#163)
+  if(provMiss.length) items.push({tone:'neg', title:provMiss.length+' provision group'+(provMiss.length===1?' has':'s have')+' nothing for '+monthLabel(todayStr().slice(0,7)), sub:provMiss.map(g=>g.name).join(', ')+'. Generate JV is blocked until each is added or skipped', label:'Open', onclick:"provisionsSelectedMonth=todayStr().slice(0,7); go('provisions')"});
   const planBad = mrPlanConflicts();   // #92
   if(planBad.length && !mrTodoHidden('conflicts', planBad)) items.push({dismiss:"mrDismissTodo('conflicts')", dismissTitle:'Hide until another account starts to disagree', tone:'warn', title:planBad.length+' account'+(planBad.length===1?' has plans':'s have plans')+' that disagree', sub:'Forecast, Budget and Provisions should match. Opens the Month review', label:'Review', onclick:"mrGoTo('mrConflicts')"});
   const smsLook = smsNeedsLookCount();   // #59
@@ -9785,6 +9794,7 @@ async function importProvisionsCSV(rows){
       groupsCreated++;
     }
     ensureLineIds(g);
+    if(reGroupManaged(g)){ skipped++; processed++; continue; }   // #164: filled from Real Estate
     let line = null;
     const csvLineId = lineIdCol? parseInt(r[lineIdCol],10) : NaN;
     if(!isNaN(csvLineId)){
@@ -9863,6 +9873,8 @@ function combinedGenerateProvisionJV(){
     return;
   }
   const monthBad = D.provisionGroups.flatMap(g=>provisionGroupIssues(g)).filter(i=>i.mk===monthKey);
+  const noRow = provMissingGroups(monthKey);   // #163
+  if(noRow.length){ toast('Can\'t generate: nothing planned for '+monthLabel(monthKey)+' in '+noRow.map(g=>g.name).join(', ')+'. Add the month, or Skip this month', true); return; }
   if(monthBad.length){ toast('Can\'t generate: '+monthBad.map(i=>(D.provisionGroups.find(g=>g.id===i.gid)||{}).name+' is off by '+money(i.sum)).join(', ')+' in '+monthLabel(monthKey), true); return; }
   const tag = monthTag(monthKey);
   const lines = [];
@@ -9943,6 +9955,7 @@ function provBulkFillApply(g, o){
 function applyProvBulkFill(gid){
   if(blockIfSyncing()) return;
   const g = findProvisionGroup(gid); if(!g) return;
+  if(reLocked(g)){ renderProvisionGroupsList(); return; }   // #164
   const v = id => (document.getElementById(id+'_'+gid)||{}).value;
   const res = provBulkFillApply(g, {lineId:Number(v('pbfLine')), from:v('pbfFrom'), count:v('pbfCount'), amt: v('pbfAmt')===''? '' : Number(String(v('pbfAmt')).replace(/,/g,'')), balanceLineId:Number(v('pbfBal'))||null});
   if(res.error){ toast(res.error, true); return; }
@@ -9978,6 +9991,7 @@ function provCopyMonthApply(g, mk){
 function provCopyMonthForward(gid, mk){
   if(blockIfSyncing()) return;
   const g = findProvisionGroup(gid); if(!g) return;
+  if(reLocked(g)){ renderProvisionGroupsList(); return; }   // #164
   const last = provLastPlannedMonth(g);
   if(!last || last<=mk){ toast('There are no planned months after '+monthLabel(mk), true); return; }
   if(!confirm('Copy '+monthLabel(mk)+' to every month from '+monthLabel(nextMonthKeyPlain(mk))+' to '+monthLabel(last)+' in "'+g.name+'"? Amounts already there are replaced.')) return;
@@ -10029,6 +10043,18 @@ function provCellKey(ev, gid, li, mi, nLines, nMonths){
   const next = document.getElementById('provCell_'+gid+'_'+tl+'_'+tm);
   if(next){ next.focus(); next.select(); }
 }
+// v5.35 (#163): a group with no row at all for a month (a row of 0s is fine: nothing on purpose) blocks
+// Generate JV for that month, finished groups included, until the month is added or skipped.
+function provNoRow(g, mk){ const c = (g.months||{})[mk]; return !c || !(g.lines||[]).some(l=>{ const v = c[l.lineId]; return v!==undefined && v!==null && v!==''; }); }
+function provSkipped(mk){ return (((getUiDismissals().provSkip)||{})[mk]||[]).map(Number); }
+function provMissingGroups(mk){ const sk = provSkipped(mk); return D.provisionGroups.filter(g=>!sk.includes(g.id) && provNoRow(g, mk)); }
+async function provSkipMonth(gid, mk){
+  const d = Object.assign({}, getUiDismissals()), all = Object.assign({}, d.provSkip||{});
+  all[mk] = [...new Set([...(all[mk]||[]).map(Number), gid])];
+  d.provSkip = all;
+  await saveUiDismissals(d);
+  if(screen==='provisions') renderProvisionGroupsList(); else if(screen==='dashboard') renderDashboard();
+}
 function renderProvisionGroupsList(){
   const el = document.getElementById('provisionGroupsList');
   if(!el) return;
@@ -10036,6 +10062,7 @@ function renderProvisionGroupsList(){
   const groups = D.provisionGroups;
   const issues = groups.flatMap(g=>provisionGroupIssues(g));
   const blocking = issues.filter(i=>i.dup || i.mk===selMonth);
+  const missing = provMissingGroups(selMonth);   // #163
   const total = groups.reduce((s,g)=>s+provisionMonthExpense(g, selMonth), 0);
   const gName = id => (groups.find(g=>g.id===id)||{}).name||'';
   const issueText = i => i.dup? gName(i.gid)+': '+accShort(i.dup.acc)+' ('+i.dup.acc+') lines total '+money(i.dup.total)+', not zero' : gName(i.gid)+': '+monthLabel(i.mk)+' is off by '+money(i.sum);
@@ -10046,8 +10073,9 @@ function renderProvisionGroupsList(){
       <div class="row" style="justify-content:space-between;align-items:center">
         <div><div class="fl" style="margin:0">Provision expense for ${esc(monthLabel(selMonth))}</div><div class="mono" style="font-size:22px;font-weight:600">${money(total)}</div></div>
         <div style="text-align:right">
-          <button class="btn pri" id="provGenAllBtn" ${blocking.length?'disabled':''} onclick="combinedGenerateProvisionJV()">⚡ Generate JV, all groups</button>
+          <button class="btn pri" id="provGenAllBtn" ${blocking.length||missing.length?'disabled':''} onclick="combinedGenerateProvisionJV()">⚡ Generate JV, all groups</button>
           ${blocking.length? `<div class="r" style="font-size:12px;margin-top:4px">Fix ${blocking.length===1?'this':'these'} first: ${esc(blocking.map(issueText).join('; '))}</div>` : ''}
+          ${missing.map(g=>`<div class="r" data-provmissing="${g.id}" style="font-size:12px;margin-top:4px">⚠ ${esc(g.name)} has nothing for ${esc(monthLabel(selMonth))} <button class="btn ghost sm" onclick="provShowMe(${g.id}, null)">Show me</button> <button class="btn ghost sm" onclick="provSkipMonth(${g.id}, '${selMonth}')">Skip this month</button></div>`).join('')}
         </div>
       </div>
     </div>
@@ -10074,11 +10102,15 @@ function provisionGroupBodyHTML(g, curMonth){
   const drift = driftFlagsFor('provision', g.id);
   const nL = g.lines.length, nM = months.length;
   const lineOpt = sel => g.lines.map(l=>`<option value="${l.lineId}"${sel===l.lineId?' selected':''}>${esc(accShort(l.acc))} (${l.acc})${l.descrBase && l.descrBase!==accShort(l.acc)? ' — '+esc(l.descrBase) : ''}</option>`).join('');
+  const noRow = provMissingGroups(provisionsSelectedMonth).includes(g);   // #163
   return `<div class="prov-body">
+    ${reGroupManaged(g)? `<div class="todo-item noprint" data-relocked="${g.id}" style="margin-top:10px"><span aria-hidden="true">🔒</span><div style="flex:1;min-width:0">Filled from the Real Estate page: change the figures there. Generate JV works as usual.</div><button class="btn ghost sm" onclick="go('realestate')">Edit in Real Estate</button></div>` : ''}
+    ${noRow? `<div class="todo-item neg noprint" style="margin-top:10px"><span class="todo-dot" aria-hidden="true"></span><div style="flex:1;min-width:0">Nothing planned for ${esc(monthLabel(provisionsSelectedMonth))}: Generate JV is blocked until the month is added, or skipped. If this group has finished, delete it.</div><button class="btn ghost sm" onclick="provSkipMonth(${g.id}, '${provisionsSelectedMonth}')">Skip this month</button></div>` : ''}
     <div class="row noprint" style="gap:8px;margin:12px 0">
       <label class="fl" style="margin:0">Name</label><input value="${esc(g.name)}" onchange="renameProvisionGroup(${g.id},this.value)" style="max-width:280px">
       ${groupHasDuplicateAccounts(g)? `<label class="row" style="gap:6px;font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" class="chk" style="width:auto" ${g.dupBalanceExempt?'checked':''} onchange="toggleDupBalanceExempt(${g.id}, this.checked)"> Duplicate-account lines don't need to net to zero</label>` : ''}
       <span style="flex:1"></span>
+      ${provEmptyMonths(g).length? `<button class="btn ghost sm" data-provdeltop="${g.id}" onclick="provDeleteAllEmpty(${g.id})">🗑 Delete all empty months (${provEmptyMonths(g).length})</button>` : ''}
       <select id="genMonthSel_${g.id}" style="width:auto">${months.map(k=>`<option value="${k}"${k===provisionsSelectedMonth?' selected':''}>${esc(monthLabel(k))}</option>`).join('') || '<option value="">No months planned yet</option>'}</select>
       <button class="btn ghost sm" ${months.length?'':'disabled'} onclick="generateProvisionJV(${g.id})">Generate JV (this group only)</button>
       <button class="x" title="Delete group" aria-label="Delete group" onclick="deleteProvisionGroup(${g.id})">✕</button>
@@ -10093,7 +10125,7 @@ function provisionGroupBodyHTML(g, curMonth){
       <thead><tr><th>Month</th>${g.lines.map(l=>`<th class="num">${esc(accShort(l.acc))}<div class="mono mut" style="font-weight:400">${l.acc}</div></th>`).join('')}<th class="num">Net</th></tr></thead>
       <tbody>${months.map((k,mi)=>{ const net = g.lines.reduce((s,l)=>s+roundCents(provCellVal(g,k,l.lineId)||0),0); const any = g.lines.some(l=>provCellVal(g,k,l.lineId)!==null); const bad = any && Math.abs(net)>0.01;
         const hl = provHighlight && provHighlight.gid===g.id && provHighlight.mk===k;
-        return `<tr id="provRow_${g.id}_${k}" class="${k===curMonth?'cur':''}${hl?' hl':''}${bad?' bad':''}"><td class="mono">${esc(monthLabel(k))}</td>${g.lines.map((l,li)=>{ const v = provCellVal(g,k,l.lineId); return `<td class="num"><input id="provCell_${g.id}_${li}_${mi}" type="text" inputmode="decimal" class="num" aria-label="${esc(accShort(l.acc))}, ${esc(monthLabel(k))}" value="${v!==null?fmt2(v):''}" placeholder="—" data-raw="${v!==null?v:''}"
+        return `<tr id="provRow_${g.id}_${k}" class="${k===curMonth?'cur':''}${hl?' hl':''}${bad?' bad':''}"><td class="mono">${esc(monthLabel(k))}</td>${g.lines.map((l,li)=>{ const v = provCellVal(g,k,l.lineId); return `<td class="num"><input id="provCell_${g.id}_${li}_${mi}" ${reGroupManaged(g)?'readonly':''} type="text" inputmode="decimal" class="num" aria-label="${esc(accShort(l.acc))}, ${esc(monthLabel(k))}" value="${v!==null?fmt2(v):''}" placeholder="—" data-raw="${v!==null?v:''}"
           onfocus="this.value=this.dataset.raw" onblur="if(this.value!==this.dataset.raw) setProvisionCell(${g.id},'${k}',${l.lineId},this.value); else this.value=this.dataset.raw? fmt2(this.dataset.raw) : ''" onkeydown="provCellKey(event,${g.id},${li},${mi},${nL},${nM})"></td>`; }).join('')}
           <td class="num mono">${g.months[k] && g.lines.every(l=>Math.abs(Number(provCellVal(g,k,l.lineId)||0))<0.005)? `<button class="btn ghost sm noprint" data-provdel="${k}" title="Every cell is 0: delete this month" onclick="provDeleteMonths(${g.id}, ['${k}'])">\ud83d\uddd1</button> ` : ''}${!any? '<span class="mut">—</span>' : (bad? `<span class="r">${money(net)}</span>` : `<span class="g">✓ 0.00</span>${mi<nM-1? ` <button class="btn ghost sm noprint" onclick="provCopyMonthForward(${g.id},'${k}')" title="Copy this month's amounts to every later month up to the last planned month">Copy ↓</button>` : ''}`)}</td></tr>`; }).join('') || `<tr><td colspan="${nL+2}" class="empty">No months planned from ${esc(monthLabel(curMonth))} onward. Add a month or use Bulk fill.</td></tr>`}</tbody>
     </table></div>` : ''}
@@ -10163,6 +10195,7 @@ async function deleteProvisionGroup(id){
 function setProvisionCell(gid, monthKey, lineId, val){
   if(blockIfSyncing()) return;
   const g = findProvisionGroup(gid); if(!g) return;
+  if(reLocked(g)){ renderProvisionGroupsList(); return; }   // #164
   const clean = String(val).replace(/,/g,'').trim();
   if(!g.months[monthKey]) g.months[monthKey] = {};
   if(clean===''){ delete g.months[monthKey][lineId]; } else { g.months[monthKey][lineId] = Number(clean); }
@@ -10172,6 +10205,7 @@ function setProvisionCell(gid, monthKey, lineId, val){
 function removeProvisionLine(gid, li){
   if(blockIfSyncing()) return;
   const g = findProvisionGroup(gid); if(!g) return;
+  if(reLocked(g)){ renderProvisionGroupsList(); return; }   // #164
   const line = g.lines[li]; if(!line) return;
   const lineId = line.lineId;
   g.lines.splice(li,1);
@@ -10184,6 +10218,7 @@ function removeProvisionLine(gid, li){
 function addProvisionMonth(gid){
   if(blockIfSyncing()) return;
   const g = findProvisionGroup(gid); if(!g) return;
+  if(reLocked(g)){ renderProvisionGroupsList(); return; }   // #164
   const ym = document.getElementById('provAddMonth_'+gid).value;
   if(!ym){ toast('Pick a month first', true); return; }
   if(!g.months[ym]) g.months[ym] = {};
@@ -10214,6 +10249,7 @@ function provAccKey(ev, gid){
 function provCloseAcDrop(gid){ const el=document.getElementById('provAcdrop_'+gid); if(el){ el.innerHTML=''; el.className='acdrop'; } }
 function provPickAcc(gid, accId){
   const g = findProvisionGroup(gid); if(!g) return;
+  if(reLocked(g)){ renderProvisionGroupsList(); return; }   // #164
   g.lines.push({acc:accId, descrBase: accShort(accId), lineId: nextLineId(g)});
   persistProvisionGroup(g);
   const inp = document.getElementById('provAddAcc_'+gid); if(inp) inp.value='';
@@ -16566,6 +16602,195 @@ function accountMonthPlanOrActual(a, monthKey, currentMonth){
   const c = computeForecastCell(a, monthKey, currentMonth);
   return c.plan!==null? c.plan : (monthKey<currentMonth? c.actual : 0);
 }
+/* v5.35 (#164): Real Estate feeds Provisions. A building row is one real-estate account; from this month
+   on its figure is typed here and written into a Provisions group together with its "money goes to"
+   lines (the other leg of the JV). The setup lives on the group's lines: the row's line has
+   re:{row:acc}; each other-leg line re:{row:acc, leg:true, fixed:n|null} (n a month; null takes the
+   rest). Such groups are locked in Provisions; Forecast and Generate JV read them as before. */
+function findBuilding(id){ return D.realEstateBuildings.find(x=>x.id===id); }
+function reGroupManaged(g){ return (g.lines||[]).some(l=>l.re); }
+function reLocked(g){ if(!reGroupManaged(g)) return false; toast('“'+g.name+'” is filled from the Real Estate page: change it there', true); return true; }
+function reRowLine(acc){
+  for(const g of (D.provisionGroups||[])){ ensureLineIds(g); const l = g.lines.find(x=>x.re && !x.re.leg && Number(x.re.row)===acc); if(l) return {g, l}; }
+  return null;
+}
+function reLegs(g, acc){ return g.lines.filter(x=>x.re && x.re.leg && Number(x.re.row)===acc); }
+function reRestLeg(legs){ return legs.find(l=>l.re.fixed===null || l.re.fixed===undefined) || legs[legs.length-1]; }
+function reSign(b, acc){ return b.apartmentAccountIds.includes(acc)? -1 : 1; }   // revenue reads reversed, as before
+// One month of a row: the row line gets `stored` (ledger sign); its legs share the opposite: fixed lines
+// their amount, the "rest" line what is left. null clears the row and its legs for that month.
+function reApplyMonth(g, acc, mk, stored){
+  const r = g.lines.find(x=>x.re && !x.re.leg && Number(x.re.row)===acc), legs = reLegs(g, acc);
+  if(!r) return;
+  const cell = g.months[mk] = Object.assign({}, g.months[mk]||{});
+  if(stored===null){ [r, ...legs].forEach(l=>{ delete cell[l.lineId]; }); if(!Object.keys(cell).length) delete g.months[mk]; return; }
+  cell[r.lineId] = roundCents(stored);
+  const total = -roundCents(stored), sgn = total<0? -1 : 1, rest = reRestLeg(legs);
+  let left = total;
+  legs.forEach(l=>{ if(l===rest) return; const v = total===0? 0 : roundCents(sgn*Math.abs(Number(l.re.fixed)||0)); cell[l.lineId] = v; left = roundCents(left - v); });
+  if(rest) cell[rest.lineId] = left;
+}
+function reRowStored(g, acc, mk){ const r = g.lines.find(x=>x.re && !x.re.leg && Number(x.re.row)===acc); const v = r? (g.months[mk]||{})[r.lineId] : undefined; return (v===undefined||v===null||v==='')? null : Number(v); }
+// Re-apply this month on of a row after its legs change (each month keeps its row figure).
+function reReapplyRow(g, acc){ const cm = todayStr().slice(0,7); Object.keys(g.months).filter(k=>k>=cm).forEach(k=>{ const v = reRowStored(g, acc, k); if(v!==null) reApplyMonth(g, acc, k, v); }); }
+async function reSetCell(bid, acc, mk, val){
+  if(blockIfSyncing()) return;
+  const b = findBuilding(bid), hit = reRowLine(acc); if(!b || !hit || mk<todayStr().slice(0,7)) return;
+  const clean = String(val).replace(/,/g,'').trim();
+  if(clean!=='' && isNaN(Number(clean))){ toast('Type a number', true); renderRealEstatePage(); return; }
+  reApplyMonth(hit.g, acc, mk, clean===''? null : Number(clean)*reSign(b, acc));
+  await persistProvisionGroup(hit.g);
+  renderRealEstatePage();
+}
+async function reCopyForward(bid, acc, mk){
+  if(blockIfSyncing()) return;
+  const b = findBuilding(bid), hit = reRowLine(acc), el = document.querySelector(`[data-rein="${bid}_${acc}_${mk}"]`);
+  if(!b || !hit || !el) return;
+  const clean = String(el.value).replace(/,/g,'').trim();
+  if(clean==='' || isNaN(Number(clean))){ toast('Type a figure first', true); return; }
+  const n = askMonthsAhead(mk, reMonthsWindow().filter(x=>x>mk)); if(!n) return;
+  const stored = Number(clean)*reSign(b, acc);
+  const differ = n.months.filter(k=>{ const v = reRowStored(hit.g, acc, k); return v!==null && Math.abs(v-stored)>0.005; }).length;
+  if(!confirm(`Copy ${money0(Number(clean))} to ${n.months.length} month${n.months.length===1?'':'s'}, up to ${monthLabel(n.months[n.months.length-1])}?`
+    + (n.cut? `\nOnly ${n.months.length} month${n.months.length===1?' is':'s are'} shown after ${monthLabel(mk)}, so it stops there.` : '')
+    + (differ? `\n${differ} already ha${differ===1?'s':'ve'} a different figure and will be overwritten.` : ''))) return;
+  [mk, ...n.months].forEach(k=>reApplyMonth(hit.g, acc, k, stored));
+  await persistProvisionGroup(hit.g);
+  renderRealEstatePage();
+  toast(`Copied to ${n.months.length} month${n.months.length===1?'':'s'} ✓`);
+}
+// The building's group for new rows: one that already holds its rows, else a new one.
+function reBuildingGroup(b){
+  const accs = [...b.apartmentAccountIds, ...b.expenseAccountIds];
+  let g = D.provisionGroups.find(x=>x.lines.some(l=>l.re && !l.re.leg && accs.includes(Number(l.re.row))));
+  if(!g){ g = {id: nextProvisionId(), name: b.name+' (Real Estate)', lines: [], months: {}, dupBalanceExempt: true}; D.provisionGroups.push(g); }
+  return g;
+}
+async function reAddLeg(bid, acc){
+  if(blockIfSyncing()) return;
+  const b = findBuilding(bid); if(!b) return;
+  let hit = reRowLine(acc);
+  if(!hit && D.provisionGroups.some(g=>(g.lines||[]).some(l=>Number(l.acc)===acc))){ toast(accShort(acc)+' is already planned in Provisions: use “Take over from Provisions”', true); return; }
+  const raw = prompt('Money goes to: account number for the new line');
+  if(raw===null) return;
+  const legAcc = parseInt(raw, 10);
+  if(!ACC_BY_ID[legAcc] || legAcc===acc){ toast('No such account (or it is the row’s own account)', true); return; }
+  if(!hit){ const g = reBuildingGroup(b); g.lines.push({acc, lineId: nextLineId(g), descrBase: b.name+' - '+accShort(acc), re:{row:acc}}); hit = {g}; }
+  const g = hit.g, legs = reLegs(g, acc);
+  // the first line takes the rest; later ones start at a fixed 0 a month, so nothing moves until typed
+  g.lines.push({acc: legAcc, lineId: nextLineId(g), descrBase: b.name+' - '+accShort(acc), re:{row:acc, leg:true, fixed: legs.length? 0 : null}});
+  reReapplyRow(g, acc);
+  await persistProvisionGroup(g);
+  renderRealEstatePage();
+}
+async function reSetLegFixed(gid, lineId, val){
+  if(blockIfSyncing()) return;
+  const g = findProvisionGroup(gid), l = g && g.lines.find(x=>x.lineId===lineId); if(!l || !l.re) return;
+  const clean = String(val).replace(/,/g,'').trim();
+  if(clean===''){
+    if(reLegs(g, Number(l.re.row)).some(x=>x!==l && (x.re.fixed===null||x.re.fixed===undefined))){ toast('Only one line can take the rest: give the other one an amount first', true); renderRealEstatePage(); return; }
+    l.re = Object.assign({}, l.re, {fixed: null});
+  } else if(isNaN(Number(clean))){ toast('Type a number', true); renderRealEstatePage(); return; }
+  else l.re = Object.assign({}, l.re, {fixed: Math.abs(Number(clean))});
+  reReapplyRow(g, Number(l.re.row));
+  await persistProvisionGroup(g);
+  renderRealEstatePage();
+}
+async function reRemoveLeg(gid, lineId){
+  if(blockIfSyncing()) return;
+  const g = findProvisionGroup(gid), l = g && g.lines.find(x=>x.lineId===lineId); if(!l || !l.re) return;
+  const acc = Number(l.re.row);
+  if(reLegs(g, acc).length<2){ toast('A row needs at least one “money goes to” line', true); return; }
+  if(!confirm('Remove '+accShort(l.acc)+' from '+accShort(acc)+'? Its amounts move to the line that takes the rest.')) return;
+  g.lines = g.lines.filter(x=>x!==l);
+  Object.keys(g.months).forEach(k=>{ if(g.months[k]) delete g.months[k][lineId]; });   // as Provisions' own remove line
+  reReapplyRow(g, acc);
+  await persistProvisionGroup(g);
+  renderRealEstatePage();
+}
+// 164g: take a building's existing Provisions groups over. Lines are paired by their description (each
+// pair = one real-estate account + its other leg(s)); every account's monthly total is kept exactly,
+// past months included, so Forecast, drift and the month review see the same figures.
+function reTakeOverPlan(b){
+  const apt = b.apartmentAccountIds, exp = b.expenseAccountIds, accs = [...apt, ...exp];
+  return (D.provisionGroups||[]).filter(g=>!reGroupManaged(g) && (g.lines||[]).some(l=>accs.includes(Number(l.acc)))).map(g=>{
+    ensureLineIds(g);
+    const byDescr = new Map(), pairs = []; let problem = null;
+    g.lines.forEach(l=>{ const k = l.descrBase||accShort(l.acc); if(!byDescr.has(k)) byDescr.set(k, []); byDescr.get(k).push(l); });
+    byDescr.forEach((ls, k)=>{
+      const a = ls.filter(l=>apt.includes(Number(l.acc))), e = ls.filter(l=>exp.includes(Number(l.acc)));
+      const row = a.length===1? a[0] : (!a.length && e.length===1? e[0] : null);
+      if(!row || ls.length<2){ problem = problem || k; return; }
+      pairs.push({row, legs: ls.filter(l=>l!==row)});
+    });
+    return {g, pairs, problem};
+  });
+}
+function reTakeOverApply(g, pairs){
+  let next = nextLineId(g);
+  const rows = [], map = new Map();
+  pairs.forEach(p=>{
+    const acc = Number(p.row.acc);
+    let r = rows.find(x=>x.row.re.row===acc);
+    if(!r){ r = {row:{acc, lineId: next++, descrBase: p.row.descrBase||accShort(acc), re:{row:acc}}, legs:[]}; rows.push(r); }
+    else r.row.descrBase = g.name+' - '+accShort(acc);   // two pairs on one account: one row now
+    map.set(String(p.row.lineId), r.row.lineId);
+    p.legs.forEach(ol=>{
+      let L = r.legs.find(x=>x.acc===Number(ol.acc));
+      if(!L){ L = {acc: Number(ol.acc), lineId: next++, descrBase: ol.descrBase||accShort(ol.acc), re:{row:acc, leg:true, fixed:null}}; r.legs.push(L); }
+      map.set(String(ol.lineId), L.lineId);
+    });
+  });
+  const months = {};
+  Object.entries(g.months||{}).forEach(([mk, cell])=>{
+    const nc = {};
+    Object.entries(cell||{}).forEach(([lid, v])=>{ const n = map.get(String(lid)); if(n===undefined || v===''||v===null||v===undefined) return; nc[n] = roundCents((nc[n]||0) + Number(v)); });
+    months[mk] = nc;
+  });
+  // fixed amounts from the first month (this month on) the row has a figure; the last leg takes the rest
+  const cm = todayStr().slice(0,7), keys = Object.keys(months).sort().filter(k=>k>=cm);
+  rows.forEach(r=>{ if(r.legs.length<2) return;
+    const k = keys.find(k=>Math.abs(Number(months[k][r.row.lineId]||0))>0.005);
+    r.legs.slice(0, -1).forEach(L=>{ L.re.fixed = k? Math.abs(Number(months[k][L.lineId]||0)) : 0; });
+  });
+  g.lines = rows.flatMap(r=>[r.row, ...r.legs]);
+  g.months = months;
+  g.dupBalanceExempt = true;   // other-leg accounts may repeat across rows (e.g. one loans account for two units)
+}
+async function reTakeOver(bid){
+  if(blockIfSyncing()) return;
+  const b = findBuilding(bid); if(!b) return;
+  const plan = reTakeOverPlan(b);
+  if(!plan.length){ toast('No Provisions group plans this building’s accounts', true); return; }
+  const bad = plan.find(p=>p.problem);
+  if(bad){ toast('Can’t take over “'+bad.g.name+'”: the lines described “'+bad.problem+'” are not one building account plus its other side. Fix the descriptions in Provisions first', true); return; }
+  if(!confirm('Take over '+plan.map(p=>'“'+p.g.name+'”').join(' and ')+' from Provisions?\n\nRows: '+[...new Set(plan.flatMap(p=>p.pairs.map(x=>accShort(Number(x.row.acc)))))].join(', ')
+    +'\n\nEvery figure stays as it is (past months too). From now on you type them on this page; the groups are locked in Provisions.')) return;
+  plan.forEach(p=>reTakeOverApply(p.g, p.pairs));
+  for(const p of plan) await persistProvisionGroup(p.g);
+  renderRealEstatePage();
+  toast('Taken over: type this month and later on this page ✓');
+}
+function reLegsHTML(b, a){
+  const hit = reRowLine(a.id);
+  if(!hit){
+    const on = (D.provisionGroups||[]).filter(g=>(g.lines||[]).some(l=>Number(l.acc)===a.id));
+    return on.length? `<span class="mut">Planned in Provisions: ${esc(on.map(g=>g.name).join(', '))}</span>`
+      : `<button class="btn ghost sm" onclick="reAddLeg(${b.id},${a.id})">+ Add “money goes to” line</button> <span class="mut">to type this row here</span>`;
+  }
+  const legs = reLegs(hit.g, a.id), rest = reRestLeg(legs);
+  return `<b>Money goes to:</b> ${legs.map(l=>`<span class="re-leg" data-releg="${l.lineId}" style="display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px;margin:2px 4px 2px 0">${esc(accShort(l.acc))} <span class="mono mut">${l.acc}</span>
+      <input class="num" aria-label="${esc(accShort(l.acc))}: amount a month (empty = the rest)" placeholder="the rest" value="${l===rest? '' : fmt2(l.re.fixed||0)}" onchange="reSetLegFixed(${hit.g.id},${l.lineId},this.value)" style="width:96px;padding:3px 6px;font-size:12px">
+      <button class="x" aria-label="Remove this line" onclick="reRemoveLeg(${hit.g.id},${l.lineId})">✕</button></span>`).join('')}
+    <button class="btn ghost sm" onclick="reAddLeg(${b.id},${a.id})">+ Add line</button>`;
+}
+function reCellHTML(b, a, m, currentMonth, reverse){
+  const hit = m>=currentMonth? reRowLine(a.id) : null;
+  if(!hit) return renderForecastCell(a, m, currentMonth, true, {readOnly:true, reverse});
+  const v = reRowStored(hit.g, a.id, m), shown = v===null? '' : v*reSign(b, a.id);
+  return `<td class="num fc-cell" style="${m===currentMonth?'background:var(--chip)':''}"><input data-rein="${b.id}_${a.id}_${m}" class="num" inputmode="decimal" aria-label="${esc(accShort(a.id))}, ${esc(monthLabel(m))}" value="${shown===''? '' : fmt2(shown)}" placeholder="—" style="width:100%;padding:4px 18px 4px 6px;font-size:12.5px"
+    onchange="reSetCell(${b.id},${a.id},'${m}',this.value)"><button class="fc-copy noprint" tabindex="-1" title="Copy this figure forward: asks how many months" aria-label="Copy this figure to later months" onmousedown="event.preventDefault(); reCopyForward(${b.id},${a.id},'${m}')">⇥</button></td>`;
+}
 function renderBuildingSection(b, months, currentMonth){
   const expanded = reExpandedBuildings.has(b.id);
   const apartmentAccs = b.apartmentAccountIds.map(id=>D.accounts.find(a=>a.id===id)).filter(Boolean);
@@ -16580,9 +16805,8 @@ function renderBuildingSection(b, months, currentMonth){
   const currentNet = currentMonthIdx>=0? netTotals[currentMonthIdx] : 0;
   const tableMinWidth = RE_LABEL_COL_WIDTH+months.length*RE_MONTH_COL_WIDTH;
   const colgroup = `<colgroup><col style="width:${RE_LABEL_COL_WIDTH}px">${months.map(()=>`<col style="width:${RE_MONTH_COL_WIDTH}px">`).join('')}</colgroup>`;
-  // Real Estate never shows editable input boxes — every account here is always sourced from
-  // Provisions/Budget (future months) or the real Ledger (historical months), never typed
-  // directly on this page. `reverse` flips display sign only (Revenue accounts, per the person's
+  // Past months show the real Ledger. From this month on, a row set up here (#164, v5.35) is typed in a
+  // box and feeds Provisions; any other row shows its Provisions/Budget plan. `reverse` flips display sign only (Revenue accounts, per the person's
   // own COA setup, are stored with a sign that reads naturally reversed here); it never touches
   // the underlying stored data.
   const gridTable = (accs, unlinkFn, emptyMsg, reverse) => `<table style="min-width:${tableMinWidth}px;table-layout:fixed">
@@ -16590,8 +16814,8 @@ function renderBuildingSection(b, months, currentMonth){
       <thead><tr><th></th>${months.map(m=>`<th class="num" style="${m===currentMonth?'background:var(--chip)':''}">${esc(monthLabel(m))}</th>`).join('')}</tr></thead>
       <tbody>${accs.length? accs.map(a=>`<tr>
         <td><span class="mono click" style="cursor:pointer;color:var(--accent)" onclick="jumpToLedgerForAccount(${a.id})" title="View this account's transactions in the Ledger">${esc(accShort(a.id))}</span> <button class="x noprint" onclick="${unlinkFn}(${b.id},${a.id})" title="Unlink">✕</button></td>
-        ${months.map(m=>renderForecastCell(a,m,currentMonth,true,{readOnly:true, reverse})).join('')}
-      </tr>`).join('') : `<tr><td colspan="${months.length+1}" class="mut" style="font-size:12px">${emptyMsg}</td></tr>`}</tbody>
+        ${months.map(m=>reCellHTML(b,a,m,currentMonth,reverse)).join('')}
+      </tr><tr class="noprint" data-relegs="${a.id}"><td colspan="${months.length+1}" style="font-size:12px;padding:2px 6px 10px">${reLegsHTML(b, a)}</td></tr>`).join('') : `<tr><td colspan="${months.length+1}" class="mut" style="font-size:12px">${emptyMsg}</td></tr>`}</tbody>
     </table>`;
   return `<div class="panel" style="overflow-x:auto">
     <div class="row" style="justify-content:space-between;align-items:center">
@@ -16601,6 +16825,7 @@ function renderBuildingSection(b, months, currentMonth){
         ${!expanded? `<span class="mono ${moneyClass(-currentNet)}" style="margin-left:10px;font-size:13px" title="Net for ${esc(monthLabel(currentMonth))}">${money0(-currentNet)}</span>` : ''}
       </div>
       <div class="row noprint">
+        ${reTakeOverPlan(b).length? `<button class="btn pri sm" data-retakeover="${b.id}" onclick="reTakeOver(${b.id})">Take over from Provisions</button>` : ''}
         <button class="btn ghost sm" onclick="renameBuilding(${b.id})">✎ Rename</button>
         <button class="btn del sm" onclick="deleteBuilding(${b.id})">🗑 Delete</button>
       </div>
@@ -17052,7 +17277,7 @@ function renderRealEstatePage(){
   const currentMonth = todayStr().slice(0,7);
   document.getElementById('app').innerHTML = `
     <div class="panel noprint row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <div class="mut" style="font-size:12.5px;max-width:520px">Plan rental income and linked expenses per building — every number here is the exact same data already tracked on the Forecast Grid.</div>
+      <div class="mut" style="font-size:12.5px;max-width:520px">Plan rental income and linked expenses per building. Past months show the ledger; this month and later are typed here and feed Provisions and the Forecast.</div>
       <div class="row" style="gap:6px;flex-wrap:wrap">
         <button class="btn ghost sm" onclick="exportRealEstateCSV()">⬇ Export Grid</button>
         <button class="btn ghost sm" onclick="document.getElementById('reImportInput').click()">⬆ Import Grid</button>
@@ -18440,6 +18665,18 @@ function renderCashFlowPanel(months, currentMonth){
 }
 // v5.33 (#157): copy a typed figure to the same account's later months up to the last month shown (overwrite after a
 // confirm). Months planned by Provisions, Budget or a Smart Rule are not typed cells and are left alone.
+// v5.35 (#161): "Copy to how many months ahead?" Counts calendar months from the one after `m`;
+// returns the ones among `shown` (cut = asked for more than are shown), or null when cancelled.
+function askMonthsAhead(m, shown){
+  const raw = prompt('Copy to how many months ahead? (counted from the month after '+monthLabel(m)+')', '');
+  if(raw===null || String(raw).trim()==='') return null;
+  const n = parseInt(raw, 10);
+  if(!(n>0)){ toast('Type a whole number of months', true); return null; }
+  const want = []; let k = m;
+  for(let i=0;i<n;i++){ k = nextMonthKeyPlain(k); want.push(k); }
+  const months = want.filter(x=>shown.includes(x));
+  return months.length? {months, cut: months.length<n} : null;
+}
 async function fcCopyForward(accId, m, sign){
   if(blockIfSyncing()) return;
   const a = D.accounts.find(x=>x.id===accId), el = document.querySelector(`[data-fcin="${accId}_${m}"]`);
@@ -18447,12 +18684,16 @@ async function fcCopyForward(accId, m, sign){
   const raw = String(el.value).replace(/,/g,'').trim();
   if(raw==='' || isNaN(Number(raw))){ toast('Type a figure first', true); return; }
   const cm = todayStr().slice(0,7), v = Number(raw)*sign, plans = D.forecastPlans[accId] || {};
-  const later = forecastMonthsWindow().filter(x=>x>m);
-  if(!later.length){ toast('This is the last month shown', true); return; }
+  const shown = forecastMonthsWindow().filter(x=>x>m);
+  if(!shown.length){ toast('This is the last month shown', true); return; }
+  // v5.35 (#161): ask how many months ahead (counted from the next month; stops at the last month shown)
+  const n = askMonthsAhead(m, shown); if(!n) return;
+  const later = n.months;
   const targets = later.filter(x=>computeForecastCell(a, x, cm).editable);
   const differ = targets.filter(x=>plans[x]!==undefined && Number(plans[x])!==v).length, skipped = later.length - targets.length;
-  if(!targets.length){ toast('No later month here takes a typed figure', true); return; }
+  if(!targets.length){ toast('No month in that range takes a typed figure', true); return; }
   if(!confirm(`Copy ${money0(Number(raw))} to ${targets.length} month${targets.length===1?'':'s'}, up to ${monthLabel(targets[targets.length-1])}?`
+    + (n.cut? `\nOnly ${later.length} month${later.length===1?' is':'s are'} shown after ${monthLabel(m)}, so it stops at ${monthLabel(later[later.length-1])}.` : '')
     + (differ? `\n${differ} already ha${differ===1?'s':'ve'} a different figure and will be overwritten.` : '')
     + (skipped? `\n${skipped} month${skipped===1?' is':'s are'} planned by Provisions, Budget or a rule and stay${skipped===1?'s':''} as ${skipped===1?'it is':'they are'}.` : ''))) return;
   D.forecastPlans[accId] = Object.assign({}, plans);
@@ -18480,7 +18721,7 @@ function renderForecastCell(a, m, currentMonth, noDecimals, opts){
     const raw = (c.plan!==null && c.plan!==undefined)? c.plan*sign : '';
     const displayFmt = noDecimals? (v=>v===''?'':money0(v)) : fmt2;
     return `<td class="num fc-cell" style="${cellBg}" title="${esc(title)}"><input type="text" inputmode="decimal" class="num" style="width:100px;padding-right:20px" data-fcin="${a.id}_${m}" value="${raw!==''?displayFmt(raw):''}" placeholder="—" data-raw="${raw}"
-      onfocus="this.value=this.dataset.raw" onblur="setManualPlan(${a.id},'${m}',this.value===''?'':(Number(String(this.value).replace(/,/g,''))*(${sign})))"><button class="fc-copy noprint" tabindex="-1" title="Copy this figure to every later month shown" aria-label="Copy to every later month" onmousedown="event.preventDefault(); fcCopyForward(${a.id}, '${m}', ${sign})">\u21e5</button></td>`;
+      onfocus="this.value=this.dataset.raw" onblur="setManualPlan(${a.id},'${m}',this.value===''?'':(Number(String(this.value).replace(/,/g,''))*(${sign})))"><button class="fc-copy noprint" tabindex="-1" title="Copy this figure forward: asks how many months" aria-label="Copy this figure to later months" onmousedown="event.preventDefault(); fcCopyForward(${a.id}, '${m}', ${sign})">\u21e5</button></td>`;
   }
   let badge = c.conflict? ` <span class="badge neg click" title="Provisions and Budget disagree — click to resolve" onclick="openForecastConflictResolver(${a.id},'${m}')">⚠</span>` : '';
   let provTag = (c.source==='provisions')? ` <span class="badge pos click" title="Sourced from Provisions — click to open" onclick="openProvisionSourceFor(${a.id},'${m}')">P</span>` : '';

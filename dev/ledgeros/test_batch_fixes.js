@@ -8152,6 +8152,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV533AddWalletCoin();
   await testV533MonthlyUpdateAndSnapshot();
   await testV534OnePricePerCoin();
+  await testV535ProvisionMissingMonth();
+  await testV535RealEstateFeedsProvisions();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12235,14 +12237,22 @@ async function testV533ForecastCopyForward(){
   assert(cell.querySelector('[data-fcin="30101_'+m1+'"]') && btn && /fcCopyForward\(30101, '[0-9-]+', 1\)/.test(btn.getAttribute('onmousedown')||''), 'Each typed cell has a copy-forward button');
   sb.document.body.appendChild(cell);
   cell.querySelector('input').value = '1,500';
-  let msg = ''; sb.confirm = m=>{ msg = m; return true; };
+  let msg = '', asked = ''; sb.confirm = m=>{ msg = m; return true; };
+  sb.prompt = (q, d)=>{ asked = q + '|' + d; return '5'; };   // v5.35 (#161): asks how many months; 5 > the 2 shown after m1
   await sb.fcCopyForward(30101, m1, 1);
   const pl = D.forecastPlans[30101];
-  assert(pl[m1]===1500 && pl[m2]===1500 && pl[m3]===1500 && pl[cm]===undefined, 'This month and every later month shown get 1,500; earlier months untouched, got ' + JSON.stringify(pl));
-  assert(/2 months/.test(msg) && /1 already has a different figure/.test(msg) && writes.length===1, 'Asks first, naming the months and the one it overwrites; saved in one write, got ' + msg);
-  sb.confirm = ()=>false; cell.querySelector('input').value = '7';
+  assert(/how many months ahead/.test(asked) && /\|$/.test(asked), '#161: a window asks how many months ahead, box empty, got ' + asked);
+  assert(pl[m1]===1500 && pl[m2]===1500 && pl[m3]===1500 && pl[cm]===undefined, 'This month and the later months asked for get 1,500; earlier months untouched, got ' + JSON.stringify(pl));
+  assert(/2 months/.test(msg) && /1 already has a different figure/.test(msg) && /stops at/.test(msg) && writes.length===1, 'Asks first, naming the months, the one it overwrites and that it stops at the last month shown; one write, got ' + msg);
+  sb.prompt = ()=>'1'; cell.querySelector('input').value = '200';
   await sb.fcCopyForward(30101, m1, 1);
-  assert(D.forecastPlans[30101][m3]===1500 && writes.length===1, 'Cancelled = nothing changes');
+  assert(D.forecastPlans[30101][m2]===200 && D.forecastPlans[30101][m3]===1500 && !/stops at/.test(msg), '#161: 1 month = only the next month, got ' + JSON.stringify(D.forecastPlans[30101]));
+  sb.prompt = ()=>null; cell.querySelector('input').value = '9';
+  await sb.fcCopyForward(30101, m1, 1);
+  assert(D.forecastPlans[30101][m2]===200 && writes.length===2, 'Cancelling the months window changes nothing');
+  sb.prompt = ()=>'5'; sb.confirm = ()=>false; cell.querySelector('input').value = '7';
+  await sb.fcCopyForward(30101, m1, 1);
+  assert(D.forecastPlans[30101][m3]===1500 && writes.length===2, 'Cancelled = nothing changes');
 }
 async function testV533AddWalletCoin(){
   const sb = v56Sandbox();
@@ -12308,4 +12318,115 @@ async function testV534OnePricePerCoin(){
   // a different coin is not affected
   const sol = sb.invLatestValuation(2), solPrice = sol? Number(sol.price) : null;
   assert(solPrice!==9999, 'Other coins keep their own price');
+}
+
+// v5.35 (#162, #163): Delete all empty months at the top too; a group with no row for the month blocks Generate JV
+async function testV535ProvisionMissingMonth(){
+  const sb = mrSandbox();
+  const D = vm.runInContext('D', sb);
+  const toasts = []; sb.__set('toast', m=>toasts.push(m));
+  let went = false; sb.__set('go', ()=>{ went = true; });
+  const gym = D.provisionGroups.find(g=>g.id===8);
+  assert(JSON.stringify(sb.provMissingGroups('2026-11').map(g=>g.id))==='[8]', '#163: the group with no November row is flagged, got ' + JSON.stringify(sb.provMissingGroups('2026-11').map(g=>g.id)));
+  gym.months['2026-11'] = {60104:0};
+  assert(!sb.provMissingGroups('2026-11').length, 'A row of 0s is nothing on purpose: not flagged');
+  gym.months['2026-11'] = {60104:''};
+  assert(sb.provMissingGroups('2026-11').length===1, 'A row with only blank cells counts as no row');
+  delete gym.months['2026-11'];
+  sb.__set('provisionsSelectedMonth', '2026-11');
+  sb.combinedGenerateProvisionJV();
+  assert(!went && toasts.some(t=>/nothing planned for/.test(t) && /Gym/.test(t)), 'Generate JV, all groups is blocked and names the group, got ' + JSON.stringify(toasts));
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="provisionGroupsList"></div>');
+  sb.__set('provisionEditingId', 8);
+  sb.renderProvisionGroupsList();
+  const btn = sb.document.getElementById('provGenAllBtn'), al = sb.document.querySelector('[data-provmissing="8"]');
+  assert(btn && btn.disabled && al && /Gym has nothing for/.test(al.textContent) && /provSkipMonth\(8, '2026-11'\)/.test(al.innerHTML), 'The button is greyed out, the alarm names the group with Show me and Skip this month');
+  assert(/Nothing planned for/.test(sb.document.getElementById('provGroup_8').textContent), 'The open group shows the alarm too');
+  const items = sb.dashboardTodoItems();
+  assert(items.some(i=>/1 provision group has nothing for/.test(i.title) && /Gym/.test(i.sub)), 'Dashboard to-do lists it, got ' + JSON.stringify(items.map(i=>i.title)));
+  sb.__set('renderDashboard', ()=>{});
+  await sb.provSkipMonth(8, '2026-11');
+  assert(!sb.provMissingGroups('2026-11').length && sb.__calls.some(c=>c.table==='pd_ui_prefs' && c.row.dismissals.provSkip['2026-11'].includes(8)), 'Skip this month clears it (synced)');
+  assert(sb.provMissingGroups('2026-12').some(g=>g.id===8), 'Skipping is for that month only');
+  assert(!sb.dashboardTodoItems().some(i=>/provision group/.test(i.title)), 'Skipped: off the Dashboard');
+  // #162: the delete-all button sits at the top of the group as well
+  D.provisionGroups[0].months['2027-02'] = {60103:0};
+  const html = sb.provisionGroupBodyHTML(D.provisionGroups[0], '2026-11');
+  assert(/data-provdeltop="7"/.test(html) && /data-provdelall="7"/.test(html) && html.indexOf('data-provdeltop')<html.indexOf('genMonthSel_7'), '#162: Delete all empty months at the top (beside Generate JV) and at the bottom');
+}
+// v5.35 (#164): the Real Estate page is typed and feeds Provisions (and so the Forecast)
+async function testV535RealEstateFeedsProvisions(){
+  const A = (id, name, category, fc) => ({id, name, category, acc_type:'Individual Account', status:'Active', forecast_category:fc});
+  const D = {
+    accounts:[A(70123,'Rent income Floor 1','Rental','invest_income_lt'), A(70113,'Maintenance','Rental','invest_expense_lt'), A(10204,'Owner A','Receivables','asset'),
+      A(10203,'Owner B','Receivables','asset'), A(20408,'Maintenance provision','Provisions','liability'), A(20111,'Payable','Provisions','liability')],
+    ledger:[{id:1, jv:1, date:'2026-10-05', acc:70123, amt:-1800, descr:'x'}],
+    provisionGroups:[
+      {id:20, name:'B1 Revenue', lines:[{acc:10204, lineId:1, descrBase:'Apt A'}, {acc:70123, lineId:2, descrBase:'Apt A'}, {acc:10203, lineId:3, descrBase:'Apt B'}, {acc:70123, lineId:4, descrBase:'Apt B'}],
+        months:{'2026-10':{1:1000, 2:-1000, 3:800, 4:-800}, '2026-11':{1:1000, 2:-1000, 3:800, 4:-800}, '2026-12':{1:1000, 2:-1000, 3:800, 4:-800}}},
+      {id:21, name:'B1 Expenses', lines:[{acc:70113, lineId:1, descrBase:'Maint'}, {acc:20408, lineId:2, descrBase:'Maint'}], months:{'2026-11':{1:250, 2:-250}}}],
+    realEstateBuildings:[{id:1, name:'B1', apartmentAccountIds:[70123], expenseAccountIds:[70113]}],
+    forecastAccountRules:[], forecastPlans:{}, budget:[], accrualMappings:[], uiPrefs:{},
+  };
+  const sb = v455Sandbox(D, '2026-11-03');
+  if(!sb.document.getElementById('app')) sb.document.body.insertAdjacentHTML('beforeend', '<div id="app"></div>');
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="provisionGroupsList"></div>');
+  vm.runInContext('reExpandedBuildings.add(1)', sb);
+  const calls = []; sb.__set('syncWrite', async (table, kind, row)=>{ calls.push({table, row}); return {ok:true}; });
+  const toasts = []; sb.__set('toast', m=>toasts.push(m));
+  sb.__set('blockIfSyncing', ()=>false);
+  sb.renderRealEstatePage();
+  assert(sb.document.querySelector('[data-retakeover="1"]') && !sb.document.querySelector('[data-rein]'), 'Before: read-only, with Take over from Provisions');
+  const plan = sb.reTakeOverPlan(D.realEstateBuildings[0]);
+  assert(plan.length===2 && plan.every(p=>!p.problem), 'Both groups can be taken over (lines paired by description)');
+  sb.confirm = ()=>true;
+  await sb.reTakeOver(1);
+  const rev = D.provisionGroups[0], row = rev.lines.find(l=>l.re && !l.re.leg), legs = sb.reLegs(rev, 70123);
+  assert(row && row.acc===70123 && legs.length===2 && legs[0].acc===10204 && legs[0].re.fixed===1000 && legs[1].acc===10203 && legs[1].re.fixed===null, '164g: one row for the account (two pairs merged), Owner A fixed 1,000, Owner B takes the rest, got ' + JSON.stringify(rev.lines));
+  const tot = (g, mk, acc) => g.lines.filter(l=>l.acc===acc).reduce((s,l)=>s+Number((g.months[mk]||{})[l.lineId]||0), 0);
+  assert(tot(rev,'2026-10',70123)===-1800 && tot(rev,'2026-10',10204)===1000 && tot(rev,'2026-10',10203)===800 && tot(rev,'2026-12',70123)===-1800, 'Every account keeps its figures, past months too');
+  assert(rev.dupBalanceExempt===true && sb.reGroupManaged(D.provisionGroups[1]) && calls.filter(c=>c.table==='pd_provisions').length===2, 'Both groups saved and now managed from Real Estate');
+  // locked in Provisions
+  sb.setProvisionCell(20, '2026-12', row.lineId, '5');
+  assert(tot(rev,'2026-12',70123)===-1800 && toasts.some(t=>/Real Estate page/.test(t)), 'Provisions refuses edits to a managed group');
+  sb.__set('provisionEditingId', 20); sb.__set('provisionsSelectedMonth', '2026-11'); sb.renderProvisionGroupsList();
+  assert(sb.document.querySelector('[data-relocked="20"]') && sb.document.querySelector('#provCell_20_0_0').hasAttribute('readonly'), 'Provisions shows the lock and Edit in Real Estate; cells read-only');
+  // typing on the page
+  sb.renderRealEstatePage();
+  assert(!sb.document.querySelector('[data-retakeover="1"]') && sb.document.querySelector('[data-rein="1_70123_2026-11"]') && !sb.document.querySelector('[data-rein="1_70123_2026-10"]'), 'This month on: boxes; past months: ledger, read-only');
+  assert(sb.document.querySelector('[data-rein="1_70123_2026-11"]').value==='1,800.00' && sb.document.querySelector('[data-relegs="70123"]').querySelectorAll('[data-releg]').length===2, 'Revenue reads positive, with its two money-goes-to lines');
+  await sb.reSetCell(1, 70123, '2026-12', '2,000');
+  assert(tot(rev,'2026-12',70123)===-2000 && tot(rev,'2026-12',10204)===1000 && tot(rev,'2026-12',10203)===1000, 'Typed 2,000: Owner A gets its 1,000, Owner B the rest');
+  assert(sb.computeForecastCell(D.accounts[0], '2026-12', '2026-11').plan===-2000, 'The Forecast follows');
+  await sb.reSetCell(1, 70123, '2026-10', '9');
+  assert(tot(rev,'2026-10',70123)===-1800, 'Past months cannot be typed');
+  await sb.reSetLegFixed(20, legs[0].lineId, '1,500');
+  assert(tot(rev,'2026-12',10204)===1500 && tot(rev,'2026-12',10203)===500 && tot(rev,'2026-11',10203)===300 && tot(rev,'2026-10',10204)===1000, 'A new fixed amount re-splits this month on; past months untouched');
+  await sb.reSetLegFixed(20, legs[0].lineId, '');
+  assert(legs[0].re.fixed===1500 && toasts.some(t=>/Only one line can take the rest/.test(t)), 'Only one line can take the rest');
+  // copy forward (#161 window)
+  sb.renderRealEstatePage();
+  sb.document.querySelector('[data-rein="1_70123_2026-11"]').value = '1,600';
+  sb.prompt = ()=>'2'; let msg = ''; sb.confirm = m=>{ msg = m; return true; };
+  await sb.reCopyForward(1, 70123, '2026-11');
+  assert(tot(rev,'2026-11',70123)===-1600 && tot(rev,'2026-12',70123)===-1600 && tot(rev,'2027-01',70123)===-1600 && tot(rev,'2027-01',10203)===100 && !rev.months['2027-02'], 'Quick copy: this month and the next 2, legs split the same way, got ' + JSON.stringify(rev.months['2027-01']));
+  assert(/2 months/.test(msg) && /1 already has a different figure/.test(msg), 'It says how many months and what it overwrites, got ' + msg);
+  // legs: add and remove
+  sb.prompt = ()=>'20111';
+  await sb.reAddLeg(1, 70113);
+  const exp = D.provisionGroups[1], eLegs = sb.reLegs(exp, 70113);
+  assert(eLegs.length===2 && eLegs[1].acc===20111 && eLegs[1].re.fixed===0 && tot(exp,'2026-11',20408)===-250 && tot(exp,'2026-11',20111)===0, 'A new line starts at 0 a month, so nothing moves until typed');
+  await sb.reRemoveLeg(21, eLegs[1].lineId);
+  assert(sb.reLegs(exp, 70113).length===1, 'A line can be removed');
+  await sb.reRemoveLeg(21, eLegs[0].lineId);
+  assert(sb.reLegs(exp, 70113).length===1 && toasts.some(t=>/at least one/.test(t)), 'The last line cannot be removed');
+  // every touched month still nets to 0
+  for(const g of D.provisionGroups) for(const mk of Object.keys(g.months)) if(mk>='2026-11'){ const s = Object.values(g.months[mk]).reduce((a,v)=>a+Number(v), 0); assert(Math.abs(s)<0.005, g.name+' '+mk+' nets to 0, got ' + s); }
+  // a new row for an account planned nowhere
+  D.accounts.push(A(70124,'Rent income Floor 2','Rental','invest_income_lt')); vm.runInContext('ACC_BY_ID[70124] = D.accounts[D.accounts.length-1]', sb);
+  D.realEstateBuildings[0].apartmentAccountIds.push(70124);
+  sb.prompt = ()=>'10204';
+  await sb.reAddLeg(1, 70124);
+  await sb.reSetCell(1, 70124, '2026-11', '700');
+  assert(tot(rev,'2026-11',70124)===-700 && tot(rev,'2026-11',10204)===1500+700 && sb.reRowLine(70124).g===rev, 'A new row goes into the building’s group and is typed straight away');
 }
