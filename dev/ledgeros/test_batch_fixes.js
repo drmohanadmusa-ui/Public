@@ -8151,6 +8151,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV533ForecastCopyForward();
   await testV533AddWalletCoin();
   await testV533MonthlyUpdateAndSnapshot();
+  await testV534OnePricePerCoin();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12288,4 +12289,23 @@ async function testV533MonthlyUpdateAndSnapshot(){
   items = sb.invNeedsYouItems();
   assert(!items.some(i=>i.key==='month'+mk), 'Once saved, the monthly item goes away');
   assert(await sb.invMonthlySnapshotIfReady()===false && writes.filter(x=>x.t==='pd_inv_snapshots').length===1, 'Only one snapshot per month');
+}
+async function testV534OnePricePerCoin(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  const eth1 = sb.invLatestValuation(1);
+  assert(eth1 && eth1.price>0, 'Fixture: ETH on platform 1 has a price');
+  D.invPositions.push({id:77, platformId:2, name:'Ethereum', ticker:'ETH', currency:'USD', assetClass:'Crypto', status:'Active'});
+  D.invTransactions.push({id:977, positionId:77, date:'2026-11-01', kind:'buy', units:2, totalSar:15000, owners:[{ownerId:1, units:2}], cashSide:'bank', usdAmount:4000});
+  const v = sb.invLatestValuation(77);
+  assert(v && Number(v.price)===Number(eth1.price) && v.date===eth1.date, 'v5.34 (#160): a new ETH position on another platform reads the same latest price, got ' + JSON.stringify(v && [v.price, v.date]));
+  assert(sb.invPriceAsOf(77, '2099-01-01')===sb.invPriceAsOf(1, '2099-01-01') && sb.invPriceAsOf(77, '2099-01-01')>0, 'Price on a date is shared too (history, daily closes)');
+  const val = sb.computePositionValuation(sb.invPositionById(77));
+  assert(val.hasValuation && Math.abs(val.marketSar - 2*Number(eth1.price)*3.75)<0.01, 'Its value uses that price (not its cost), got ' + JSON.stringify([val.hasValuation, val.marketSar]));
+  // a newer price saved on the new position is used by the old one as well
+  D.invValuations.push({id:99001, positionId:77, date:'2099-01-02', price:9999});
+  assert(Number(sb.invLatestValuation(1).price)===9999, 'Whichever platform saves the newest price, every platform reads it');
+  // a different coin is not affected
+  const sol = sb.invLatestValuation(2), solPrice = sol? Number(sol.price) : null;
+  assert(solPrice!==9999, 'Other coins keep their own price');
 }

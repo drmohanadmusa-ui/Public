@@ -638,12 +638,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.33.0';
+const APP_VERSION = '5.34.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.34.0', date:'2026-11-23', changes:[
+    'Investments: one price per coin. Every platform holding a coin (same ticker) now reads the newest price saved for that coin, whichever platform saved it: refreshes, daily closes and prices typed by hand. A coin added to another platform shows its price, value and P/L straight away.',
+  ]},
   {version:'5.33.0', date:'2026-11-23', changes:[
     '\ud83d\udce9 SMS inbox: when an account has SMS on several dates, each date is listed with its own Create JV (oldest first); the other dates stay in the inbox instead of being saved as Drafts. The bank balance is asked once for the account\u2019s first date, and every date opens New JV with the reconcile bar showing.',
     'Forecast grid: a small \u21e5 button beside a typed figure (on hover or while typing; always on touch screens) copies it to every later month shown, after a confirmation that says how many months change and how many already had a different figure. Months planned by Provisions, Budget or a rule are left as they are.',
@@ -10474,8 +10477,11 @@ function invOwnerById(id){ return (D.invOwners||[]).find(o=>o.id===id) || null; 
 function invPositionById(id){ return (D.invPositions||[]).find(p=>p.id===id) || null; }
 function invPositionsForPlatform(pid){ return (D.invPositions||[]).filter(p=>p.platformId===pid).sort((a,b)=>(a.name||'').localeCompare(b.name||'')); }
 function invTxForPosition(posId){ return (D.invTransactions||[]).filter(t=>t.positionId===posId).slice().sort((a,b)=> a.date===b.date? (a.id-b.id) : (a.date<b.date?-1:1)); }
+// v5.34 (#160): one price per coin (same ticker): every position of the coin reads the newest price saved for any of them.
+function invCoinPosIds(posId){ const ids = new Set(invCoinPositions(posId).map(p=>p.id)); ids.add(posId); return ids; }
 function invLatestValuation(posId){
-  const vals = (D.invValuations||[]).filter(v=>v.positionId===posId).slice().sort(invValCmp);
+  const ids = invCoinPosIds(posId);
+  const vals = (D.invValuations||[]).filter(v=>ids.has(v.positionId)).slice().sort(invValCmp);
   return vals.length? vals[vals.length-1] : null;
 }
 function invNextId(arr){ return 1 + (arr||[]).reduce((m,x)=>{ const n = Number(x.id)||0; return n>=INV_CLOSE_ID_BASE? m : Math.max(m, n); }, 0); }
@@ -11244,7 +11250,8 @@ function invPositionStateAsOf(posId, asOfDate, selfOnly){
   return {units, costSar};
 }
 function invPriceAsOf(posId, asOfDate){
-  const vals = (D.invValuations||[]).filter(v=>v.positionId===posId && v.date<=asOfDate).sort(invValCmp);
+  const ids = invCoinPosIds(posId);   // v5.34 (#160)
+  const vals = (D.invValuations||[]).filter(v=>ids.has(v.positionId) && v.date<=asOfDate).sort(invValCmp);
   return vals.length? Number(vals[vals.length-1].price)||0 : 0;
 }
 // Portfolio value and cost at every date a price was logged — the series behind the chart.
@@ -14914,7 +14921,8 @@ function openInvPosition(posId){
   const pos = invPositionById(posId); if(!pos) return;
   const v = computePositionValuation(pos);
   const txs = invTxForPosition(posId).slice().reverse();
-  const vals = (D.invValuations||[]).filter(x=>x.positionId===posId).slice().sort((a,b)=>a.date<b.date?1:-1).slice(0,6);
+  const coinIds = invCoinPosIds(posId);   // v5.34 (#160): the coin's prices, whichever platform saved them
+  const vals = (D.invValuations||[]).filter(x=>coinIds.has(x.positionId)).slice().sort((a,b)=>a.date<b.date?1:-1).slice(0,6);
   showModal(`
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h3 style="margin:0">${esc(pos.name)}${pos.ticker? ` <span class="mut">${esc(pos.ticker)}</span>`:''}</h3>
