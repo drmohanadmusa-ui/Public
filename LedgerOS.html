@@ -353,6 +353,11 @@ nav button:focus-visible{outline:2px solid var(--rail-on-bg);outline-offset:2px}
 /* v5.26 (#142): tinted chip behind each rail icon; -3px margin keeps the 18px footprint, so rail sizes don't change */
 .nav-chip{width:24px;height:24px;margin:-3px;flex:none;display:grid;place-items:center;border-radius:7px;background:color-mix(in srgb,var(--rail-on-bg) 14%,transparent);transition:background-color .18s ease,color .18s ease}
 .nav-chip .nav-svg{width:16px;height:16px}
+/* v5.33 (#157): Forecast copy-forward button, shown on hover / while typing (always on touch) */
+.fc-cell{position:relative}
+.fc-copy{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:transparent;color:var(--accent);font-size:13px;line-height:1;padding:2px 3px;cursor:pointer;opacity:0;transition:opacity .12s}
+.fc-cell:hover .fc-copy,.fc-cell:focus-within .fc-copy{opacity:1}
+@media (hover:none){.fc-copy{opacity:.7}}
 nav button.on .nav-chip{background:var(--rail-on-fg);color:var(--rail-on-bg)}
 nav .nav-ico{margin:0;width:auto;font-size:16px}
 .nav-lbl{line-height:1.15}
@@ -633,12 +638,18 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.32.0';
+const APP_VERSION = '5.33.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.33.0', date:'2026-11-23', changes:[
+    '\ud83d\udce9 SMS inbox: when an account has SMS on several dates, each date is listed with its own Create JV (oldest first); the other dates stay in the inbox instead of being saved as Drafts. The bank balance is asked once for the account\u2019s first date, and every date opens New JV with the reconcile bar showing.',
+    'Forecast grid: a small \u21e5 button beside a typed figure (on hover or while typing; always on touch screens) copies it to every later month shown, after a confirmation that says how many months change and how many already had a different figure. Months planned by Provisions, Budget or a rule are left as they are.',
+    'Wallet check: coins in a wallet that are already tracked on another platform (same contract address) are listed with "+ Add to <this platform>", which adds the coin here in one click so the check and Log it work straight away.',
+    'Investments \u2192 Needs you: a Monthly update from the 1st of each month. Start refreshes all prices, reads every wallet and Binance and saves their units, then lists what is left for you (the same list as the Month review investments step). When every platform is updated, a full snapshot is saved for that month: units, price, value, cost and P/L per coin and platform, cash, and totals for you, each family member and overall. DATABASE CHANGE: adds the new pd_inv_snapshots table (already set up for you and added to your backup).',
+  ]},
   {version:'5.32.0', date:'2026-11-19', changes:[
     'Investments \u2192 Binance: after a Binance check shows differences, \ud83d\udcdc Find the trades reads your Spot trades (coin/USDT and coin/USDC) newest first and stops as soon as they explain each coin\u2019s difference (at most 30 days back). When the cash differs it also lists USDT / USDC deposits and withdrawals. Each line has Log it, which opens the trade (or deposit / withdrawal) window filled in: date, units, USD and fee; lines already in the tracker show "looks logged".',
     'Trade window: a price per unit now fills USD paid without rounding to the cent, so tiny (dust) amounts save; and a buy at $0 can be saved after a confirm (dust or an airdrop), like a sale with no proceeds.',
@@ -1484,7 +1495,7 @@ const CHANGELOG = [
     'Added an iPhone/iPad home-screen icon, so adding the site to your home screen shows a real icon instead of a blank screenshot.',
   ]},
 ];
-let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[], loans:[], smsInbox:[]};
+let D = {accounts:[], ledger:[], budget:[], templates:[], categories:[], subcategories:[], provisionGroups:[], accrualMappings:[], jamiahs:[], forecastPlans:{}, nameTranslations:{}, descrTranslations:{}, realEstateBuildings:[], forecastAccountRules:[], customForecastCategories:[], invOwners:[], invPlatforms:[], invPositions:[], invTransactions:[], invValuations:[], invCashMovements:[], invSettings:{fxUsdSar:3.75, mgmtFeePct:0}, uiPrefs:{pageOrder:null, balanceStaleDays:0, dashboardLayout:null, positionBoxes:null, dismissals:{}, forecastNotes:{}}, forecastSnapshots:[], invRoboValueLog:[], loans:[], smsInbox:[], invSnapshots:[]};
 let jvDrafts = []; // local-only scratchpad of unfinished JVs — not synced to cloud
 function loadJVDrafts(){ try{ return JSON.parse(localStorage.getItem('jvDrafts_v1')||'[]'); }catch(e){ return []; } }
 function saveJVDraftsList(){ try{ safeSetItem('jvDrafts_v1', JSON.stringify(jvDrafts)); }catch(e){} }
@@ -1568,6 +1579,7 @@ function normalizeDataShape(D){
   if(!Array.isArray(D.invRoboValueLog)) D.invRoboValueLog = [];
   if(!Array.isArray(D.smsInbox)) D.smsInbox = [];
   if(!Array.isArray(D.loans)) D.loans = [];
+  if(!Array.isArray(D.invSnapshots)) D.invSnapshots = [];   // v5.33 (#159)
   if(!D.forecastPlans || typeof D.forecastPlans!=='object') D.forecastPlans = {};
   if(!D.nameTranslations || typeof D.nameTranslations!=='object') D.nameTranslations = {};
   if(!D.descrTranslations || typeof D.descrTranslations!=='object') D.descrTranslations = {};
@@ -2493,12 +2505,12 @@ async function fetchAllFromCloud(forceFullLedger){
   // slowest of the 16) with zero visible movement. Ledger's own page-by-page fetch progress
   // (ledgerProgress below) is blended in as a fraction of its single slot, so the bar now advances
   // smoothly through that wait instead of appearing to hang.
-  const TOTAL_SOURCES = 28;
+  const TOTAL_SOURCES = 29;
   let completedSources = 0; // counts the 24 non-ledger sources only
   let ledgerFraction = 0; // 0..1, how far through Ledger's own paginated fetch we are
   const recomputeSplashProgress = () => updateSplashProgress((completedSources + ledgerFraction) / TOTAL_SOURCES * 100);
   const tp = (p, isLedger) => p.then(r=>{ if(isLedger) ledgerFraction = 1; else completedSources++; recomputeSplashProgress(); return r; });
-  const [acc,led,bud,tpl,cat,subcat,drafts,prov,accr,jam,fplans,nameTr,descrTr,reBuild,farules,customCats,invOwn,invPlat,invPos,invTx,invVal,invCash,invSet,uiPrefs,fcSnaps,roboLog,smsRows,loanRows] = await Promise.all([
+  const [acc,led,bud,tpl,cat,subcat,drafts,prov,accr,jam,fplans,nameTr,descrTr,reBuild,farules,customCats,invOwn,invPlat,invPos,invTx,invVal,invCash,invSet,uiPrefs,fcSnaps,roboLog,smsRows,loanRows,invSnapRows] = await Promise.all([
     tp(fetchAllRows('pd_accounts','id')),
     tp(canSkipLedger? Promise.resolve({data: D.ledger.map(l=>({id:l.id,jv:l.jv,entry_date:l.date,acc:l.acc,descr:l.descr,amt:l.amt,alloc:l.alloc,allocatable:l.allocatable,acc_name_snapshot:l.accNameSnapshot||null,updated_at:l.updated_at||null})), error:null}) : fetchAllRows('pd_ledger','id','*',ledgerProgress), true),
     tp(fetchAllRows('pd_budget','id')),
@@ -2527,6 +2539,7 @@ async function fetchAllFromCloud(forceFullLedger){
     tp(fetchAllRows('pd_inv_robo_value_log','id')),
     tp(fetchAllRows('pd_sms_inbox','id')),
     tp(fetchAllRows('pd_loans','id')),
+    tp(fetchAllRows('pd_inv_snapshots','id')),
   ]);
   if(acc.error||led.error||bud.error||tpl.error){ toast('Cloud load error',true); return; }
   D.accounts = acc.data.map(a=>({id:a.id, descr:a.descr, balance:a.balance, direction:a.direction, acc_type:a.acc_type, name:a.name, cf_type:a.cf_type, category:a.category, status:a.status, is_savings:!!a.is_savings, is_allocatable:!!a.is_allocatable, is_credit_card:!!a.is_credit_card, credit_limit:a.credit_limit, stmt_balance:a.stmt_balance, stmt_available:a.stmt_available, stmt_date:a.stmt_date||null, forecast_category:a.forecast_category||null, updated_at:a.updated_at||null}));
@@ -2559,6 +2572,8 @@ async function fetchAllFromCloud(forceFullLedger){
   if(smsRows && !smsRows.error){ D.smsInbox = smsRows.data.map(smsFromRow); setTimeout(()=>{ smsAutoClear().catch(()=>{}); }, 0); }
   // v5.14: same for pd_loans before its schema script has run.
   if(loanRows && !loanRows.error){ D.loans = loanRows.data.map(loanFromRow); }
+  // v5.33 (#159): same before its schema script has run.
+  if(invSnapRows && !invSnapRows.error){ D.invSnapshots = invSnapRows.data.map(r=>({id:Number(r.id), month:r.month, takenAt:r.taken_at||null, data:(r.data && typeof r.data==='object')? r.data : {}, updated_at:r.updated_at||null})); }
   setTimeout(()=>{ invWalletAutoCheck().catch(()=>{}); }, 4000);   // v5.15 (#76)
   syncCustomForecastCategories();
   if(serverLedgerMarker) safeSetItem('ledgerLastChanged', serverLedgerMarker);
@@ -3257,6 +3272,15 @@ create table if not exists pd_loans (
   updated_at    timestamptz default now()
 );
 
+-- v5.33: monthly investment snapshots (#159): one row per month (id = yyyymm), everything in data (jsonb).
+create table if not exists pd_inv_snapshots (
+  id            bigint primary key,
+  month         text,
+  taken_at      date,
+  data          jsonb default '{}'::jsonb,
+  updated_at    timestamptz default now()
+);
+
 create index if not exists idx_inv_positions_platform on pd_inv_positions(platform_id);
 create index if not exists idx_inv_tx_position        on pd_inv_transactions(position_id);
 create index if not exists idx_inv_val_position       on pd_inv_valuations(position_id);
@@ -3325,6 +3349,7 @@ begin
     'pd_inv_robo_value_log',
     'pd_sms_inbox',
     'pd_loans',
+    'pd_inv_snapshots',
     'pd_sync_meta'
   ]
   loop
@@ -6710,7 +6735,8 @@ function smsSuggestedBalance(groupKey, accId){
   const n = new Set(lines.map(l=>l.smsId)).size;
   return {value: smsR2(ledger + sum), note: `Ledger ${money(ledger)} ${sum<0? '\u2212' : '+'} ${n} SMS ${money(Math.abs(sum))} = ${money(ledger+sum)}`};
 }
-function openSmsStmtPrompt(groupKey, accId){
+function openSmsStmtPrompt(groupKey, accId, onlyDate){
+  const dArg = smsArg(onlyDate||'');
   const a = ACC_BY_ID[accId]; if(!a) return;
   const s = bankReconState(a);
   const sug = smsSuggestedBalance(groupKey, accId);
@@ -6719,45 +6745,44 @@ function openSmsStmtPrompt(groupKey, accId){
     <div class="mut" style="font-size:12.5px;margin:8px 0 10px">Before the JV opens, type ${s.isCC? 'the card\'s <b>available limit</b>' : 'the account\'s balance'} from the bank app. Sums work too (500-150 saves 350).</div>
     <label class="fl">${s.isCC? 'Available limit' : 'Statement balance'}</label>
     <input id="smsStmtBal" type="text" inputmode="decimal" class="num" style="width:180px" value="${sug? sug.value : (s.hasStmt? s.typedVal : '')}"
-      onkeydown="if(event.key==='Enter'){ event.preventDefault(); smsStmtSave(${smsArg(groupKey)}, ${a.id}); }">
+      onkeydown="if(event.key==='Enter'){ event.preventDefault(); smsStmtSave(${smsArg(groupKey)}, ${a.id}, ${dArg}); }">
     ${sug? `<div class="mut" id="smsStmtNote" style="font-size:11.5px;margin-top:4px">Suggested: ${esc(sug.note)}. Check it against the bank app.</div>` : ''}
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
-      <button class="btn ghost" onclick="smsCreateJVs(${smsArg(groupKey)}, true)">Skip</button>
-      <button class="btn pri" onclick="smsStmtSave(${smsArg(groupKey)}, ${a.id})">Save and open the JV</button>
+      <button class="btn ghost" onclick="smsCreateJVs(${smsArg(groupKey)}, true, ${dArg})">Skip</button>
+      <button class="btn pri" onclick="smsStmtSave(${smsArg(groupKey)}, ${a.id}, ${dArg})">Save and open the JV</button>
     </div>`);
   const el = document.getElementById('smsStmtBal'); if(el){ el.focus(); el.select(); }
 }
-async function smsStmtSave(groupKey, accId){
+async function smsStmtSave(groupKey, accId, onlyDate){
   const el = document.getElementById('smsStmtBal');
   const ok = await saveStmtBalance(accId, el? el.value : '');
   if(ok===false) return;
-  await smsCreateJVs(groupKey, true);
+  await smsCreateJVs(groupKey, true, onlyDate);
 }
-async function smsCreateJVs(groupKey, balanceAsked){
+// v5.33 (#156): one date at a time (the other dates stay in the inbox, no drafts); the bank balance is asked once per
+// account until that account has nothing left waiting, and every date still opens with the reconcile bar.
+let smsBalAsked = new Set();
+async function smsCreateJVs(groupKey, balanceAsked, onlyDate){
   if(blockIfSyncing()) return;
   const {jvs, netted, group} = smsBuildJVs(groupKey);
   if(!group){ toast('That group is no longer waiting', true); return; }
   if(!group.acc){ toast('Choose this group’s LedgerOS account first', true); return; }
   const bank = jvs.length? smsReconcileAcc(group.acc) : null;
-  if(bank && !balanceAsked){ openSmsStmtPrompt(groupKey, bank.id); return; }
+  if(bank && !balanceAsked && !smsBalAsked.has(bank.id)){ openSmsStmtPrompt(groupKey, bank.id, onlyDate); return; }
+  if(bank) smsBalAsked.add(bank.id);
   const busy = (jvDraft.lines||[]).some(l=>!jvIsBlankLine(l));
   if(jvs.length && busy && !confirm('The JV you are typing will be saved as a draft first. Continue?')) return;
   if(jvs.length && busy) await saveJVDraft();
   if(netted.length) await smsSetStatus(netted, 'netted');
-  const [first, ...rest] = jvs;
-  for(const j of rest){
-    const draft = {id: nextDraftId(), date: j.date, lines: j.lines.map(l=>({acc:l.acc, descr:l.descr, amt:l.amt, smsId:l.smsId})), savedAt: nowISO()};
-    jvDrafts.push(draft);
-    saveJVDraftsList();
-    await syncWrite('pd_drafts','upsert',{id:draft.id, entry_date:draft.date, lines:draft.lines, saved_at:draft.savedAt}, null);
-  }
+  const first = onlyDate? jvs.find(j=>j.date===onlyDate) : jvs[0];
+  const left = jvs.length - (first? 1 : 0);
   if(first){ jvDraft = {date:first.date, lines:first.lines.map(l=>Object.assign(freshLine(), l))}; jvBalanceCheckSelected = new Set(); }
   if(first && bank) reconcileAcc = bank.id;
   closeModal();
   if(screen!=='newjv') go('newjv'); else renderNewJV();
   const parts = [];
   if(first) parts.push(fmtDateShort(first.date)+' is open');
-  if(rest.length) parts.push(rest.length+' more date'+(rest.length===1?'':'s')+' saved under Drafts');
+  if(left) parts.push(left+' more date'+(left===1?'':'s')+' wait in the SMS inbox');
   if(netted.length) parts.push(netted.length+' SMS cancelled out');
   toast(parts.join(' · ')+(first? '. Pick the missing accounts, check, then post.' : ''));
 }
@@ -6982,9 +7007,19 @@ function smsRowHTML(s, actions){
     <td>${esc(smsDescr(s))}<div class="mut" style="font-size:11px">${esc(extra)}</div></td>
     <td class="num mono">${amtTxt}</td><td style="white-space:nowrap;text-align:right">${actions}</td></tr>`;
 }
+// v5.33 (#156): with several dates, the group's SMS are listed per date (oldest first), each date with its own Create JV.
+function smsRowsByDate(g, netted, split, rowFn){
+  if(!split) return g.rows.map(rowFn).join('');
+  return [...new Set(g.rows.map(r=>r.date))].sort().map(d=>{
+    const rs = g.rows.filter(r=>r.date===d), live = rs.filter(r=>!netted.has(r.id)).length;
+    return `<tr data-smsdate="${esc(d)}"><td colspan="9" style="padding-top:10px"><b>${esc(fmtDateShort(d))}</b> <span class="mut">${rs.length} SMS</span>${live? ` <button class="btn pri sm" ${g.acc?'':'disabled'} onclick="smsCreateJVs(${smsArg(g.key)}, false, ${smsArg(d)})">Create JV</button>` : ''}</td></tr>` + rs.map(rowFn).join('');
+  }).join('');
+}
 function openSmsInbox(){
   if(!smsAutoClearBusy && smsAlreadyPostedMatches().length){ smsAutoClear().then(n=>{ if(n && document.querySelector('#modalRoot .modal')) openSmsInbox(); }).catch(()=>{}); }
   const groups = smsGroups();
+  // #156: forget "balance asked" for an account once nothing of it is waiting, so the next batch asks again
+  [...smsBalAsked].forEach(id=>{ if(!groups.some(g=>{ const b = g.acc? smsReconcileAcc(g.acc) : null; return b && b.id===id; })) smsBalAsked.delete(id); });
   const accOpts = () => D.accounts.filter(a=>[1,2].includes(firstDigit(a.id)) && a.status!=='Inactive')
     .map(a=>`<option value="${a.id}">${a.id} · ${esc(accShort(a.id))}</option>`).join('');
   const done = (D.smsInbox||[]).filter(s=>s.status!=='pending' && s.status!=='review' && s.status!=='matched').sort((a,b)=>(b.date+' '+b.time).localeCompare(a.date+' '+a.time));
@@ -7003,15 +7038,15 @@ function openSmsInbox(){
             : `<div style="margin-top:4px"><select class="sms-acc-pick" onchange="setSmsAccount(${smsArg(g.tokens[0])}, this.value).then(openSmsInbox)"><option value="">Which LedgerOS account is ${esc(g.tokens[0])}?</option>${accOpts()}</select></div>`}
         </div>
         ${g.acc? `<button class="btn ghost sm" title="Send this card or account to a different LedgerOS account" onclick="smsMapOpen=true; openSmsInbox()">✎ Change</button>` : ''}
-        <button class="btn pri sm" ${g.acc?'':'disabled'} onclick="smsCreateJVs(${smsArg(g.key)})">${dates>1? 'Create '+dates+' JVs' : 'Create JV'}</button>
+        ${dates>1? `<span class="mut" style="font-size:12px">${dates} dates: one JV each, below</span>` : `<button class="btn pri sm" ${g.acc?'':'disabled'} onclick="smsCreateJVs(${smsArg(g.key)})">Create JV</button>`}
       </div>
-      <table style="margin-top:8px"><tbody>${g.rows.map(s=>smsRowHTML(s, netted.has(s.id)? '<span class="pill">cancels out</span>'
-        : `<button class="btn ghost sm" onclick="smsCopy(${s.id})">Copy</button> <button class="btn ghost sm" onclick="smsDismiss(${s.id})">Dismiss</button>`)).join('')}</tbody></table>
+      <table style="margin-top:8px"><tbody>${smsRowsByDate(g, netted, dates>1, s=>smsRowHTML(s, netted.has(s.id)? '<span class="pill">cancels out</span>'
+        : `<button class="btn ghost sm" onclick="smsCopy(${s.id})">Copy</button> <button class="btn ghost sm" onclick="smsDismiss(${s.id})">Dismiss</button>`))}</tbody></table>
     </div>`;
   };
   showModal(`
     <h3>📩 SMS inbox</h3>
-    <p class="mut" style="font-size:12px">Bank SMS logged by your iPhone, grouped by account. Create JV builds one JV per SMS date, each SMS on its own line with the other half ready for you to pick its account. Nothing is posted until you post it.</p>
+    <p class="mut" style="font-size:12px">Bank SMS logged by your iPhone, grouped by account. Each SMS date gets its own JV (its own Create JV button), each SMS on its own line with the other half ready for you to pick its account. Nothing is posted until you post it.</p>
     <div class="row" style="justify-content:space-between;align-items:center"><span class="mut">${waiting} waiting${inJVs? ' · '+inJVs+' already in a JV or draft' : ''}</span><button class="btn ghost sm" onclick="refreshSmsInbox()">↻ Refresh</button></div>
     ${smsNeedsLookHTML()}
     ${groups.map(groupHTML).join('') || '<div class="empty" style="padding:18px">No SMS waiting</div>'}
@@ -8945,12 +8980,69 @@ function mrGoTo(id){
 // v5.23 (#122): investments in the Month review: every platform with something in it, how fresh its prices and
 // units / value are, the action that updates it, and a "done this month" tick (monthReview.invDone[YYYY-MM] = [ids]).
 // (#127c) plus each Reconcile line's difference.
+// v5.33 (#159): the monthly investment update. From the 1st, a Needs you item opens one window: it refreshes prices, reads
+// every wallet and Binance and saves their units, then lists what is left (the Month review investments step). Once every
+// platform is updated this month, a snapshot of everything is saved (one per month, id yyyymm, so devices never duplicate it).
+function invSnapshotRow(r){ return {id:r.id, month:r.month, taken_at:r.takenAt||null, data:r.data||{}}; }
+function invMonthSnapshot(mk){ return (D.invSnapshots||[]).find(x=>x.month===mk) || null; }
+function invBuildSnapshotData(){
+  const state = invCashState(null).state;
+  const all = invOwnerHoldings('all', state).filter(h=>h.hasAnything), t = invHoldingsTotals(all);
+  return {fx: getInvFxRate(),
+    total: {valueSar:t.valueSar, costSar:t.costSar, cashUsd:t.cashUsd, cashSar:t.cashSar},
+    owners: (D.invOwners||[]).map(o=>{ const x = invHoldingsTotals(invOwnerHoldings(o.id, state).filter(h=>h.hasAnything)); return {id:o.id, name:o.name, self:!!o.isSelf, valueSar:x.valueSar, costSar:x.costSar, cashUsd:x.cashUsd, cashSar:x.cashSar}; }),
+    platforms: all.map(h=>({id:h.platform.id, name:h.platform.name, robo:!!h.robo, valueSar:h.valueSar, costSar:h.costSar, cashUsd:h.cashUsd+h.stableUsd,
+      positions:(h.positions||[]).map(r=>({id:r.pos.id, name:r.pos.name, ticker:r.pos.ticker||'', units:r.units, price: r.hasValuation? r.price : null, valueSar:r.valueSar, costSar:r.costSar, plSar:r.valueSar-r.costSar, excluded:!!r.excluded}))}))};
+}
+let invSnapBusy = false;
+async function invMonthlySnapshotIfReady(){
+  const mk = todayStr().slice(0,7);
+  if(invSnapBusy || invMonthSnapshot(mk)) return false;
+  const rows = mrInvRows();
+  if(!rows.length || rows.some(r=>!r.done)) return false;
+  invSnapBusy = true;
+  try{
+    const rec = {id: Number(mk.replace('-','')), month: mk, takenAt: todayStr(), data: invBuildSnapshotData(), updated_at:null};
+    D.invSnapshots = (D.invSnapshots||[]).filter(x=>x.month!==mk).concat([rec]);
+    persistLocal();
+    await syncWrite('pd_inv_snapshots', 'upsert', invSnapshotRow(rec), null);
+    toast('\ud83d\udcf8 Investment snapshot saved for '+monthLabel(mk));
+  } finally { invSnapBusy = false; }
+  return true;
+}
+let invMonthlyRunning = false;
+async function openInvMonthlyUpdate(){
+  if(invMonthlyRunning) return;
+  invMonthlyRunning = true;
+  showModal(`<div id="invMonthly"><h3 style="margin-top:0">\ud83d\udcc5 Monthly update \u2014 ${esc(monthLabel(todayStr().slice(0,7)))}</h3><div class="mut">Refreshing prices and reading your wallets and Binance\u2026</div></div>`, true);
+  try{
+    try{ await refreshInvPrices({quiet:true}); }catch(e){}
+    for(const p of (D.invPlatforms||[]).filter(invHasUnitSource)){
+      try{
+        if(invIsBinance(p)) await invReadBinance(p.id); else await invReadPlatformWallet(p.id);
+        const r = invWalletResults[p.id];
+        if(r && r.rows && r.rows.length && !r.error){ const keep = r; await saveInvWalletUnits(p.id); invWalletResults[p.id] = keep; }
+      }catch(e){}
+    }
+  } finally { invMonthlyRunning = false; }
+  await invMonthlySnapshotIfReady();
+  renderInvMonthlyUpdate();
+}
+function renderInvMonthlyUpdate(){
+  const mk = todayStr().slice(0,7), snap = invMonthSnapshot(mk), rows = mrInvRows(), left = rows.filter(r=>!r.done).length;
+  showModal(`<div id="invMonthly"><div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">\ud83d\udcc5 Monthly update \u2014 ${esc(monthLabel(mk))}</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
+    <div class="mut" style="font-size:12.5px;margin:6px 0 10px" data-invmonthly-status="1">${snap? `\u2713 Everything updated. Snapshot saved on ${esc(snap.takenAt||'')} (prices, units, cash, values and totals per platform and per person).`
+      : `Prices refreshed and wallets / Binance read. ${left} platform${left===1?'':'s'} still need${left===1?'s':''} you: update ${left===1?'it':'them'}, or tick one you can\u2019t update. The snapshot is taken as soon as all are done.`}</div>
+    ${mrInvestHTML()}</div>`, true);
+}
 function mrInvRows(){
   const hs = invOwnerHoldings('all', invCashState(null).state).filter(h=>h.hasAnything);
   const done = (mrState().invDone||{})[todayStr().slice(0,7)] || [];
   return hs.map(h=>{
     const p = h.platform, fr = h.robo? null : invBoxFreshness(h), wallets = h.robo? [] : invPlatformWallets(p.id);
-    return {p, robo:h.robo, fr, wallet: wallets.length>0, done: done.map(Number).includes(p.id),
+    const start = todayStr().slice(0,7)+'-01', ticked = done.map(Number).includes(p.id);
+    const auto = h.robo? !!(p.roboValueDate && p.roboValueDate>=start) : !!(fr.checked && fr.checked>=start && fr.oldest && fr.oldest>=start);   // v5.33 (#159)
+    return {p, robo:h.robo, fr, wallet: wallets.length>0 || invIsBinance(p), done: ticked || auto, ticked, auto,
       valueDate: h.robo? (p.roboValueDate||null) : null};
   });
 }
@@ -8959,7 +9051,9 @@ async function mrInvToggleDone(pid, on){
   const cur = new Set((all[mk]||[]).map(Number)); if(on) cur.add(pid); else cur.delete(pid);
   all[mk] = [...cur];
   await mrSaveState({invDone: all});
-  renderMonthReview();
+  await invMonthlySnapshotIfReady();
+  if(screen==='monthreview') renderMonthReview();
+  if(document.getElementById('invMonthly')) renderInvMonthlyUpdate();
 }
 function mrInvGoRecon(pid, check){
   setInvView('recon'); go('investments');
@@ -12786,7 +12880,7 @@ async function invReadPlatformWallet(platformId){
   const wallets = invPlatformWallets(platformId);
   const cfg = getInvPriceCfg();
   const positions = invPositionsForPlatform(platformId).filter(p=>p.status!=='Closed');
-  const rows = [], errors = [];
+  const rows = [], errors = [], addable = [];
   let untracked = 0;
   for(const w of wallets){
     const mine = positions.filter(p=>{ const l = cfg.links[p.id]; return l && l.kind==='dex' && l.chain===w.chain; });
@@ -12800,11 +12894,16 @@ async function invReadPlatformWallet(platformId){
       if(w.chain==='solana'){
         const known = new Set(mine.map(p=>cfg.links[p.id].address));
         untracked += Object.keys(bal).filter(m=>!known.has(m) && bal[m]>0).length;
+        // v5.33 (#158): a token linked to a coin on another platform can be added here in one click
+        Object.keys(bal).filter(m=>!known.has(m) && bal[m]>0).forEach(m=>{
+          const src = (D.invPositions||[]).find(p=>p.platformId!==platformId && cfg.links[p.id] && cfg.links[p.id].chain==='solana' && cfg.links[p.id].address===m);
+          if(src && !addable.some(x=>x.src.id===src.id || (src.ticker && x.src.ticker===src.ticker))) addable.push({mint:m, units:bal[m], src});
+        });
       }
     }catch(e){ errors.push(INV_CHAINS[w.chain].label+': '+(e && e.message || e)); }
   }
-  invWalletResults[platformId] = {rows, untracked, error: errors.join(' · '), at: nowISO()};
-  if(!rows.length && !errors.length) invWalletResults[platformId].error = 'No positions on this platform are linked to a token address on that chain yet (⚙ Setup → 💹 Price links).';
+  invWalletResults[platformId] = {rows, untracked, addable, error: errors.join(' · '), at: nowISO()};
+  if(!rows.length && !errors.length && !addable.length) invWalletResults[platformId].error = 'No positions on this platform are linked to a token address on that chain yet (⚙ Setup → 💹 Price links).';
   return invWalletResults[platformId];
 }
 const invWalletDiffers = x => Math.abs(x.wallet - x.tracker) > Math.max(1e-6, Math.abs(x.tracker)*1e-6);
@@ -12956,6 +13055,16 @@ async function saveInvWalletUnits(platformId){
   toast((r.binance? 'Binance units and cash' : 'Wallet units')+' saved as statement units ✓');
   renderInvestmentsPage();
 }
+// v5.33 (#158): the same coin (name, ticker) as a new position on this platform; the price link is per coin, so it applies.
+async function invAddWalletCoin(platformId, srcId){
+  const src = invPositionById(srcId); if(!src) return;
+  if(invPositionsForPlatform(platformId).some(p=>p.status!=='Closed' && p.ticker && p.ticker===src.ticker)){ toast(src.ticker+' is already on this platform', true); return; }
+  const pos = {id: invNextId(D.invPositions), platformId, name: src.name, ticker: src.ticker||'', assetClass: src.assetClass||'Crypto', currency: src.currency||'USD', status:'Active', stmtUnits:null, stmtDate:null, updated_at:null};
+  D.invPositions.push(pos);
+  await persistInvPosition(pos);
+  toast((pos.ticker||pos.name)+' added to '+((invPlatformById(platformId)||{}).name||'this platform')+' \u2713');
+  await checkInvPlatformWallet(platformId);
+}
 function invWalletPanelHTML(p, open){
   const wallets = invPlatformWallets(p.id);
   const r = invWalletResults[p.id];
@@ -12978,7 +13087,8 @@ function invWalletPanelHTML(p, open){
     <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">${bin? 'Save Binance units and cash as statement figures' : 'Save wallet units as statement units'}</button>
       ${bin? `<button class="btn ghost sm" data-binfind="${p.id}" onclick="invBinanceFindTrades(${p.id})">\ud83d\udcdc Find the trades</button>` : ''}
       ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other coin${r.untracked===1?'':'s'} ${bin? 'on Binance' : 'in this wallet'} aren't in the tracker.</span>` : ''}</div>` : '';
-  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + body + (bin? invBinanceFoundHTML(p.id) : invWalletTxsHTML(p.id));
+  const add = (r.addable||[]).length? `<div class="inv-wallet-add" style="margin:6px 0;font-size:12px"><span class="mut">In this wallet, tracked on another platform:</span> ${r.addable.map(x=>`<span style="white-space:nowrap">${esc(x.src.ticker||x.src.name)} ${invFmtUnits(x.units)} <button class="btn ghost sm" data-walletadd="${x.src.id}" onclick="invAddWalletCoin(${p.id}, ${x.src.id})">+ Add to ${esc(p.name)}</button></span>`).join(' ')}</div>` : '';
+  return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + add + body + (bin? invBinanceFoundHTML(p.id) : invWalletTxsHTML(p.id));
 }
 
 // ---------- platform boxes (👤 Mine) ----------
@@ -13248,6 +13358,14 @@ function invNeedsYouItems(){
     const fx = getInvFxRate();
     const state = invCashState(null).state;
     const cashUsd = Object.keys(state).reduce((s,pid)=>s+Object.values(state[pid]||{}).reduce((a,o)=>a+(Number((o||{}).usd)||0),0),0);
+    { const mk = todayStr().slice(0,7);   // v5.33 (#159)
+      if(!invMonthSnapshot(mk)){
+        const rows = mrInvRows(), done = rows.filter(r=>r.done).length;
+        if(rows.length){
+          items.push({key:'month'+mk, icon:'\ud83d\udcc5', text:`Monthly update for ${esc(monthLabel(mk))}: ${done} of ${rows.length} platform${rows.length===1?'':'s'} updated; the snapshot is saved when all are done`, btn:'Start', act:'openInvMonthlyUpdate()'});
+          if(done===rows.length) invMonthlySnapshotIfReady().then(t=>{ if(t && screen==='investments') renderInvestmentsPage(); }).catch(()=>{});
+        }
+      } }
     if(cashUsd>1) items.push({key:'cash', icon:'💵', text:`$${fmt2(cashUsd)} cash waiting on platforms (${money(cashUsd*fx)} SAR)`, btn:'🔁 Buy', act:"openInvCashBuyPicker()"});
     const pricable = invPricablePositions();
     const stale = pricable.filter(p=>{ const v = invLatestValuation(p.id); return !v || invDaysSince(v.date)>INV_PRICE_STALE_DAYS; });
@@ -18312,6 +18430,30 @@ function renderCashFlowPanel(months, currentMonth){
     </div>
   </div>`;
 }
+// v5.33 (#157): copy a typed figure to the same account's later months up to the last month shown (overwrite after a
+// confirm). Months planned by Provisions, Budget or a Smart Rule are not typed cells and are left alone.
+async function fcCopyForward(accId, m, sign){
+  if(blockIfSyncing()) return;
+  const a = D.accounts.find(x=>x.id===accId), el = document.querySelector(`[data-fcin="${accId}_${m}"]`);
+  if(!a || !el) return;
+  const raw = String(el.value).replace(/,/g,'').trim();
+  if(raw==='' || isNaN(Number(raw))){ toast('Type a figure first', true); return; }
+  const cm = todayStr().slice(0,7), v = Number(raw)*sign, plans = D.forecastPlans[accId] || {};
+  const later = forecastMonthsWindow().filter(x=>x>m);
+  if(!later.length){ toast('This is the last month shown', true); return; }
+  const targets = later.filter(x=>computeForecastCell(a, x, cm).editable);
+  const differ = targets.filter(x=>plans[x]!==undefined && Number(plans[x])!==v).length, skipped = later.length - targets.length;
+  if(!targets.length){ toast('No later month here takes a typed figure', true); return; }
+  if(!confirm(`Copy ${money0(Number(raw))} to ${targets.length} month${targets.length===1?'':'s'}, up to ${monthLabel(targets[targets.length-1])}?`
+    + (differ? `\n${differ} already ha${differ===1?'s':'ve'} a different figure and will be overwritten.` : '')
+    + (skipped? `\n${skipped} month${skipped===1?' is':'s are'} planned by Provisions, Budget or a rule and stay${skipped===1?'s':''} as ${skipped===1?'it is':'they are'}.` : ''))) return;
+  D.forecastPlans[accId] = Object.assign({}, plans);
+  [m, ...targets].forEach(x=>{ D.forecastPlans[accId][x] = v; });
+  persistLocal();
+  await syncWrite('pd_forecast_plans', 'upsert', {id:1, plans:D.forecastPlans}, null);
+  renderForecastBody();
+  toast(`Copied to ${targets.length} month${targets.length===1?'':'s'} \u2713`);
+}
 function renderForecastCell(a, m, currentMonth, noDecimals, opts){
   opts = opts || {};
   const sign = opts.reverse? -1 : 1;
@@ -18329,8 +18471,8 @@ function renderForecastCell(a, m, currentMonth, noDecimals, opts){
   if(c.editable && !opts.readOnly){
     const raw = (c.plan!==null && c.plan!==undefined)? c.plan*sign : '';
     const displayFmt = noDecimals? (v=>v===''?'':money0(v)) : fmt2;
-    return `<td class="num" style="${cellBg}" title="${esc(title)}"><input type="text" inputmode="decimal" class="num" style="width:100px" value="${raw!==''?displayFmt(raw):''}" placeholder="—" data-raw="${raw}"
-      onfocus="this.value=this.dataset.raw" onblur="setManualPlan(${a.id},'${m}',this.value===''?'':(Number(String(this.value).replace(/,/g,''))*(${sign})))"></td>`;
+    return `<td class="num fc-cell" style="${cellBg}" title="${esc(title)}"><input type="text" inputmode="decimal" class="num" style="width:100px;padding-right:20px" data-fcin="${a.id}_${m}" value="${raw!==''?displayFmt(raw):''}" placeholder="—" data-raw="${raw}"
+      onfocus="this.value=this.dataset.raw" onblur="setManualPlan(${a.id},'${m}',this.value===''?'':(Number(String(this.value).replace(/,/g,''))*(${sign})))"><button class="fc-copy noprint" tabindex="-1" title="Copy this figure to every later month shown" aria-label="Copy to every later month" onmousedown="event.preventDefault(); fcCopyForward(${a.id}, '${m}', ${sign})">\u21e5</button></td>`;
   }
   let badge = c.conflict? ` <span class="badge neg click" title="Provisions and Budget disagree — click to resolve" onclick="openForecastConflictResolver(${a.id},'${m}')">⚠</span>` : '';
   let provTag = (c.source==='provisions')? ` <span class="badge pos click" title="Sourced from Provisions — click to open" onclick="openProvisionSourceFor(${a.id},'${m}')">P</span>` : '';
@@ -19274,7 +19416,7 @@ async function restoreFromBackup(parsed){
         customForecastCategories: parsed.customForecastCategories||[],
         invOwners: parsed.invOwners||[], invPlatforms: parsed.invPlatforms||[], invPositions: parsed.invPositions||[],
         invTransactions: parsed.invTransactions||[], invValuations: parsed.invValuations||[], invCashMovements: parsed.invCashMovements||[],
-        invSettings: parsed.invSettings||{}, uiPrefs: parsed.uiPrefs||{}, forecastSnapshots: parsed.forecastSnapshots||[], invRoboValueLog: parsed.invRoboValueLog||[], smsInbox: parsed.smsInbox||[], loans: parsed.loans||[] };
+        invSettings: parsed.invSettings||{}, uiPrefs: parsed.uiPrefs||{}, forecastSnapshots: parsed.forecastSnapshots||[], invRoboValueLog: parsed.invRoboValueLog||[], smsInbox: parsed.smsInbox||[], invSnapshots: parsed.invSnapshots||[], loans: parsed.loans||[] };
   // Backfills anything still missing (an older backup file predating a module, for instance) with
   // the same defaults the app boots with, rather than leaving it undefined — this is exactly the
   // normalization step that was missing here before, which crashed the cloud-restore path below
@@ -19322,6 +19464,7 @@ async function restoreFromBackup(parsed){
   await SB.from('pd_inv_robo_value_log').delete().neq('id',-1); bump('Clearing old data');
   await SB.from('pd_sms_inbox').delete().neq('id',-1); bump('Clearing old data');
   await SB.from('pd_loans').delete().neq('id',-1); bump('Clearing old data');
+  await SB.from('pd_inv_snapshots').delete().neq('id',-1); bump('Clearing old data');
   if(D.accounts.length) await insertWithRetry('pd_accounts', D.accounts.map(a=>({id:a.id,descr:a.descr,balance:a.balance,direction:a.direction,acc_type:a.acc_type,name:a.name,cf_type:a.cf_type,category:a.category,status:a.status,is_savings:!!a.is_savings,is_allocatable:!!a.is_allocatable,is_credit_card:!!a.is_credit_card,credit_limit:a.credit_limit,stmt_balance:a.stmt_balance,stmt_available:a.stmt_available,stmt_date:a.stmt_date,forecast_category:a.forecast_category||null})));
   bump('Restoring accounts');
   if(D.templates.length) await insertWithRetry('pd_templates', D.templates.map(t=>({id:t.id,name:t.name,lines:t.lines})));
@@ -19355,6 +19498,7 @@ async function restoreFromBackup(parsed){
   if((D.invRoboValueLog||[]).length) await insertWithRetry('pd_inv_robo_value_log', D.invRoboValueLog.map(r=>({id:r.id, platform_id:r.platformId, entry_date:r.date, value:Number(r.value)||0})));
   if((D.smsInbox||[]).length) await insertWithRetry('pd_sms_inbox', D.smsInbox.map(smsToRow));
   if((D.loans||[]).length) await insertWithRetry('pd_loans', D.loans.map(loanToRow));
+  if((D.invSnapshots||[]).length) await insertWithRetry('pd_inv_snapshots', D.invSnapshots.map(invSnapshotRow));
   bump('Restoring Investments');
   bump('Restoring Custom Categories');
   if(Object.keys(D.forecastPlans).length) await insertWithRetry('pd_forecast_plans', [{id:1, plans:D.forecastPlans}]);
@@ -19971,6 +20115,7 @@ async function clearEverything(){
     await SB.from('pd_inv_robo_value_log').delete().neq('id',-1);
     await SB.from('pd_sms_inbox').delete().neq('id',-1);
     await SB.from('pd_loans').delete().neq('id',-1);
+    await SB.from('pd_inv_snapshots').delete().neq('id',-1);
   }
   go('dashboard');
 }
