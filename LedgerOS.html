@@ -638,12 +638,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.35.0';
+const APP_VERSION = '5.36.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.36.0', date:'2026-11-23', changes:[
+    'Investments: KuCoin, MEXC, LBank and Poloniex now work like Binance, with your read-only keys. On each of those platforms, Check reads the balances (KuCoin: Funding and Trading together), Save puts them in as the statement units and cash, and \ud83d\udcdc Find the trades lists the trades, deposits and withdrawals behind a difference, each with Log it. The Monthly update reads them too.',
+  ]},
   {version:'5.35.0', date:'2026-11-23', changes:[
     'Real Estate is now where you plan your buildings. Past months show the ledger; from this month on each row has a box to type in, and what you type is written into Provisions, so the Forecast and Generate JV follow. Under each row, \u201cMoney goes to\u201d lists the other side of the JV: one line or several, each with an amount a month, and one line takes the rest.',
     'Real Estate: \u201cTake over from Provisions\u201d moves a building\u2019s existing Provisions groups onto the page in one click. Every figure stays as it is, past months included. Those groups are then locked in Provisions, with an \u201cEdit in Real Estate\u201d button.',
@@ -9044,7 +9047,7 @@ function renderInvMonthlyUpdate(){
   const mk = todayStr().slice(0,7), snap = invMonthSnapshot(mk), rows = mrInvRows(), left = rows.filter(r=>!r.done).length;
   showModal(`<div id="invMonthly"><div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">\ud83d\udcc5 Monthly update \u2014 ${esc(monthLabel(mk))}</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
     <div class="mut" style="font-size:12.5px;margin:6px 0 10px" data-invmonthly-status="1">${snap? `\u2713 Everything updated. Snapshot saved on ${esc(snap.takenAt||'')} (prices, units, cash, values and totals per platform and per person).`
-      : `Prices refreshed and wallets / Binance read. ${left} platform${left===1?'':'s'} still need${left===1?'s':''} you: update ${left===1?'it':'them'}, or tick one you can\u2019t update. The snapshot is taken as soon as all are done.`}</div>
+      : `Prices refreshed and wallets / exchanges read. ${left} platform${left===1?'':'s'} still need${left===1?'s':''} you: update ${left===1?'it':'them'}, or tick one you can\u2019t update. The snapshot is taken as soon as all are done.`}</div>
     ${mrInvestHTML()}</div>`, true);
 }
 function mrInvRows(){
@@ -12786,7 +12789,12 @@ let invWalletResults = {};   // platformId → {rows:[{pos, tracker, wallet}], u
 // v5.31 (#151): Binance Spot balances through the Edge Function binance-balances (signed on Supabase's side with his
 // read-only key; must run outside the US, hence x-region). Results use the wallet check's table, save and + Log buttons.
 // shortcut: the Binance platform is found by its name; add a setting if he ever has two Binance accounts.
-function invIsBinance(p){ return !!p && !p.isRobo && /binance/i.test(p.name||''); }
+// v5.36 (#165): KuCoin, MEXC, LBank and Poloniex work the same way through the Edge Function exchange-balances (his
+// read-only keys as its secrets); invIsBinance now means "an exchange with a read-only key", found by platform name.
+const INV_EXCHANGES = {binance:'Binance', kucoin:'KuCoin', mexc:'MEXC', lbank:'LBank', poloniex:'Poloniex'};
+function invExchange(p){ const m = p && !p.isRobo && /binance|kucoin|mexc|lbank|poloniex/i.exec(p.name||''); return m? m[0].toLowerCase() : null; }
+function invExLabel(p){ return INV_EXCHANGES[invExchange(p)] || 'Binance'; }
+function invIsBinance(p){ return !!invExchange(p); }
 const INV_STABLES = ['USDT', 'USDC'];
 // {COIN: units}. Simple Earn flexible shows in Spot as "LD"+coin (151e): counted as that coin when it is a stablecoin
 // or a coin on this platform (so a real coin such as LDO is left alone).
@@ -12798,18 +12806,20 @@ function invBinanceFold(bal, tickers){
   }
   return out;
 }
-async function invBinanceCall(input){
+async function invBinanceCall(input, ex){
+  ex = ex || 'binance';
   let url = '', key = '';
   try{ url = (localStorage.getItem('sb_url')||'').replace(/\/+$/, ''); key = localStorage.getItem('sb_key')||''; }catch(e){}
   if(!url || !key) throw new Error('not connected to Supabase on this device');
-  const r = await fetch(url+'/functions/v1/binance-balances', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key, 'x-region':'eu-central-1'}, body: JSON.stringify(input||{})});
+  const r = await fetch(url+'/functions/v1/'+(ex==='binance'? 'binance-balances' : 'exchange-balances'), {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+key, apikey:key, 'x-region':'eu-central-1'},
+    body: JSON.stringify(ex==='binance'? (input||{}) : Object.assign({exchange:ex}, input||{}))});
   const d = await r.json().catch(()=>({}));
-  if(!r.ok || !d || d.error) throw new Error((d && d.error) || ('the Binance check said '+r.status));
+  if(!r.ok || !d || d.error) throw new Error((d && d.error) || ('the '+INV_EXCHANGES[ex]+' check said '+r.status));
   return d;
 }
-async function invBinanceBalances(){
-  const d = await invBinanceCall({});
-  if(!d.balances) throw new Error('the Binance check sent no balances');
+async function invBinanceBalances(ex){
+  const d = await invBinanceCall({}, ex);
+  if(!d.balances) throw new Error('the '+INV_EXCHANGES[ex||'binance']+' check sent no balances');
   return d.balances;
 }
 // v5.32 (#154): for each coin whose Binance units differ from the tracker, read its Spot trades (coin/USDT and coin/USDC),
@@ -12826,6 +12836,7 @@ function invBinanceTradeEffect(t, coin, quote){
 }
 async function invBinanceFindTrades(platformId){
   const r = invWalletResults[platformId]; if(!r || !r.binance) return;
+  const ex = invExchange(invPlatformById(platformId)) || 'binance';
   invBinanceFound[platformId] = {loading:true, rows:[], notes:[]};
   if(screen==='investments') renderInvestmentsPage();
   const found = {loading:false, rows:[], notes:[], error:''}, now = Date.now();
@@ -12836,7 +12847,7 @@ async function invBinanceFindTrades(platformId){
       let net = 0, n = 0;
       for(let day = 0; day<INV_BINANCE_DAYS && !(n && Math.abs(net-diff)<=tol); day++){
         for(const q of INV_STABLES){
-          const d = await invBinanceCall({action:'trades', symbol:coin+q, startTime: now-(day+1)*INV_DAY_MS, endTime: now-day*INV_DAY_MS});
+          const d = await invBinanceCall({action:'trades', symbol:coin+q, startTime: now-(day+1)*INV_DAY_MS, endTime: now-day*INV_DAY_MS}, ex);
           (d.rows||[]).forEach(t=>{ const e = invBinanceTradeEffect(t, coin, q); net += e.units; n++;
             found.rows.push({type:'trade', pos:x.pos, coin, quote:q, time:t.time, date:invLocalDate(t.time), buy:t.buy, units:Math.abs(e.units), usd:e.usd, price:t.price, bnbFee: t.feeAsset==='BNB'}); });
         }
@@ -12845,13 +12856,13 @@ async function invBinanceFindTrades(platformId){
     }
     if(typeof r.cashUsd==='number' && Math.abs(r.cashUsd - invPlatformCash(platformId).totalUsd)>=0.005){
       for(const action of ['deposits','withdrawals']){
-        const d = await invBinanceCall({action, startTime: now-INV_BINANCE_DAYS*INV_DAY_MS, endTime: now});
+        const d = await invBinanceCall({action, startTime: now-INV_BINANCE_DAYS*INV_DAY_MS, endTime: now}, ex);
         (d.rows||[]).filter(m=>INV_STABLES.includes(String(m.coin).toUpperCase())).forEach(m=>found.rows.push({type: action==='deposits'? 'deposit' : 'withdrawal',
           coin:String(m.coin).toUpperCase(), time:m.time, date:invLocalDate(m.time), usd: Number(m.amount) + (action==='withdrawals'? Number(m.fee)||0 : 0)}));
       }
     }
     found.rows.sort((a,b)=>b.time-a.time);
-  }catch(e){ found.error = 'Binance: '+(e && e.message || e); }
+  }catch(e){ found.error = INV_EXCHANGES[ex]+': '+(e && e.message || e); }
   invBinanceFound[platformId] = found;
   if(screen==='investments') renderInvestmentsPage();
   return found;
@@ -12863,7 +12874,7 @@ function invBinanceRowLogged(platformId, x){
 function invBinanceLog(platformId, i){
   const x = ((invBinanceFound[platformId]||{}).rows||[])[i]; if(!x) return;
   if(x.type==='trade'){
-    window._invTxPreset = {date:x.date, kind: x.buy? 'buy' : 'sell', units: Number(x.units.toPrecision(10)), usdAmount: Number(x.usd.toPrecision(8)), cashSide:'cash', note:'From Binance '+x.coin+'/'+x.quote};
+    window._invTxPreset = {date:x.date, kind: x.buy? 'buy' : 'sell', units: Number(x.units.toPrecision(10)), usdAmount: Number(x.usd.toPrecision(8)), cashSide:'cash', note:'From '+invExLabel(invPlatformById(platformId))+' '+x.coin+'/'+x.quote};
     openInvTxModal(x.pos.id);
     return;
   }
@@ -12871,20 +12882,21 @@ function invBinanceLog(platformId, i){
   const d = window._invCashDraft; if(!d) return;
   d.date = x.date; d.usdAmount = Math.round(x.usd*100)/100;
   if(d.owners && d.owners[0]) d.owners[0].usd = d.usdAmount;
-  d.note = 'From Binance ('+x.coin+')';
+  d.note = 'From '+invExLabel(invPlatformById(platformId))+' ('+x.coin+')';
   renderInvCashModal();
 }
 function invBinanceFoundHTML(platformId){
   const st = invBinanceFound[platformId];
   if(!st) return '';
-  if(st.loading) return '<div class="mut" style="font-size:12px;margin:6px 0">Reading your Binance trades\u2026</div>';
+  const lbl = invExLabel(invPlatformById(platformId));
+  if(st.loading) return '<div class="mut" style="font-size:12px;margin:6px 0">Reading your '+esc(lbl)+' trades\u2026</div>';
   const rows = st.rows.map((x,i)=>`<tr data-binrow="${i}"><td class="mono" style="white-space:nowrap">${esc(x.date)}</td>
       <td>${x.type==='trade'? `${x.buy? 'Buy' : 'Sell'} ${esc(x.coin)}` : `${x.type==='deposit'? 'Deposit' : 'Withdrawal'} ${esc(x.coin)}`}</td>
       <td class="num mono">${x.type==='trade'? invFmtUnits(x.units) : ''}</td>
       <td class="num mono">${x.type==='trade'? '@ '+invFmtPrice(x.price) : ''}</td>
       <td class="num mono">$${fmt2(x.usd)}${x.bnbFee? ' <span class="mut" title="Fee paid in BNB, not in this amount">+BNB fee</span>' : ''}</td>
       <td>${invBinanceRowLogged(platformId, x)? '<span class="mut" style="font-size:11px">looks logged</span>' : `<button class="btn ghost sm" data-binlog="${i}" onclick="invBinanceLog(${platformId}, ${i})">Log it</button>`}</td></tr>`).join('');
-  return `<div class="inv-binance-found" style="margin:6px 0"><div class="mut" style="font-size:11.5px">Binance Spot trades (USDT / USDC) behind the differences above, newest first; and USDT / USDC deposits and withdrawals when the cash differs. Log it opens the window filled in; nothing is saved until you save it.</div>
+  return `<div class="inv-binance-found" style="margin:6px 0"><div class="mut" style="font-size:11.5px">${esc(lbl)} trades (USDT / USDC) behind the differences above, newest first; and USDT / USDC deposits and withdrawals when the cash differs. Log it opens the window filled in; nothing is saved until you save it.</div>
     ${st.error? `<div class="r" style="font-size:12px">${esc(st.error)}</div>` : ''}
     ${st.notes.map(t=>`<div class="mut" style="font-size:11.5px">\u26a0 ${esc(t)}</div>`).join('')}
     ${rows? `<table style="font-size:12px;margin-top:4px"><tbody>${rows}</tbody></table>` : (st.error? '' : '<div class="mut" style="font-size:12px">No trades found.</div>')}</div>`;
@@ -12893,20 +12905,21 @@ async function invReadBinance(platformId){
   const positions = invPositionsForPlatform(platformId).filter(p=>p.status!=='Closed');
   const tick = p=>String(p.ticker||p.name||'').trim().toUpperCase();
   try{
-    const bal = invBinanceFold(await invBinanceBalances(), new Set(positions.map(tick)));
+    const ex = invExchange(invPlatformById(platformId)) || 'binance', raw = await invBinanceBalances(ex);
+    const bal = ex==='binance'? invBinanceFold(raw, new Set(positions.map(tick))) : raw;   // LD coins are Binance's
     const rows = positions.map(p=>({pos:p, tracker: computePositionState(p.id).totalUnits, wallet: Number(bal[tick(p)])||0}));
     // USDT/USDC held as a position count there; the rest is the platform's cash
     const asPositions = rows.filter(x=>invIsStablecoin(x.pos)).reduce((s,x)=>s+x.wallet, 0);
     const cashUsd = Math.round((INV_STABLES.reduce((s,c)=>s+(Number(bal[c])||0), 0) - asPositions)*100)/100;
     const known = new Set(positions.map(tick).concat(INV_STABLES));
     invWalletResults[platformId] = {rows, untracked: Object.keys(bal).filter(k=>!known.has(k)).length, error:'', at:nowISO(), binance:true, cashUsd};
-  }catch(e){ invWalletResults[platformId] = {rows:[], untracked:0, error:'Binance: '+(e && e.message || e), at:nowISO(), binance:true}; }
+  }catch(e){ invWalletResults[platformId] = {rows:[], untracked:0, error:invExLabel(invPlatformById(platformId))+': '+(e && e.message || e), at:nowISO(), binance:true}; }
   return invWalletResults[platformId];
 }
 function invHasUnitSource(p){ return !!p && (invPlatformWallets(p.id).length>0 || invIsBinance(p)); }
 async function checkInvPlatformWallet(platformId){
   if(invIsBinance(invPlatformById(platformId))){
-    toast('Reading Binance…');
+    toast('Reading '+invExLabel(invPlatformById(platformId))+'…');
     await invReadBinance(platformId);
     invReconExpandedPlatforms.add(platformId);
     renderInvestmentsPage();
@@ -13095,7 +13108,7 @@ async function saveInvWalletUnits(platformId){
     if(p){ p.stmtCashUsd = r.cashUsd; p.stmtDate = date; await persistInvPlatform(p); }
   }
   delete invWalletResults[platformId];
-  toast((r.binance? 'Binance units and cash' : 'Wallet units')+' saved as statement units ✓');
+  toast((r.binance? invExLabel(invPlatformById(platformId))+' units and cash' : 'Wallet units')+' saved as statement units ✓');
   renderInvestmentsPage();
 }
 // v5.33 (#158): the same coin (name, ticker) as a new position on this platform; the price link is per coin, so it applies.
@@ -13111,10 +13124,10 @@ async function invAddWalletCoin(platformId, srcId){
 function invWalletPanelHTML(p, open){
   const wallets = invPlatformWallets(p.id);
   const r = invWalletResults[p.id];
-  const bin = invIsBinance(p);
+  const bin = invIsBinance(p), lbl = invExLabel(p);
   const head = bin? `<div class="row noprint inv-wallet" data-walletplat="${p.id}" data-binance="${p.id}" style="gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 4px;font-size:12px">
-      <span class="mut">🟡 Binance Spot (read-only key)</span>
-      <button class="btn ghost sm" onclick="checkInvPlatformWallet(${p.id})">Check Binance</button></div>`
+      <span class="mut">🟡 ${esc(lbl)}${lbl==='Binance'? ' Spot' : ''} (read-only key)</span>
+      <button class="btn ghost sm" onclick="checkInvPlatformWallet(${p.id})">Check ${esc(lbl)}</button></div>`
     : `<div class="row noprint inv-wallet" data-walletplat="${p.id}" style="gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 4px;font-size:12px">
       <span class="mut">👛 ${wallets.length? wallets.map(w=>INV_CHAINS[w.chain].label+' '+esc(invShortAddr(w.address))).join(' · ') : 'No wallet set'}</span>
       ${wallets.length? `<button class="btn ghost sm" onclick="checkInvPlatformWallet(${p.id})">Check wallet</button>` : ''}
@@ -13122,14 +13135,14 @@ function invWalletPanelHTML(p, open){
       <button class="btn ghost sm" onclick="editInvPlatformWallet(${p.id})">${wallets.length? '✎' : '+ Wallet address'}</button></div>`;
   if(open===false) return head;   // v5.16 (#87): Hide collapses the wallet table and transactions too
   if(!r) return head + invWalletTxsHTML(p.id);
-  const body = r.rows.length? `<table style="font-size:12px;margin-top:4px"><thead><tr><th>Token</th><th class="num">Tracker</th><th class="num">${bin? 'Binance' : 'Wallet'}</th><th class="num">Difference</th></tr></thead><tbody>${r.rows.map(x=>{
+  const body = r.rows.length? `<table style="font-size:12px;margin-top:4px"><thead><tr><th>Token</th><th class="num">Tracker</th><th class="num">${bin? esc(lbl) : 'Wallet'}</th><th class="num">Difference</th></tr></thead><tbody>${r.rows.map(x=>{
       const diff = x.wallet - x.tracker, ok = Math.abs(diff) <= Math.max(1e-6, Math.abs(x.tracker)*1e-6);
       return `<tr data-walletpos="${x.pos.id}"><td>${esc(x.pos.ticker||x.pos.name)}</td><td class="num mono">${invFmtUnits(x.tracker)}</td><td class="num mono">${invFmtUnits(x.wallet)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : invFmtUnits(diff)+` <button class="btn ghost sm" data-walletlog="${x.pos.id}" title="Log a ${diff>0?'buy':'sell'} of the difference" onclick="invLogWalletDiff(${x.pos.id}, ${Math.round(diff*1e8)/1e8})">+ Log ${diff>0?'buy':'sell'}</button>`}</td></tr>`;
     }).join('')}${bin && typeof r.cashUsd==='number'? (()=>{ const tc = invPlatformCash(p.id).totalUsd, d = r.cashUsd - tc, ok = Math.abs(d)<0.005;
       return `<tr data-binancecash="${p.id}"><td>Cash (USDT + USDC)</td><td class="num mono">$${fmt2(tc)}</td><td class="num mono">$${fmt2(r.cashUsd)}</td><td class="num mono ${ok?'':'r'}">${ok? '✓' : '$'+fmt2(d)}</td></tr>`; })() : ''}</tbody></table>
-    <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">${bin? 'Save Binance units and cash as statement figures' : 'Save wallet units as statement units'}</button>
+    <div class="row noprint" style="gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn pri sm" onclick="saveInvWalletUnits(${p.id})">${bin? 'Save '+esc(lbl)+' units and cash as statement figures' : 'Save wallet units as statement units'}</button>
       ${bin? `<button class="btn ghost sm" data-binfind="${p.id}" onclick="invBinanceFindTrades(${p.id})">\ud83d\udcdc Find the trades</button>` : ''}
-      ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other coin${r.untracked===1?'':'s'} ${bin? 'on Binance' : 'in this wallet'} aren't in the tracker.</span>` : ''}</div>` : '';
+      ${r.untracked? `<span class="mut" style="font-size:11.5px">${r.untracked} other coin${r.untracked===1?'':'s'} ${bin? 'on '+esc(lbl) : 'in this wallet'} aren't in the tracker.</span>` : ''}</div>` : '';
   const add = (r.addable||[]).length? `<div class="inv-wallet-add" style="margin:6px 0;font-size:12px"><span class="mut">In this wallet, tracked on another platform:</span> ${r.addable.map(x=>`<span style="white-space:nowrap">${esc(x.src.ticker||x.src.name)} ${invFmtUnits(x.units)} <button class="btn ghost sm" data-walletadd="${x.src.id}" onclick="invAddWalletCoin(${p.id}, ${x.src.id})">+ Add to ${esc(p.name)}</button></span>`).join(' ')}</div>` : '';
   return head + (r.error? `<div class="r" style="font-size:12px">${esc(r.error)}</div>` : '') + add + body + (bin? invBinanceFoundHTML(p.id) : invWalletTxsHTML(p.id));
 }
@@ -13342,7 +13355,7 @@ function renderInvPlatformPage(nav, holdings){
   app.innerHTML = nav + `<div class="row noprint" style="gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn ghost sm" onclick="closeInvPlatformPage()">← All platforms</button>
       <span class="mut" style="font-size:12px">${h.robo? (h.stats.valueDate? 'Value as of '+esc(h.stats.valueDate) : 'No value logged') : `${fr.age===null? 'No prices yet' : 'Oldest price: '+esc(fr.oldest)}${fr.missing? ` · ⚠ ${fr.missing} without a price` : ''} · ${fr.checked? 'Checked '+esc(fr.checked) : 'Never checked'}`}</span></div>`
-    + (!h.robo && invHasUnitSource(h.platform)? (invIsBinance(h.platform)? `<div class="row noprint" style="gap:8px;align-items:center;margin:-4px 0 10px"><button class="btn pri sm" data-walletupdate="${h.platform.id}" onclick="invUpdateFromWallet(${h.platform.id})">\u21bb Update prices, units &amp; cash from Binance</button><span class="mut" style="font-size:11.5px">Refreshes the prices, reads your Binance Spot balances and saves them as the statement units and cash.</span></div>` : `<div class="row noprint" style="gap:8px;align-items:center;margin:-4px 0 10px"><button class="btn pri sm" data-walletupdate="${h.platform.id}" onclick="invUpdateFromWallet(${h.platform.id})">\u21bb Update prices &amp; units from wallet</button><span class="mut" style="font-size:11.5px">Refreshes the prices, reads the wallet and saves its units as the statement units.</span></div>`) : '')
+    + (!h.robo && invHasUnitSource(h.platform)? (invIsBinance(h.platform)? `<div class="row noprint" style="gap:8px;align-items:center;margin:-4px 0 10px"><button class="btn pri sm" data-walletupdate="${h.platform.id}" onclick="invUpdateFromWallet(${h.platform.id})">\u21bb Update prices, units &amp; cash from ${esc(invExLabel(h.platform))}</button><span class="mut" style="font-size:11.5px">Refreshes the prices, reads your ${esc(invExLabel(h.platform))} balances and saves them as the statement units and cash.</span></div>` : `<div class="row noprint" style="gap:8px;align-items:center;margin:-4px 0 10px"><button class="btn pri sm" data-walletupdate="${h.platform.id}" onclick="invUpdateFromWallet(${h.platform.id})">\u21bb Update prices &amp; units from wallet</button><span class="mut" style="font-size:11.5px">Refreshes the prices, reads the wallet and saves its units as the statement units.</span></div>`) : '')
     + invHoldingCardHTML(h, 'mine', true, false, true)
     + (!h.robo && invHasUnitSource(h.platform) && invWalletResults[h.platform.id]? `<div class="panel">${invWalletPanelHTML(h.platform, true)}</div>` : '')
     + invEmptyPositionsHTML(h.platform.id);

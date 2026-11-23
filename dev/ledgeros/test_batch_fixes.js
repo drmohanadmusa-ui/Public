@@ -8154,6 +8154,8 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV534OnePricePerCoin();
   await testV535ProvisionMissingMonth();
   await testV535RealEstateFeedsProvisions();
+  await testEdgeExchangeBalances();
+  await testV536ExchangeKeys();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12429,4 +12431,92 @@ async function testV535RealEstateFeedsProvisions(){
   await sb.reAddLeg(1, 70124);
   await sb.reSetCell(1, 70124, '2026-11', '700');
   assert(tot(rev,'2026-11',70124)===-700 && tot(rev,'2026-11',10204)===1500+700 && sb.reRowLine(70124).g===rev, 'A new row goes into the building’s group and is typed straight away');
+}
+
+// edge: exchange-balances (#165): KuCoin, MEXC, LBank and Poloniex, read-only, signed as each exchange documents
+async function testEdgeExchangeBalances(){
+  const nc = require('crypto');
+  const src = fs.readFileSync(path.join(__dirname, 'edge', 'exchange-balances', 'index.ts'), 'utf8').replace(/^export /mg, '');
+  const fn = new Function('TextEncoder', 'btoa', 'atob', src + '\nreturn {exchangeCall, md5, hmac};')(TextEncoder, btoa, atob);
+  for(const t of ['', 'abc', 'api_key=x&echostr=y&signature_method=HmacSHA256&timestamp=1', 'é✓'.repeat(40)])
+    assert(fn.md5(t)===nc.createHash('md5').update(t).digest('hex'), 'edge: exchange-balances MD5 matches a standard MD5 for ' + JSON.stringify(t.slice(0,20)));
+  const H = (sec, msg, enc) => nc.createHmac('sha256', sec).update(msg).digest(enc||'hex');
+  let calls = [];
+  const fake = body => async (url, opt)=>{ calls.push({url, opt}); return {ok:true, status:200, text: async()=>JSON.stringify(body)}; };
+  // checks before any call
+  let r = await fn.exchangeCall({}, {exchange:'kraken'}, fake({}), crypto.subtle, 1);
+  assert(r.status===400 && /Unknown exchange/.test(r.body) && !calls.length, 'edge: an unknown exchange is refused');
+  r = await fn.exchangeCall({KUCOIN_API_KEY:'k', KUCOIN_API_SECRET:'s'}, {exchange:'kucoin'}, fake({}), crypto.subtle, 1);
+  assert(r.status===400 && /KUCOIN_API_PASSPHRASE/.test(r.body) && !calls.length, 'edge: a missing secret is named, no call made');
+  const kenv = {KUCOIN_API_KEY:'k', KUCOIN_API_SECRET:'sec', KUCOIN_API_PASSPHRASE:'pp'};
+  r = await fn.exchangeCall(kenv, {exchange:'kucoin', action:'trades', symbol:'BTCEUR', startTime:1, endTime:2}, fake({}), crypto.subtle, 1);
+  assert(r.status===400 && /USDT or coin\/USDC/.test(r.body), 'edge: only coin/USDT or coin/USDC pairs');
+  r = await fn.exchangeCall(kenv, {exchange:'kucoin', action:'trades', symbol:'BTCUSDT', startTime:1, endTime:2+86400000}, fake({}), crypto.subtle, 1);
+  r = r.status===400 && /24 hours/.test(r.body) ? await fn.exchangeCall(kenv, {exchange:'kucoin', action:'deposits', startTime:1, endTime:2+91*86400000}, fake({}), crypto.subtle, 1) : r;
+  assert(r.status===400 && /90 days/.test(r.body) && !calls.length, 'edge: trades at most 24 h, deposits at most 90 days per call');
+  r = await fn.exchangeCall(kenv, {exchange:'kucoin', action:'transfer', startTime:1, endTime:2}, fake({}), crypto.subtle, 1);
+  assert(r.status===400 && /Unknown action/.test(r.body), 'edge: any other action is refused');
+  // KuCoin: Funding (main) + Trading, signed headers, passphrase HMAC'd
+  r = await fn.exchangeCall(kenv, {exchange:'kucoin'}, fake({code:'200000', data:[{currency:'KCS', type:'main', balance:'2'}, {currency:'kcs', type:'trade', balance:'1'}, {currency:'USDT', type:'margin', balance:'9'}]}), crypto.subtle, 1700000000000);
+  let h = calls[0].opt.headers;
+  assert(calls[0].url==='https://api.kucoin.com/api/v1/accounts' && h['KC-API-SIGN']===H('sec', '1700000000000GET/api/v1/accounts', 'base64') && h['KC-API-PASSPHRASE']===H('sec', 'pp', 'base64') && h['KC-API-KEY-VERSION']==='3', 'edge: KuCoin request signed as documented');
+  assert(JSON.parse(r.body).balances.KCS===3 && !('USDT' in JSON.parse(r.body).balances), 'edge: KuCoin adds Funding + Trading, leaves margin out, got ' + r.body);
+  // MEXC: Binance-style hex signature; trades parsed
+  calls = [];
+  r = await fn.exchangeCall({MEXC_API_KEY:'mk', MEXC_API_SECRET:'ms'}, {exchange:'mexc', action:'trades', symbol:'KASUSDT', startTime:1000, endTime:2000}, fake([{time:1500, isBuyer:true, qty:'10', quoteQty:'1.2', price:'0.12', commission:'0.01', commissionAsset:'KAS'}]), crypto.subtle, 5);
+  const mq = calls[0].url.split('?')[1], mqs = mq.replace(/&signature=.*/, ''), msig = mq.replace(/.*signature=/, '');
+  assert(/^https:\/\/api\.mexc\.com\/api\/v3\/myTrades\?symbol=KASUSDT&startTime=1000&endTime=2000/.test(calls[0].url) && msig===H('ms', mqs) && calls[0].opt.headers['X-MEXC-APIKEY']==='mk', 'edge: MEXC trades call signed like Binance');
+  const mrow = JSON.parse(r.body).rows[0];
+  assert(mrow && mrow.buy && mrow.qty===10 && mrow.quoteQty===1.2 && mrow.feeAsset==='KAS', 'edge: MEXC trade rows in the Binance shape');
+  // LBank: sorted params -> MD5 upper -> HMAC hex; RSA when the secret is a private key
+  calls = [];
+  r = await fn.exchangeCall({LBANK_API_KEY:'lk', LBANK_API_SECRET:'shortsecret'}, {exchange:'lbank'}, fake({result:true, data:[{coin:'doge', assetAmt:'12.5'}, {coin:'usdt', assetAmt:'0'}]}), crypto.subtle, 7);
+  const lb = new URLSearchParams(calls[0].opt.body), echo = calls[0].opt.headers.echostr;
+  const pre = nc.createHash('md5').update(`api_key=lk&echostr=${echo}&signature_method=HmacSHA256&timestamp=7`).digest('hex').toUpperCase();
+  assert(calls[0].url==='https://api.lbkex.com/v2/supplement/user_info.do' && lb.get('sign')===H('shortsecret', pre) && !lb.has('echostr') && echo.length>=30 && echo.length<=40, 'edge: LBank HmacSHA256 signature as documented');
+  assert(JSON.parse(r.body).balances.DOGE===12.5 && !('USDT' in JSON.parse(r.body).balances), 'edge: LBank balances, zeros left out');
+  const kp = nc.generateKeyPairSync('rsa', {modulusLength:1024});
+  const pem = kp.privateKey.export({type:'pkcs8', format:'pem'});
+  calls = [];
+  await fn.exchangeCall({LBANK_API_KEY:'lk', LBANK_API_SECRET:pem}, {exchange:'lbank'}, fake({result:true, data:[]}), crypto.subtle, 7);
+  const rb = new URLSearchParams(calls[0].opt.body), pre2 = nc.createHash('md5').update(`api_key=lk&echostr=${calls[0].opt.headers.echostr}&signature_method=RSA&timestamp=7`).digest('hex').toUpperCase();
+  assert(rb.get('signature_method')==='RSA' && nc.verify('sha256', Buffer.from(pre2), kp.publicKey, Buffer.from(rb.get('sign'), 'base64')), 'edge: an LBank RSA key signs with RSA-SHA256');
+  // Poloniex: "GET\npath\nsorted params" base64; Spot only
+  calls = [];
+  r = await fn.exchangeCall({POLONIEX_API_KEY:'pk', POLONIEX_API_SECRET:'psec'}, {exchange:'poloniex'}, fake([{accountType:'SPOT', balances:[{currency:'PRQ', available:'5', hold:'1'}]}, {accountType:'FUTURES', balances:[{currency:'BTC', available:'1', hold:'0'}]}]), crypto.subtle, 9);
+  h = calls[0].opt.headers;
+  assert(calls[0].url==='https://api.poloniex.com/accounts/balances' && h.signature===H('psec', 'GET\n/accounts/balances\nsignTimestamp=9', 'base64') && h.key==='pk', 'edge: Poloniex signed as documented');
+  assert(JSON.parse(r.body).balances.PRQ===6 && !('BTC' in JSON.parse(r.body).balances), 'edge: Poloniex Spot balances only');
+  calls = [];
+  r = await fn.exchangeCall({POLONIEX_API_KEY:'pk', POLONIEX_API_SECRET:'psec'}, {exchange:'poloniex', action:'withdrawals', startTime:1000, endTime:5000}, fake({withdrawals:[{currency:'USDT', amount:'20', fee:'1', timestamp:3, status:'COMPLETE: tx'}, {currency:'USDT', amount:'7', fee:'1', timestamp:4, status:'AWAITING APPROVAL'}]}), crypto.subtle, 9);
+  const prow = JSON.parse(r.body).rows;
+  assert(/\/wallets\/activity\?start=1&end=5/.test(calls[0].url) && prow.length===1 && prow[0].amount===20 && prow[0].time===3000, 'edge: Poloniex completed withdrawals only, time in ms');
+}
+// v5.36 (#165): KuCoin, MEXC, LBank and Poloniex platforms read like Binance
+async function testV536ExchangeKeys(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  assert(sb.invExchange({name:'KuCoin main'})==='kucoin' && sb.invExchange({name:'mexc'})==='mexc' && sb.invExchange({name:'LBank'})==='lbank' && sb.invExchange({name:'Poloniex'})==='poloniex' && sb.invExchange({name:'Binance'})==='binance', 'Each exchange is found by its platform name');
+  assert(sb.invIsBinance({name:'KuCoin'}) && !sb.invIsBinance({name:'KuCoin', isRobo:true}) && !sb.invIsBinance({name:'Kraken'}), 'They get the exchange check (not robo, not other names)');
+  sb.localStorage.setItem('sb_url', 'https://test.example.co'); sb.localStorage.setItem('sb_key', 'anon-test');
+  let seen = null;
+  sb.fetch = async (url, opt)=>{ seen = {url, opt}; return {ok:true, status:200, json: async()=>({balances:{LDO:3, ETH:2}})}; };
+  vm.runInContext("D.invPlatforms.find(p=>p.id===1).name = 'KuCoin'", sb);
+  const r = await sb.invReadBinance(1);
+  const body = seen && JSON.parse(seen.opt.body);
+  assert(seen.url==='https://test.example.co/functions/v1/exchange-balances' && body.exchange==='kucoin' && seen.opt.headers['x-region']==='eu-central-1', 'KuCoin goes through exchange-balances, outside the US, got ' + JSON.stringify(seen && [seen.url, seen.opt.body]));
+  assert(r.binance && !r.error && r.rows.some(x=>x.pos.ticker==='ETH' && x.wallet===2), 'KuCoin units land in the same check table');
+  const div = sb.document.createElement('div'); div.innerHTML = sb.invWalletPanelHTML(sb.invPlatformById(1), true);
+  assert(/Check KuCoin/.test(div.textContent) && /Save KuCoin units and cash/.test(div.textContent) && !/Binance/.test(div.textContent), 'The panel names KuCoin, not Binance');
+  sb.fetch = async (url, opt)=>{ seen = {url, opt}; return {ok:false, status:502, json: async()=>({error:'MEXC said 400: No permission to access the endpoint.'})}; };
+  vm.runInContext("D.invPlatforms.find(p=>p.id===1).name = 'MEXC'", sb);
+  const bad = await sb.invReadBinance(1);
+  assert(bad.error==='MEXC: MEXC said 400: No permission to access the endpoint.', 'An exchange’s own error shows, named, got ' + bad.error);
+  // the trade finder asks the same exchange
+  vm.runInContext("D.invPlatforms.find(p=>p.id===1).name = 'Poloniex'", sb);
+  const asked = []; sb.__set('invBinanceCall', async (input, ex)=>{ asked.push(ex); return {rows:[]}; });
+  vm.runInContext("invWalletResults[1] = {rows:[{pos:D.invPositions.find(p=>p.platformId===1 && p.ticker==='ETH'), tracker:1, wallet:2}], binance:true}", sb);
+  await sb.invBinanceFindTrades(1);
+  assert(asked.length && asked.every(x=>x==='poloniex'), 'Find the trades asks Poloniex, got ' + JSON.stringify(asked.slice(0,3)));
 }
