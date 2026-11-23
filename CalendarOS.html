@@ -2440,7 +2440,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.75.0';
+const APP_VERSION = '4.75.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2448,6 +2448,12 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.75.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'NEW \u2014 Health Log \u2192 \u201cWhat each metric means\u201d now also offers sleep score and resting heart rate. If you set them to none before, the banner asks once more. Their weekly averages, plus weekly average sleep, now go to the AI coach.',
+    'FIX \u2014 A metric named \u201cSleep Score\u201d was guessed as sleep; it is now guessed as sleep score.',
+    'NEW \u2014 Missed training days: a \u201cswapped days\u201d reason, for a session you moved to another day rather than skipped.',
+  ]},
   { v:'4.75.0', changes: [
     '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds training_skip_reasons (app_settings), role (health_metric_defs), day_complete (health_logs) and note (training_sets). Additive and safe to run more than once. Until it is run, syncing shows a missing-column error.',
     'NEW \u2014 Phone workout: a Notes button next to + Add set opens today\u2019s note for that exercise (the same note as the computer\u2019s log card) and the exercise\u2019s permanent note. Both now go to the AI coach.',
@@ -9178,9 +9184,10 @@ if(!state.healthViewDate) state.healthViewDate = todayStr();
 /* ---------- v4.75.0: what each health metric means ----------
    m.role: null = not confirmed yet (the name-based guess is used meanwhile),
    '' = confirmed "none", else one of METRIC_ROLES. */
-const METRIC_ROLES = ['calories','protein','fat','carbs','fiber','sleep','weight','waist','steps'];
+const METRIC_ROLES = ['calories','protein','fat','carbs','fiber','sleep','sleep_score','resting_hr','weight','waist','steps'];
+const METRIC_ROLE_LABELS = { sleep_score:'sleep score', resting_hr:'resting heart rate' };   // v4.75.1
 const METRIC_ROLE_PATTERNS = { calories:/calor|kcal/i, protein:/protein/i, fat:/\bfats?\b/i, carbs:/carb/i, fiber:/fib(er|re)/i,
-  sleep:/sleep/i, weight:/weight|\bwt\b/i, waist:/waist/i, steps:/steps?\b/i };
+  sleep:/sleep(?!.*score)/i, sleep_score:/sleep.*score/i, resting_hr:/resting|heart|\bhr\b|pulse/i, weight:/weight|\bwt\b/i, waist:/waist/i, steps:/steps?\b/i };
 function guessMetricRole(name){
   if(/deficit|goal|target/i.test(name||'')) return '';   // "Calorie Deficit" is not calories eaten
   const hits = METRIC_ROLES.filter(r=>METRIC_ROLE_PATTERNS[r].test(name||'') && !(r==='fat' && /body/i.test(name)));
@@ -9213,7 +9220,7 @@ function normRoleValue(role, v){
     const h = Math.floor(v), frac = Math.round((v - h)*100);
     return frac < 60 ? h*60 + frac : Math.round(v*60);   // 6.75 can't be h.mm, read it as decimal hours
   }
-  if(typeof v === 'string' && ['weight','waist','calories','protein','fat','carbs','fiber','steps'].includes(role)){
+  if(typeof v === 'string' && ['weight','waist','calories','protein','fat','carbs','fiber','steps','sleep_score','resting_hr'].includes(role)){
     const n = v.replace(/,/g,'').match(/-?\d+(\.\d+)?/);
     return n ? Number(n[0]) : v;
   }
@@ -9236,10 +9243,17 @@ function migrateHealthRoleValues(){
   });
   return changed;
 }
-function healthRolesNeedConfirm(){ return state.healthMetricDefs.some(m=>m.id!=='core_water' && m.role==null && guessMetricRole(m.name)); }
+/* v4.75.1: a metric set to "none" before a meaning existed for it is offered the new meaning once, until some metric holds it. */
+const METRIC_ROLES_ADDED_4751 = ['sleep_score','resting_hr'];
+function metricRoleUnconfirmed(m){
+  const g = guessMetricRole(m.name);
+  if(!g || m.id==='core_water') return false;
+  return m.role==null || (m.role==='' && METRIC_ROLES_ADDED_4751.includes(g) && !state.healthMetricDefs.some(x=>x.role===g));
+}
+function healthRolesNeedConfirm(){ return state.healthMetricDefs.some(metricRoleUnconfirmed); }
 function openMetricRolesModal(){
   const defs = metricsInDisplayOrder(false).filter(m=>m.id!=='core_water');
-  const opts = r=>`<option value="">\u2014 none \u2014</option>${METRIC_ROLES.map(x=>`<option value="${x}" ${x===r?'selected':''}>${x}</option>`).join('')}`;
+  const opts = r=>`<option value="">\u2014 none \u2014</option>${METRIC_ROLES.map(x=>`<option value="${x}" ${x===r?'selected':''}>${METRIC_ROLE_LABELS[x]||x}</option>`).join('')}`;
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'metricRolesOverlay';
   ov.onclick = (e)=>{ if(e.target===ov) ov.remove(); };
@@ -9247,7 +9261,7 @@ function openMetricRolesModal(){
     <h3>What each metric means</h3>
     <div class="page-sub" style="margin-bottom:10px;">Guessed from the names. Check each one, change any that are wrong, then Save. This drives the calorie check, the sleep entry and the weekly averages sent to the AI. Saving also converts old sleep entries (6.34 = 6 h 34 min) and text weights ("102 Kgs" = 102).</div>
     <div style="max-height:52vh; overflow:auto; margin-bottom:12px;">
-      ${defs.map(m=>`<div class="row" style="align-items:center; gap:10px; margin-bottom:6px;"><span style="flex:1;">${escapeHtml(m.name)}${m.role==null && guessMetricRole(m.name) ? ' <span class="page-sub">(guess)</span>' : ''}</span><select data-role-metric="${escapeHtml(m.id)}">${opts(metricRole(m))}</select></div>`).join('')}
+      ${defs.map(m=>`<div class="row" style="align-items:center; gap:10px; margin-bottom:6px;"><span style="flex:1;">${escapeHtml(m.name)}${metricRoleUnconfirmed(m) ? ' <span class="page-sub">(guess)</span>' : ''}</span><select data-role-metric="${escapeHtml(m.id)}">${opts(metricRoleUnconfirmed(m) ? guessMetricRole(m.name) : metricRole(m))}</select></div>`).join('')}
     </div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="document.getElementById('metricRolesOverlay').remove()">Later</button>
@@ -9681,7 +9695,7 @@ function openMetricModal(metricId){
       </div>
       <div class="field">
         <label>Means</label>
-        <select id="metricRole"><option value="">\u2014 none \u2014</option>${METRIC_ROLES.map(x=>`<option value="${x}" ${editing && metricRole(editing)===x?'selected':''}>${x}</option>`).join('')}</select>
+        <select id="metricRole"><option value="">\u2014 none \u2014</option>${METRIC_ROLES.map(x=>`<option value="${x}" ${editing && metricRole(editing)===x?'selected':''}>${METRIC_ROLE_LABELS[x]||x}</option>`).join('')}</select>
       </div>
       <div class="field">
         <label>Group</label>
@@ -15830,7 +15844,8 @@ function buildReviewPackExtras(sinceDate, today){
     const wk = role=>avg(days.map(h=>roleValue(h, role)));
     return { weekStart, weekEnd,
       setsByMuscle: Object.fromEntries(Object.entries(vol).map(([k,v])=>[k, r1(v)])),
-      avgWeightKg: wk('weight'), avgWaist: wk('waist'), avgCalories: wk('calories'), avgProteinG: wk('protein') };
+      avgWeightKg: wk('weight'), avgWaist: wk('waist'), avgCalories: wk('calories'), avgProteinG: wk('protein'),
+      avgSleepMin: wk('sleep'), avgSleepScore: wk('sleep_score'), avgRestingHr: wk('resting_hr') };
   });
   const reasons = state.settings.trainingSkipReasons || {};
   const skipReasons = Object.keys(reasons).filter(d=>d>=sinceDate && d<=today).sort().map(d=>({ date:d, reason:reasons[d] }));
@@ -15993,7 +16008,7 @@ MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smalles
 ${JSON.stringify(exerciseLibrary, null, 2)}
 \`\`\`
 
-MY DATA PACK (also: weeklyHistory = my last 4 full weeks of sets per muscle and average weight / waist / calories / protein; skipReasons = why planned days were missed; workingSets[].restTakenSec = actual rest before that set; note = why a set beat an earlier failure set; dayNote = my note for that exercise that day; sessionLengthMin; plannedVsDone = each block of the previous plan against what I did; bodyMetrics days marked partial = I did not confirm that day's log was complete; library notes = my permanent note on that exercise):
+MY DATA PACK (also: weeklyHistory = my last 4 full weeks of sets per muscle and average weight / waist / calories / protein / sleep minutes / sleep score / resting heart rate; skipReasons = why planned days were missed ("swapped days" = I moved that session to another day, not skipped it); workingSets[].restTakenSec = actual rest before that set; note = why a set beat an earlier failure set; dayNote = my note for that exercise that day; sessionLengthMin; plannedVsDone = each block of the previous plan against what I did; bodyMetrics days marked partial = I did not confirm that day's log was complete; library notes = my permanent note on that exercise):
 \`\`\`json
 ${packJson}
 \`\`\`
@@ -20198,7 +20213,7 @@ async function init(){
 /* v4.75.0: planned training days in the last 14 days (today excluded) with
    nothing logged and no reason yet. One tap per day; reasons sync
    (app_settings.training_skip_reasons) and go into the Review Pack. */
-const SKIP_REASONS = ['work','sleep','energy','travel','other'];
+const SKIP_REASONS = ['work','sleep','energy','travel','swapped days','other'];
 function missedTrainingDays(){
   const today = todayStr(), reasons = state.settings.trainingSkipReasons || {};
   return (state.training.calendar||[]).filter(c=>{
