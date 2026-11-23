@@ -140,10 +140,10 @@ Check before building: which of 1-5 need SQL (e.g. a reason field for missed day
 
 | # | Comment (lightly tidied) | Type | Status |
 |---|---|---|---|
-| 33 | "What each metric means": Resting Heart Rate and Sleep Score exist as metrics but aren't in the drop-down list of meanings. | change | agreed (Q34 A) |
-| 34 | (found while answering 33) "Sleep Score" was guessed as "sleep" because its name contains "sleep". | fix | agreed (Q35 A) |
-| 36 | Missed training sheet: add an option "swap days". | change | question asked (Q36) |
+| 33 | "What each metric means": Resting Heart Rate and Sleep Score exist as metrics but aren't in the drop-down list of meanings. | change | shipped (v4.75.1) |
+| 34 | (found while answering 33) "Sleep Score" was guessed as "sleep" because its name contains "sleep". | fix | shipped (v4.75.1) |
+| 36 | Missed training sheet: add an option "swap days". | change | shipped (v4.75.1): Q36 A, a sixth reason "swapped days" |
 
 Facts (v4.75.0): the meanings list holds only the nine the app uses (calorie check, sleep h+min entry and conversion, weekly averages of weight / waist / calories / protein). Every metric, whether or not it has a meaning, already goes to the AI each day by its own name in `bodyMetrics`. A new meaning only changes something if the app then uses it, e.g. a weekly average in `weeklyHistory`. Adding meanings needs no SQL (`role` is a text column).
 
-Decisions 2026-11-21: **Q34 A**: add "resting heart rate" and "sleep score" as meanings; `weeklyHistory` also gets weekly average sleep, sleep score and resting heart rate. **Q35 A**: "Sleep Score" is guessed as "sleep score", never "sleep". No SQL. Planned as v4.75.1 (fix + small addition), built when he says ship.
+Decisions 2026-11-21: **Q34 A**: add "resting heart rate" and "sleep score" as meanings; `weeklyHistory` also gets weekly average sleep, sleep score and resting heart rate. **Q35 A**: "Sleep Score" is guessed as "sleep score", never "sleep". No SQL. **Q36 A**: "swapped days" is a sixth missed-day reason. Shipped 2026-11-23 as v4.75.1 (no SQL). A metric he set to "none" before these meanings existed is offered the new meaning once, until some metric holds it.
