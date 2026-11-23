@@ -142,6 +142,7 @@ Check before building: which of 1-5 need SQL (e.g. a reason field for missed day
 |---|---|---|---|
 | 33 | "What each metric means": Resting Heart Rate and Sleep Score exist as metrics but aren't in the drop-down list of meanings. | change | agreed (Q34 A) |
 | 34 | (found while answering 33) "Sleep Score" was guessed as "sleep" because its name contains "sleep". | fix | agreed (Q35 A) |
+| 36 | Missed training sheet: add an option "swap days". | change | question asked (Q36) |
 
 Facts (v4.75.0): the meanings list holds only the nine the app uses (calorie check, sleep h+min entry and conversion, weekly averages of weight / waist / calories / protein). Every metric, whether or not it has a meaning, already goes to the AI each day by its own name in `bodyMetrics`. A new meaning only changes something if the app then uses it, e.g. a weekly average in `weeklyHistory`. Adding meanings needs no SQL (`role` is a text column).
 
