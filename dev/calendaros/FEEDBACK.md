@@ -29,6 +29,42 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 | 11 | The graphs need to be interactive: hovering over a bar or a point shows its figures and label. | change | shipped (v4.74.1) |
 | 12 | The weight axis shouldn't run from the lowest to the highest weight; it should start at 0 and end 50% above the max weight. | change | shipped (v4.74.1) |
 
+## Batch 2026-11-21: exercise notes, increments, and an AI coach's review (to build in a new session)
+
+Source: his own comments (13-14) plus feedback he received from an AI review of his data and the app (15-32, his numbering in brackets). Logged for a later build session; nothing built here.
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 13 | Exercise note: a button next to "+ Add set" / "- Remove last" on the phone workout opens a window to type a note. | change | shipped (v4.75.0) |
+| 14 | Leg press was listed with a 2.5 kg step; he corrected it to 10 kg in the app. Update whatever else needs it, and the AI's planning instructions. | fix | app part: nothing to build (the pack already sends the 10 kg step); Doc 2 text: waiting for his paste |
+| 15 | [P1 #1] Reason for every missed session (work / sleep / energy / travel / other, one tap); a "short on time" option keeping only the first 3-4 blocks; reasons in the data pack. | change | shipped (v4.75.0) |
+| 16 | [P1 #2] Check entries when typed: protein x4 + fat x9 (+ carbs x4) above the day's calories -> warn/block; add carbs; "day complete" checkbox; sleep as a time picker stored in minutes; weight as a number; a set with more reps than an earlier RIR-0 set asks "rested longer?" and saves the answer as a note. | change | shipped (v4.75.0) |
+| 17 | [P1 #3] Rest: defaults about 3 min for compounds and 2 min for isolation (editable per exercise); log actual rest automatically (done -> next set started) and send it in the pack; a deliberate pairing flag (e.g. curl + extension). | change | shipped (v4.75.0): actual rest recorded (pairing dropped, default rest stays 60 s) |
+| 18 | [P1 #4] Increments: show each machine's step on the exercise screen; allow an add-on weight where the machine has one; never suggest a weight off the grid. | change | dropped (Q6, Q23) |
+| 19 | [P1 #5] Weekly check-in on Friday morning: waist, photos monthly; app calculates 7-day average weight, weekly rate of loss, projected date to reach the goal weight. | change | dropped or done by him (see decisions) |
+| 20 | [P1 #6] Adaptive calorie targets: estimate real maintenance from intake vs weight trend over 2-3 weeks; daily target for a chosen rate of loss (suggested 0.5-0.75 kg/week); daily progress bars for calories, protein, fat, fiber; a fat cap; a steps target (e.g. 8,000). | change (large) | dropped or done by him (see decisions) |
+| 21 | [P1 #7] RIR accuracy score per exercise from failure tests (e.g. "you underestimate by about 8 reps"). | change | dropped or done by him (see decisions) |
+| 22 | [P1 #8] Fairer volume: per-exercise partial credit per muscle (e.g. leg press quads 1, glutes 0.5, hamstrings 0.25); secondary credit on at half a set. | change | dropped or done by him (see decisions) |
+| 23 | [P1 #9] Data pack: remove ~80 old session templates from currentPlan; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan; failure sets carry RIR 0, not null. | change | shipped (v4.75.0) |
+| 24 | [P1 #10] One progression rule in both the app and his documents. | change | shipped (v4.75.0) |
+| 25 | [P2 #1] Remove conflicts between his documents and the prompt (one 10-20 band, 60 s rest, simple progression, failure tests isolation-only), or state that the prompt wins. | change | shipped (v4.75.0) |
+| 26 | [P2 #2] Only include rules that apply: the priority section only when priorities are set. | change | shipped (v4.75.0) |
+| 27 | [P2 #3] Muscles with a single primary exercise may repeat it up to 3x/week; the variety rule doesn't apply to them. | change | shipped (v4.75.0) |
+| 28 | [P2 #4] Extra day vs 4th set: prefer an extra day or a different exercise, but a 4th set is allowed when it is the lower-fatigue option, justified in the rules check (relaxes the v4.70 strict ladder). | change | shipped (v4.75.0) |
+| 29 | [P2 #5] Fallback plan: if only 3 of the 5 days happen, which 3 sessions and what to merge so every muscle still gets >= 70% of its MIN. | change | dropped or done by him (see decisions) |
+| 30 | [P2 #6] Nutrition targets in the prompt; an output section with next fortnight's targets, one nutrition change, and 3 measurable goals for the next review (a scorecard). | change | dropped or done by him (see decisions) |
+| 31 | [P2 #7] Week 2 weights = week 1 as a floor; the app's live progression applies earned bumps. | change | dropped or done by him (see decisions) |
+| 32 | [P2 #8] Review on a fixed rhythm: every 2 weeks, same weekday. | change | dropped or done by him (see decisions) |
+
+### Facts checked in the code (v4.74.1, 2026-11-21)
+
+- Per-day, per-exercise notes already exist on the computer's log card (`training_logs.notes`, synced). The phone workout has no way to edit them yet. **Correction (review 2026-11-21): the Review Pack does NOT send these notes** (`buildTrainingReviewPack` only uses `training_logs` to count logged days), so item 13 must also add them to the session detail.
+- The Review Pack sends each exercise's own `weightIncrementKg` from the library (fallback 2.5 only when unset), so his 10 kg correction flows into the next pack automatically. His own plan documents ("Doc 1/2") are outside the app.
+- The rest timer default is a flat 60 s (`defaultRestSec`); a per-exercise `restSec` overrides it. **Correction:** sets have a synced `rest_taken_sec` column, but **nothing ever writes it** (always null). Item 17 must start recording it (from marking a set done to the next set).
+- **Compound vs isolation:** the Lift Type switch was removed in v4.59. `isIsolationExercise` uses an old `liftType` if present, else guesses from muscles (anything touching chest, traps, lats, shoulders, quads, hamstrings or glutes counts as compound). Failure tests only pick "isolation" exercises, so e.g. lateral raises and leg curls are never tested. Item 25's claim that "the app also tests compounds" does not match the code.
+- Health metrics (calories, protein, fat, sleep, weight, ...) are user-defined Health Log metrics; the app does not know which metric is which yet.
+- The app does **not** apply earned weight bumps to planned weights (item 6, parked), so P2 #7's "the app's live progression applies earned bumps" is not true today.
+
 ### Notes from the code (v4.73.0)
 
 - **Weight increase rule** (`doubleProgressionSuggestion`): double progression on the last *completed* session's working sets (warm-ups and failure-test sets excluded), judged at that session's heaviest weight.
@@ -43,3 +79,59 @@ Statuses: **open** · **question asked** · **agreed** · **shipped (vX.Y.Z)** �
 - **AI vs app weight rule:** the Review Pack prompt gives the AI the same rule in words (hold if under the bottom of the range; add one increment when the top is reached "at RIR 2 or lower"; never below the last completed top weight; on the increment grid). The AI can also deload on purpose (it must say so), and it is asked to flag stalls (same weight ≥ 2 sessions with RIR > 2).
 - **Gap in both (found 2026-11-17):** the increase needs every set at the top of the range **and RIR ≤ 2**. Reaching the top with RIR 3+ (too easy) does **not** count, so the app says "same weight" forever. The AI gets the same wording and would only catch it as a stall.
 - **Big steps:** the increment is per exercise (`weightIncrementKg`), but the rule is the same for every machine. On leg press, 70 → 80 kg is +14%. By the app's own e1RM formula (Epley), 70 kg × 12 at RIR 2 predicts about 6 reps at 80 kg with 2 in reserve, which is under the bottom of 8–12. At 70 kg × 14 reps at RIR 2, 80 kg predicts about 8 reps, so the jump lands inside the range.
+
+### Decisions 2026-11-21 (his answers to Q1-33)
+
+| Q | Item | Decision |
+|---|---|---|
+| 1 | review | Tracker corrections applied (above). |
+| 2 | 16 carbs | Done by him (Carbs metric added). Nothing to build. |
+| 3 | 16 weight | He set the Weight metric to Number. Build: convert old text entries (e.g. "102 Kgs" -> 102). |
+| 4 | 16 | KEEP the "rested longer?" prompt: a set with more reps than an earlier RIR-0 set asks, answer saved on the set. |
+| 5 | 17 pairing | Dropped. |
+| 6 | 18 add-on weight | Dropped (no machine has one). |
+| 7 | 19 photos | Reminder only (his own weekly reminder covers it, see Q24). |
+| 8 | 20 maintenance calc | Dropped. |
+| 9 | 21 RIR accuracy score | Dropped. |
+| 10 | 22 credit editor | No build. He checks each exercise's primary muscles himself (Exercise Library; a muscle only helped by an exercise moves to secondary). Guide given in chat 2026-11-21. He checked: the muscle setup is right, keep it as is for now. |
+| 11 | 32 review rhythm | Done by him (recurring task in CalendarOS). Nothing to build. |
+| 12 | 31 week-2 weights | Ignore. Nothing to build or add to the prompt. |
+| 13 | 13 notes | BOTH on the phone: that day's note for the exercise (same as the computer log card) and the permanent exercise note. Both go into the Review Pack. |
+| 14 | 13 | No last-session note reminder. |
+| 15 | 14/24/25 documents | BOTH: one line at the top of the prompt ("this prompt wins where my documents disagree"), and in the build session he pastes Doc 2 for corrected text. |
+| 16 | 15 missed days | Ask the next time he opens the app: one-tap sheet listing missed planned days (work / sleep / energy / travel / other). Reasons go into the data pack. |
+| 17 | 15 short on time | Ignore (dropped). |
+| 18 | 16 metric types | Match metrics by name, and ask him to confirm / select where unsure. |
+| 19 | 16 calorie check | Warn with "Save anyway", about 10% slack (protein x4 + carbs x4 + fat x9 vs calories). |
+| 20 | 16 day complete | "Day complete" box; unticked days are marked "partial" for the AI only (still counted in averages). |
+| 21 | 16 sleep | Simple, fast hours + minutes entry; stored in minutes. Old "6.34"-style entries mean 6 h 34 min; "5:00" means 5 h. Convert them. |
+| 22 | 17 rest default | Keep 60 s. No compound/isolation switch. Actual rest still gets recorded (item 17). |
+| 23 | 18 | Don't show the machine step on the exercise screen. |
+| 24 | 19 check-in | He added a weekly reminder himself. In-app check-in dropped; weekly average weight / waist still go in the data pack (item 23). |
+| 25 | 15 privacy | Move the goal weight / loss target out of the public code into Settings (private, synced). |
+| 26 | 20/30 nutrition targets | Ignore: he uses a separate food app. Dropped. |
+| 27 | 22 | Do NOT turn on secondary counting. |
+| 28 | 23 templates | Drop every session template not used (not on the calendar in the pack's window). |
+| 29 | 24 | One progression rule (double progression + big-jump check) stated at the top of the prompt. |
+| 30 | 26/27 | Accept both: priority section only when priorities are set; single-exercise muscles may repeat up to 3x/week, variety rule waived. |
+| 31 | 28 | Accept: a 4th set is allowed instead of an extra day when it is the lower-fatigue option, justified in the rules check. |
+| 32 | 29 fallback plan | Ignore (dropped). |
+| 33 | build | One release. |
+
+### Build scope for the next session (one release, v4.75.0)
+
+Everything below is agreed. Items not listed were dropped or done by him (see the decisions table).
+
+1. **Notes on the phone workout (13):** a Notes button next to "+ Add set" / "- Remove last" opens a window with two fields: today's note for this exercise (the same `training_logs.notes` as the computer's log card) and the permanent exercise note (Edit Exercise -> Notes). Both go into the Review Pack (session detail and exercise library). The day note is not in the pack today.
+2. **Missed sessions (15):** the next time he opens the app, a one-tap sheet lists planned days that passed unlogged; reasons: work / sleep / energy / travel / other. Stored and synced; reasons go into the data pack.
+3. **Health Log entry checks (16):** match metrics to calories / protein / fat / carbs / fiber / sleep / weight / waist / steps by name, asking him to confirm where unsure; calorie check warns with "Save anyway" (protein x4 + carbs x4 + fat x9 > calories by more than ~10%); "Day complete" box, unticked days marked "partial" for the AI only; sleep entered fast as hours + minutes and stored in minutes, old entries converted ("6.34" = 6 h 34 min, "5:00" = 5 h); old text weights converted to numbers ("102 Kgs" -> 102).
+4. **"Rested longer?" (16):** when a set has more reps than an earlier set of the same exercise that day logged at RIR 0 (failure), ask once (Rested longer / Earlier effort was off / Other) and save the answer on the set.
+5. **Actual rest (17):** record `rest_taken_sec` (time from marking the previous set done to marking this one done); default rest stays 60 s.
+6. **Privacy (25):** move the goal weight and loss target out of the public code into Settings (private, synced); update `test_v440`'s goals-shape check.
+7. **Data pack (23):** drop session templates not used on the calendar in the pack's window; add per-muscle volume for each of the last 4 weeks, weekly average weight and waist, weekly average calories and protein, skip reasons, rest times, session length, planned vs done per block of the previous plan, exercise notes; failure sets carry RIR 0, not null.
+8. **Prompt (24-28):** a line at the top, "this prompt wins wherever my documents disagree"; one progression rule (double progression + big-jump check) stated once at the top; the priority-muscles section only when priorities are set; muscles with a single primary exercise may repeat it up to 3x/week, variety rule waived; a 4th set is allowed instead of an extra day when it is the lower-fatigue option, justified in the rules check (update `test_v4700` deliberately).
+9. **His Doc 2:** in the build session he pastes Doc 2; produce corrected text (per-muscle ranges, 60 s rest default, the single progression rule, failure tests as the app really picks them). The text stays in chat, never in the repo.
+
+**Shipped 2026-11-21 as v4.75.0:** items 1-8. SQL: four additive columns (`app_settings.training_skip_reasons`, `health_metric_defs.role`, `health_logs.day_complete`, `training_sets.note`). Item 9 (Doc 2) is chat-only and waits for him to paste Doc 2. Interpretations used: the missed-days sheet looks back 14 days; "partial" applies only from the first day he ticks "Day complete"; rest = time since the last set marked done that day (any exercise), gaps over 30 min not counted; currentPlan keeps sessions on the calendar from 30 days back to 14 days ahead.
+
+Check before building: which of 1-5 need SQL (e.g. a reason field for missed days, a note on sets). State it clearly and wait for his "go".

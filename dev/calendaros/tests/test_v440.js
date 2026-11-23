@@ -350,7 +350,7 @@ async function reviewPackStructure() {
 
   const pack = win.buildTrainingReviewPack();
   check('has reviewPeriod', pack && pack.reviewPeriod && pack.reviewPeriod.from && pack.reviewPeriod.to);
-  check('has goals', pack.goals && typeof pack.goals.targetWeightKg === 'number');
+  check('has goals', pack.goals && 'targetWeightKg' in pack.goals && 'weightLossTargetKg' in pack.goals);  // v4.75.0: values come from Settings (private), null when unset
   check('has sessionDetail', Array.isArray(pack.sessionDetail));
   check('session detail contains today\'s sets',
         pack.sessionDetail.some(s => s.date === today && s.workingSets.length > 0));
