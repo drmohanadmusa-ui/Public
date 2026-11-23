@@ -8157,6 +8157,9 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testEdgeExchangeBalances();
   await testV536ExchangeKeys();
   await testV5361UnitsRounding();
+  await testV537ForecastScrollLead();
+  await testV537MonthlyStaysOpen();
+  await testV537Snapshots();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -12535,4 +12538,85 @@ async function testV5361UnitsRounding(){
   assert(sb.invUnitsTol(0.5)===1e-9 && sb.invUnitsTol(12188891)>1e-6 && sb.invUnitsTol(12188891)<1e-4, 'Small amounts keep the old 1e-9; large ones get one millionth of a millionth');
   const html = fs.readFileSync(APP_HTML, 'utf8');
   assert((html.match(/invUnitsTol\(/g)||[]).length>=7, 'Every units check uses the shared allowance (trade window, save, held, Sell to family, Move coins)');
+}
+
+// v5.37 (#169): only the table under his hand leads; echoes from the others never pull it back
+async function testV537ForecastScrollLead(){
+  const sb = makeSandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="forecastBody"><div class="forecast-scroll" id="fsA"></div><div class="forecast-scroll" id="fsB"></div><div class="forecast-scroll" id="fsC"></div></div>');
+  const el = id=>sb.document.getElementById(id);
+  ['fsA','fsB','fsC'].forEach(id=>{ let v = 0; const max = id==='fsC'? 60 : 1000; Object.defineProperty(el(id), 'scrollLeft', {get:()=>v, set:x=>{ v = Math.max(0, Math.min(max, x)); }, configurable:true}); });
+  sb.syncForecastScrollContainers();
+  const ev = (id, type)=>el(id).dispatchEvent(new sb.Event(type));
+  ev('fsA', 'wheel'); el('fsA').scrollLeft = 100; ev('fsA', 'scroll');
+  assert(el('fsB').scrollLeft===100 && el('fsC').scrollLeft===60, '#169: the swiped table moves the others (one stops at its end), got ' + [el('fsB').scrollLeft, el('fsC').scrollLeft]);
+  ev('fsC', 'scroll'); ev('fsB', 'scroll');   // the browser's delayed echoes of the copied positions
+  assert(el('fsA').scrollLeft===100, '#169: echoes from the other tables never pull the swiped one back, got ' + el('fsA').scrollLeft);
+  ev('fsB', 'touchstart'); el('fsB').scrollLeft = 300; ev('fsB', 'scroll');
+  assert(el('fsA').scrollLeft===300, 'Swiping another table makes it the leader');
+}
+// v5.37 (#167): Update value / Reconcile come back to the Monthly update; Start again the same day does not re-read
+async function testV537MonthlyStaysOpen(){
+  const sb = v56Sandbox();
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  let reads = 0; sb.__set('refreshInvPrices', async ()=>{ reads++; });
+  sb.__set('invReadBinance', async ()=>{}); sb.__set('invReadPlatformWallet', async ()=>{});
+  await sb.openInvMonthlyUpdate();
+  assert(reads===1 && sb.document.getElementById('invMonthly') && sb.document.querySelector('[data-monthlyreread]') && sb.document.querySelector('[data-monthlysnaps]'), 'Start reads once; the window has Read everything again and Snapshots');
+  // robo Update value opens on top, saving comes back to the window
+  sb.openInvRoboValueModal(3);
+  assert(!sb.document.getElementById('invMonthly') && sb.document.getElementById('invRoboValueInput'), 'Update value opens its window');
+  sb.document.getElementById('invRoboValueInput').value = '1234';
+  await sb.saveInvRoboValueFromModal(3);
+  assert(sb.document.getElementById('invMonthly') && reads===1, '#167: after saving, back in the same Monthly update window, nothing re-read');
+  sb.openInvRoboValueModal(3); sb.invBackToMonthly();
+  assert(sb.document.getElementById('invMonthly'), 'Cancel also comes back');
+  // Check wallet / Enter units go to Reconcile, which offers the way back
+  sb.mrInvGoRecon(1, false);
+  assert(!sb.document.getElementById('invMonthly') && sb.document.querySelector('[data-monthlyback]'), '#167: Reconcile shows Back to Monthly update');
+  sb.invBackToMonthly();
+  assert(sb.document.getElementById('invMonthly') && reads===1, 'Back to Monthly update reopens the window without re-reading');
+  // Start again the same day: last results at once; Read everything again reads
+  sb.closeModal(); await sb.openInvMonthlyUpdate();
+  assert(sb.document.getElementById('invMonthly') && reads===1, '#167: Start again the same day shows the last results without reading');
+  await sb.openInvMonthlyUpdate(true);
+  assert(reads===2, 'Read everything again reads');
+  sb.closeModal(); sb.renderInvestmentsPage();
+  assert(!sb.document.querySelector('[data-monthlyback]'), 'Reconcile opened normally has no back button');
+}
+// v5.37 (#168): Snapshots tab, two layouts with a synced switch, details, compare, CSV
+async function testV537Snapshots(){
+  const snap = (mk, v, c, ownerV, ownerC, platV)=>({id:Number(mk.replace('-','')), month:mk, takenAt:mk+'-02', data:{fx:3.75,
+    total:{valueSar:v, costSar:c, cashUsd:10, cashSar:37.5},
+    owners:[{id:1, name:'Sam', self:true, valueSar:ownerV, costSar:ownerC, cashUsd:10}, {id:2, name:'Omar', self:false, valueSar:v-ownerV, costSar:c-ownerC, cashUsd:0}],
+    platforms:[{id:1, name:'Exchange 1', valueSar:platV, costSar:c-200, cashUsd:10, positions:[{id:1, name:'Ethereum', ticker:'ETH', units:1.5, price:2000, valueSar:platV, costSar:c-200, plSar:platV-c+200}]},
+      {id:3, name:'Robo Fund', robo:true, valueSar:v-platV, costSar:200, cashUsd:0, positions:[]}]}});
+  const sb = v56Sandbox({invSnapshots:[snap('2026-10', 10000, 9000, 6000, 5500, 8000), snap('2026-11', 11000, 9500, 6600, 5800, 8700)]});
+  const D = vm.runInContext('D', sb);
+  D.invSnapshots = [snap('2026-10', 10000, 9000, 6000, 5500, 8000), snap('2026-11', 11000, 9500, 6600, 5800, 8700)];
+  sb.setInvView('snapshots');
+  const q = s=>sb.document.querySelector(s);
+  assert(/Snapshots/.test(sb.invNavHTML()) && q('[data-snapdetail="2026-11"]') && q('[data-snapmonth="2026-10"]'), '#168: Snapshots tab opens on the newest month, months listed');
+  assert(/\+10\.0%/.test((q('[data-snapmonth="2026-11"]')||{}).textContent||''), 'Each month shows its change against the month before');
+  assert(/Sam/.test(q('[data-snapdetail]').textContent) && /11,000/.test(q('[data-snapdetail]').textContent) && !q('[data-snappos]'), 'Totals and people shown; coins hidden until opened');
+  sb.invSnapTogglePlat(1);
+  assert(/ETH/.test((q('[data-snappos="1"]')||{}).textContent||''), 'A platform opens its coins');
+  sb.invSnapToggleCmp('2026-10', true);
+  const cmp = q('[data-snapcompare]');
+  const rows = sb.invSnapCompareRows(D.invSnapshots[0], D.invSnapshots[1]);
+  assert(cmp && /Oct-26/.test(cmp.textContent) && rows[0].change===1000 && rows[0].newMoney===500 && rows[0].price===500, '#168: compare, oldest first: change 1,000 = new money 500 + price 500, got ' + JSON.stringify(rows[0]));
+  assert(rows.some(r=>/Sam \(you\)/.test(r.name) && r.change===600 && r.newMoney===300) && rows.some(r=>r.name==='Exchange 1' && r.change===700), 'Per person and per platform rows');
+  let csv = null; sb.__set('invCsvDownload', (name, r)=>{ csv = {name, r}; });
+  sb.invSnapCsv('2026-11');
+  assert(csv && /2026-11/.test(csv.name) && csv.r.some(r=>r[0]==='Coin' && /ETH/.test(r[1]) && r[2]===1.5) && csv.r.some(r=>r[0]==='Person' && r[1]==='Omar'), '#168: CSV has totals, people, platforms and coins');
+  await sb.setInvSnapLayout('chart');
+  assert(sb._writes.some(w=>w.t==='pd_ui_prefs' && w.row.dismissals.invSnapLayout==='chart') && q('[data-snapbar="2026-10"]') && q('[data-snapbar="2026-11"]') && q('[data-snapdetail="2026-11"]'), '#168: the switch is synced and B shows a bar per month with the same details');
+  sb.invSnapPick('2026-10');
+  assert(q('[data-snapdetail="2026-10"]') && !q('[data-snapcompare]'), 'Click a bar opens that month');
+  sb.invSnapPick('2026-11', true);
+  assert(q('[data-snapcompare]') && q('[data-snapdetail="2026-10"]'), 'Shift-click a second month compares');
+  sb.invSnapSetWho(1);
+  assert(/6,600/.test((q('[data-snapbar="2026-11"]')||{}).textContent||''), 'The person buttons show that person’s value');
+  D.invSnapshots = []; sb.renderInvestmentsPage();
+  assert(/No snapshots yet/.test(sb.document.getElementById('app').textContent), 'No snapshots: a plain explanation');
 }

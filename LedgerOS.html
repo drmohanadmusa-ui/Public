@@ -638,12 +638,17 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.36.1';
+const APP_VERSION = '5.37.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.37.0', date:'2026-11-23', changes:[
+    'Investments \u2192 \ud83d\udcf8 Snapshots: a new tab for the monthly snapshots. Two layouts with a switch (remembered on every device): Month list (pick a month, tick Compare on another) and Value over time (a bar per month with your cost marked; click a bar, shift-click a second to compare). Each month shows value, cost, profit/loss and cash, by person and by platform (\u25b8 opens the coins). Compare shows the change for everyone, each person and each platform, split into new money and price effect. \u2b07 CSV exports the month. Also reachable from the Monthly update window.',
+    'Monthly update: Update value now opens on top and brings you back to the same window after saving; Check wallet / Enter units go to Reconcile, which has \u201c\u2190 Back to Monthly update\u201d. Pressing Start again the same day shows the last results straight away; \u201c\u21bb Read everything again\u201d does a fresh read.',
+    'Forecast: side scrolling no longer jumps back and forth. The table you are swiping leads and the others follow, without sending their position back.',
+  ]},
   {version:'5.36.1', date:'2026-11-23', changes:[
     'Investments: a trade in millions of units could not be saved (\u201cAllocated: X of X \u2014 these must match\u201d in red although both figures were the same), because of computer rounding when adding the owners\u2019 shares. The check now allows a difference in proportion to the size (one millionth of a millionth of the units). Same for the \u201cmore than held\u201d checks in the trade window, Sell to family and Move coins.',
   ]},
@@ -2743,7 +2748,7 @@ const LEDGEROS_KEYS = [
   'budgetCollapsedSections','statementSortDesc','driftDismissals','driftSettings',
   'hiddenPages','sidebarPinned','theme','invFxUsdSar','uiTheme','uiBackground','uiMotion','customAccentColor',
   'fontSize','fontFamily','contentWidthMode','contentWidthPreset',
-  'invView','invCcy','invPricesFetchedAt','appLogo','splashStyle','invPlatSort',
+  'invView','invCcy','invPricesFetchedAt','appLogo','splashStyle','invPlatSort','invMonthlyReadOn',
 ];
 const LS_ORIGIN_LIMIT_BYTES = 5 * 1024 * 1024; // browsers land near 5 MB; treated as approximate
 function isLedgerOsKey(k){
@@ -9029,7 +9034,15 @@ async function invMonthlySnapshotIfReady(){
   return true;
 }
 let invMonthlyRunning = false;
-async function openInvMonthlyUpdate(){
+// v5.37 (#167): a window or Reconcile opened from the Monthly update comes back to it; Start again the same day shows the
+// last read (saved units, prices) without reading every exchange again, unless he asks for a fresh read.
+let invMonthlyBack = false;
+function invMonthlyReadToday(){ try{ return localStorage.getItem('invMonthlyReadOn')===todayStr(); }catch(e){ return false; } }
+function invBackToMonthly(){ closeModal(); if(invMonthlyBack){ invMonthlyBack = false; renderInvMonthlyUpdate(); } }
+function invMonthlyBackHTML(){ return invMonthlyBack? `<div class="row noprint" data-monthlyback="1" style="margin:0 0 10px"><button class="btn pri sm" onclick="invBackToMonthly()">\u2190 Back to Monthly update</button></div>` : ''; }
+async function openInvMonthlyUpdate(fresh){
+  invMonthlyBack = false;
+  if(!fresh && invMonthlyReadToday()){ renderInvMonthlyUpdate(); return; }
   if(invMonthlyRunning) return;
   invMonthlyRunning = true;
   showModal(`<div id="invMonthly"><h3 style="margin-top:0">\ud83d\udcc5 Monthly update \u2014 ${esc(monthLabel(todayStr().slice(0,7)))}</h3><div class="mut">Refreshing prices and reading your wallets and Binance\u2026</div></div>`, true);
@@ -9043,6 +9056,7 @@ async function openInvMonthlyUpdate(){
       }catch(e){}
     }
   } finally { invMonthlyRunning = false; }
+  try{ localStorage.setItem('invMonthlyReadOn', todayStr()); }catch(e){}
   await invMonthlySnapshotIfReady();
   renderInvMonthlyUpdate();
 }
@@ -9051,6 +9065,8 @@ function renderInvMonthlyUpdate(){
   showModal(`<div id="invMonthly"><div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">\ud83d\udcc5 Monthly update \u2014 ${esc(monthLabel(mk))}</h3><button class="x noprint" onclick="closeModal()">\u2715</button></div>
     <div class="mut" style="font-size:12.5px;margin:6px 0 10px" data-invmonthly-status="1">${snap? `\u2713 Everything updated. Snapshot saved on ${esc(snap.takenAt||'')} (prices, units, cash, values and totals per platform and per person).`
       : `Prices refreshed and wallets / exchanges read. ${left} platform${left===1?'':'s'} still need${left===1?'s':''} you: update ${left===1?'it':'them'}, or tick one you can\u2019t update. The snapshot is taken as soon as all are done.`}</div>
+    <div class="row noprint" style="gap:8px;margin:0 0 8px;flex-wrap:wrap"><button class="btn ghost sm" data-monthlyreread="1" onclick="openInvMonthlyUpdate(true)">\u21bb Read everything again</button>
+      <button class="btn ghost sm" data-monthlysnaps="1" onclick="closeModal(); setInvView('snapshots'); go('investments')">\ud83d\udcf8 Snapshots</button></div>
     ${mrInvestHTML()}</div>`, true);
 }
 function mrInvRows(){
@@ -9074,6 +9090,9 @@ async function mrInvToggleDone(pid, on){
   if(document.getElementById('invMonthly')) renderInvMonthlyUpdate();
 }
 function mrInvGoRecon(pid, check){
+  const fromMonthly = !!document.getElementById('invMonthly');
+  if(fromMonthly) closeModal();
+  invMonthlyBack = fromMonthly;
   setInvView('recon'); go('investments');
   if(check) checkInvPlatformWallet(pid);
 }
@@ -11982,7 +12001,7 @@ function invPctText(cost, market, hasVal){
    USDT and USDC holdings count as cash (1:1 with USD) everywhere in these views. */
 const INV_VIEWS = [
   ['all','👥 All'], ['mine','👤 Mine'], ['family','👨‍👩‍👧 Family'], ['prices','💲 Prices'], ['activity','📋 Activity'], ['recon','✅ Reconcile'],
-  ['insights','📊 Insights'], ['setup','⚙ Setup']
+  ['insights','📊 Insights'], ['snapshots','📸 Snapshots'], ['setup','⚙ Setup']
 ];   // v5.18 (#99): All first and the tab Investments opens on; (#102) Prices
 // v5.6: the 🗂 Classic tab is gone from the menu (Muhannad, #22). Its page is still the fallback below.
 let invView = 'all';   // v5.18 (#99): the app always opens Investments on All
@@ -13564,6 +13583,90 @@ function invOpenPriceLinkFor(posId){
   const row = [...document.querySelectorAll('#invPriceLinksTable tr[data-linkpos]')].find(tr=>ids.includes(Number(tr.dataset.linkpos)));
   if(row){ if(row.scrollIntoView) row.scrollIntoView({block:'center'}); flashEl(row); }
 }
+/* v5.37 (#168): 📸 Snapshots tab. The monthly snapshots (#159), shown two ways by a synced switch
+   (dismissals.invSnapLayout): 'list' = months on the left, tick one to compare; 'chart' = value per month as bars
+   (cost marked), click a bar to open it, shift-click a second to compare. Both show the same details and compare table. */
+let invSnapSel = null, invSnapCmp = null, invSnapWho = 'all';
+const invSnapOpen = new Set();
+function invSnapsSorted(){ return (D.invSnapshots||[]).filter(s=>s && s.data && s.data.total).slice().sort((a,b)=>a.month<b.month? -1 : 1); }
+function invSnapLayout(){ return getUiDismissals().invSnapLayout==='chart'? 'chart' : 'list'; }
+async function setInvSnapLayout(v){ await saveUiDismissals(Object.assign({}, getUiDismissals(), {invSnapLayout: v==='chart'? 'chart' : 'list'})); renderInvestmentsPage(); }
+function invSnapPick(mk, shift){ if(shift && invSnapSel && mk!==invSnapSel) invSnapCmp = mk; else { invSnapSel = mk; if(invSnapCmp===mk) invSnapCmp = null; } renderInvestmentsPage(); }
+function invSnapToggleCmp(mk, on){ if(on && mk!==invSnapSel) invSnapCmp = mk; else if(!on && invSnapCmp===mk) invSnapCmp = null; renderInvestmentsPage(); }
+function invSnapSetWho(w){ invSnapWho = w; renderInvestmentsPage(); }
+function invSnapTogglePlat(id){ if(invSnapOpen.has(id)) invSnapOpen.delete(id); else invSnapOpen.add(id); renderInvestmentsPage(); }
+function invSnapTotals(s, who){ return who==='all'? s.data.total : ((s.data.owners||[]).find(o=>String(o.id)===String(who)) || {valueSar:0, costSar:0}); }
+// From one month to a later one: change in value = new money (change in cost; a sale shows as money out) + price effect.
+function invSnapCompareRows(a, b){
+  const row = (name, x, y)=>{ x = x||{}; y = y||{}; const d = (y.valueSar||0)-(x.valueSar||0), n = (y.costSar||0)-(x.costSar||0); return {name, a:x.valueSar||0, b:y.valueSar||0, change:d, newMoney:n, price:d-n}; };
+  const ids = k=>[...new Set([...(a.data[k]||[]), ...(b.data[k]||[])].map(x=>x.id))];
+  const get = (s, k, id)=>(s.data[k]||[]).find(x=>x.id===id);
+  return [row('Everyone', a.data.total, b.data.total)]
+    .concat(ids('owners').map(id=>{ const x = get(a,'owners',id), y = get(b,'owners',id), o = y||x; return row(o.name+(o.self? ' (you)' : ''), x, y); }))
+    .concat(ids('platforms').map(id=>{ const x = get(a,'platforms',id), y = get(b,'platforms',id); return row((y||x).name, x, y); }));
+}
+function invSnapCsv(mk){
+  const s = invSnapsSorted().find(x=>x.month===mk); if(!s) return;
+  const d = s.data, rows = [['Section','Name','Units','Price','Value SAR','Cost SAR','P/L SAR','Cash USD']];
+  rows.push(['Total','Everyone','','',d.total.valueSar,d.total.costSar,d.total.valueSar-d.total.costSar,d.total.cashUsd||0]);
+  (d.owners||[]).forEach(o=>rows.push(['Person',o.name,'','',o.valueSar,o.costSar,o.valueSar-o.costSar,o.cashUsd||0]));
+  (d.platforms||[]).forEach(p=>{ rows.push(['Platform',p.name,'','',p.valueSar,p.costSar,p.valueSar-p.costSar,p.cashUsd||0]);
+    (p.positions||[]).forEach(x=>rows.push(['Coin',p.name+' / '+(x.ticker||x.name),x.units,x.price===null? '' : x.price,x.valueSar,x.costSar,x.plSar,''])); });
+  invCsvDownload('Investment snapshot '+mk, rows);
+}
+function invSnapPL(v){ return `<span class="${moneyClass(v)}">${v>0? '+' : ''}${money0(v)}</span>`; }
+function invSnapDetailHTML(s){
+  const d = s.data, t = d.total;
+  const kp = (l, v)=>`<div class="panel" style="margin:0;padding:10px 12px"><div class="mut" style="font-size:11.5px">${l}</div><div class="mono" style="font-size:18px;font-weight:600">${v}</div></div>`;
+  const people = (d.owners||[]).filter(o=>Math.abs(o.valueSar)>0.5 || Math.abs(o.costSar)>0.5 || Math.abs(o.cashUsd||0)>0.005);
+  return `<div data-snapdetail="${esc(s.month)}">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px">${kp('Value · '+esc(monthLabel(s.month)), money0(t.valueSar))}${kp('Cost', money0(t.costSar))}${kp('Profit / loss', invSnapPL(t.valueSar-t.costSar))}${kp('Cash', '$'+fmt2(t.cashUsd||0))}</div>
+    <div class="panel"><h3 style="margin-top:0">By person <span class="mut" style="font-weight:400;font-size:12px">· taken ${esc(s.takenAt||'')}</span></h3><div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Person</th><th class="num">Value</th><th class="num">Cost</th><th class="num">P/L</th><th class="num">Cash</th></tr></thead><tbody>
+      ${people.map(o=>`<tr><td>${esc(o.name)}${o.self? ' <span class="mut">(you)</span>' : ''}</td><td class="num mono">${money0(o.valueSar)}</td><td class="num mono">${money0(o.costSar)}</td><td class="num mono">${invSnapPL(o.valueSar-o.costSar)}</td><td class="num mono">$${fmt2(o.cashUsd||0)}</td></tr>`).join('')}</tbody></table></div></div>
+    <div class="panel"><h3 style="margin-top:0">By platform <span class="mut" style="font-weight:400;font-size:12px">· ▸ opens its coins</span></h3><div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Platform / coin</th><th class="num">Units</th><th class="num">Price</th><th class="num">Value</th><th class="num">Cost</th><th class="num">P/L</th></tr></thead><tbody>
+      ${(d.platforms||[]).map(p=>`<tr data-snapplat="${p.id}"><td><button class="btn ghost sm" style="padding:0 6px" aria-expanded="${invSnapOpen.has(p.id)}" onclick="invSnapTogglePlat(${p.id})">${invSnapOpen.has(p.id)? '▾' : '▸'}</button> <b>${esc(p.name)}</b></td><td></td><td></td><td class="num mono">${money0(p.valueSar)}</td><td class="num mono">${money0(p.costSar)}</td><td class="num mono">${invSnapPL(p.valueSar-p.costSar)}</td></tr>
+        ${invSnapOpen.has(p.id)? (p.positions||[]).map(x=>`<tr data-snappos="${x.id}" class="mut"><td style="padding-left:34px">${esc(x.ticker||x.name)}</td><td class="num mono">${invFmtUnits(x.units)}</td><td class="num mono">${x.price===null||x.price===undefined? '—' : invFmtPrice(x.price)}</td><td class="num mono">${money0(x.valueSar)}</td><td class="num mono">${money0(x.costSar)}</td><td class="num mono">${invSnapPL(x.plSar)}</td></tr>`).join('') : ''}`).join('')}</tbody></table></div></div></div>`;
+}
+function invSnapCompareHTML(a, b){
+  if(a.month>b.month){ const t = a; a = b; b = t; }
+  return `<div class="panel" data-snapcompare="1"><h3 style="margin-top:0">Compare ${esc(monthLabel(a.month))} → ${esc(monthLabel(b.month))} <span class="mut" style="font-weight:400;font-size:12px">· new money = change in cost (a sale shows as money out); price effect = the rest</span></h3>
+    <div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Who / where</th><th class="num">${esc(monthLabel(a.month))}</th><th class="num">${esc(monthLabel(b.month))}</th><th class="num">Change</th><th class="num">New money</th><th class="num">Price effect</th></tr></thead><tbody>
+    ${invSnapCompareRows(a, b).map((r,i)=>`<tr${i===0? ' style="font-weight:700"' : ''}><td>${esc(r.name)}</td><td class="num mono">${money0(r.a)}</td><td class="num mono">${money0(r.b)}</td><td class="num mono">${invSnapPL(r.change)}</td><td class="num mono mut">${money0(r.newMoney)}</td><td class="num mono">${invSnapPL(r.price)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function renderInvSnapshotsView(nav){
+  const snaps = invSnapsSorted();
+  if(!snaps.some(s=>s.month===invSnapSel)) invSnapSel = snaps.length? snaps[snaps.length-1].month : null;
+  if(!snaps.some(s=>s.month===invSnapCmp) || invSnapCmp===invSnapSel) invSnapCmp = null;
+  const lay = invSnapLayout(), sel = snaps.find(s=>s.month===invSnapSel), cmp = snaps.find(s=>s.month===invSnapCmp);
+  const sw = v=>`<button class="btn ${lay===v? 'pri' : 'ghost'} sm" data-snaplayout="${v}" onclick="setInvSnapLayout('${v}')">${v==='list'? 'Month list' : 'Value over time'}</button>`;
+  const head = `<div class="panel noprint row" style="gap:8px;align-items:center;flex-wrap:wrap"><b>📸 Snapshots</b><span class="mut" style="font-size:12px">saved once a month when every platform is updated</span><span style="flex:1"></span>${sw('list')}${sw('chart')}${sel? `<button class="btn ghost sm" data-snapcsv="1" onclick="invSnapCsv('${sel.month}')">⬇ CSV</button>` : ''}</div>`;
+  let body;
+  if(!snaps.length) body = '<div class="panel empty">No snapshots yet. One is saved automatically once every platform is updated in the Monthly update (Needs you, from the 1st of each month).</div>';
+  else {
+    const detail = invSnapDetailHTML(sel) + (cmp? invSnapCompareHTML(sel, cmp) : `<div class="mut" style="font-size:12px;margin:4px 0 10px">${lay==='list'? 'Tick Compare on another month' : 'Shift-click another month'} to compare the two.</div>`);
+    if(lay==='list'){
+      const items = snaps.slice().reverse().map(s=>{ const i = snaps.indexOf(s), prev = snaps[i-1], v = s.data.total.valueSar, ch = prev && prev.data.total.valueSar? (v/prev.data.total.valueSar-1)*100 : null;
+        return `<div data-snapmonth="${esc(s.month)}" style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:7px 9px;border-radius:8px;margin-bottom:4px;border:1px solid ${s.month===invSnapSel? 'var(--accent)' : 'var(--line)'}">
+          <button class="btn ghost sm" style="flex:1;justify-content:flex-start;text-align:left" onclick="invSnapPick('${s.month}')"><b>${esc(monthLabel(s.month))}</b></button>
+          <span class="mono ${ch===null? 'mut' : moneyClass(ch)}" style="font-size:12px">${ch===null? '—' : (ch>0? '+' : '')+ch.toFixed(1)+'%'}</span>
+          ${s.month!==invSnapSel? `<label class="mut" style="font-size:11px;display:flex;gap:3px;align-items:center"><input type="checkbox" class="chk" style="width:auto" ${s.month===invSnapCmp? 'checked' : ''} onchange="invSnapToggleCmp('${s.month}', this.checked)">Compare</label>` : ''}</div>`; }).join('');
+      body = `<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start"><div class="panel" style="flex:0 1 230px;min-width:200px;margin:0">${items}</div><div style="flex:999 1 560px;min-width:0">${detail}</div></div>`;
+    } else {
+      const people = ((snaps[snaps.length-1].data.owners)||[]).filter(o=>Math.abs(o.valueSar)>0.5);
+      const whoBtn = (w, l)=>`<button class="btn ${String(invSnapWho)===String(w)? 'pri' : 'ghost'} sm" onclick="invSnapSetWho('${w}')">${esc(l)}</button>`;
+      const tot = snaps.map(s=>invSnapTotals(s, invSnapWho)), max = Math.max(1, ...tot.map(t=>Math.max(t.valueSar||0, t.costSar||0)));
+      const bars = snaps.map((s,i)=>{ const t = tot[i], on = s.month===invSnapSel || s.month===invSnapCmp;
+        return `<button class="snap-bar" data-snapbar="${esc(s.month)}" onclick="invSnapPick('${s.month}', event.shiftKey)" title="${esc(monthLabel(s.month))}: value ${money0(t.valueSar)}, cost ${money0(t.costSar)}" style="flex:1;max-width:90px;min-width:34px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;background:none;border:none;cursor:pointer;color:inherit;padding:0">
+          <span class="mono" style="font-size:11px">${money0(t.valueSar)}</span>
+          <span style="position:relative;width:70%;height:${((t.valueSar||0)/max*82).toFixed(1)}%;background:${on? 'var(--accent)' : 'color-mix(in srgb,var(--accent) 35%,var(--panel))'};border-radius:6px 6px 0 0"><span aria-hidden="true" style="position:absolute;left:-6px;right:-6px;bottom:${(t.valueSar? (t.costSar||0)/t.valueSar*100 : 0).toFixed(1)}%;border-top:3px solid #f59e0b"></span></span>
+          <span style="font-size:11.5px;font-weight:${on? 700 : 400}">${esc(monthLabel(s.month))}</span></button>`; }).join('');
+      body = `<div class="panel"><div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><b style="margin-right:6px">Value vs cost, each month</b>${whoBtn('all','Everyone')}${people.map(o=>whoBtn(o.id, o.name+(o.self? ' (you)' : ''))).join('')}</div>
+        <div style="display:flex;gap:14px;align-items:flex-end;height:220px;border-bottom:1px solid var(--line);overflow-x:auto">${bars}</div>
+        <div class="mut" style="font-size:11.5px;margin-top:6px">Bars = value; orange line = cost (money put in). Click a month to open it; shift-click a second month to compare.</div></div>${detail}`;
+    }
+  }
+  document.getElementById('app').innerHTML = nav + head + body;
+}
 function renderInvPricesView(nav){
   const rows = invPricesRows(), unpriced = rows.filter(r=>!r.priced).length;
   const body = rows.map(r=>{
@@ -14022,7 +14125,8 @@ function setInvTab(t){ invTab = t; setInvView(t==='recon'? 'recon' : 'mine'); }
 function renderInvestmentsPage(){
   invMaybeAutoRefresh();
   const nav = invNavHTML();
-  if(invView==='recon'){ renderInvReconPage(nav + invOwnerReconPanelHTML()); return; }
+  if(invView==='recon'){ renderInvReconPage(nav + invMonthlyBackHTML() + invOwnerReconPanelHTML()); return; }
+  if(invView==='snapshots'){ renderInvSnapshotsView(nav); return; }
   if(invView==='mine'){ renderInvMineView(nav); return; }
   if(invView==='all'){ renderInvAllView(nav); return; }
   if(invView==='prices'){ renderInvPricesView(nav); return; }
@@ -14550,12 +14654,13 @@ function invRoboPlatformStats(p){
 // so "Update value" opened Edit platform (no value field). Saves today's value with saveInvRoboValue.
 function openInvRoboValueModal(platformId){
   const p = invPlatformById(platformId); if(!p) return;
+  invMonthlyBack = !!document.getElementById('invMonthly');   // #167: come back to the Monthly update
   const last = (p.roboValue===null||p.roboValue===undefined)? null : Number(p.roboValue);
-  showModal(`<div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">🤖 ${esc(p.name)}: portfolio value</h3><button class="x noprint" onclick="closeModal()">✕</button></div>
+  showModal(`<div class="row" style="justify-content:space-between;align-items:baseline"><h3 style="margin:0">🤖 ${esc(p.name)}: portfolio value</h3><button class="x noprint" onclick="invBackToMonthly()">✕</button></div>
     <div class="mut" style="font-size:12.5px;margin:8px 0 12px">${last!==null? `Last value: <b class="mono">${money(last)}</b> on ${esc(p.roboValueDate||'?')}` : 'No value logged yet.'} Enter today's value from the platform's app (in SAR).</div>
     <label class="fl">Value today (${esc(todayStr())})</label>
     <input id="invRoboValueInput" type="number" step="0.01" min="0" style="text-align:right" placeholder="${last!==null? money(last) : '0.00'}" onkeydown="if(event.key==='Enter') saveInvRoboValueFromModal(${p.id})">
-    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn ghost" onclick="invBackToMonthly()">Cancel</button>
       <button class="btn pri" data-robosave="1" onclick="saveInvRoboValueFromModal(${p.id})">Save</button></div>`, true);
   const el = document.getElementById('invRoboValueInput'); if(el && el.focus) el.focus();
 }
@@ -14564,6 +14669,7 @@ async function saveInvRoboValueFromModal(platformId){
   if(!(v>0)){ toast('Enter the value (more than 0)', true); return; }
   closeModal();
   await saveInvRoboValue(platformId, v);
+  if(invMonthlyBack){ invMonthlyBack = false; await invMonthlySnapshotIfReady(); renderInvMonthlyUpdate(); }
 }
 async function saveInvRoboValue(platformId, val){
   const price = Number(val);
@@ -18852,14 +18958,15 @@ function syncForecastScrollContainers(){
   const body = document.getElementById('forecastBody');
   if(!body) return;
   const containers = Array.from(body.querySelectorAll('.forecast-scroll'));
-  let syncing = false;
+  // v5.37 (#169): only the table under his hand leads. Copied positions fire their own scroll events a moment
+  // later; if those were passed on, a table that can't scroll as far pulled the swiped one back (jitter).
+  let lead = null;
   containers.forEach(c=>{
+    ['wheel','touchstart','pointerdown','mousedown','keydown','focusin'].forEach(ev=>c.addEventListener(ev, ()=>{ lead = c; }, {passive:true}));
     c.addEventListener('scroll', ()=>{
-      if(syncing) return;
-      syncing = true;
-      containers.forEach(other=>{ if(other!==c) other.scrollLeft = c.scrollLeft; });
-      syncing = false;
-    });
+      if(lead && lead!==c) return;
+      containers.forEach(other=>{ if(other!==c && Math.abs(other.scrollLeft - c.scrollLeft)>=1) other.scrollLeft = c.scrollLeft; });
+    }, {passive:true});
   });
 }
 function renderForecastBody(){
