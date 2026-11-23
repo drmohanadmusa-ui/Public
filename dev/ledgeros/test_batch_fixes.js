@@ -8147,6 +8147,10 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV531BinanceUnitsAndCash();
   await testEdgeBinanceHistory();
   await testV532BinanceFindTrades();
+  await testV533SmsDatesInInbox();
+  await testV533ForecastCopyForward();
+  await testV533AddWalletCoin();
+  await testV533MonthlyUpdateAndSnapshot();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
@@ -9227,8 +9231,8 @@ async function testSmsInboxTableIsInEveryTableList(){
   const html = fs.readFileSync(APP_HTML, 'utf8');
   const sb = makeSandbox();
   const sql = vm.runInContext('DB_SCHEMA_CORE', sb);
-  assert(/create table if not exists pd_sms_inbox \(/.test(sql) && /'pd_sms_inbox',\s*\n\s*'pd_loans',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_sms_inbox and gives it the same RLS policy as every table');
-  assert(/fetchAllRows\('pd_sms_inbox','id'\)/.test(html) && /TOTAL_SOURCES = 28/.test(html), 'The cloud load fetches it (and the splash progress counts it)');
+  assert(/create table if not exists pd_sms_inbox \(/.test(sql) && /'pd_sms_inbox',\s*\n\s*'pd_loans',\s*\n\s*'pd_inv_snapshots',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_sms_inbox and gives it the same RLS policy as every table');
+  assert(/fetchAllRows\('pd_sms_inbox','id'\)/.test(html) && /TOTAL_SOURCES = 29/.test(html), 'The cloud load fetches it (and the splash progress counts it)');
   assert(/SB\.from\('pd_sms_inbox'\)\.delete\(\)\.neq\('id',-1\); bump/.test(html) && /insertWithRetry\('pd_sms_inbox', D\.smsInbox\.map\(smsToRow\)\)/.test(html), 'Restore from backup clears and restores it');
   assert((html.match(/SB\.from\('pd_sms_inbox'\)\.delete\(\)/g)||[]).length===2, 'Wipe-all clears it too');
   const D = vm.runInContext('D', sb); delete D.smsInbox; sb.normalizeDataShape(D);
@@ -9330,18 +9334,17 @@ async function testSmsCreateOpensFirstDateDraftsRestAndPostingMarksDone(){
   await sb.smsCreateJVs('a:10101', true);
   const jvDraft = vm.runInContext('jvDraft', sb), drafts = vm.runInContext('jvDrafts', sb);
   assert(jvDraft.date==='2026-11-10' && jvDraft.lines.length===2 && jvDraft.lines[0].smsId===1, 'The earliest date opens in New JV');
-  assert(drafts.length===1 && drafts[0].date==='2026-11-11' && drafts[0].lines.every(l=>l.smsId===2), 'The other date is saved as a draft, still linked to its SMS');
-  const draftWrite = sb.__calls.find(c=>c.table==='pd_drafts');
-  assert(draftWrite && draftWrite.row.lines[0].smsId===2, 'The draft syncs with the SMS link on its lines');
-  assert(sb.smsPending().map(s=>s.id).join()==='3', 'SMS in the open JV or a draft are no longer waiting');
+  // v5.33 (#156): the other date stays in the inbox (no draft)
+  assert(drafts.length===0 && !sb.__calls.some(c=>c.table==='pd_drafts'), 'No draft is saved for the other date');
+  assert(sb.smsPending().map(s=>s.id).sort().join()==='2,3', 'SMS in the open JV are no longer waiting; the other date still is');
   jvDraft.lines[1].acc = '60102';
   await sb.postJV();
   const posted = sb.__calls.filter(c=>c.table==='pd_sms_inbox');
   const jvNo = vm.runInContext('D', sb).ledger.filter(l=>l.descr==='SHOP 1').map(l=>l.jv)[0];
   assert(posted.length===1 && posted[0].row.id===1 && posted[0].row.status==='posted' && posted[0].row.jv===jvNo && jvNo, 'Posting the JV moves its SMS to Done with the JV number');
-  sb.continueDraft(drafts[0].id);
+  await sb.smsCreateJVs('a:10101', true, '2026-11-11');
   const again = vm.runInContext('jvDraft', sb);
-  assert(again.lines.every(l=>l.smsId===2), 'Continuing the draft keeps the SMS link, so posting it marks that SMS too');
+  assert(again.date==='2026-11-11' && again.lines.every(l=>l.smsId===2), 'Create JV for the other date opens that date, linked to its SMS');
   await sb.saveJVDraft();
   const saved = vm.runInContext('jvDrafts', sb).slice(-1)[0];
   assert(saved && saved.lines.every(l=>l.smsId===2), 'Saving it as a draft again keeps the link too');
@@ -9811,6 +9814,7 @@ async function testV56NeedsYouListsWhatIsWaiting(){
 }
 async function testV56RailBadgeCountsInvestmentItems(){
   const sb = v56Sandbox({invPlatforms:[{id:3, name:'Robo Fund', isRobo:true, roboValue:1000, roboValueDate:'2026-08-01'}], invPositions:[], invTransactions:[], invValuations:[]});
+  sb._D.invSnapshots = [{id:1, month: sb.todayStr().slice(0,7), takenAt: sb.todayStr(), data:{}}];   // v5.33 (#159): this month's snapshot exists, so no monthly item
   const b = sb.invNavBadgeHTML();
   assert(/inv-nav-badge/.test(b) && />1<\/span>/.test(b), 'One item → a badge with 1 on the Investments button, got ' + b);
   const html = fs.readFileSync(APP_HTML, 'utf8');
@@ -10854,8 +10858,8 @@ async function testV514LoanSaveAndTableLists(){
   assert(back.id===1 && back.terms.amount===50000 && back.accs.liability===20202 && back.provisionId===null && back.settledOn===null, 'Row round trip');
   const html = fs.readFileSync(APP_HTML, 'utf8');
   const sql = vm.runInContext('DB_SCHEMA_CORE', sb);
-  assert(/create table if not exists pd_loans \(/.test(sql) && /'pd_loans',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_loans with the same RLS policy');
-  assert(/fetchAllRows\('pd_loans','id'\)/.test(html) && /loanRows\] =/.test(html) && /D\.loans = loanRows\.data\.map\(loanFromRow\)/.test(html), 'Cloud load reads it');
+  assert(/create table if not exists pd_loans \(/.test(sql) && /'pd_loans',\s*\n\s*'pd_inv_snapshots',\s*\n\s*'pd_sync_meta'/.test(sql), 'Schema creates pd_loans with the same RLS policy');
+  assert(/fetchAllRows\('pd_loans','id'\)/.test(html) && /loanRows,invSnapRows\] =/.test(html) && /D\.loans = loanRows\.data\.map\(loanFromRow\)/.test(html), 'Cloud load reads it');
   assert(/SB\.from\('pd_loans'\)\.delete\(\)\.neq\('id',-1\); bump/.test(html) && /insertWithRetry\('pd_loans', D\.loans\.map\(loanToRow\)\)/.test(html) && (html.match(/SB\.from\('pd_loans'\)\.delete\(\)/g)||[]).length===2, 'Restore and wipe-all clear and restore it');
   assert(/loans: parsed\.loans\|\|\[\]/.test(html), 'Restore from a backup file keeps the loans');
   const D2 = vm.runInContext('D', sb); delete D2.loans; sb.normalizeDataShape(D2);
@@ -11766,9 +11770,11 @@ async function testV523MonthReviewInvestments(){
   const bin = rows.find(r=>r.p.id===1), robo = rows.find(r=>r.p.id===3);
   assert(bin && !bin.robo && robo && robo.robo && robo.valueDate==='2026-11-01', 'One row per platform with holdings; robo shows its value date');
   let html = sb.mrInvestHTML();
-  assert(/Refresh all prices/.test(html) && /openInvRoboValueModal\(3\)/.test(html) && /Enter units/.test(html) && /0 of \d+ platform/.test(html), 'Step 6: refresh, Update value for robo, Enter units for exchanges, count');
+  // v5.31/5.33: the fixture's platform 1 is named Binance (Check wallet), and a robo value from this month counts as updated (#159)
+  const doneNow = sb.mrInvRows().filter(r=>r.done).length;
+  assert(/Refresh all prices/.test(html) && /openInvRoboValueModal\(3\)/.test(html) && /Check wallet|Enter units/.test(html) && new RegExp(doneNow+' of \\d+ platform').test(html) && sb.mrInvRows().find(r=>r.p.id===3).auto, 'Step 6: refresh, Update value for robo, units, count (the robo value from this month counts)');
   await sb.mrInvToggleDone(1, true);
-  assert(sb.mrInvRows().find(r=>r.p.id===1).done && /1 of \d+ platform/.test(sb.mrInvestHTML()), 'Done this month is ticked and counted');
+  assert(sb.mrInvRows().find(r=>r.p.id===1).done && new RegExp((doneNow+1)+' of \\d+ platform').test(sb.mrInvestHTML()), 'Done this month is ticked and counted');
   assert(/data-mrrecon=/.test(sb.mrInvestHTML()) || !sb.invOwnerReconciliation().some(r=>r.linked), 'Reconcile lines listed with their difference');
 }
 async function testV524FalseAlarmsAndDepositSar(){
@@ -12183,4 +12189,103 @@ async function testV532BinanceFindTrades(){
   vm.runInContext(`invWalletResults[1].rows = [{pos: invPositionById(1), tracker: ${tracker}, wallet: ${tracker} + 50}]`, sb);
   const g = await sb.invBinanceFindTrades(1);
   assert(g.notes.length===1 && /ETH/.test(g.notes[0]) && calls.filter(c=>c.action==='trades').length===60, 'Not explained: looks back 30 days (2 pairs a day) and says so, got ' + JSON.stringify(g.notes) + ' calls ' + calls.length);
+}
+async function testV533SmsDatesInInbox(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  D.smsInbox.push(R(1, {date:'2026-11-10', amt:120}), R(2, {date:'2026-11-11', amt:125}));
+  await sb.__map({'1111':10101});
+  sb.openSmsInbox();
+  const dateRows = [...sb.document.querySelectorAll('[data-smsdate]')];
+  const oc = i => { const b = dateRows[i] && dateRows[i].querySelector('button'); return b? b.getAttribute('onclick')||'' : ''; };
+  assert(dateRows.length===2 && dateRows[0].getAttribute('data-smsdate')==='2026-11-10' && /smsCreateJVs\(.*false, "2026-11-10"\)/.test(oc(0)) && /smsCreateJVs\(.*false, "2026-11-11"\)/.test(oc(1)), 'Two dates: one row per date, oldest first, each with its own Create JV, got ' + oc(0));
+  // balance asked once per account; every date opens with the reconcile bar
+  let asked = 0;
+  sb.__set('smsReconcileAcc', ()=>({id:10101}));
+  sb.__set('openSmsStmtPrompt', ()=>{ asked++; });
+  await sb.smsCreateJVs('a:10101', false, '2026-11-10');
+  assert(asked===1, 'First date: the bank balance is asked');
+  await sb.smsCreateJVs('a:10101', true, '2026-11-10');
+  assert(vm.runInContext('jvDraft', sb).date==='2026-11-10' && vm.runInContext('reconcileAcc', sb)===10101 && vm.runInContext('jvDrafts', sb).length===0, 'It opens that date with the reconcile bar; no draft for the other date');
+  vm.runInContext("jvDraft = {date:'2026-11-11', lines:[freshLine(), freshLine()]}; reconcileAcc = null", sb);
+  await sb.smsCreateJVs('a:10101', false, '2026-11-11');
+  assert(asked===1 && vm.runInContext('jvDraft', sb).date==='2026-11-11' && vm.runInContext('reconcileAcc', sb)===10101, 'Next date of the same account: not asked again, and the reconcile bar shows');
+  // once nothing of that account waits, the next batch asks again
+  D.smsInbox.forEach(s=>{ s.status = 'posted'; });
+  vm.runInContext("jvDraft = {date:'2026-11-11', lines:[freshLine(), freshLine()]}", sb);
+  sb.openSmsInbox();
+  D.smsInbox.push(R(7, {date:'2026-11-12', amt:40}));
+  await sb.smsCreateJVs('a:10101');
+  assert(asked===2, 'A new batch for that account asks for the balance again');
+}
+async function testV533ForecastCopyForward(){
+  const sb = makeSandbox();
+  const D = vm.runInContext('D', sb);
+  const cm = sb.todayStr().slice(0,7), m1 = sb.nextMonthKeyPlain(cm), m2 = sb.nextMonthKeyPlain(m1), m3 = sb.nextMonthKeyPlain(m2);
+  D.accounts = [{id:30101, name:'Test Salary', acc_type:'Individual Account', status:'Active', category:'Income', forecast_category:'income'}];
+  D.ledger = []; D.forecastPlans = {30101:{[m2]:-999}};
+  sb.rebuildIndex && sb.rebuildIndex();
+  sb.__set('forecastMonthsWindow', ()=>[cm, m1, m2, m3]);
+  sb.__set('blockIfSyncing', ()=>false);
+  const writes = []; sb.__set('syncWrite', async (t, op, row)=>{ writes.push(t); });
+  sb.__set('renderForecastBody', ()=>{});
+  const cell = sb.document.createElement('table'); cell.innerHTML = '<tr>'+sb.renderForecastCell(D.accounts[0], m1, cm, true, {})+'</tr>';
+  const btn = cell.querySelector('.fc-copy');
+  assert(cell.querySelector('[data-fcin="30101_'+m1+'"]') && btn && /fcCopyForward\(30101, '[0-9-]+', 1\)/.test(btn.getAttribute('onmousedown')||''), 'Each typed cell has a copy-forward button');
+  sb.document.body.appendChild(cell);
+  cell.querySelector('input').value = '1,500';
+  let msg = ''; sb.confirm = m=>{ msg = m; return true; };
+  await sb.fcCopyForward(30101, m1, 1);
+  const pl = D.forecastPlans[30101];
+  assert(pl[m1]===1500 && pl[m2]===1500 && pl[m3]===1500 && pl[cm]===undefined, 'This month and every later month shown get 1,500; earlier months untouched, got ' + JSON.stringify(pl));
+  assert(/2 months/.test(msg) && /1 already has a different figure/.test(msg) && writes.length===1, 'Asks first, naming the months and the one it overwrites; saved in one write, got ' + msg);
+  sb.confirm = ()=>false; cell.querySelector('input').value = '7';
+  await sb.fcCopyForward(30101, m1, 1);
+  assert(D.forecastPlans[30101][m3]===1500 && writes.length===1, 'Cancelled = nothing changes');
+}
+async function testV533AddWalletCoin(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  D.invPlatforms.push({id:9, name:'Cold Wallet'});
+  await sb.saveInvPriceCfg({wallets:{9:[{chain:'solana', address:'So1anaWa11et111111111111111111111111111111'}]}, links:{3:{kind:'dex', chain:'solana', address:'MintFrog111'}}});
+  sb.__set('invWalletBalances', async ()=>({MintFrog111: 5, MintOther: 2}));
+  const r = await sb.invReadPlatformWallet(9);
+  assert(!r.rows.length && r.addable.length===1 && r.addable[0].src.id===3 && r.addable[0].units===5 && !r.error, 'A token linked to a coin on another platform is offered, got ' + JSON.stringify({add:r.addable, err:r.error}));
+  const div = sb.document.createElement('div'); div.innerHTML = sb.invWalletPanelHTML(sb.invPlatformById(9), true);
+  const btn = div.querySelector('[data-walletadd="3"]');
+  assert(btn && /\+ Add to Cold Wallet/.test(btn.textContent), 'The button names the platform being checked');
+  await sb.invAddWalletCoin(9, 3);
+  const added = D.invPositions.find(p=>p.platformId===9);
+  const after = vm.runInContext('invWalletResults[9]', sb);
+  assert(added && added.ticker==='FROG' && after.rows.some(x=>x.pos.id===added.id && x.wallet===5), 'Added with the same ticker; its price link applies, so the wallet check now counts it');
+  let msg = ''; sb.__set('toast', m=>{ msg = m; });
+  await sb.invAddWalletCoin(9, 3);
+  assert(D.invPositions.filter(p=>p.platformId===9).length===1 && /already/.test(msg), 'Not added twice');
+}
+async function testV533MonthlyUpdateAndSnapshot(){
+  const sb = v56Sandbox();
+  const D = vm.runInContext('D', sb);
+  sb.document.body.insertAdjacentHTML('beforeend', '<div id="modalRoot"></div>');
+  D.invSnapshots = [];
+  const mk = sb.todayStr().slice(0,7);
+  const writes = []; sb.__set('syncWrite', async (t, op, row)=>{ writes.push({t, row}); });
+  let items = sb.invNeedsYouItems();
+  assert(items.some(i=>i.key==='month'+mk && /Monthly update/.test(i.text) && i.act==='openInvMonthlyUpdate()'), 'Needs you: Monthly update with Start');
+  assert(await sb.invMonthlySnapshotIfReady()===false && !writes.some(w=>w.t==='pd_inv_snapshots'), 'No snapshot while platforms still need updating');
+  // the window: automatic pass, then what is left
+  sb.__set('refreshInvPrices', async ()=>{});
+  await sb.openInvMonthlyUpdate();
+  const box = sb.document.getElementById('invMonthly');
+  assert(box && /still need/.test(box.textContent) && box.querySelector('#mrInvest'), 'The window lists what is left (the Month review investments step)');
+  for(const r of sb.mrInvRows()) if(!r.done) await sb.mrInvToggleDone(r.p.id, true);
+  const snap = sb.invMonthSnapshot(mk);
+  const w = writes.find(x=>x.t==='pd_inv_snapshots');
+  assert(snap && snap.id===Number(mk.replace('-','')) && w && w.row.month===mk, 'All done → the snapshot is saved automatically, id yyyymm (one per month, every device)');
+  const d = snap.data;
+  assert(d.platforms.length>0 && d.platforms.every(p=>Array.isArray(p.positions)) && d.platforms.some(p=>p.positions.some(x=>'units' in x && 'price' in x && 'valueSar' in x && 'costSar' in x && 'plSar' in x)) && d.owners.length===D.invOwners.length && 'valueSar' in d.total && 'cashUsd' in d.total, 'The snapshot has per platform and coin units, price, value, cost, P/L, cash, and totals per person and overall');
+  assert(/Snapshot saved/.test(sb.document.getElementById('invMonthly').textContent), 'The window says it was saved');
+  items = sb.invNeedsYouItems();
+  assert(!items.some(i=>i.key==='month'+mk), 'Once saved, the monthly item goes away');
+  assert(await sb.invMonthlySnapshotIfReady()===false && writes.filter(x=>x.t==='pd_inv_snapshots').length===1, 'Only one snapshot per month');
 }
