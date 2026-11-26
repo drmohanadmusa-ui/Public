@@ -8092,6 +8092,7 @@ async function testOlderTransferPairsStillShowAsOneMove(){
   await testV511PasteSmsUsesTheEdgeFunction();
   await testV512CashbackIsNamedAfterItsPurchaseAndGoesToItsAccount();
   await testV512BalanceWindowSuggestsTheBalance();
+  await testV538ReconcileBarCountsWaitingSms();
   await testV512CreditCardOver30PercentWarns();
   await testV513MerchantMemorySuggestsTheAccount();
   await testV513SuggestionIsAmberUntilChanged();
@@ -10615,6 +10616,31 @@ async function testV512CashbackIsNamedAfterItsPurchaseAndGoesToItsAccount(){
   sb.openSmsInbox();
   sb.__set('smsMapOpen', true); sb.openSmsInbox();
   assert(sb.document.getElementById('smsCashbackAcc') && /Cashback · TEST SHOP \(75\.00\)/.test(sb.document.getElementById('modalRoot').innerHTML), 'Numbers & accounts has the setting; the inbox shows the name');
+}
+async function testV538ReconcileBarCountsWaitingSms(){
+  const sb = smsSandbox(); const D = vm.runInContext('D', sb), R = sb.__R;
+  D.smsInbox.push(R(1, {date:'2026-11-10', amt:100}), R(2, {date:'2026-11-11', amt:40}), R(3, {acct:'7777', date:'2026-11-11', amt:25}));
+  await sb.__map({'1111':10101, '7777':10103});
+  const first = sb.smsBuildJVs('a:10101').jvs.find(j=>j.date==='2026-11-10');
+  assert(first, 'Setup: the 10 Nov JV is built');
+  vm.runInContext('jvDraft', sb).lines = first.lines.map(l=>Object.assign({}, l));
+  vm.runInContext('jvDrafts', sb).push({id:900, date:'2026-11-09', lines:[{acc:'10101', descr:'old SMS', amt:'-30', smsId:77}, {acc:'', descr:'old SMS', amt:'30', smsId:77}, {acc:'10101', descr:'typed', amt:'-5'}]});
+  const acc = D.accounts.find(a=>a.id===10101); acc.stmt_balance = 1000;
+  vm.runInContext('ACC_BY_ID[10101]', sb).stmt_balance = 1000;
+  sb.__set('reconcileAcc', 10101);
+  const ledger = sb.accountBalance(10101);
+  const html = sb.reconcileBannerHTML();
+  const w = vm.runInContext('reconcileWait', sb);
+  assert(w && w.sms.n===1 && w.sms.sum===-40 && w.sms.dates.join()==='2026-11-11', '#171: the other date still waiting counts (the open JV\'s SMS not twice), got ' + JSON.stringify(w));
+  assert(w.drafts.n===1 && w.drafts.sum===-30, '#171: saved drafts count only their SMS lines on this account, got ' + JSON.stringify(w && w.drafts));
+  assert(Math.abs(sb.reconcileProjected() - (ledger - 100 - 40 - 30))<0.001, '#171: one Remaining figure: ledger + this JV + waiting SMS + drafts, got ' + sb.reconcileProjected());
+  assert(/Includes 1 SMS still waiting \([^)]*\): <b class="mono">\u2212(SAR )?40\.00/.test(html) && /Includes 1 SMS in saved drafts: <b class="mono">\u2212(SAR )?30\.00/.test(html), '#171: each on its own note line, got ' + (html.match(/Includes[^<]*<b[^<]*</g)||[]).join(' | '));
+  vm.runInContext('jvDraft', sb).lines[0].amt = String(Number(first.lines[0].amt) - 1);
+  assert(Math.abs(sb.reconcileProjected() - (ledger - 101 - 40 - 30))<0.001, 'Typing in this JV still moves the figure');
+  const c = sb.reconcileWaiting(10103);
+  assert(c.sms.n===1 && c.sms.sum===-25, '#171: credit cards count their waiting SMS too, got ' + JSON.stringify(c.sms));
+  D.smsInbox.length = 0; vm.runInContext('jvDrafts', sb).length = 0;
+  assert(!/data-recwait/.test(sb.reconcileBannerHTML()), 'Nothing waiting: no note lines');
 }
 async function testV512BalanceWindowSuggestsTheBalance(){
   const {sb, D, R} = v511Sandbox();
