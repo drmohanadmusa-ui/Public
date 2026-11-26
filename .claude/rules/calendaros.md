@@ -85,6 +85,7 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
 - **Run:** `bash dev/calendaros/run_tests.sh [path/to/CalendarOS.html]`. It works from any clone location and takes about 40 seconds.
   - It splits the app into `dev/calendaros/.build/` (gitignored), installs pinned `jsdom` on first run, and runs every `dev/calendaros/tests/test_*.js`.
   - It prints each FAIL line marked `[known]` or `[NEW]`, then `N passed, M failed`. Exit codes: 0 = no new failures, 1 = new failure, 2 = crash or build error.
+- **Latest run (v4.75.1, 2026-11-23): 1141 passed, 29 failed, 0 new.** The passed count only grows.
 - **Baseline at the move to Claude Code (v4.71.1, 2026-11-07): 864 passed, 29 failed, 0 new.** That is 25 suites: 24 carried over (841 passed) plus `test_core_conventions.js` (23).
   - The 29 are **known stale assertions** in 8 older suites (`baseline_failures.txt`): behaviour that later versions deliberately changed. They predate the move.
   - **"Clean" means no `[NEW]` lines, not zero failures.** Never add a line to the baseline to hide a new failure. Retiring a stale assertion is agreed work, and its baseline line is deleted in the same commit.
@@ -120,6 +121,8 @@ No read-only connector exists for CalendarOS's Supabase project, so sessions can
 - **Planned volume double-counted** today's done sets (a duplicated calculation was consolidated). **4.61:** Calendar View / Session Library were dropped from navigation. **4.63:** "weights going backwards" because progression used warm-ups or future staged days.
 - **v4.71.0 "Hide missed / moved" hid too much.** He meant only what is missed/moved *for the date shown* (fixed in 4.71.1). Restate your interpretation of ambiguous words, and test the "should stay visible" cases too.
 - **Pushes were rejected (non-fast-forward)** because LedgerOS commits land on the same `main`. Always rebase on `origin/main` first.
+- **After a squash merge, the session branch diverges** from `main`. A force-push to reset it was refused (2026-11-23). Instead, merge `origin/<branch>` into the rebuilt branch, keep your own side (`git checkout --ours`), and check that `git diff origin/main --stat` shows only your change.
+- **A scripted tracker edit overwrote the decisions table** (2026-11-21) because its section check stopped at `## ` and not at `### `. Check `git diff` on `FEEDBACK.md` before committing.
 - **Mobile workout layout bugs were found only by screenshots.** Use `smoke_browser.js` or a seeded screenshot for UI work.
 - **The old claude.ai sandbox lost its workspace more than once.** That's why everything now lives in this repo.
 - **Privacy:** an old hand-over file held a GitHub token in plain text. Never repeat that.
@@ -144,6 +147,11 @@ No read-only connector exists for CalendarOS's Supabase project, so sessions can
 | 4.70 | Review Pack: 3 sets default / 4-set ladder, 6 exercises per day, rules-check listing (prompt text only) |
 | 4.71.0 | Ctrl+Z undoes recurring moves, "Hide missed / moved" switch, health metric groups. **SQL:** `group_id`, `metric_groups` |
 | 4.71.1 | Fix: "Hide missed / moved" hides only what is missed/moved for the shown date |
+| 4.72 | Per-muscle weekly set targets, "Weekdays" repeat, Health Log Alt+arrow day shortcut |
+| 4.73 | Night Mode Style (Warm Charcoal / True Black / Midnight Slate), night-mode readability fixes |
+| 4.74.0–4.74.1 | Too-easy sets count toward weight increases, big-jump check (app + Review Pack), Training → Progress charts |
+| 4.75.0 | Phone Notes sheet, missed-day reasons, health metric meanings (`role`), calorie check, Day complete, sleep h+min (stored in minutes, old entries converted), "Rested longer?", actual rest recorded, goal weight moved to synced Training Goals, Review Pack data/prompt overhaul. **SQL:** `training_skip_reasons`, `role`, `day_complete`, `training_sets.note` |
+| 4.75.1 | Sleep score / resting heart rate meanings, "Sleep Score" guess fix, "swapped days" reason |
 
 ## 8. Open items and backlog (ask before starting any of them)
 
@@ -156,7 +164,9 @@ No read-only connector exists for CalendarOS's Supabase project, so sessions can
 6. Retire the "Mobile workout (beta)" switch? (Keep the desktop layout code either way.)
 7. Remove the inert hydration plumbing (table sync, settings columns, backup entry)?
 8. A visible Undo for recurring moves (Ctrl+Z only today; he uses a phone a lot).
-9. Confirm the 4.71.0 SQL was run (sync errors with `PGRST204` / missing column mean re-run Copy SQL).
+9. Confirm the 4.71.0 and **4.75.0** SQL were run (sync errors with `PGRST204` / missing column mean re-run Copy SQL). He was given the 4.75.0 statements on 2026-11-21; not confirmed.
+12. **Feedback item 9 (batch 2026-11-21): his "Doc 2".** He pastes it; reply with corrected text in chat only, never in the repo (per-muscle ranges, 60 s rest default, the single progression rule at the top of the Review Pack prompt, failure tests only on exercises the app treats as isolation).
+13. After 4.75.0: he should re-enter his goal weight / loss target in Training Goals, and confirm "What each metric means" once (Sleep Score = sleep score, Resting Heart Rate = resting heart rate).
 10. The iPhone chime (hardened in 4.59/4.61) was never confirmed on a device.
 11. His own copy of `backup_calendaros.py` must list the coffee tables. The red banner shows if not, and re-copying from Settings fixes it. Where or whether it runs on a schedule was never verified.
 
