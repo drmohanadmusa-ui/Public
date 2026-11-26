@@ -638,12 +638,15 @@ const SEED = {"accounts":[],"ledger":[],"budget":[],"templates":[],"categories":
 <script>
 /* ============================= STATE ============================= */
 // Bump this on every shipped change (major.minor.patch). Shown in Settings.
-const APP_VERSION = '5.37.0';
+const APP_VERSION = '5.38.0';
 // STANDING CONVENTION (as of v3.6.1, applies to every release from here on):
 // every time APP_VERSION is bumped, add a matching entry to CHANGELOG below —
 // version, date (YYYY-MM-DD), and a short bullet list of what changed. This is
 // shown to the person in Settings → Change Log. Do not skip this step.
 const CHANGELOG = [
+  {version:'5.38.0', date:'2026-11-26', changes:[
+    'New JV reconcile bar (#171): Remaining now counts the account\u2019s SMS still waiting in the SMS inbox for other dates, and SMS lines in saved drafts, so a difference the next date will clear no longer shows as missing. Each shows on its own line under the figures (for example "Includes 3 SMS still waiting (24 Nov): \u2212450.00"). Works for credit cards too.'
+  ]},
   {version:'5.37.0', date:'2026-11-23', changes:[
     'Investments \u2192 \ud83d\udcf8 Snapshots: a new tab for the monthly snapshots. Two layouts with a switch (remembered on every device): Month list (pick a month, tick Compare on another) and Value over time (a bar per month with your cost marked; click a bar, shift-click a second to compare). Each month shows value, cost, profit/loss and cash, by person and by platform (\u25b8 opens the coins). Compare shows the change for everyone, each person and each platform, split into new money and price effect. \u2b07 CSV exports the month. Also reachable from the Monthly update window.',
     'Monthly update: Update value now opens on top and brings you back to the same window after saving; Check wallet / Enter units go to Reconcile, which has \u201c\u2190 Back to Monthly update\u201d. Pressing Start again the same day shows the last results straight away; \u201c\u21bb Read everything again\u201d does a fresh read.',
@@ -5682,10 +5685,31 @@ function jvBalanced(){
   if(nonBlank.some(l=>!jvIsCompleteLine(l))) return false;
   return Math.abs(jvTotal()) < 0.005 && nonBlank.length>=2;
 }
+// v5.38 (#171): SMS for this account still waiting in the inbox (any group, as Create JV would build them) and
+// saved drafts with SMS lines on it. Worked out once when the bar is drawn (reconcileWait), not on every keystroke.
+let reconcileWait = null;
+function reconcileWaiting(accId){
+  const onAcc = l => Number(l.acc)===Number(accId) && l.smsId && l.amt!=='' && l.amt!==null && l.amt!==undefined && isFinite(Number(l.amt));
+  const sum = ls => smsR2(ls.reduce((t,l)=>t+Number(l.amt), 0));
+  const smsLines = [];
+  smsGroups().filter(g=>g.acc).forEach(g=>smsBuildJVs(g.key).jvs.forEach(j=>j.lines.filter(onAcc).forEach(l=>smsLines.push({amt:l.amt, smsId:l.smsId, date:j.date}))));
+  const draftLines = (jvDrafts||[]).flatMap(d=>(d.lines||[]).filter(onAcc));
+  return {acc: Number(accId),
+    sms: {n: new Set(smsLines.map(l=>l.smsId)).size, sum: sum(smsLines), dates: [...new Set(smsLines.map(l=>l.date))].sort()},
+    drafts: {n: new Set(draftLines.map(l=>l.smsId)).size, sum: sum(draftLines)}};
+}
 function reconcileProjected(){
   const posted = accountBalance(reconcileAcc);
   const draft = jvDraft.lines.filter(l=>Number(l.acc)===reconcileAcc).reduce((s,l)=>s+(Number(l.amt)||0),0);
-  return posted + draft;
+  const w = reconcileWait && reconcileWait.acc===Number(reconcileAcc)? reconcileWait : {sms:{sum:0}, drafts:{sum:0}};
+  return posted + draft + w.sms.sum + w.drafts.sum;
+}
+function reconcileWaitNotesHTML(w){
+  const sg = v => (v<0? '\u2212' : '+') + money(Math.abs(v));
+  const out = [];
+  if(w.sms.n) out.push(`Includes ${w.sms.n} SMS still waiting (${w.sms.dates.map(fmtDateShort).join(', ')}): <b class="mono">${sg(w.sms.sum)}</b>`);
+  if(w.drafts.n) out.push(`Includes ${w.drafts.n} SMS in saved drafts: <b class="mono">${sg(w.drafts.sum)}</b>`);
+  return out.map(t=>`<div class="mut" data-recwait style="font-size:11.5px;margin-top:2px">${t}</div>`).join('');
 }
 // Last n posted JVs (newest by JV date) that touch the account being reconciled — only the line(s)
 // hitting that account. Reads D.ledger only, so an unposted draft never appears here.
@@ -5710,6 +5734,7 @@ function reconcileBannerHTML(){
   if(!reconcileAcc) return '';
   const a = ACC_BY_ID[reconcileAcc];
   if(!a || a.stmt_balance===null || a.stmt_balance===undefined) { reconcileAcc=null; return ''; }
+  reconcileWait = reconcileWaiting(reconcileAcc);
   const projected = reconcileProjected();
   const remaining = Number(a.stmt_balance) - projected;
   const done = Math.abs(remaining) < 0.005;
@@ -5717,6 +5742,7 @@ function reconcileBannerHTML(){
     <div class="row" style="justify-content:space-between">
       <div><b>🏦 Reconciling ${a.id} — ${esc(accShort(a.id))}</b>
         <div class="mut" style="font-size:12px;margin-top:3px">Statement: <b class="mono">${money(a.stmt_balance)}</b> &nbsp; Ledger incl. this draft: <b class="mono" id="reconcileProjected">${money(projected)}</b></div>
+        ${reconcileWaitNotesHTML(reconcileWait)}
       </div>
       <div style="text-align:right">
         <div class="mut" style="font-size:11px;text-transform:uppercase">Remaining</div>
