@@ -15,7 +15,24 @@
       "mcp__github__actions_list",
       "mcp__github__actions_get",
       "mcp__github__get_job_logs",
-      "mcp__github__get_check_run"
+      "mcp__github__get_check_run",
+      "mcp__github__get_me",
+      "mcp__github__list_tags",
+      "mcp__github__list_releases",
+      "mcp__github__issue_read",
+      "mcp__github__list_issues",
+      "Bash(gh api -X GET:*)",
+      "Bash(git fetch:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git diff:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(ls:*)",
+      "Bash(sed -n:*)"
     ]
   }
 }
