@@ -759,6 +759,7 @@ html:has(.mw-lock), body:has(.mw-lock){ overflow:hidden; overscroll-behavior:non
 .mw-tile{ flex:1; min-width:0; height:72px; border-radius:20px; background:#17191C; display:flex; flex-direction:column; align-items:center; justify-content:center; margin:0; cursor:pointer; }
 .mw-set.done .mw-tile{ background:#1E2219; }
 .mw-tile span{ font-size:12px; color:#A1A5AD; margin-top:2px; }
+.mw .mw-last{ font-size:11px; color:#6E737B; line-height:1; margin-bottom:2px; font-weight:400; letter-spacing:0; }
 input.mw-num{ width:100%; min-width:0 !important; min-height:0 !important; height:36px; padding:0 !important; border:0 !important; background:transparent !important; text-align:center; font-family:'Archivo',sans-serif; font-stretch:90%; font-weight:800; font-size:30px !important; line-height:1; color:#F3F2EE; font-variant-numeric:tabular-nums; caret-color:transparent; box-shadow:none; }
 input.mw-num::placeholder{ color:#5C6068; opacity:1; }
 .mw-rir{ width:64px; height:72px; border-radius:20px; background:#17191C !important; flex-shrink:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
@@ -2440,7 +2441,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.75.1';
+const APP_VERSION = '4.76.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2448,6 +2449,15 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.76.0', changes: [
+    '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds gym_locations (app_settings) and location_id (training_exercises). Additive and safe to run more than once. Until it is run, syncing shows a missing-column error.',
+    'NEW \u2014 Locations. Exercise Library \u2192 Locations: add your gyms, pick your usual one, and add away periods (a month somewhere else, travel). Each exercise gets one location, or Everywhere for walking and bodyweight. The same movement at another gym is a separate exercise, because the machines and weights differ.',
+    'NEW \u2014 An exercise with no location is left out of plans, Add exercise and Swap, and the Exercise Library shows a warning until you give it one. The library also has a location filter and a location badge on every exercise.',
+    'NEW \u2014 Review Pack: every date in the next 14 days carries its location, the AI only gets the machines at those locations (plus Everywhere), and it is told to use only that day\u2019s location\u2019s machines.',
+    'NEW \u2014 Phone workout: Add exercise and Swap show only the machines at that day\u2019s location, with a \u201cShow all locations\u201d option.',
+    'CHANGED \u2014 Moving or swapping a training day clears whatever was not done yet on the dates involved; sets you already did stay. Each date then shows its new plan by itself, so the Plan day button is gone.',
+    'CHANGED \u2014 Phone workout: the \u201cExercise 1 of 5\u201d line, the Target line and the New weight banner are removed to free up space. Instead, each weight, reps and RIR box shows what you did in that set last time, small and grey above today\u2019s number. Dragging changes only today\u2019s number.',
+  ]},
   { v:'4.75.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'NEW \u2014 Health Log \u2192 \u201cWhat each metric means\u201d now also offers sleep score and resting heart rate. If you set them to none before, the banner asks once more. Their weekly averages, plus weekly average sleep, now go to the AI coach.',
@@ -4668,7 +4678,7 @@ function trainingExerciseToRow(ex){
            notes:ex.notes||'', category:ex.category||'strength', tag_ids: ex.tagIds||[],
            muscle_groups: exMuscleGroups(ex,'primary'), muscle_groups_secondary: exMuscleGroups(ex,'secondary'),
            rest_sec: ex.restSec||null, lift_type: ex.liftType||null,
-           seat_setting: ex.seatSetting||null,
+           seat_setting: ex.seatSetting||null, location_id: ex.locationId||null,
            updated_at:new Date().toISOString() };
 }
 function rowToTrainingExercise(r){
@@ -4685,7 +4695,7 @@ function rowToTrainingExercise(r){
            muscleGroupsSecondary: Array.isArray(r.muscle_groups_secondary) ? r.muscle_groups_secondary : [],
            muscleGroups: Array.isArray(r.muscle_groups) ? r.muscle_groups : [],
            muscleGroup: r.muscle_group||null, restSec: r.rest_sec||null, liftType: r.lift_type||null,
-           seatSetting: r.seat_setting||null };
+           seatSetting: r.seat_setting||null, locationId: r.location_id||null };
 }
 function trainingSessionToRow(sess){
   const s = state.settings.sync;
@@ -4877,7 +4887,7 @@ function syncStepsForDomain(domain){
       ()=> { const rows = state.healthMetricDefs.map(metricDefToRow); return rows.length ? supaUpsert('health_metric_defs', rows, 'pin,id') : null; },
     ];
     case 'settings': return [
-      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted, training_skip_reasons: state.settings.trainingSkipReasons||{} }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted, training_skip_reasons: state.settings.trainingSkipReasons||{}, gym_locations: state.settings.gymLocations||null }], 'pin'),
     ];
     case 'training': return [
       ()=> flushPendingTrainingDeletes(),
@@ -5213,6 +5223,10 @@ async function pullFromSupabase(onProgress){
       // device already decided a date's failure-day plan keeps that
       // decision everywhere, rather than each device deciding independently.
       // v4.75.0: per-date skip reasons merge the same way
+      // v4.76.0: gym locations — online copy wins, like the other settings lists
+      if(settingsRows[0].gym_locations && typeof settingsRows[0].gym_locations==='object' && Array.isArray(settingsRows[0].gym_locations.list)){
+        state.settings.gymLocations = settingsRows[0].gym_locations;
+      }
       if(settingsRows[0].training_skip_reasons && typeof settingsRows[0].training_skip_reasons==='object'){
         state.settings.trainingSkipReasons = Object.assign(state.settings.trainingSkipReasons||{}, settingsRows[0].training_skip_reasons);
       }
@@ -5834,7 +5848,7 @@ async function saveSettings(){
   await safeStorageSet(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings), 'settings');
   if(syncConfigured()){
     scheduleSync('settings', ()=>[
-      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted, training_skip_reasons: state.settings.trainingSkipReasons||{} }], 'pin'),
+      ()=> supaUpsert('app_settings', [{ pin: state.settings.sync.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted, training_skip_reasons: state.settings.trainingSkipReasons||{}, gym_locations: state.settings.gymLocations||null }], 'pin'),
     ]);
   }
 }
@@ -10402,6 +10416,44 @@ function defaultRestSec(ex){
    when present; anything without it falls back to the same muscle-group
    guess this always used, so an exercise that never touched the old
    picker behaves exactly as it did before this change. */
+/* v4.76.0: gym locations. state.settings.gymLocations =
+   { list:[{id,name}], defaultId, periods:[{from,to,locationId}] }. Each
+   exercise has ONE locationId (the same movement at another gym is a
+   separate exercise, because the machines and weights differ), or the
+   built-in 'everywhere' (walking, bodyweight). An exercise with no location
+   is never offered once any location exists; until then nothing filters. */
+const LOC_EVERYWHERE = 'everywhere';
+function gymLocs(){
+  const g = state.settings.gymLocations;
+  return (g && Array.isArray(g.list)) ? { list:g.list, defaultId:g.defaultId||null, periods:Array.isArray(g.periods)?g.periods:[] } : { list:[], defaultId:null, periods:[] };
+}
+function locationsOn(){ return gymLocs().list.length > 0; }
+function gymLocationName(id){
+  if(id === LOC_EVERYWHERE) return 'Everywhere';
+  const l = gymLocs().list.find(x=>x.id===id);
+  return l ? l.name : null;
+}
+function locationForDate(date){
+  const g = gymLocs();
+  const p = g.periods.find(x=> x.from && x.to && x.from<=date && date<=x.to && g.list.some(l=>l.id===x.locationId));
+  if(p) return p.locationId;
+  return g.list.some(l=>l.id===g.defaultId) ? g.defaultId : null;
+}
+function exerciseAtLocation(ex, locId){
+  if(!locationsOn()) return true;
+  return !!ex && (ex.locationId===LOC_EVERYWHERE || (!!locId && ex.locationId===locId));
+}
+function exercisesWithoutLocation(){
+  return locationsOn() ? state.training.exercises.filter(e=> !gymLocationName(e.locationId)) : [];
+}
+function exLocationSelectHtml(id, cur){
+  const opts = [['','\u2014 none \u2014'],[LOC_EVERYWHERE,'Everywhere'], ...gymLocs().list.map(l=>[l.id,l.name])];
+  return `<div class="field">
+        <label>Location <span class="page-sub" style="font-weight:400;">\u2014 the gym this machine is at. The same movement at another gym is a separate exercise, because the weights differ</span></label>
+        <select id="${id}">${opts.map(([v,n])=>`<option value="${escapeHtml(v)}" ${v===(cur||'')?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+        ${locationsOn() ? '' : '<div class="page-sub" style="margin-top:4px;">Add your gyms first: Exercise Library \u2192 Locations.</div>'}
+      </div>`;
+}
 function isIsolationExercise(ex){
   if(!ex) return false;
   if(ex.liftType === 'compound') return false;
@@ -11086,10 +11138,6 @@ function renderMobileWorkout(){
   const isWalking = !!(ex && ex.category === 'walking');
   const segs = exerciseIds.map((id,i)=>`<button class="mw-seg ${mwExerciseDone(date,id)?'full':(i===idx?'cur':'')}" aria-label="Exercise ${i+1}" onclick="mwJump(${i})"></button>`).join('');
   const prim = ex ? exMuscleGroups(ex,'primary').map(g=>MUSCLE_GROUP_LABELS[g]||g).slice(0,2).join(' · ') : '';
-  const suggested = parseSuggestedWeightKg((block.notes||'').trim());
-  const floor = (suggested != null && !isWalking) ? getWeightFloor(exId, date) : null;
-  const below = !!(floor && suggested < floor.weightKg - 1e-9);
-  const targetBits = [block.sets && block.reps ? `${block.sets} × ${block.reps}` : (block.sets ? `${block.sets} sets` : (block.reps ? `${block.reps} reps` : null)), suggested ? `${suggested} kg` : null].filter(Boolean).join(' · ');
   const failure = !isWalking && (state.settings.trainingFailurePlan||{})[date] === exId;
 
   let body;
@@ -11108,11 +11156,14 @@ function renderMobileWorkout(){
       if(!s.isWarmup) n++;
       const label = s.isWarmup ? 'W' : String(n);
       const rirTxt = s.toFailure ? 'F' : (s.rir != null ? String(s.rir) : '—');
+      // v4.76.0: set N shows what set N was last time, small and grey; warm-ups show nothing
+      const prev = s.isWarmup ? null : lastWorking[n-1];
+      const lastTxt = v => (v == null || v === '') ? '' : `<small class="mw-last">last ${escapeHtml(String(v))}</small>`;
       return `<div class="mw-set ${s.done?'done':''} ${s.isWarmup?'warm':''}">
         <button class="mw-tick" data-mw-set="${date}|${eid}|${s.setNo}" onclick="mwTickTap('${date}','${eid}',${s.setNo},${restSec});" aria-label="${s.done?'Undo':'Complete'} set ${label}">${s.done ? MW_SVG.check : label}</button>
-        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|weightKg" aria-label="Weight for set ${label}"><span>kg</span></label>
-        <label class="mw-tile"><input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|reps" aria-label="Reps for set ${label}"><span>reps</span></label>
-        <div class="mw-rir ${s.toFailure?'fail':''} ${(s.done && !s.isWarmup)?'tap':''}" ${(s.done && !s.isWarmup)?`role="button" tabindex="0" onclick="openMwRirSheet('${date}','${eid}',${s.setNo},false)"`:''} aria-label="Effort for set ${label}"><small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></div>
+        <label class="mw-tile">${prev ? lastTxt(prev.weightKg!=null ? cleanKg(prev.weightKg) : null) : ''}<input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|weightKg" aria-label="Weight for set ${label}"><span>kg</span></label>
+        <label class="mw-tile">${prev ? lastTxt(prev.reps) : ''}<input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|reps" aria-label="Reps for set ${label}"><span>reps</span></label>
+        <div class="mw-rir ${s.toFailure?'fail':''} ${(s.done && !s.isWarmup)?'tap':''}" ${(s.done && !s.isWarmup)?`role="button" tabindex="0" onclick="openMwRirSheet('${date}','${eid}',${s.setNo},false)"`:''} aria-label="Effort for set ${label}">${prev ? lastTxt(prev.toFailure ? 'F' : prev.rir) : ''}<small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></div>
       </div>`;
     }).join('');
     body = `<div class="mw-sets">${rows}
@@ -11128,7 +11179,6 @@ function renderMobileWorkout(){
     ${mwDayRow(date, session)}
     <div class="mw-segs">${segs}</div>
     <div class="mw-ex">
-      <div class="mw-eyebrow">EXERCISE ${idx+1} OF ${exerciseIds.length}</div>
       <h1 class="mw-name">${ex ? escapeHtml(ex.name) : `⚠ missing exercise`}</h1>
       <div class="mw-chips">
         ${prim ? `<span class="mw-chip">${escapeHtml(prim)}</span>` : ''}
@@ -11137,9 +11187,7 @@ function renderMobileWorkout(){
         ${ex && exVideoUrls(ex).length ? `<button class="mw-round sm" aria-label="Form video" onclick="${exVideoUrls(ex).length===1 ? `window.open('${escapeHtml(exVideoUrls(ex)[0])}','_blank','noopener')` : `openExerciseVideoPicker('${ex.id}')`}">${MW_SVG.play}</button>` : ''}
         ${ex ? `<button class="mw-round sm" aria-label="Exercise history" onclick="${isWalking ? `openExerciseHistoryModal('${ex.id}','${date}')` : `openExerciseCompletedHistoryModal('${ex.id}','${date}')`}">${MW_SVG.hist}</button>` : ''}
       </div>
-      ${targetBits ? `<div class="mw-target">Target ${escapeHtml(targetBits)}${below ? ` <span class="mw-warn">below your last ${floor.weightKg} kg</span>` : ''}</div>` : ''}
       ${failure ? `<div class="mw-banner">Failure day: push your last set to true failure, then mark it F.</div>` : ''}
-      ${mwNewWeightBanner(exId, date, suggested, isWalking)}
     </div>
     ${body}
     <div class="mw-dock">
@@ -11160,18 +11208,8 @@ function mwEmptyHtml(date, session){
       <h1 class="mw-name">${rest ? 'Rest day' : 'Nothing planned'}</h1>
       <p class="mw-target">${rest ? 'No session is scheduled for today.' : 'No exercises are planned for this day yet.'}</p>
       <button class="mw-next" onclick="openQuickAddExerciseModal('${date}')">Add exercise</button>
-      <button class="mw-ghost" onclick="openPlanDayModal('${date}')">Plan day</button>
     </div>
   </div>`;
-}
-/* v4.74.0: banner when today's planned weight differs from the last completed
-   session's top working weight. Numbers only (his choice). */
-function mwNewWeightBanner(exId, date, planned, isWalking){
-  if(isWalking || planned == null) return '';
-  const last = getLastCompletedSession(exId, date);
-  if(!last || last.topWeightKg == null || Math.abs(planned - last.topWeightKg) < 1e-9) return '';
-  const up = planned > last.topWeightKg;
-  return `<div class="mw-banner mw-newweight ${up?'mw-up':'mw-down'}">${up?'\u2191 New weight':'\u2193 Lighter'}: ${cleanKg(planned)} kg <span class="mw-nw-last">(last time ${cleanKg(last.topWeightKg)} kg)</span></div>`;
 }
 function mwSummaryData(date, ordered, blockMap){
   const done = (state.training.sets||[]).filter(s=>s.date===date && s.done && !s.isWarmup);
@@ -11250,7 +11288,6 @@ function openMwMenu(){
     <div class="mw-eyebrow">THIS DAY</div>
     <div class="mw-menugroup">
       ${item('Add exercise', `openQuickAddExerciseModal('${date}')`)}
-      ${item('Plan day', `openPlanDayModal('${date}')`)}
       ${cur ? item('Swap this exercise', `openMwSwapSheet('${date}','${escapeHtml(cur)}')`, 'Same primary muscle') : ''}
       ${cur ? item('Remove this exercise', `removeExerciseFromDay('${date}','${escapeHtml(cur)}')`) : ''}
     </div>
@@ -11272,20 +11309,22 @@ function openMwMenu(){
    already done stay on the old exercise; the new one gets the remaining sets
    (target sets - done sets) at its own last-completed weight. The swap also
    replaces the exercise in the session plan for this day and every later day. */
-function mwSwapCandidates(date, exId){
+function mwSwapCandidates(date, exId, showAll){
   const cur = getTrainingExerciseById(exId);
   if(!cur) return [];
   const prim = new Set(exMuscleGroups(cur, 'primary'));
   if(!prim.size) return [];
   const onDay = new Set(getTrainingDayExerciseIds(date));
+  const loc = locationForDate(date);
   return state.training.exercises
-    .filter(e=> e.id!==exId && e.category!=='walking' && !onDay.has(e.id) && exMuscleGroups(e,'primary').some(m=>prim.has(m)))
+    .filter(e=> e.id!==exId && e.category!=='walking' && !onDay.has(e.id) && exMuscleGroups(e,'primary').some(m=>prim.has(m)) && (showAll || exerciseAtLocation(e, loc)))
     .sort((a,b)=> String(a.name).localeCompare(String(b.name)));
 }
-function openMwSwapSheet(date, exId){
+function openMwSwapSheet(date, exId, showAll){
   const cur = getTrainingExerciseById(exId);
   if(!cur || cur.category==='walking'){ showToast('Walking cannot be swapped'); return; }
-  const cands = mwSwapCandidates(date, exId);
+  mwCloseSheet('mwSwap');
+  const cands = mwSwapCandidates(date, exId, !!showAll);
   const rows = cands.map(e=>{
     const l = getLastCompletedSession(e.id, null);
     const sub = l && l.topWeightKg!=null ? `Last: ${l.topWeightKg} kg` : 'No history yet';
@@ -11294,7 +11333,8 @@ function openMwSwapSheet(date, exId){
   mwSheet('mwSwap', `
     <div class="mw-eyebrow">SWAP ${escapeHtml(cur.name).toUpperCase()}</div>
     <div class="mw-sheet-sub">Same primary muscle. Sets you have already done stay on ${escapeHtml(cur.name)}; the new exercise takes the remaining sets and replaces it in the plan for this day and later days.</div>
-    ${rows || '<div class="mw-sheet-sub">No other exercise in your library shares this primary muscle.</div>'}`);
+    ${rows || `<div class="mw-sheet-sub">No other exercise${showAll||!locationsOn()?' in your library':' at this location'} shares this primary muscle.</div>`}
+    ${locationsOn() && !showAll ? `<button class="mw-menuitem" onclick="openMwSwapSheet('${date}','${escapeHtml(exId)}',true)"><span>Show all locations<small>This day: ${escapeHtml(gymLocationName(locationForDate(date))||'none set')}</small></span></button>` : ''}`);
 }
 function mwSwapExercise(date, oldId, newId){
   const oldEx = getTrainingExerciseById(oldId), newEx = getTrainingExerciseById(newId);
@@ -12842,7 +12882,6 @@ function renderTrainingDayCard(date){
         <span class="glyph">🏋</span>No exercises logged for ${humanDate(date)} yet.
         <div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
           <button class="btn brass sm" onclick="openQuickAddExerciseModal('${date}')">+ Add Exercise</button>
-          <button class="btn secondary sm" onclick="openPlanDayModal('${date}')">📋 Plan Day</button>
         </div>
       </div>
     `;
@@ -12928,7 +12967,6 @@ function renderTrainingDayCard(date){
 
       <div class="modal-actions" style="justify-content:flex-start; margin-top:4px; flex-wrap:wrap;">
         <button class="btn secondary sm" onclick="openQuickAddExerciseModal('${date}')">+ Add Exercise</button>
-        <button class="btn secondary sm" onclick="openPlanDayModal('${date}')">📋 Plan Day</button>
         <button class="btn brass" onclick="saveTrainingDayLogs('${date}')">Save Today's Log</button>
         ${hasLogs ? `<button class="btn secondary" onclick="deleteTrainingDayLogs('${date}')">Delete All Logs For This Day</button>` : ''}
       </div>
@@ -13112,6 +13150,7 @@ function openQuickAddExerciseModal(date){
                onblur="setTimeout(()=>hideQuickAddExercisePickerResults(), 200)">
         <div id="quickAddExResults" class="ex-picker-results tall" style="display:none;"></div>
       </div>
+      ${locationsOn() ? `<label class="page-sub" style="display:flex; gap:6px; align-items:center; margin-top:4px;"><input type="checkbox" id="quickAddAllLocs" onchange="filterQuickAddExercisePicker('${date}')"> Show all locations (this day: ${escapeHtml(gymLocationName(locationForDate(date))||'none set')})</label>` : ''}
       <div class="page-sub" style="margin-top:4px;">Not in your library yet? <a href="#" onclick="event.preventDefault(); closeQuickAddExerciseModal(); openAddExerciseModal('${date}');">Add a new exercise</a> first, then come back and search for it.</div>
       <div class="modal-actions">
         <button class="btn secondary" onclick="closeQuickAddExerciseModal()">Done</button>
@@ -13133,8 +13172,10 @@ function filterQuickAddExercisePicker(date){
   if(!inputEl || !resultsEl) return;
   const q = inputEl.value.trim().toLowerCase();
   const already = new Set(getTrainingDayExerciseIds(date));
+  const allEl = document.getElementById('quickAddAllLocs');
+  const loc = locationForDate(date), showAll = !!(allEl && allEl.checked);
   quickAddExMatches = [...state.training.exercises].sort((a,b)=>a.name.localeCompare(b.name))
-    .filter(e=> (!q || e.name.toLowerCase().includes(q)) && !already.has(e.id)).slice(0,10);
+    .filter(e=> (!q || e.name.toLowerCase().includes(q)) && !already.has(e.id) && (showAll || exerciseAtLocation(e, loc))).slice(0,10);
   if(quickAddExIndex >= quickAddExMatches.length) quickAddExIndex = Math.max(0, quickAddExMatches.length-1);
   renderQuickAddExResults(date);
   resultsEl.style.display = 'block';
@@ -13191,33 +13232,6 @@ function afterQuickAddExPick(date){
   // and is unaffected by this.)
   showToast('Added');
   closeQuickAddExerciseModal();
-}
-/* ---------- Plan Day modal ----------
-   Replaces the old Randomize button. Instead of picking exercises randomly,
-   it loads the session assigned to this calendar date and stages all of its
-   exercises as pending adds. If no session is assigned it falls back to
-   letting you pick from the library — same as + Add Exercise. */
-function openPlanDayModal(date){
-  const cal = getTrainingCalEntry(date);
-  const session = cal ? getTrainingSessionById(cal.sessionId) : null;
-  if(session && session.blocks && session.blocks.length){
-    // Stage all session exercises as pending adds, skipping ones already added.
-    const already = new Set([
-      ...(state.trainingPendingAdds[date]||[]),
-      ...getTrainingLogsForDate(date).map(l=>l.exerciseId),
-    ]);
-    const toAdd = session.blocks.map(b=>b.exerciseId).filter(id=> !already.has(id));
-    if(!toAdd.length){ showToast(`All exercises from "${session.name}" are already on this day`); return; }
-    if(!state.trainingPendingAdds[date]) state.trainingPendingAdds[date]=[];
-    toAdd.forEach(id=> state.trainingPendingAdds[date].push(id));
-    state.trainingEditingDate = date;
-    flushTrainingDrafts();
-    renderMain();
-    showToast(`Added ${toAdd.length} exercise${toAdd.length===1?'':'s'} from "${session.name}"`);
-  } else {
-    // No session — fall through to the quick-add picker
-    openQuickAddExerciseModal(date);
-  }
 }
 /* ---------- Training randomizer (legacy — kept for the modal functions still referenced) ----------
    Both are drawn WITHOUT replacement, so you never get the same exercise twice. */
@@ -13496,7 +13510,7 @@ function openSwapDaysModal(){
   overlay.innerHTML = `
     <div class="modal" style="max-width:420px;">
       <h3>Swap Two Days</h3>
-      <div class="page-sub" style="margin-bottom:12px;">Swaps which plan is assigned to each date. Any sets you've already logged stay on the date you actually logged them — only the assignment moves.</div>
+      <div class="page-sub" style="margin-bottom:12px;">Swaps which plan is assigned to each date. Sets you've already done stay on the date you did them; anything not done yet is cleared and each date shows its new plan.</div>
       <div class="field"><label>First date</label><input type="date" id="swapDayA" value="${todayStr()}"></div>
       <div class="field"><label>Second date</label><input type="date" id="swapDayB"></div>
       <div class="modal-actions">
@@ -13523,6 +13537,8 @@ function submitSwapDays(){
   const calB = getTrainingCalEntry(dateB);
   if(calA) calA.date = dateB;
   if(calB) calB.date = dateA;
+  clearNotDoneTrainingForDate(dateA);
+  clearNotDoneTrainingForDate(dateB);
   saveTraining();
   const overlay = document.getElementById('swapDaysOverlay');
   if(overlay) overlay.remove();
@@ -13965,9 +13981,14 @@ function renderTrainingExercisesSubpage(){
   const afterMg = mgFilter
     ? allSorted.filter(ex=> exMuscleGroups(ex).includes(mgFilter))
     : allSorted;
-  const sorted = tagFilter==='all' ? afterMg
-    : tagFilter==='untagged' ? afterMg.filter(isUntagged)
-    : afterMg.filter(ex=>(ex.tagIds||[]).includes(tagFilter));
+  const locFilter = locationsOn() ? (state.exerciseLocFilter || 'all') : 'all';
+  const afterLoc = locFilter==='all' ? afterMg
+    : locFilter==='none' ? afterMg.filter(ex=>!gymLocationName(ex.locationId))
+    : afterMg.filter(ex=>ex.locationId===locFilter);
+  const sorted = tagFilter==='all' ? afterLoc
+    : tagFilter==='untagged' ? afterLoc.filter(isUntagged)
+    : afterLoc.filter(ex=>(ex.tagIds||[]).includes(tagFilter));
+  const noLoc = exercisesWithoutLocation();
   const tags = state.settings.exerciseTags || [];
   const untaggedCount = afterMg.filter(isUntagged).length;
   const LABELS = MUSCLE_GROUP_LABELS;
@@ -13977,9 +13998,16 @@ function renderTrainingExercisesSubpage(){
         <h2>Exercise Library${mgFilter?` — ${LABELS[mgFilter]||mgFilter}`:''}</h2>
         <span style="display:flex; gap:6px;">
           ${mgFilter?`<button class="btn ghost sm" onclick="state.muscleGroupFilter=null;renderMain();">✕ Clear filter</button>`:''}
+          <button class="btn secondary sm" onclick="openGymLocationsModal()">\ud83d\udccd Locations</button>
           <button class="btn brass sm" onclick="openAddExerciseModal()">+ Add Exercise</button>
         </span>
       </div>
+      ${noLoc.length ? `<div class="card" style="padding:8px 14px; margin-bottom:8px; border:1px solid var(--flag,#D95B5B); color:var(--flag,#D95B5B);">\u26a0 ${noLoc.length} exercise${noLoc.length===1?' has':'s have'} no location, so ${noLoc.length===1?'it is':'they are'} left out of plans, Add exercise and Swap. Tap one to give it a location (or Everywhere).</div>` : ''}
+      ${locationsOn() ? `
+        <div class="chip-select" style="margin-bottom:6px; flex-wrap:wrap;">
+          ${[['all','All locations'], ...gymLocs().list.map(l=>[l.id,l.name]), [LOC_EVERYWHERE,'Everywhere'], ['none','No location']].map(([v,n])=>
+            `<button class="${locFilter===v?'active':''}" onclick="state.exerciseLocFilter='${escapeHtml(v)}';renderMain();">${escapeHtml(n)}</button>`).join('')}
+        </div>` : ''}
       ${MUSCLE_GROUPS.length ? `
         <div class="chip-select" style="margin-bottom:6px; flex-wrap:wrap;">
           <button class="${!mgFilter?'active':''}" onclick="state.muscleGroupFilter=null;renderMain();">All muscles</button>
@@ -14039,6 +14067,7 @@ function renderTrainingExercisesSubpage(){
               ${failureTestBadgeForExercise(ex)}
               ${exerciseIsUnused(ex) ? `<span class="page-sub" style="font-size:10px; background:color-mix(in srgb,var(--flag,#D95B5B) 12%,var(--paper)); border:1px solid var(--flag,#D95B5B); border-radius:4px; padding:1px 6px; margin-left:4px; color:var(--flag,#D95B5B);" title="Not in any upcoming plan and never logged — a candidate to remove or start using">Unused</span>` : ''}
               ${(ex.tagIds||[]).map(tid=>{ const t = tags.find(x=>x.id===tid); return t ? `<span class="page-sub" style="font-size:10px; background:var(--paper-dim); border-radius:4px; padding:1px 6px; margin-left:4px;">${escapeHtml(t.name)}</span>` : ''; }).join('')}
+              ${locationsOn() ? (gymLocationName(ex.locationId) ? `<span class="page-sub" style="font-size:10px; border:1px solid var(--line); border-radius:4px; padding:1px 6px; margin-left:4px;">\ud83d\udccd ${escapeHtml(gymLocationName(ex.locationId))}</span>` : `<span class="page-sub" style="font-size:10px; border:1px solid var(--flag,#D95B5B); color:var(--flag,#D95B5B); border-radius:4px; padding:1px 6px; margin-left:4px;">No location</span>`) : ''}
             </span>
             <button class="icon-btn" title="View history" onclick="event.stopPropagation(); openExerciseLibraryHistoryModal('${ex.id}')">🕘</button>
             <button class="icon-btn" title="Delete" onclick="event.stopPropagation(); deleteTrainingExercise('${ex.id}')">✕</button>
@@ -15806,7 +15835,7 @@ function buildTrainingReviewPack(){
     const d = addDays(today, i);
     const [y,m,dd] = d.split('-').map(Number);
     const dow = new Date(y, m-1, dd).getDay();
-    trainingSchedule.push({ date:d, dayOfWeek:DOW_ABBR[dow], isRestDay: restDayAbbrs.includes(DOW_ABBR[dow]) });
+    trainingSchedule.push({ date:d, dayOfWeek:DOW_ABBR[dow], isRestDay: restDayAbbrs.includes(DOW_ABBR[dow]), ...(locationsOn() ? { location: gymLocationName(locationForDate(d)) } : {}) });
   }
 
   return {
@@ -15977,7 +16006,12 @@ function copyTrainingReviewPack(){
   const packJson = JSON.stringify(pack, null, 2);
 
   // Current exercise library so the AI can reference existing exercise IDs.
-  const exerciseLibrary = state.training.exercises.map(e=>({
+  // v4.76.0: only exercises at a location the next 14 days use (or Everywhere)
+  const packLocIds = new Set(pack.trainingSchedule.map(x=>locationForDate(x.date)));
+  const exerciseLibrary = state.training.exercises
+    .filter(e=> !locationsOn() || (gymLocationName(e.locationId) && (e.locationId===LOC_EVERYWHERE || packLocIds.has(e.locationId))))
+    .map(e=>({
+    location: locationsOn() ? gymLocationName(e.locationId) : undefined,
     id: e.id, name: e.name, category: e.category||'strength',
     primaryMuscles: exMuscleGroups(e,'primary'), secondaryMuscles: exMuscleGroups(e,'secondary'), tags: e.tags||[],
     weightIncrementKg: e.weightIncrementKg || 2.5, seatSetting: e.seatSetting || null, notes: e.notes || null,
@@ -15988,6 +16022,8 @@ function copyTrainingReviewPack(){
   const priorityMuscleLabels = (trainingGoals.priorityMuscles||[]).map(mg=>MUSCLE_GROUP_LABELS[mg]||mg);
   const band = state.settings.muscleBand || MUSCLE_BAND_DEFAULT;
   const weeklySetTargetsBlock = buildWeeklySetTargetsPromptBlock(pack.goals.weeklyTrainingDays);
+  const locNoneCount = exercisesWithoutLocation().length;
+  const locationsBlock = locationsOn() ? `\nLOCATIONS (hard constraint): I train at different gyms, and each date in MY FIXED WEEKLY SCHEDULE above has a "location". On each date use ONLY exercises from my library below whose "location" is that date's location or "Everywhere". The same movement at two gyms is two separate exercises with their own machines, weights and history: never carry a weight from one to the other. The once-per-week and variety rules apply to the exercises available at that date's location. A date whose location is null has no gym set: plan only "Everywhere" exercises on it and tell me.${locNoneCount ? ` ${locNoneCount} of my exercises have no location yet, so they are left out of the library below; tell me to fix that.` : ''}\n` : '';
 
   const prompt = `You are my coach: a world-class strength and hypertrophy coach with an excellent track record of building muscle in real people, and deep, current knowledge of programming, recovery and nutrition. Be direct. Do not sugar-coat anything, do not flatter me, and do not soften bad news: tell me exactly how it is, including when my own plan, rules or logging are the problem. If a rule I set looks wrong for my goal, say so plainly and still follow it in the plan unless it is physically impossible.\n\nTHIS PROMPT WINS: wherever my own training documents disagree with this prompt, follow this prompt.\n\nPROGRESSION RULE (the one rule, used by my app and by you): double progression on the working sets of my most recent completed session of an exercise, judged at its heaviest weight. Hold that weight if I did not reach the bottom of the rep range on all sets. When every working set reached the top of the range, that counts toward an increase however many reps I had left (a set that felt too easy counts too). BIG-JUMP CHECK before adding one weightIncrementKg (this matters most on machines with big steps, e.g. 10 kg on a leg press): estimate my max from the weakest set at that weight with Epley, e1RM = weight × (1 + (reps + RIR) / 30), taking RIR as 2 when it is missing; then the reps I could do at the new weight keeping 2 in reserve = 30 × (e1RM / new weight − 1) − 2. If that is at least the bottom of the rep range, add the increment and drop back to the bottom of the range. If it is below, keep the weight and raise the rep target by one instead (at most 3 reps above the top of the range); once I reach that cap, add the increment anyway. Example: 70 kg × 12 at RIR 2 on 8-12 with a 10 kg step predicts about 6 reps at 80 kg, so stay at 70 kg and aim for 13; at 70 kg × 14 at RIR 2 it predicts about 8, so go to 80 kg. My app applies exactly this rule and shows me wherever your weight differs from it.\n\nYou are reviewing my CalendarOS training data for the period ${pack.reviewPeriod.from} to ${pack.reviewPeriod.to}.
 
@@ -16002,7 +16038,7 @@ ${weeklySetTargetsBlock}
 EVERY tracked muscle group must get AT LEAST its own MIN from the WEEKLY SET TARGETS table above, every week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, close the gap using the ordered steps in the working-sets rule below (extra training day, different primary exercise, secondary credit, and only then a 4th set), while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
 ${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume than the rest (aim toward the upper end of their own range in the WEEKLY SET TARGETS table, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (the lower end of their own range, never below its MIN), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
-
+${locationsBlock}
 MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid; seatSetting, where present, is my own note on how I have that machine dialed in — purely informational, nothing for you to act on; lastCompleted is the date and heaviest working weight of my most recent completed session of that exercise, null if I have never done it):
 \`\`\`json
 ${JSON.stringify(exerciseLibrary, null, 2)}
@@ -16918,6 +16954,27 @@ async function clearTrainingExercises(){
   showToast(`Cleared ${count} exercise(s)`);
 }
 
+/* v4.76.0: after a move or swap, a date keeps only what was actually done.
+   Its not-done exercises and empty sets go (same keep-done pattern as the
+   phone swap), and it re-loads whatever session it now has when opened. */
+function clearNotDoneTrainingForDate(date){
+  if(!state.training.sets) state.training.sets = [];
+  getTrainingDayExerciseIds(date).forEach(exId=>{
+    const keep = getSetsForExercise(date, exId).filter(x=>x.done);
+    deleteTrainingSetsForExercise(date, exId);
+    pendingTrainingDeletes.push({ table:'training_sets', match:{ log_date:date, exercise_id:exId } });
+    keep.forEach((x,i)=>{ x.setNo = i+1; state.training.sets.push(x); });
+    if(keep.length){ syncTrainingLogFromSets(date, exId); }
+    else {
+      state.training.logs = state.training.logs.filter(l=> !(l.date===date && l.exerciseId===exId));
+      pendingTrainingDeletes.push({ table:'training_logs', match:{ log_date:date, exercise_id:exId } });
+      delete state.trainingDraftValues[trainingDraftKey(date, exId)];
+    }
+  });
+  delete state.trainingPendingAdds[date];
+  autoPlannedDates.delete(date);
+  flushTrainingDrafts();
+}
 /* ---------- #6: Move a single day's session to a different date ---------- */
 function toggleMoveDateForm(date){
   state.trainingMoveFormDate = state.trainingMoveFormDate === date ? null : date;
@@ -16933,11 +16990,14 @@ async function moveTrainingDayMapping(oldDate, newDate){
   let msg = `Move this session from ${humanDate(oldDate)} to ${humanDate(newDate)}?`;
   if(existingAtNew) msg += `\n\n${humanDate(newDate)} already has a session mapped — it will be replaced.`;
   if(logsAtOld.length) msg += `\n\nNote: ${logsAtOld.length} already-logged exercise(s) for ${humanDate(oldDate)} stay attached to that original date — they don't move with it.`;
+  msg += `\n\nAnything not done yet on ${humanDate(oldDate)} is cleared.`;
   if(!confirm(msg)) return;
 
   pendingTrainingDeletes.push({ table:'training_calendar', match:{ cal_date: oldDate } });
   state.training.calendar = state.training.calendar.filter(c=> c.date!==oldDate && c.date!==newDate);
   state.training.calendar.push({ date:newDate, sessionId:cal.sessionId });
+  clearNotDoneTrainingForDate(oldDate);
+  clearNotDoneTrainingForDate(newDate);
   state.trainingMoveFormDate = null;
   await saveTraining();
   diagLogEvent('activity', `Moved training session from ${oldDate} to ${newDate}`);
@@ -17458,6 +17518,7 @@ function openAddExerciseModal(addToDayDate){
         <textarea id="newExVideo" rows="3" placeholder="One URL per line"></textarea>
         <div class="page-sub" style="margin-top:4px;">One per line. With more than one, the ▶ button opens a list to pick from.</div>
       </div>
+      ${exLocationSelectHtml('newExLocation', locationForDate(addToDayDate||todayStr()))}
       <div class="field"><label>Notes (optional)</label><input type="text" id="newExNotes"></div>
       <div class="modal-actions">
         <button class="btn secondary" onclick="document.getElementById('addExerciseOverlay').remove();">Cancel</button>
@@ -17488,7 +17549,9 @@ async function submitAddExercise(){
   const restSec = rsEl && rsEl.value !== '' ? Number(rsEl.value) : null;
   const seatEl = document.getElementById('newExSeatSetting');
   const seatSetting = seatEl && seatEl.value.trim() !== '' ? seatEl.value.trim() : null;
-  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroupsPrimary, muscleGroupsSecondary, restSec, weightIncrementKg, seatSetting };
+  const locEl = document.getElementById('newExLocation');
+  const locationId = locEl && locEl.value ? locEl.value : null;
+  const newEx = { id:newId('ex'), name, videoUrl:video, videoUrls, notes, category, tagIds, muscleGroupsPrimary, muscleGroupsSecondary, restSec, weightIncrementKg, seatSetting, locationId };
   const overlay = document.getElementById('addExerciseOverlay');
   // Read the context flag BEFORE removing the overlay that carries it.
   const addToDay = overlay ? (overlay.dataset.addToDay || '') : '';
@@ -17646,6 +17709,7 @@ function openEditExerciseModal(id){
         <textarea id="editExVideo" rows="3" placeholder="One URL per line">${escapeHtml(exVideoUrls(ex).join('\n'))}</textarea>
         <div class="page-sub" style="margin-top:4px;">One per line. With more than one, the ▶ button opens a list to pick from.</div>
       </div>
+      ${exLocationSelectHtml('editExLocation', ex.locationId)}
       <div class="field"><label>Notes (optional)</label><input type="text" id="editExNotes" value="${escapeHtml(ex.notes||'')}"></div>
       <div class="modal-actions">
         <button class="btn secondary" onclick="document.getElementById('editExerciseOverlay').remove();">Cancel</button>
@@ -17683,12 +17747,105 @@ async function submitEditExercise(id){
   if(rsEl) ex.restSec = rsEl.value !== '' ? Number(rsEl.value) : null;
   const seatEl = document.getElementById('editExSeatSetting');
   if(seatEl) ex.seatSetting = seatEl.value.trim() !== '' ? seatEl.value.trim() : null;
+  const locEl = document.getElementById('editExLocation');
+  if(locEl) ex.locationId = locEl.value || null;
   await saveTraining();
   const overlay = document.getElementById('editExerciseOverlay');
   if(overlay) overlay.remove();
   diagLogEvent('activity', `Edited exercise "${name}"`, { id });
   renderMain();
   showToast('Exercise updated');
+}
+
+/* ---------- v4.76.0: gym locations manager ---------- */
+function openGymLocationsModal(){
+  let overlay = document.getElementById('gymLocOverlay');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'gymLocOverlay';
+    overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+  const g = gymLocs();
+  const opt = (sel)=> g.list.map(l=>`<option value="${escapeHtml(l.id)}" ${l.id===sel?'selected':''}>${escapeHtml(l.name)}</option>`).join('');
+  const count = (id)=> state.training.exercises.filter(e=>e.locationId===id).length;
+  const today = todayStr();
+  const next14 = Array.from({length:14},(_,i)=>addDays(today,i)).map(d=>[d, gymLocationName(locationForDate(d))||'none']);
+  const runs = []; next14.forEach(([d,n])=>{ const r = runs[runs.length-1]; if(r && r.n===n) r.to=d; else runs.push({from:d,to:d,n}); });
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:520px;">
+      <h3>Locations</h3>
+      <div class="page-sub" style="margin-bottom:10px;">Your gyms. Give every exercise one location (or Everywhere). Plans, Add exercise and Swap then only use the machines at that day's location.</div>
+      <div class="field">
+        <label>New location</label>
+        <div style="display:flex; gap:8px;"><input type="text" id="newGymLocName" placeholder="e.g. Home gym" style="flex:1;"><button class="btn brass sm" onclick="addGymLocation()">Add</button></div>
+      </div>
+      ${g.list.map(l=>`
+        <div class="metric-manage-row">
+          <span class="metric-manage-name">${escapeHtml(l.name)} <span class="page-sub">\u00b7 ${count(l.id)} exercise${count(l.id)===1?'':'s'}${l.id===g.defaultId?' \u00b7 usual':''}</span></span>
+          ${l.id===g.defaultId ? '' : `<button class="btn ghost sm" onclick="setUsualGymLocation('${escapeHtml(l.id)}')">Make usual</button>`}
+          <button class="icon-btn" title="Rename" onclick="renameGymLocation('${escapeHtml(l.id)}')">\u270e</button>
+          <button class="icon-btn" title="Delete" onclick="deleteGymLocation('${escapeHtml(l.id)}')">\u2715</button>
+        </div>`).join('') || '<div class="page-sub">No locations yet.</div>'}
+      ${g.list.length ? `
+        <h4 style="margin:14px 0 4px;">Away periods</h4>
+        <div class="page-sub" style="margin-bottom:6px;">Dates you train somewhere other than your usual location (a month away, travel). Every other date uses your usual location.</div>
+        ${g.periods.map((x,i)=>`<div class="metric-manage-row"><span class="metric-manage-name">${escapeHtml(humanDateNoRelative(x.from))} \u2013 ${escapeHtml(humanDateNoRelative(x.to))}: ${escapeHtml(gymLocationName(x.locationId)||'deleted location')}</span><button class="icon-btn" title="Remove" onclick="removeGymLocationPeriod(${i})">\u2715</button></div>`).join('')}
+        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:6px;">
+          <input type="date" id="gymPeriodFrom" value="${today}"> <input type="date" id="gymPeriodTo">
+          <select id="gymPeriodLoc">${opt(null)}</select>
+          <button class="btn secondary sm" onclick="addGymLocationPeriod()">Add period</button>
+        </div>
+        <h4 style="margin:14px 0 4px;">Next 14 days (what the Review Pack uses)</h4>
+        ${runs.map(r=>`<div class="page-sub">${escapeHtml(humanDateNoRelative(r.from))}${r.to!==r.from?` \u2013 ${escapeHtml(humanDateNoRelative(r.to))}`:''}: <b>${escapeHtml(r.n)}</b></div>`).join('')}
+      ` : ''}
+      <div class="modal-actions"><button class="btn secondary" onclick="document.getElementById('gymLocOverlay').remove(); renderMain();">Done</button></div>
+    </div>`;
+}
+async function saveGymLocations(g){
+  state.settings.gymLocations = { list:g.list, defaultId:g.defaultId, periods:g.periods };
+  await saveSettings();
+  openGymLocationsModal();
+}
+async function addGymLocation(){
+  const el = document.getElementById('newGymLocName');
+  const name = el ? el.value.trim() : '';
+  if(!name){ showToast('Type a name first'); return; }
+  const g = gymLocs();
+  if(g.list.some(l=>l.name.toLowerCase()===name.toLowerCase())){ showToast('That location already exists'); return; }
+  const id = newId('loc');
+  await saveGymLocations({ list:[...g.list, {id, name}], defaultId: g.defaultId || id, periods:g.periods });
+}
+async function renameGymLocation(id){
+  const g = gymLocs(); const l = g.list.find(x=>x.id===id); if(!l) return;
+  const name = (prompt('New name', l.name)||'').trim();
+  if(!name || name===l.name) return;
+  await saveGymLocations({ list:g.list.map(x=>x.id===id?{...x, name}:x), defaultId:g.defaultId, periods:g.periods });
+}
+async function deleteGymLocation(id){
+  const g = gymLocs(); const l = g.list.find(x=>x.id===id); if(!l) return;
+  const n = state.training.exercises.filter(e=>e.locationId===id).length;
+  if(!confirm(`Delete "${l.name}"?${n?` Its ${n} exercise${n===1?'':'s'} will have no location until you give ${n===1?'it':'them'} one.`:''}`)) return;
+  const list = g.list.filter(x=>x.id!==id);
+  await saveGymLocations({ list, defaultId: g.defaultId===id ? (list[0]?list[0].id:null) : g.defaultId, periods:g.periods.filter(x=>x.locationId!==id) });
+}
+async function setUsualGymLocation(id){
+  const g = gymLocs();
+  await saveGymLocations({ list:g.list, defaultId:id, periods:g.periods });
+}
+async function addGymLocationPeriod(){
+  const from = (document.getElementById('gymPeriodFrom')||{}).value;
+  const to = (document.getElementById('gymPeriodTo')||{}).value;
+  const locationId = (document.getElementById('gymPeriodLoc')||{}).value;
+  if(!from || !to || !locationId){ showToast('Pick both dates and a location'); return; }
+  if(to < from){ showToast('The end date is before the start date'); return; }
+  const g = gymLocs();
+  await saveGymLocations({ list:g.list, defaultId:g.defaultId, periods:[...g.periods, {from, to, locationId}].sort((a,b)=>a.from<b.from?-1:1) });
+}
+async function removeGymLocationPeriod(i){
+  const g = gymLocs();
+  await saveGymLocations({ list:g.list, defaultId:g.defaultId, periods:g.periods.filter((_,k)=>k!==i) });
 }
 
 /* ---------- Exercise tag management (body parts, etc.) ---------- */
@@ -18350,6 +18507,8 @@ alter table app_settings add column if not exists rest_timer_sound_muted boolean
 -- v4.75.0: missed-day reasons, what each health metric means, the
 -- "Day complete" box, and the "rested longer?" answer on a set.
 alter table app_settings add column if not exists training_skip_reasons jsonb default '{}';
+alter table app_settings add column if not exists gym_locations jsonb default null;
+alter table training_exercises add column if not exists location_id text;
 alter table health_metric_defs add column if not exists role text;
 alter table health_logs add column if not exists day_complete boolean;
 alter table training_sets add column if not exists note text;

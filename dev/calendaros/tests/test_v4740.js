@@ -101,24 +101,17 @@ const T = { repsMin: 8, repsMax: 12 };
     check('import: no history -> no differences', win.computeImportRuleDifferences(res).length === 0);
   }
 
-  // ---- 6. phone new-weight banner
+  // ---- 6. phone new-weight banner: removed on purpose in v4.76.0 (his call);
+  //         last time's numbers now show inside each box instead (test_v4760)
   { const { win, t, today } = setup(true);
     t.state.training.sets = sets(3, 12, 35, 2, { date: win.addDays(today, -4), exerciseId: 'CP' });
-    const up = win.mwNewWeightBanner('CP', today, 37.5, false);
-    check('banner: heavier', /mw-up/.test(up) && up.includes('New weight') && up.includes('37.5 kg') && up.includes('last time 35 kg'), up);
-    const down = win.mwNewWeightBanner('CP', today, 30, false);
-    check('banner: lighter', /mw-down/.test(down) && down.includes('Lighter'), down);
-    check('banner: same weight -> none', win.mwNewWeightBanner('CP', today, 35, false) === '');
-    check('banner: no plan weight -> none', win.mwNewWeightBanner('CP', today, null, false) === '');
-    check('banner: walking -> none', win.mwNewWeightBanner('CP', today, 37.5, true) === '');
-    check('banner: first time ever -> none', win.mwNewWeightBanner('LP', today, 80, false) === '');
-    // In the real phone screen.
+    check('banner: function removed', typeof win.mwNewWeightBanner === 'undefined');
     t.state.training.sessions = [{ id: 'S1', name: 'Push', type: 'strength', blocks: [{ exerciseId: 'CP', sets: 3, reps: '8-12', notes: 'suggested starting weight: 37.5kg' }] }];
     t.state.training.calendar = [{ date: today, sessionId: 'S1' }];
     t.state.trainingSelectedDate = today; t.state.trainingSection = 'today'; t.state.view = 'training';
     t.state.settings.mobileWorkoutBeta = true;
     const html = win.renderTrainingView();
-    check('banner: shown on the phone workout screen', html.includes('mw-newweight') && html.includes('37.5 kg'));
+    check('banner: not on the phone workout screen', !html.includes('mw-newweight') && !html.includes('New weight'));
   }
 
   // ---- 7. chime 3x louder
