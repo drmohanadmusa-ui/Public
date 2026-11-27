@@ -147,3 +147,20 @@ Check before building: which of 1-5 need SQL (e.g. a reason field for missed day
 Facts (v4.75.0): the meanings list holds only the nine the app uses (calorie check, sleep h+min entry and conversion, weekly averages of weight / waist / calories / protein). Every metric, whether or not it has a meaning, already goes to the AI each day by its own name in `bodyMetrics`. A new meaning only changes something if the app then uses it, e.g. a weekly average in `weeklyHistory`. Adding meanings needs no SQL (`role` is a text column).
 
 Decisions 2026-11-21: **Q34 A**: add "resting heart rate" and "sleep score" as meanings; `weeklyHistory` also gets weekly average sleep, sleep score and resting heart rate. **Q35 A**: "Sleep Score" is guessed as "sleep score", never "sleep". No SQL. **Q36 A**: "swapped days" is a sixth missed-day reason. Shipped 2026-11-23 as v4.75.1 (no SQL). A metric he set to "none" before these meanings existed is offered the new meaning once, until some metric holds it.
+
+## Batch 2026-11-27: training days, locations, phone workout screen (v4.75.1)
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 37 | Moving a session ("move excessive", probably "move exercises / session") or swapping days should remove the old trainings from the old date. | fix | question asked (Q37) |
+| 38 | Plan day shouldn't show the old trainings. | fix | question asked (Q38) |
+| 39 | Locations in the Exercise Library: tag each machine with a single location. | change | question asked (Q39-40) |
+| 40 | Phone workout: remove the "Target 3 × 10-15 · 20 kg" line and the "EXERCISE 4 OF 5" line to free up space. | change | question asked (Q41) |
+| 41 | Add "last" to each exercise so he can see what he did last time. | change | question asked (Q42) |
+
+Facts (v4.75.1):
+- Move day and Swap Days only move the calendar assignment. The exercises already staged on the old date (pending adds, kept in local drafts) and its auto-filled not-done sets stay there, so the old date still shows the old session.
+- Plan day (and auto-load) adds the assigned session's exercises on top of whatever is already staged, skipping duplicates, so old staged exercises stay in the list.
+- Exercises have no location field today. `training_exercises` has no `meta` column, so a location needs one additive column (SQL). Tags already exist but allow several per exercise.
+- The Target line is the only place the rep range, the suggested weight from the plan and the "below your last X kg" warning appear on the phone screen. The coloured progress bar above already shows which exercise you're on.
+- Set rows show last time's top weight and first-set reps only as grey placeholders, which disappear once a value is typed.
