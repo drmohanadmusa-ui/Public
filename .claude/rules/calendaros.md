@@ -78,6 +78,8 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
   - each exercise uses its own weight increments, and reps default to the **top** of the range (4.69)
   - 3 working sets by default; 4 only through the exception ladder; at most 6 exercises per day (search `WORKING SETS PER EXERCISE`)
   - sets are never auto-created for past days, and plan import clears stale not-done sets on future dates only
+  - moving or swapping a day clears not-done training on the dates involved (`clearNotDoneTrainingForDate`); there is no Plan day button any more
+  - **locations (4.76):** one `locationId` per exercise or `'everywhere'`; no location = never offered once any location exists (`exerciseAtLocation`, `locationForDate`)
 - **Never put credentials or tokens in any file.** Test fixtures use invented data: names (Layla, Sam), silos (Alpha/Beta/Gamma), locations (Site A/B, Home, Office), host `proj.example.test`, PIN `1234`.
 
 ## 4. Tests
@@ -85,7 +87,7 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
 - **Run:** `bash dev/calendaros/run_tests.sh [path/to/CalendarOS.html]`. It works from any clone location and takes about 40 seconds.
   - It splits the app into `dev/calendaros/.build/` (gitignored), installs pinned `jsdom` on first run, and runs every `dev/calendaros/tests/test_*.js`.
   - It prints each FAIL line marked `[known]` or `[NEW]`, then `N passed, M failed`. Exit codes: 0 = no new failures, 1 = new failure, 2 = crash or build error.
-- **Latest run (v4.75.1, 2026-11-23): 1141 passed, 29 failed, 0 new.** The passed count only grows.
+- **Latest run (v4.76.0, 2026-11-27): 1201 passed, 29 failed, 0 new.** The passed count only grows.
 - **Baseline at the move to Claude Code (v4.71.1, 2026-11-07): 864 passed, 29 failed, 0 new.** That is 25 suites: 24 carried over (841 passed) plus `test_core_conventions.js` (23).
   - The 29 are **known stale assertions** in 8 older suites (`baseline_failures.txt`): behaviour that later versions deliberately changed. They predate the move.
   - **"Clean" means no `[NEW]` lines, not zero failures.** Never add a line to the baseline to hide a new failure. Retiring a stale assertion is agreed work, and its baseline line is deleted in the same commit.
@@ -152,6 +154,7 @@ No read-only connector exists for CalendarOS's Supabase project, so sessions can
 | 4.74.0–4.74.1 | Too-easy sets count toward weight increases, big-jump check (app + Review Pack), Training → Progress charts |
 | 4.75.0 | Phone Notes sheet, missed-day reasons, health metric meanings (`role`), calorie check, Day complete, sleep h+min (stored in minutes, old entries converted), "Rested longer?", actual rest recorded, goal weight moved to synced Training Goals, Review Pack data/prompt overhaul. **SQL:** `training_skip_reasons`, `role`, `day_complete`, `training_sets.note` |
 | 4.75.1 | Sleep score / resting heart rate meanings, "Sleep Score" guess fix, "swapped days" reason |
+| 4.76.0 | Gym locations (one per exercise, "Everywhere", usual location + away periods; filters Add/Swap and the Review Pack), move/swap clears not-done training, Plan day removed, phone screen shows last time's weight/reps/RIR in each box (Target line, "Exercise N of M", new-weight banner removed). **SQL:** `gym_locations`, `location_id` |
 
 ## 8. Open items and backlog (ask before starting any of them)
 
@@ -164,6 +167,7 @@ No read-only connector exists for CalendarOS's Supabase project, so sessions can
 6. Retire the "Mobile workout (beta)" switch? (Keep the desktop layout code either way.)
 7. Remove the inert hydration plumbing (table sync, settings columns, backup entry)?
 8. A visible Undo for recurring moves (Ctrl+Z only today; he uses a phone a lot).
+14. **Run the 4.76.0 SQL** (`gym_locations`, `location_id`) and set up Locations; until then sync shows a missing-column error. The session's Supabase connection can't reach his projects, so he runs Copy SQL himself.
 13. After 4.75.0: he should re-enter his goal weight / loss target in Training Goals, and confirm "What each metric means" once (Sleep Score = sleep score, Resting Heart Rate = resting heart rate).
 10. The iPhone chime (hardened in 4.59/4.61) was never confirmed on a device.
 11. His own copy of `backup_calendaros.py` must list the coffee tables. The red banner shows if not, and re-copying from Settings fixes it. Where or whether it runs on a schedule was never verified.

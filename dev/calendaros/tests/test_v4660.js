@@ -20,9 +20,10 @@ function setup(mobile=true){
 { const { win } = setup(true);
   check('mobile + beta on -> workout', win.mobileWorkoutActive() === true);
   const h = win.renderTrainingView();
-  check('workout markup', /class="mw( mw-lock)?"/.test(h) && h.includes('EXERCISE 1 OF 2') && h.includes('Chest Press'));
+  // v4.76.0: the "EXERCISE N OF M" line was removed on purpose (the segment bar shows it)
+  check('workout markup', /class="mw( mw-lock)?"/.test(h) && h.includes('<h1 class="mw-name">Chest Press') && !h.includes('EXERCISE 1 OF'));
   check('no sets-logged count', !/sets logged/.test(h));
-  check('target shown', h.includes('Target 3 × 8-12 · 35 kg'));
+  check('target line removed (v4.76.0)', !h.includes('Target 3 × 8-12') && !h.includes('mw-target'));
   check('rest dock element present', h.includes('id="restTimerDisplay"'));
   check('clock before first tick', h.includes('id="mwElapsed">0:00'));
   check('desktop-only buttons absent from workout', !h.includes('Copy Review Pack') && !h.includes('Paste &amp; Import'));
@@ -71,10 +72,10 @@ function setup(mobile=true){
   check('first exercise fully done -> default moves on', win.mwCurrentIndex(today, ['E1','E2']) === 1 || true);
   win.mwJump(0); win.mwGo(1);
   html = win.document.getElementById('mainContent').innerHTML;
-  check('next exercise', html.includes('EXERCISE 2 OF 2') && html.includes('Lat Pulldown'));
+  check('next exercise', html.includes('<h1 class="mw-name">Lat Pulldown'));
   check('last exercise button says Finish', html.includes('Finish workout'));
   win.mwGo(-1); html = win.document.getElementById('mainContent').innerHTML;
-  check('previous exercise', html.includes('EXERCISE 1 OF 2'));
+  check('previous exercise', html.includes('<h1 class="mw-name">Chest Press'));
   // add / remove set
   const n0 = sets().length; win.mwAddSetFor(today,'E1'); check('add set', sets().length === n0+1);
   win.mwRemoveLastSet(today,'E1'); check('remove last set', sets().length === n0);

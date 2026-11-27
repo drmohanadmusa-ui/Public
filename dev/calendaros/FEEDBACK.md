@@ -152,11 +152,11 @@ Decisions 2026-11-21: **Q34 A**: add "resting heart rate" and "sleep score" as m
 
 | # | Comment (lightly tidied) | Type | Status |
 |---|---|---|---|
-| 37 | Moving a session ("move excessive", probably "move exercises / session") or swapping days should remove the old trainings from the old date. | fix | agreed (Q37 B) |
-| 38 | Plan day shouldn't show the old trainings. "Do I need Plan day? Once I swap it should show the new plan and that's it." | fix | question asked (Q38b) |
-| 39 | Locations in the Exercise Library: tag each machine with a single location. | change | Q39 A; Q40 design proposed, waiting for his OK |
-| 40 | Phone workout: remove the "Target 3 × 10-15 · 20 kg" line and the "EXERCISE 4 OF 5" line to free up space. | change | agreed (Q41 B) |
-| 41 | Add "last" to each exercise so he can see what he did last time. | change | mock-up shown, waiting for his feedback |
+| 37 | Moving a session ("move excessive", probably "move exercises / session") or swapping days should remove the old trainings from the old date. | fix | shipped (v4.76.0) |
+| 38 | Plan day shouldn't show the old trainings. "Do I need Plan day? Once I swap it should show the new plan and that's it." | fix | shipped (v4.76.0): Plan day removed |
+| 39 | Locations in the Exercise Library: tag each machine with a single location. | change | shipped (v4.76.0) |
+| 40 | Phone workout: remove the "Target 3 × 10-15 · 20 kg" line and the "EXERCISE 4 OF 5" line to free up space. | change | shipped (v4.76.0) |
+| 41 | Add "last" to each exercise so he can see what he did last time. | change | shipped (v4.76.0), RIR added |
 
 Facts (v4.75.1):
 - Move day and Swap Days only move the calendar assignment. The exercises already staged on the old date (pending adds, kept in local drafts) and its auto-filled not-done sets stay there, so the old date still shows the old session.
@@ -172,3 +172,14 @@ Decisions 2026-11-27:
 - **Q40 (his idea):** each location has its own set of exercises/machines (e.g. home gym vs a month away vs travel). He marks which exercises are at each location. When copying the Review Pack, the app asks which location the new plan is for, and the AI plans only with the machines there. Design proposal and follow-ups sent (Q40a-d).
 - **Q41 B:** remove the "EXERCISE N OF M" line, the Target line (rep range, suggested weight, "below your last" warning) and the "New weight" banner. The small "last" in each box replaces them.
 - **Q42:** in each weight and reps box, last time's value in small grey text above today's number. Dragging changes only today's number. Mock-up (invented data) shown 2026-11-27.
+
+Decisions 2026-11-27 (2), then "go":
+- **Q38b:** taken as A from his earlier answer ("once I swap it should show the new plan and that's it"): Plan day removed; a day loads its planned session by itself.
+- **Q40a B:** one location per exercise. The same movement at another gym is a separate exercise (different machines, different weights).
+- **Q40b:** an exercise with no location is never used; a warning shows in the Exercise Library. Built-in "Everywhere" location for walking / bodyweight.
+- **Q40c B:** date ranges: a usual location plus away periods (from, to, location). The Review Pack gives each of the next 14 days its location.
+- **Q40d A:** phone Add exercise and Swap show only that day's location, with "Show all locations".
+- **Q42:** mock-up OK; also show last time's RIR (F for a failure set).
+- **SQL:** he asked me to run it; not possible from the session (the Supabase connection has no access to his projects), so he runs Copy SQL.
+
+**Shipped 2026-11-27 as v4.76.0:** items 37-41. SQL: `app_settings.gym_locations`, `training_exercises.location_id`.
