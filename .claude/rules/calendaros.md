@@ -167,10 +167,11 @@ No read-only connector exists for CalendarOS's Supabase project, so sessions can
 6. Retire the "Mobile workout (beta)" switch? (Keep the desktop layout code either way.)
 7. Remove the inert hydration plumbing (table sync, settings columns, backup entry)?
 8. A visible Undo for recurring moves (Ctrl+Z only today; he uses a phone a lot).
-14. **Run the 4.76.0 SQL** (`gym_locations`, `location_id`) and set up Locations; until then sync shows a missing-column error. The session's Supabase connection can't reach his projects, so he runs Copy SQL himself.
 13. After 4.75.0: he should re-enter his goal weight / loss target in Training Goals, and confirm "What each metric means" once (Sleep Score = sleep score, Resting Heart Rate = resting heart rate).
 10. The iPhone chime (hardened in 4.59/4.61) was never confirmed on a device.
 11. His own copy of `backup_calendaros.py` must list the coffee tables. The red banner shows if not, and re-copying from Settings fixes it. Where or whether it runs on a schedule was never verified.
+
+**Closed 2026-11-28:** item 14 (he ran the 4.76.0 SQL). Still to do: set up Locations and give every exercise one.
 
 **Closed 2026-11-26:** item 9 (he confirmed the 4.71.0 and 4.75.0 SQL are run; `PGRST204` / missing-column sync errors still mean re-run Copy SQL) and item 12 (Doc 2 correction dropped at his request; the Review Pack prompt's "this prompt wins" line covers the conflicts).
 

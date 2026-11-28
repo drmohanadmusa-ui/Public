@@ -183,3 +183,11 @@ Decisions 2026-11-27 (2), then "go":
 - **SQL:** he asked me to run it; not possible from the session (the Supabase connection has no access to his projects), so he runs Copy SQL.
 
 **Shipped 2026-11-27 as v4.76.0:** items 37-41. SQL: `app_settings.gym_locations`, `training_exercises.location_id`.
+
+## Batch 2026-11-28: after v4.76.0 (SQL run, he confirmed)
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 42 | Weekly Volume panel (screenshot, "This week", Saturday): "it appears to not calculate the weekends". | question | question asked (Q43) |
+
+Facts (v4.76.0): Done counts every done working set from Sunday to Saturday, weekend days included. Planned counts sessions still on the calendar from today to Saturday. Nothing in the code skips weekend days or rest days. The panel shows only "This week", not its dates.
