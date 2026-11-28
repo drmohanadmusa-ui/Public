@@ -6,6 +6,9 @@
    behaviour; this suite proves the new one. */
 const fs = require('fs');
 const { loadApp } = require('./harness');
+// v4.77.0: a push now first reads training_sets to keep the newer copy of each set (agreed fix);
+// that read is part of the push, so a pull is recognised by its reads of the other tables.
+const isPullGet = c => c.method === 'GET' && !String(c.url).includes('/training_sets?');
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -40,7 +43,7 @@ function seedTask(win, done) {
   }];
 }
 const posts = win => win.__calls.filter(c => c.method === 'POST');
-const gets = win => win.__calls.filter(c => c.method === 'GET');
+const gets = win => win.__calls.filter(isPullGet);
 const postedTables = win => posts(win).map(c => c.url.split('/rest/v1/')[1].split('?')[0]);
 
 /* ---------- 1. The original defect is closed ---------- */
@@ -97,7 +100,7 @@ async function pushThenPull() {
 
   await win.runBackgroundSync();
   const firstPost = win.__calls.findIndex(c => c.method === 'POST');
-  const firstGet = win.__calls.findIndex(c => c.method === 'GET');
+  const firstGet = win.__calls.findIndex(isPullGet);
   check('a push happens', firstPost >= 0);
   check('a pull happens too', firstGet >= 0);
   check('the push comes BEFORE the pull', firstPost < firstGet, `push@${firstPost} get@${firstGet}`);

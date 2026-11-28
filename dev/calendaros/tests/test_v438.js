@@ -17,6 +17,9 @@
    nothing in the app currently drives it. */
 const fs = require('fs');
 const { loadApp } = require('./harness');
+// v4.77.0: a push now first reads training_sets to keep the newer copy of each set (agreed fix);
+// that read is part of the push, so a pull is recognised by its reads of the other tables.
+const isPullGet = c => c.method === 'GET' && !String(c.url).includes('/training_sets?');
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -76,7 +79,7 @@ async function dirtyTasksAutoResolvesOnline() {
 
   await win.runBackgroundSync();
 
-  check('a pull happened', win.__calls.some(c => c.method === 'GET'));
+  check('a pull happened', win.__calls.some(isPullGet));
   check('one_time_tasks was NOT blind-pushed', !postedTables(win).includes('one_time_tasks'),
         postedTables(win).join(','));
   check('the divergence is fully resolved by the time runBackgroundSync returns — no pending prompt',
@@ -180,7 +183,7 @@ async function mixedDirtySet() {
 
   await win.runBackgroundSync();
   const tables = postedTables(win);
-  const firstGet = win.__calls.findIndex(c => c.method === 'GET');
+  const firstGet = win.__calls.findIndex(isPullGet);
   const firstTrainingPush = win.__calls.findIndex(c => c.method === 'POST' && c.url.includes('/training_'));
 
   check('training was pushed', tables.some(x => x.startsWith('training_')), tables.join(','));
@@ -212,7 +215,7 @@ async function unguardedFailureStillBlocksPull() {
   t.state.syncMeta.dirty = true;
 
   await win.runBackgroundSync();
-  check('no pull was performed', !win.__calls.some(c => c.method === 'GET'));
+  check('no pull was performed', !win.__calls.some(isPullGet));
   check('both domains stay dirty',
         t.state.syncMeta.dirtyDomains.includes('tasks') && t.state.syncMeta.dirtyDomains.includes('training'),
         JSON.stringify(t.state.syncMeta.dirtyDomains));
@@ -276,7 +279,7 @@ async function cleanStartUnaffected() {
   t.state.syncMeta.dirty = false;
 
   await win.runBackgroundSync();
-  check('a pull happened', win.__calls.some(c => c.method === 'GET'));
+  check('a pull happened', win.__calls.some(isPullGet));
   check('a genuine difference is still detected and resolved (not left pending)',
         t.pendingDivergence === null);
   check('the online value won', t.state.tasks.oneTime[0].done === true);

@@ -183,3 +183,55 @@ Decisions 2026-11-27 (2), then "go":
 - **SQL:** he asked me to run it; not possible from the session (the Supabase connection has no access to his projects), so he runs Copy SQL.
 
 **Shipped 2026-11-27 as v4.76.0:** items 37-41. SQL: `app_settings.gym_locations`, `training_exercises.location_id`.
+
+## Batch 2026-11-28: after v4.76.0 (SQL run, he confirmed)
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 42 | Weekly Volume panel (screenshot, "This week", Saturday): "it appears to not calculate the weekends". | question | question asked (Q43) |
+
+Facts (v4.76.0): Done counts every done working set from Sunday to Saturday, weekend days included. Planned counts sessions still on the calendar from today to Saturday. Nothing in the code skips weekend days or rest days. The panel shows only "This week", not its dates.
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 43 | He wants to give the session read access to CalendarOS's Supabase project, to see completed details. | setup | done: read-only connector "Supabase - CalendarOS" works in sessions |
+| 44 | A trained day (Mon 23 Nov) now shows "Training logged" with 0 sets done on all 6 exercises, although he marked every set done at the time. Linked in his mind to swapping days; has happened 2-3 times. Wants it found and fixed once. | bug | shipped (v4.77.0) |
+
+Facts (v4.76.0) for 44, not yet proven with his data:
+- Every training push upserts **every** local set row (`training_sets`, key pin+date+exercise+set, including `done`, reps, weight, `logged_at`), with no "newer wins" check.
+- Sync pushes a dirty domain **before** pulling. So a device holding an older copy (e.g. a day's sets auto-filled but not done) that makes any training change (a swap, a move, an edit) pushes its old `done:false` copies over the done rows another device saved, and the next pull spreads that to every device.
+- That fits the screenshot (the exercises and log rows are there, 0 sets done) and the link to swapping, and it predates 4.76.0.
+- To confirm with data: Nov 23 rows in `training_sets` with `done=false` and empty `logged_at` would match. Ask which device he trained on and which he swapped on.
+
+Answers 2026-11-28: **Q44:** he trains on the phone; swaps were done on the phone and on the PC, on different dates. **Q45 A:** before sending, fetch the cloud's sets and keep the newer copy of each set; a done set is never overwritten by an older copy.
+
+## Batch 2026-11-28 (2): after v4.76.0
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 45 | Phone workout: show new weights in bold red. | change | shipped (v4.77.0), Q46 A heavier only |
+| 46 | "Are you sure nothing is being overwritten? I feel I have done some exercises with the new weights, but History says otherwise." | bug (same as 44) | shipped with 44 (v4.77.0) |
+| 47 | The highlight of the upper box is cut (screenshot mentioned, not attached). | fix | shipped (v4.77.0) |
+| 48 | Log training duration and times: start/end of each set, or at least the start of each set, taking the end of the rest as the start of the next set. | change | shipped (v4.77.0), Q48 A |
+| 49 | Unmarking a done set should ask for confirmation (so the timing isn't lost by accident). | change | shipped (v4.77.0) |
+| 50 | Leg press still suggests 72.5 kg on the end screen. | bug | shipped (v4.77.0) |
+| 51 | "New best": how is it calculated? It should be based on each exercise's volume. | change | shipped (v4.77.0), Q50 A |
+| 52 | How to add a CalendarOS Supabase connector when one for LedgerOS already exists. | setup | answered |
+| 53 | Search results should show the task's date; for a recurring task, the occurrence date. | change | shipped (v4.77.0), Q51 A |
+| 54 | Training graphs: a summary comparing week to week and month to month, all exercises in one long list. | change | shipped (v4.77.0), Q52 A at the top of Training -> Progress |
+| 55 | Recurring task "Move It": two options, e.g. move and mark missed, or move and mark complete. | change | shipped (v4.77.0), Q53 A |
+
+Facts (v4.76.0):
+- **50:** the per-exercise weight step (`weightIncrementKg`) is **never synced**: `trainingExerciseToRow` has no column for it and the pull rebuilds exercises from the cloud, so every sync puts it back to 2.5 kg. The end screen then suggests 70 + 2.5 = 72.5. The Review Pack has the same problem after a sync, so the note under item 14 ("the pack already sends the 10 kg step") was wrong. Fix needs SQL (`training_exercises.weight_increment_kg`).
+- **51:** "New best" today counts an exercise whose estimated one-rep max (Epley, from today's done sets) beats its best before today.
+- **49:** tapping a done set's tick undoes it at once (`mwTickTap` -> `toggleSetDone`), with no question.
+- **48:** each done set already stores the time it was marked done (`logged_at`) and the actual rest before it (`restTakenSec`); the end screen shows the duration from first to last done set. There is no set start time.
+- **47 (guess):** the selected box's ring on the top set row is clipped by the scroll area (`.mw-sets` scrolls, the ring is drawn outside the box).
+- **55:** "Move It" in the recurring task's edit window moves this occurrence and marks the original date missed.
+- **Fix for 44 (Q45 A) needs SQL:** a per-set "last edited" time (`training_sets.edited_at`) so the newer copy can win, including when a set is deliberately unmarked.
+
+Data check 2026-11-28 (read-only connector, figures kept out of the repo): Nov 23 had been re-entered that morning (every set ticked within about a minute), so the original overwrite could not be seen; the cloud keeps no edit history. Nov 24 shows logged exercises with 0 done sets (lost, or planned and not trained: not provable). `training_exercises` had no weight-step column.
+
+**Found while building:** the app never reloaded sets from the device on start (`loadAll` kept exercises, sessions, calendar, logs and resources but not sets). Sets ticked with no signal were lost if the page reloaded before they were sent. Probably the main cause of item 44, with the stale-copy overwrite as a second path.
+
+**Shipped 2026-11-28 as v4.77.0:** items 44-55. SQL: `training_exercises.weight_increment_kg`, `training_sets.edited_at`, `training_sets.started_at`. Interpretations: "heavier" = today's weight above that set's weight last time; a set's start = when the rest before it ended (timer ran out or skipped), the first set of a workout has none; "New best" = session volume above that exercise's best earlier session; search shows the occurrence date only on recurring rows while a search is typed (one-time rows already show their date); "Done, Move It" keeps the original date marked missed.

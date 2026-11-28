@@ -751,6 +751,7 @@ html:has(.mw-lock), body:has(.mw-lock){ overflow:hidden; overscroll-behavior:non
 .mw.mw-lock{ height:100vh; height:100dvh; min-height:0; overflow:hidden; display:flex; flex-direction:column; padding-bottom:0; }
 .mw.mw-lock > *{ flex:none; }
 .mw.mw-lock > .mw-sets, .mw.mw-lock > .mw-walk{ flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding-bottom:230px; }
+.mw.mw-lock > .mw-sets{ padding-top:3px; padding-left:3px; padding-right:3px; margin-top:13px; } /* room for the 2px drag ring */
 .mw.mw-lock > .mw-dock{ flex:none; }
 .mw-set{ display:flex; align-items:center; gap:10px; height:72px; margin-bottom:10px; }
 .mw-tick{ width:60px; height:72px; border-radius:20px; flex-shrink:0; border:2px solid #2F3238 !important; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; color:#F3F2EE; }
@@ -759,6 +760,7 @@ html:has(.mw-lock), body:has(.mw-lock){ overflow:hidden; overscroll-behavior:non
 .mw-tile{ flex:1; min-width:0; height:72px; border-radius:20px; background:#17191C; display:flex; flex-direction:column; align-items:center; justify-content:center; margin:0; cursor:pointer; }
 .mw-set.done .mw-tile{ background:#1E2219; }
 .mw-tile span{ font-size:12px; color:#A1A5AD; margin-top:2px; }
+.mw input.mw-num.mw-heavier{ color:#FF5A5A !important; font-weight:800; }
 .mw .mw-last{ font-size:11px; color:#6E737B; line-height:1; margin-bottom:2px; font-weight:400; letter-spacing:0; }
 input.mw-num{ width:100%; min-width:0 !important; min-height:0 !important; height:36px; padding:0 !important; border:0 !important; background:transparent !important; text-align:center; font-family:'Archivo',sans-serif; font-stretch:90%; font-weight:800; font-size:30px !important; line-height:1; color:#F3F2EE; font-variant-numeric:tabular-nums; caret-color:transparent; box-shadow:none; }
 input.mw-num::placeholder{ color:#5C6068; opacity:1; }
@@ -2441,7 +2443,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.76.0';
+const APP_VERSION = '4.77.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2449,6 +2451,19 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.77.0', changes: [
+    '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds weight_increment_kg (training_exercises), edited_at and started_at (training_sets). Additive and safe to run more than once. Until it is run, syncing shows a missing-column error.',
+    'FIX \u2014 Logged sets could be lost. Two causes, both fixed: sets were not reloaded from the device when the app restarted (so sets ticked with a weak signal were lost if the page reloaded before they were sent), and a device holding an older copy could overwrite sets logged on another device. Each set now remembers when it was last changed, and before sending, the app fetches the cloud\u2019s sets and keeps the newer copy of each one.',
+    'FIX \u2014 Each exercise\u2019s weight step (for example 10 kg on a leg press) is now saved to the cloud. It used to go back to 2.5 kg after every sync, which is why the end screen suggested 72.5 kg. Check your steps once after updating, in case one was already reset.',
+    'NEW \u2014 Phone workout: a weight heavier than last time shows in bold red.',
+    'NEW \u2014 Each set records when it started (when the rest before it ended). Log History shows each workout\u2019s start, end and length, and the Review Pack gets them too.',
+    'CHANGED \u2014 Unticking a done set asks first, so its time isn\u2019t lost by accident.',
+    'CHANGED \u2014 \u201cNew bests\u201d on the end screen now means an exercise\u2019s volume (weight \u00d7 reps of its working sets) beat its best earlier session.',
+    'NEW \u2014 Training \u2192 Progress: a week and month summary of every exercise, with volume and top weight this week vs last week and this month vs last month.',
+    'NEW \u2014 Searching tasks shows the date of each recurring task\u2019s occurrence.',
+    'NEW \u2014 Recurring task \u2192 Move This Occurrence: a \u201cDone, Move It\u201d button moves it and marks it done on the new date.',
+    'FIX \u2014 Phone workout: the highlight around the box you drag is no longer cut off on the top row.',
+  ]},
   { v:'4.76.0', changes: [
     '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds gym_locations (app_settings) and location_id (training_exercises). Additive and safe to run more than once. Until it is run, syncing shows a missing-column error.',
     'NEW \u2014 Locations. Exercise Library \u2192 Locations: add your gyms, pick your usual one, and add away periods (a month somewhere else, travel). Each exercise gets one location, or Everywhere for walking and bodyweight. The same movement at another gym is a separate exercise, because the machines and weights differ.',
@@ -4087,10 +4102,13 @@ async function loadAll(){
     // even when sync is on — same treatment as tasks/lists.
     if(trainingRes){
       const t = JSON.parse(trainingRes.value);
-      state.training = { exercises: t.exercises||[], sessions: t.sessions||[], calendar: t.calendar||[], logs: t.logs||[], resources: t.resources||[] };
+      // v4.77.0: sets are kept too. They used to be dropped here, so sets ticked
+      // while offline were lost if the page reloaded before they were sent.
+      state.training = { exercises: t.exercises||[], sessions: t.sessions||[], calendar: t.calendar||[], logs: t.logs||[], sets: Array.isArray(t.sets) ? t.sets : [], resources: t.resources||[] };
     } else {
       state.training = { exercises: [], sessions: [], calendar: [], logs: [], resources: [] };
     }
+    resetSetSnapshot(); // edits from here on get an editedAt stamp
 
     // Recipes — same treatment as Training (small/bounded, kept locally
     // even when sync is on, rather than reclaimed like completions/health).
@@ -4679,6 +4697,7 @@ function trainingExerciseToRow(ex){
            muscle_groups: exMuscleGroups(ex,'primary'), muscle_groups_secondary: exMuscleGroups(ex,'secondary'),
            rest_sec: ex.restSec||null, lift_type: ex.liftType||null,
            seat_setting: ex.seatSetting||null, location_id: ex.locationId||null,
+           weight_increment_kg: ex.weightIncrementKg||null,
            updated_at:new Date().toISOString() };
 }
 function rowToTrainingExercise(r){
@@ -4695,7 +4714,8 @@ function rowToTrainingExercise(r){
            muscleGroupsSecondary: Array.isArray(r.muscle_groups_secondary) ? r.muscle_groups_secondary : [],
            muscleGroups: Array.isArray(r.muscle_groups) ? r.muscle_groups : [],
            muscleGroup: r.muscle_group||null, restSec: r.rest_sec||null, liftType: r.lift_type||null,
-           seatSetting: r.seat_setting||null, locationId: r.location_id||null };
+           seatSetting: r.seat_setting||null, locationId: r.location_id||null,
+           weightIncrementKg: r.weight_increment_kg!=null ? Number(r.weight_increment_kg) : null };
 }
 function trainingSessionToRow(sess){
   const s = state.settings.sync;
@@ -4890,6 +4910,7 @@ function syncStepsForDomain(domain){
       ()=> supaUpsert('app_settings', [{ pin: s.pin, locations: state.settings.locations, silos: state.settings.silos, list_folders: state.settings.listFolders, week_view_presets: state.settings.weekViewPresets, calendar_view_presets: state.settings.calendarViewPresets, hydration_containers: state.settings.hydrationContainers, hydration_goal_ml: state.settings.hydrationGoalMl, exercise_tags: state.settings.exerciseTags, metric_groups: state.settings.metricGroups||[], weekend_days: state.settings.weekendDays, location_day_rules: state.settings.locationDayRules, last_active_date: state.settings.lastActiveDate, training_suggestions: state.settings.trainingSuggestions||null, muscle_band: state.settings.muscleBand||null, training_failure_plan: state.settings.trainingFailurePlan||null, training_goals: state.settings.trainingGoals||null, include_secondary_muscles: !!state.settings.includeSecondaryMuscles, exercise_suggestions: state.settings.exerciseSuggestions||null, rest_timer_sound_muted: !!state.settings.restTimerSoundMuted, training_skip_reasons: state.settings.trainingSkipReasons||{}, gym_locations: state.settings.gymLocations||null }], 'pin'),
     ];
     case 'training': return [
+      ()=> mergeServerTrainingSets(),
       ()=> flushPendingTrainingDeletes(),
       ()=> supaUpsert('training_exercises', state.training.exercises.map(trainingExerciseToRow), 'pin,id'),
       ()=> supaUpsert('training_sessions', state.training.sessions.map(trainingSessionToRow), 'pin,id'),
@@ -5145,7 +5166,11 @@ async function pullFromSupabase(onProgress){
 
     if(trainingPulled){
       state.training = {
-        exercises: trainingPulled.training_exercises.map(rowToTrainingExercise),
+        // v4.77.0: a step the cloud doesn't have yet (column new) keeps this device's value
+        exercises: trainingPulled.training_exercises.map(rowToTrainingExercise).map(e=>{
+          if(e.weightIncrementKg==null){ const old = (state.training.exercises||[]).find(x=>x.id===e.id); if(old && old.weightIncrementKg) e.weightIncrementKg = old.weightIncrementKg; }
+          return e;
+        }),
         sessions: trainingPulled.training_sessions.map(rowToTrainingSession),
         calendar: trainingPulled.training_calendar.map(rowToTrainingCalendar),
         logs: trainingPulled.training_logs.map(rowToTrainingLog),
@@ -5156,6 +5181,7 @@ async function pullFromSupabase(onProgress){
         resources: resourcesPulled ? resourcesPulled.map(rowToTrainingResource) : ((state.training && state.training.resources) || []),
       };
       pendingTrainingDeletes.length = 0; // remote is now authoritative, drop any stale pending deletes
+      resetSetSnapshot();
     } else if(resourcesPulled){
       // Training pull failed but resources came back — apply just that slice,
       // leaving every other part of state.training untouched.
@@ -5853,9 +5879,11 @@ async function saveSettings(){
   }
 }
 async function saveTraining(){
+  stampEditedSets();
   await safeStorageSet(STORAGE_KEYS.TRAINING, JSON.stringify(state.training), 'training');
   if(syncConfigured()){
     scheduleSync('training', ()=>[
+      ()=> mergeServerTrainingSets(),
       ()=> flushPendingTrainingDeletes(),
       ()=> supaUpsert('training_exercises', state.training.exercises.map(trainingExerciseToRow), 'pin,id'),
       ()=> supaUpsert('training_sessions', state.training.sessions.map(trainingSessionToRow), 'pin,id'),
@@ -7766,7 +7794,7 @@ function renderTicket(row, opts){
           ${typeTag}
           ${priTag}
           ${statsTag}
-          ${nextDateTag}
+          ${nextDateTag}${(state.searchQuery && isRecurring && !opts.showNextDate && row.dueOn) ? `<span class="tag next-date-tag">${humanDate(row.dueOn)}</span>` : ''}
           <span>${dueLabel}</span>
         </div>
         ${nextShiftRow}
@@ -9937,6 +9965,7 @@ function bestE1RMForExercise(exId, excludeDate){
 }
 
 let _restTimerHandle=null,_restTimerEnd=null,_restTimerExId=null,_restTimerDefaultSec=120,_restTimerLastTickSec=null;
+let _restEndedAt=null; // v4.77.0: when the last rest ended (timer ran out or was skipped)
 /* v4.59.0: rest timer chimes (item 8) — a short tick each of the last 5
    seconds, then a distinct two-tone chime at zero. Generated with the
    WebAudio oscillator rather than an audio file, so the page stays fully
@@ -10265,6 +10294,7 @@ function _restTimerDoneHtml(){
   </div>`;
 }
 function stopRestTimer(){
+  if(_restTimerEnd!=null) _restEndedAt = Math.min(Date.now(), _restTimerEnd);
   if(_restTimerHandle){clearInterval(_restTimerHandle);_restTimerHandle=null;}
   if(_tipRotationHandle){clearInterval(_tipRotationHandle);_tipRotationHandle=null;}
   _restTimerEnd=null;_restTimerExId=null;
@@ -10485,13 +10515,69 @@ function trainingSetToRow(s){
   return {pin,log_date:s.date,exercise_id:s.exerciseId,set_no:s.setNo,
     reps:s.reps||null,weight_kg:s.weightKg||null,done:!!s.done,
     rir:s.rir!=null?s.rir:null,to_failure:!!s.toFailure,
-    is_warmup:!!s.isWarmup,rest_taken_sec:s.restTakenSec||null,note:s.note||null,logged_at:s.loggedAt||null};
+    is_warmup:!!s.isWarmup,rest_taken_sec:s.restTakenSec||null,note:s.note||null,logged_at:s.loggedAt||null,
+    edited_at:s.editedAt||null,started_at:s.startedAt||null};
 }
 function rowToTrainingSet(r){
   return {date:r.log_date,exerciseId:r.exercise_id,setNo:r.set_no,
     reps:r.reps||null,weightKg:r.weight_kg||null,done:!!r.done,
     rir:r.rir!=null?r.rir:null,toFailure:!!r.to_failure,
-    isWarmup:!!r.is_warmup,restTakenSec:r.rest_taken_sec||null,note:r.note||null,loggedAt:r.logged_at||null};
+    isWarmup:!!r.is_warmup,restTakenSec:r.rest_taken_sec||null,note:r.note||null,loggedAt:r.logged_at||null,
+    editedAt:r.edited_at||null,startedAt:r.started_at||null};
+}
+/* v4.77.0: sync safety for sets. Every training push used to send this
+   device's whole copy of every set, so a device holding an older copy
+   overwrote sets logged on another device. Now each set carries editedAt
+   (stamped when it changes on this device; an app-created, untouched set
+   has none), and before a push the cloud's sets are fetched and, set by
+   set, the newer copy wins (editedAt, else loggedAt). */
+let _setSnapReady = false;
+const _setSnap = new Map();
+function setKey(x){ return `${x.date}|${x.exerciseId}|${x.setNo}`; }
+function setBody(x){ return JSON.stringify([x.reps||null, x.weightKg||null, !!x.done, x.rir!=null?x.rir:null, !!x.toFailure, !!x.isWarmup, x.note||null, x.loggedAt||null]); }
+function resetSetSnapshot(){
+  _setSnap.clear();
+  (state.training.sets||[]).forEach(x=> _setSnap.set(setKey(x), setBody(x)));
+  _setSnapReady = true;
+}
+function setStampMs(x){ const t = Date.parse((x && (x.editedAt || x.loggedAt)) || ''); return isNaN(t) ? 0 : t; }
+function stampEditedSets(){
+  if(!_setSnapReady){ resetSetSnapshot(); return; }
+  const now = new Date().toISOString();
+  (state.training.sets||[]).forEach(x=>{
+    const k = setKey(x), b = setBody(x);
+    if(!_setSnap.has(k)){ _setSnap.set(k, b); return; }   // created by the app, not an edit
+    if(_setSnap.get(k) !== b){ x.editedAt = now; _setSnap.set(k, b); }
+  });
+  pendingTrainingDeletes.forEach(d=>{ if(d.table==='training_sets' && !d.at) d.at = now; });
+}
+function _deleteMatchesSet(match, x){
+  return Object.entries(match).every(([k,v])=> k==='log_date' ? x.date===v : k==='exercise_id' ? x.exerciseId===v : k==='set_no' ? x.setNo===Number(v) : true);
+}
+async function mergeServerTrainingSets(){
+  stampEditedSets();
+  const rows = await supaSelectAll('training_sets'); // throws on a failed or short read: never push blind
+  if(!state.training.sets) state.training.sets = [];
+  const local = new Map(state.training.sets.map(x=>[setKey(x), x]));
+  const dels = pendingTrainingDeletes.filter(d=>d.table==='training_sets');
+  const touched = new Set();
+  rows.map(rowToTrainingSet).forEach(r=>{
+    const k = setKey(r), l = local.get(k);
+    if(l){
+      if(setStampMs(r) > setStampMs(l)){ Object.assign(l, r); touched.add(k); }
+      return;
+    }
+    // Not on this device: deleted here (keep the delete unless the cloud copy is newer) or added elsewhere.
+    const d = dels.find(d=> _deleteMatchesSet(d.match, r));
+    if(d && setStampMs(r) <= (Date.parse(d.at||'') || Infinity)) return;
+    state.training.sets.push(r); touched.add(k);
+  });
+  if(!touched.size) return;
+  const pairs = new Set();
+  state.training.sets.forEach(x=>{ if(touched.has(setKey(x))){ _setSnap.set(setKey(x), setBody(x)); pairs.add(x.date+'::'+x.exerciseId); } });
+  pairs.forEach(p=>{ const [date, exId] = p.split('::'); syncTrainingLogFromSets(date, exId); });
+  diagLogEvent('supabase', 'Kept newer sets from the cloud before sending', { sets: touched.size });
+  await safeStorageSet(STORAGE_KEYS.TRAINING, JSON.stringify(state.training), 'training');
 }
 function getTrainingSuggestion(date,exId){
   return (state.settings.trainingSuggestions||{})[`${date}::${exId}`]||null;
@@ -11161,7 +11247,7 @@ function renderMobileWorkout(){
       const lastTxt = v => (v == null || v === '') ? '' : `<small class="mw-last">last ${escapeHtml(String(v))}</small>`;
       return `<div class="mw-set ${s.done?'done':''} ${s.isWarmup?'warm':''}">
         <button class="mw-tick" data-mw-set="${date}|${eid}|${s.setNo}" onclick="mwTickTap('${date}','${eid}',${s.setNo},${restSec});" aria-label="${s.done?'Undo':'Complete'} set ${label}">${s.done ? MW_SVG.check : label}</button>
-        <label class="mw-tile">${prev ? lastTxt(prev.weightKg!=null ? cleanKg(prev.weightKg) : null) : ''}<input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|weightKg" aria-label="Weight for set ${label}"><span>kg</span></label>
+        <label class="mw-tile">${prev ? lastTxt(prev.weightKg!=null ? cleanKg(prev.weightKg) : null) : ''}<input type="number" class="num-pick mw-num${prev && prev.weightKg && s.weightKg > prev.weightKg ? ' mw-heavier' : ''}"${prev && prev.weightKg ? ` data-last="${prev.weightKg}"` : ''} readonly inputmode="none" value="${s.weightKg||''}" placeholder="${defaultWeight||'—'}" onclick="openNumPicker(this,'weightKg','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|weightKg" aria-label="Weight for set ${label}"><span>kg</span></label>
         <label class="mw-tile">${prev ? lastTxt(prev.reps) : ''}<input type="number" class="num-pick mw-num" readonly inputmode="none" value="${s.reps||''}" placeholder="${defaultReps||'—'}" onclick="openNumPicker(this,'reps','${date}','${eid}',${s.setNo})" data-np="${date}|${eid}|${s.setNo}|reps" aria-label="Reps for set ${label}"><span>reps</span></label>
         <div class="mw-rir ${s.toFailure?'fail':''} ${(s.done && !s.isWarmup)?'tap':''}" ${(s.done && !s.isWarmup)?`role="button" tabindex="0" onclick="openMwRirSheet('${date}','${eid}',${s.setNo},false)"`:''} aria-label="Effort for set ${label}">${prev ? lastTxt(prev.toFailure ? 'F' : prev.rir) : ''}<small>${s.isWarmup?'WARM':'RIR'}</small><b>${s.isWarmup?'—':rirTxt}</b></div>
       </div>`;
@@ -11211,6 +11297,23 @@ function mwEmptyHtml(date, session){
     </div>
   </div>`;
 }
+/* v4.77.0: a day's workout times. Start = the first set's start time if
+   recorded, else the first set marked done; end = the last set marked done. */
+function workoutTimes(date){
+  const done = (state.training.sets||[]).filter(s=>s.date===date && s.done && s.loggedAt);
+  const ends = done.map(s=>Date.parse(s.loggedAt)).filter(t=>!isNaN(t));
+  if(!ends.length) return null;
+  const starts = done.map(s=>Date.parse(s.startedAt||'')).filter(t=>!isNaN(t));
+  const start = Math.min(...ends, ...starts), end = Math.max(...ends);
+  return { start, end, minutes: Math.round((end - start)/60000) };
+}
+function fmtClockTime(ms){ const d = new Date(ms); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
+function bestSessionVolume(exId, beforeDate){
+  const by = {};
+  (state.training.sets||[]).forEach(s=>{ if(s.exerciseId===exId && s.done && !s.isWarmup && s.date < beforeDate) by[s.date] = (by[s.date]||0) + (s.weightKg||0)*(s.reps||0); });
+  const v = Object.values(by);
+  return v.length ? Math.max(...v) : 0;
+}
 function mwSummaryData(date, ordered, blockMap){
   const done = (state.training.sets||[]).filter(s=>s.date===date && s.done && !s.isWarmup);
   const volume = Math.round(done.reduce((t,s)=>t + (s.weightKg||0)*(s.reps||0), 0));
@@ -11220,8 +11323,9 @@ function mwSummaryData(date, ordered, blockMap){
   const rows = ordered.map(id=>{
     const ex = getTrainingExerciseById(id);
     const mine = done.filter(s=>s.exerciseId===id).sort((a,b)=>a.setNo-b.setNo);
-    const e1 = mine.length ? epley1RM(mine) : null, prev = bestE1RMForExercise(id, date);
-    const pr = !!(e1 && prev && e1 > prev);
+    // v4.77.0: a new best is today's volume (weight x reps, working sets) above this exercise's best earlier session
+    const vol = mine.reduce((t,s)=>t + (s.weightKg||0)*(s.reps||0), 0), prev = bestSessionVolume(id, date);
+    const pr = !!(vol && prev && vol > prev);
     if(pr) bests++;
     const top = mine.reduce((m,s)=>Math.max(m, s.weightKg||0), 0);
     const b = blockMap[id] || {};
@@ -11964,6 +12068,8 @@ function setSetMode(date, exId, setNo, mode, rirValue){
   const s = state.training.sets.find(s=>s.date===date&&s.exerciseId===exId&&s.setNo===setNo);
   if(!s) return;
   const wasDone = !!s.done;
+  const clears = (mode==='rir' && s.rir===rirValue && !s.toFailure && !s.isWarmup) || (mode==='failure' && s.toFailure) || (mode==='warmup' && s.isWarmup);
+  if(wasDone && clears && !confirmUntickSet(s)) return;
   if(mode==='rir'){
     s.rir = (s.rir===rirValue) ? null : rirValue;
     if(s.rir!==null){ s.toFailure=false; s.isWarmup=false; }
@@ -12100,6 +12206,7 @@ function _npMove(e){
   _npDrag.moved = true;
   const v = _npValueAt(dy);
   if(v != null) _npArmed.el.value = _npFmt(v);
+  if(_npArmed.el.dataset && _npArmed.el.dataset.last) _npArmed.el.classList.toggle('mw-heavier', Number(_npArmed.el.value) > Number(_npArmed.el.dataset.last));
   if(e.cancelable) e.preventDefault();
 }
 function _npUp(){
@@ -12177,12 +12284,16 @@ function updateSetField(date, exId, setNo, field, value){
    - "Rested longer?": more reps than an earlier RIR-0 / failure set of the
      same exercise that day asks once why; the answer is saved on the set. */
 function onSetDoneChanged(s){
-  if(!s.done){ s.restTakenSec = null; return; }
+  if(!s.done){ s.restTakenSec = null; s.startedAt = null; return; }
   const now = Date.parse(s.loggedAt);
   const prev = (state.training.sets||[]).filter(x=>x!==s && x.date===s.date && x.done && x.loggedAt)
     .map(x=>Date.parse(x.loggedAt)).filter(t=>!isNaN(t) && t<=now);
   const gap = prev.length ? Math.round((now - Math.max(...prev))/1000) : null;
   s.restTakenSec = (gap && gap <= 1800) ? gap : null;
+  // v4.77.0: the set started when the rest before it ended (timer ran out or was skipped);
+  // the first set of a workout has no start.
+  const restEnd = _restTimerEnd!=null ? Math.min(now, _restTimerEnd) : _restEndedAt;
+  s.startedAt = (s.restTakenSec!=null && restEnd && restEnd >= Math.max(...prev) && restEnd <= now) ? new Date(restEnd).toISOString() : null;
   if(s.isWarmup || s.note) return;
   const reps = Number(s.reps)||0;
   const beat = (state.training.sets||[]).some(x=>x.date===s.date && x.exerciseId===s.exerciseId && x.setNo<s.setNo
@@ -12210,10 +12321,14 @@ function setSetNote(date, exId, setNo, text){
   s.note = text;
   saveTraining();
 }
+function confirmUntickSet(s){
+  return confirm(`Untick set ${s.isWarmup ? 'W' : s.setNo}? Its time will be cleared.`);
+}
 function toggleSetDone(date, exId, setNo, restSec){
   if(!state.training.sets) state.training.sets=[];
   const s = state.training.sets.find(s=>s.date===date&&s.exerciseId===exId&&s.setNo===setNo);
   if(!s) return;
+  if(s.done && !confirmUntickSet(s)) return;
   s.done = !s.done;
   s.loggedAt = s.done ? new Date().toISOString() : null;
   onSetDoneChanged(s);
@@ -13595,7 +13710,7 @@ function renderTrainingHistorySubpage(){
         return `
           <div class="card" style="padding:14px 18px; margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-              <b>${humanDate(date)}${session?` — ${escapeHtml(session.name)}`:''}</b>
+              <b>${humanDate(date)}${session?` — ${escapeHtml(session.name)}`:''}${(()=>{ const w = workoutTimes(date); return w ? ` <span class="page-sub" style="font-weight:400;">\u00b7 ${fmtClockTime(w.start)}\u2013${fmtClockTime(w.end)} \u00b7 ${w.minutes} min</span>` : ''; })()}</b>
               <div style="display:flex; align-items:center; gap:10px;">
                 ${agg ? `<span class="page-sub">${agg.completed}/${agg.total} done${agg.avgDifficulty!=null?` · avg ${agg.avgDifficulty}`:''}</span>` : ''}
                 <button class="btn ghost sm" onclick="setTrainingViewDate('${date}'); setTrainingSection('today');">Open</button>
@@ -13754,6 +13869,41 @@ function svgWeightVolumeChart(rows){
     unit:' kg', colour:'var(--brass)', aria:'Heaviest working weight and volume per session',
     tips: rows.map(r=>`<b>${humanDateNoRelative(r.date)}</b><br><span class="k">Heaviest weight</span> <b>${cleanKg(r.topKg)} kg</b><br><span class="k">Volume</span> <b>${r.volume.toLocaleString()} kg</b>`) });
 }
+/* v4.77.0: per exercise, this week vs last week (Sun-Sat) and this month vs
+   last month: volume (weight x reps, done working sets) and top weight. */
+function exerciseCompareRows(){
+  const today = todayStr();
+  const w0 = getCalendarWeekBounds(0), w1 = getCalendarWeekBounds(-1);
+  const m0s = today.slice(0,7)+'-01', m1s = (()=>{ const [y,m] = today.split('-').map(Number); return m===1 ? `${y-1}-12-01` : `${y}-${String(m-1).padStart(2,'0')}-01`; })();
+  const ranges = { tw:[w0.weekStart,w0.weekEnd], lw:[w1.weekStart,w1.weekEnd], tm:[m0s, today.slice(0,7)+'-31'], lm:[m1s, m1s.slice(0,7)+'-31'] };
+  const out = [];
+  (state.training.exercises||[]).filter(e=>e.category!=='walking').forEach(e=>{
+    const sets = (state.training.sets||[]).filter(s=>s.exerciseId===e.id && s.done && !s.isWarmup);
+    const r = {};
+    Object.entries(ranges).forEach(([k,[a,b]])=>{
+      const ss = sets.filter(s=>s.date>=a && s.date<=b);
+      r[k] = { vol: Math.round(ss.reduce((t,s)=>t+(s.weightKg||0)*(s.reps||0),0)), top: ss.length ? Math.max(0, ...ss.map(s=>s.weightKg||0)) : 0 };
+    });
+    if(Object.values(r).some(x=>x.vol || x.top)) out.push({ ex:e, ...r });
+  });
+  return out.sort((a,b)=> a.ex.name.localeCompare(b.ex.name));
+}
+function _pctCell(cur, prev){
+  if(!cur && prev) return '<span class="page-sub">\u2014</span>';
+  if(!prev) return cur ? '<span class="page-sub">new</span>' : '<span class="page-sub">\u2014</span>';
+  const p = Math.round((cur/prev - 1)*100);
+  return `<span style="color:${p>0?'var(--teal)':p<0?'var(--flag,#D95B5B)':'var(--ink-soft)'};">${p>0?'+':''}${p}%</span>`;
+}
+function renderExerciseCompareTable(){
+  const rows = exerciseCompareRows();
+  if(!rows.length) return '<div class="page-sub" style="padding:8px 0;">Log sets on the Training page to see this summary.</div>';
+  const cell = (o, k1, k0)=> `<td style="text-align:right; white-space:nowrap;">${o[k0].vol ? o[k0].vol.toLocaleString() : '\u2014'}<br><span class="page-sub" style="font-size:11px;">${o[k1].vol ? o[k1].vol.toLocaleString() : '\u2014'}</span></td><td style="text-align:right;">${_pctCell(o[k0].vol, o[k1].vol)}</td><td style="text-align:right; white-space:nowrap;">${o[k0].top ? cleanKg(o[k0].top) : '\u2014'}<br><span class="page-sub" style="font-size:11px;">${o[k1].top ? cleanKg(o[k1].top) : '\u2014'}</span></td><td style="text-align:right;">${_pctCell(o[k0].top, o[k1].top)}</td>`;
+  return `<div style="overflow-x:auto; max-width:100%; contain:inline-size;"><table class="log-table ex-compare" style="width:100%; font-variant-numeric:tabular-nums;">
+    <thead><tr><th rowspan="2">Exercise</th><th colspan="4" style="text-align:center;">This week <span class="page-sub">vs last week</span></th><th colspan="4" style="text-align:center;">This month <span class="page-sub">vs last month</span></th></tr>
+    <tr><th style="text-align:right;">Volume</th><th></th><th style="text-align:right;">Top kg</th><th></th><th style="text-align:right;">Volume</th><th></th><th style="text-align:right;">Top kg</th><th></th></tr></thead>
+    <tbody>${rows.map(o=>`<tr><td>${escapeHtml(o.ex.name)}</td>${cell(o,'lw','tw')}${cell(o,'lm','tm')}</tr>`).join('')}</tbody></table></div>
+    <div class="page-sub" style="font-size:11.5px; margin-top:6px;">Big number = this week / month, small = last week / month. Volume = weight \u00d7 reps of done working sets. Weeks run Sunday to Saturday.</div>`;
+}
 function renderTrainingTrendsSubpage(){
   const today = todayStr();
   const exs = (state.training.exercises||[]).filter(e=>e.category!=='walking')
@@ -13768,6 +13918,10 @@ function renderTrainingTrendsSubpage(){
   const sel = exs.find(x=>x.e.id===state.trainingTrendExId);
   const rows = sel ? sel.rows.slice(-12) : [];
   return `
+    <div class="section" style="margin-bottom:20px;">
+      <div class="section-head"><h2>Week and month summary</h2></div>
+      <div class="card" style="padding:12px 14px; min-width:0; max-width:100%;">${renderExerciseCompareTable()}</div>
+    </div>
     <div class="section" style="margin-bottom:20px;">
       <div class="section-head"><h2>Strength index</h2><span class="page-sub" style="font-size:11.5px;">Average change in your estimated max vs 4 weeks earlier</span></div>
       <div class="card" style="padding:12px 14px;">
@@ -15728,6 +15882,7 @@ function buildTrainingReviewPack(){
         rir: s.toFailure ? 0 : s.rir,   // v4.75.0: a failure set is RIR 0, not null
         toFailure: s.toFailure,
         restTakenSec: s.restTakenSec || null,
+        ...(s.startedAt ? { startedAt: fmtClockTime(Date.parse(s.startedAt)) } : {}),
         ...(s.note ? { note: s.note } : {}),
       })),
       dayNote: (getTrainingLogForExercise(e.date, e.exerciseId)||{}).notes || null,
@@ -15878,9 +16033,8 @@ function buildReviewPackExtras(sinceDate, today){
   });
   const reasons = state.settings.trainingSkipReasons || {};
   const skipReasons = Object.keys(reasons).filter(d=>d>=sinceDate && d<=today).sort().map(d=>({ date:d, reason:reasons[d] }));
-  const byDate = {};
-  (state.training.sets||[]).forEach(x=>{ if(x.date>=sinceDate && x.done && x.loggedAt){ const t = Date.parse(x.loggedAt); if(!isNaN(t)) (byDate[x.date] = byDate[x.date]||[]).push(t); } });
-  const sessionLengthMin = Object.keys(byDate).sort().map(d=>({ date:d, minutes: Math.round((Math.max(...byDate[d]) - Math.min(...byDate[d]))/60000) }));
+  const days = [...new Set((state.training.sets||[]).filter(x=>x.date>=sinceDate && x.done && x.loggedAt).map(x=>x.date))].sort();
+  const sessionLengthMin = days.map(d=>{ const w = workoutTimes(d); return w ? { date:d, minutes:w.minutes, start:fmtClockTime(w.start), end:fmtClockTime(w.end) } : null; }).filter(Boolean);
   const plannedVsDone = state.training.calendar.filter(c=>c.sessionId && c.date>=sinceDate && c.date<today).sort((a,b)=>a.date<b.date?-1:1).map(c=>{
     const sess = getTrainingSessionById(c.sessionId);
     return { date:c.date, session: sess ? sess.name : c.sessionId, blocks: (sess && sess.blocks || []).map(b=>{
@@ -16044,7 +16198,7 @@ MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smalles
 ${JSON.stringify(exerciseLibrary, null, 2)}
 \`\`\`
 
-MY DATA PACK (also: weeklyHistory = my last 4 full weeks of sets per muscle and average weight / waist / calories / protein / sleep minutes / sleep score / resting heart rate; skipReasons = why planned days were missed ("swapped days" = I moved that session to another day, not skipped it); workingSets[].restTakenSec = actual rest before that set; note = why a set beat an earlier failure set; dayNote = my note for that exercise that day; sessionLengthMin; plannedVsDone = each block of the previous plan against what I did; bodyMetrics days marked partial = I did not confirm that day's log was complete; library notes = my permanent note on that exercise):
+MY DATA PACK (also: weeklyHistory = my last 4 full weeks of sets per muscle and average weight / waist / calories / protein / sleep minutes / sleep score / resting heart rate; skipReasons = why planned days were missed ("swapped days" = I moved that session to another day, not skipped it); workingSets[].restTakenSec = actual rest before that set; workingSets[].startedAt = local time the set started (when the rest before it ended); note = why a set beat an earlier failure set; dayNote = my note for that exercise that day; sessionLengthMin = each workout's length in minutes with its local start and end time; plannedVsDone = each block of the previous plan against what I did; bodyMetrics days marked partial = I did not confirm that day's log was complete; library notes = my permanent note on that exercise):
 \`\`\`json
 ${packJson}
 \`\`\`
@@ -18509,6 +18663,9 @@ alter table app_settings add column if not exists rest_timer_sound_muted boolean
 alter table app_settings add column if not exists training_skip_reasons jsonb default '{}';
 alter table app_settings add column if not exists gym_locations jsonb default null;
 alter table training_exercises add column if not exists location_id text;
+alter table training_exercises add column if not exists weight_increment_kg numeric;
+alter table training_sets add column if not exists edited_at timestamptz;
+alter table training_sets add column if not exists started_at timestamptz;
 alter table health_metric_defs add column if not exists role text;
 alter table health_logs add column if not exists day_complete boolean;
 alter table training_sets add column if not exists note text;
@@ -19484,8 +19641,11 @@ function buildTaskModalHtml(kind, t, isDup){
           <label>Move This Occurrence (${humanDate(modalOccurrenceDate)}) To</label>
           ${quickDateButtonsHtml('f_reschedule_to')}
           <input type="date" id="f_reschedule_to" value="${addDays(modalOccurrenceDate,1)}">
-          <button type="button" class="btn secondary sm" style="margin-top:8px;" onclick="submitRescheduleOccurrence()">Move It</button>
-          <div class="page-sub" style="margin-top:6px;">${humanDate(modalOccurrenceDate)} will be marked missed. The recurring pattern is unaffected.</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+            <button type="button" class="btn secondary sm" onclick="submitRescheduleOccurrence()">Move It</button>
+            <button type="button" class="btn secondary sm" onclick="submitRescheduleOccurrence(true)">Done, Move It</button>
+          </div>
+          <div class="page-sub" style="margin-top:6px;">${humanDate(modalOccurrenceDate)} will be marked missed. \u201cDone, Move It\u201d also marks it done on the new date (you did it then). The recurring pattern is unaffected.</div>
         </div>
       ` : ''}
 
@@ -19497,13 +19657,15 @@ function buildTaskModalHtml(kind, t, isDup){
     </div>
   `;
 }
-async function submitRescheduleOccurrence(){
+async function submitRescheduleOccurrence(markDone){
   const toDate = document.getElementById('f_reschedule_to').value;
   if(!toDate){ showToast('Pick a date'); return; }
-  await rescheduleOccurrence(modalEditingId, modalOccurrenceDate, toDate);
+  const taskId = modalEditingId, fromDate = modalOccurrenceDate;
+  await rescheduleOccurrence(taskId, fromDate, toDate);
+  if(markDone) setOccurrenceStatus(taskId, toDate, 'done'); // v4.77.0: "Done, Move It"
   closeModal();
   renderMain();
-  showToast(`Moved to ${humanDate(toDate)} — ${humanDate(modalOccurrenceDate)} marked missed`);
+  showToast(`Moved to ${humanDate(toDate)}${markDone ? ' and marked done' : ''} — ${humanDate(fromDate)} marked missed`);
 }
 
 function quickDateButtonsHtml(inputId){

@@ -11,6 +11,9 @@
    check.
 */
 const { loadApp } = require('./harness');
+// v4.77.0: a push now first reads training_sets to keep the newer copy of each set (agreed fix);
+// that read is part of the push, so a pull is recognised by its reads of the other tables.
+const isPullGet = c => c.method === 'GET' && !String(c.url).includes('/training_sets?');
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -54,7 +57,7 @@ async function scenarioDirtyStartup() {
   await win.runBackgroundSync();
 
   const calls = win.__calls;
-  const selects = calls.filter(c => c.method === 'GET');
+  const selects = calls.filter(isPullGet);
   const taskPushes = calls.filter(c => c.method === 'POST' && c.url.includes('/one_time_tasks'));
 
   // BEFORE v4.37.0 this scenario proved the DEFECT: no pull, a full push, and
@@ -64,7 +67,7 @@ async function scenarioDirtyStartup() {
   check('a pull IS now performed as well as the push', selects.length > 0,
         `${selects.length} GET request(s)`);
   check('the push comes first (a pull first would destroy unsynced local work)',
-        calls.findIndex(c => c.method === 'POST') < calls.findIndex(c => c.method === 'GET'));
+        calls.findIndex(c => c.method === 'POST') < calls.findIndex(isPullGet));
   check('the stale task list is NOT pushed — only the dirty domain is',
         taskPushes.length === 0, `${taskPushes.length} push(es)`);
   check('the stale done=false never reaches the server',
@@ -85,11 +88,11 @@ async function scenarioCleanStartup() {
 
   await win.runBackgroundSync();
   const calls = win.__calls;
-  check('a pull IS performed', calls.some(c => c.method === 'GET'));
+  check('a pull IS performed', calls.some(isPullGet));
   // The remote is empty in this scenario, so seeding it from local IS the
   // correct behaviour (`hasAnyRemoteData` guards the destructive direction).
   // What matters is that the pull ran first and could compare.
-  const pullIndex = calls.findIndex(c => c.method === 'GET');
+  const pullIndex = calls.findIndex(isPullGet);
   const pushIndex = calls.findIndex(c => c.method === 'POST');
   check('the pull happens before any push', pullIndex >= 0 && (pushIndex === -1 || pullIndex < pushIndex),
         `pull@${pullIndex} push@${pushIndex}`);
