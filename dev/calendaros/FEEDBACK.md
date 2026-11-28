@@ -191,6 +191,9 @@ Decisions 2026-11-27 (2), then "go":
 | 42 | Weekly Volume panel (screenshot, "This week", Saturday): "it appears to not calculate the weekends". | question | question asked (Q43) |
 
 Facts (v4.76.0): Done counts every done working set from Sunday to Saturday, weekend days included. Planned counts sessions still on the calendar from today to Saturday. Nothing in the code skips weekend days or rest days. The panel shows only "This week", not its dates.
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
 | 43 | He wants to give the session read access to CalendarOS's Supabase project, to see completed details. | setup | instructions sent (new read-only connector, then a new session) |
 | 44 | A trained day (Mon 23 Nov) now shows "Training logged" with 0 sets done on all 6 exercises, although he marked every set done at the time. Linked in his mind to swapping days; has happened 2-3 times. Wants it found and fixed once. | bug | diagnosis proposed, waiting for data access and his "go" |
 
