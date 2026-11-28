@@ -78,7 +78,7 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
   - one working weight per exercise per day, and weights never go backwards from the last completed top weight
   - each exercise uses its own weight increments, and reps default to the **top** of the range (4.69)
   - 3 working sets by default; 4 only through the exception ladder; at most 6 exercises per day (search `WORKING SETS PER EXERCISE`)
-  - sets are never auto-created for past days, and plan import clears stale not-done sets on future dates only
+  - sets are never auto-created for past days; plan import (4.78) removes every exercise without a done set on today and later covered dates (deletes sent to the cloud) and old sessions on days in the next 7 the plan leaves empty (`REVIEW_PLAN_DAYS`); the Review Pack plans 7 days, history 30
   - moving or swapping a day clears not-done training on the dates involved (`clearNotDoneTrainingForDate`); there is no Plan day button any more
   - **locations (4.76):** one `locationId` per exercise or `'everywhere'`; no location = never offered once any location exists (`exerciseAtLocation`, `locationForDate`)
 - **Never put credentials or tokens in any file.** Test fixtures use invented data: names (Layla, Sam), silos (Alpha/Beta/Gamma), locations (Site A/B, Home, Office), host `proj.example.test`, PIN `1234`.
@@ -88,7 +88,7 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
 - **Run:** `bash dev/calendaros/run_tests.sh [path/to/CalendarOS.html]`. It works from any clone location and takes about 40 seconds.
   - It splits the app into `dev/calendaros/.build/` (gitignored), installs pinned `jsdom` on first run, and runs every `dev/calendaros/tests/test_*.js`.
   - It prints each FAIL line marked `[known]` or `[NEW]`, then `N passed, M failed`. Exit codes: 0 = no new failures, 1 = new failure, 2 = crash or build error.
-- **Latest run (v4.77.1, 2026-11-28): 1271 passed, 29 failed, 0 new.** The passed count only grows.
+- **Latest run (v4.78.0, 2026-11-28): 1303 passed, 29 failed, 0 new.** The passed count only grows.
 - **Baseline at the move to Claude Code (v4.71.1, 2026-11-07): 864 passed, 29 failed, 0 new.** That is 25 suites: 24 carried over (841 passed) plus `test_core_conventions.js` (23).
   - The 29 are **known stale assertions** in 8 older suites (`baseline_failures.txt`): behaviour that later versions deliberately changed. They predate the move.
   - **"Clean" means no `[NEW]` lines, not zero failures.** Never add a line to the baseline to hide a new failure. Retiring a stale assertion is agreed work, and its baseline line is deleted in the same commit.
@@ -161,6 +161,7 @@ Since 2026-11-28 a read-only connector exists: **"Supabase - CalendarOS"** (tool
 | 4.76.0 | Gym locations (one per exercise, "Everywhere", usual location + away periods; filters Add/Swap and the Review Pack), move/swap clears not-done training, Plan day removed, phone screen shows last time's weight/reps/RIR in each box (Target line, "Exercise N of M", new-weight banner removed). **SQL:** `gym_locations`, `location_id` |
 | 4.77.0 | Sync safety for sets (reload keeps sets, newer copy wins before push), weight step synced, set start times + workout times, untick asks, heavier weight red, volume-based new bests, week/month summary on Progress, search shows occurrence dates, "Done, Move It". **SQL:** `weight_increment_kg`, `edited_at`, `started_at` |
 | 4.77.1 | Swaps and moves carry to other devices: staged exercises of a day's old plan cleared on pull, deleted empty sets not re-uploaded |
+| 4.78.0 | Start set timer (exact rest, rest keeps counting until the next Start set), Review Pack "lower than last time" list (best-set e1RM, 2% drop) with reasons/patterns, pack plans 7 days, import removes unlogged exercises on every device and old sessions on empty days in the window |
 
 ## 8. Open items and backlog (ask before starting any of them)
 

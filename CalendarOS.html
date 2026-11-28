@@ -821,9 +821,10 @@ body.mw-focus .rest-timer-tip{ display:block; flex:0 0 100%; order:10; margin-to
 .mw-daybtns.wrap{ flex-wrap:wrap; } .mw-daybtns.wrap .mw-pill.wide{ flex:1 1 45%; }
 .mw-sheet .field label{ display:block; font-size:13px; color:#A1A5AD; margin:0 0 6px; }
 .mw-sheet textarea{ width:100%; box-sizing:border-box; background:#202328; color:#F3F2EE; border:0; border-radius:14px; padding:12px; font:inherit; font-size:16px; margin-bottom:12px; }
-.rest-timer-box .rd-short{ display:none; }
-body.mw-focus .rest-timer-box .rd-long{ display:none; }
-body.mw-focus .rest-timer-box .rd-short{ display:inline; }
+body.mw-focus .rest-timer-box .set-start-btn{ background:var(--mw-accent,#D3F53D); color:#0E0F11; }
+body.mw-focus .rest-timer-box[data-mode="idle"] .set-start-btn{ flex:1; justify-content:center; text-align:center; }
+.set-timer-hint{ font-size:12px; color:var(--ink-soft); }
+body.mw-focus .set-timer-hint{ color:#A1A5AD; }
 body.mw-focus .rest-timer-box{ flex-wrap:wrap; }
 body.mw-focus .rest-timer-count{ font-size:32px; min-width:0; }
 body.mw-focus .rest-timer-label{ font-size:11px; }
@@ -2443,7 +2444,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.77.1';
+const APP_VERSION = '4.78.0';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2451,6 +2452,13 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.78.0', changes: [
+    'No SQL migration needed — front-end only.',
+    'NEW — Phone workout: a Start set button. Tap it when you begin a set and the box counts the set up; the set ends when you tick it and pick the RIR. The rest timer then counts down, and when it runs out it keeps counting ("Rested 2:35") until you tap Start set for the next set, so the rest is measured exactly. Ticking without Start set still works as before.',
+    'NEW — Review Pack: every session in the last 30 days where an exercise did at least 2% worse than its previous session is listed for the AI (measured on the best working set’s estimated one-rep max, weight × (1 + reps/30); best reps for bodyweight moves). The AI is asked to find the likely reason in your sleep, resting heart rate, food, rest times, time of day, exercise order and notes, look for patterns across all the drops, and give one thing to do for each.',
+    'CHANGED — Review Pack plans the next 7 days instead of 14 (schedule, locations and the Settings preview too). The history it sends stays at 30 days.',
+    'CHANGED — Importing a plan removes every exercise without a done set on today and the dates it covers, on all your devices, not just this one (done sets stay). A day in the next 7 days that the new plan leaves empty loses its old session too, unless you already trained that day.',
+  ]},
   { v:'4.77.1', changes: [
     'No SQL migration needed \u2014 front-end only.',
     'FIX \u2014 Swapping or moving a training day on one device now carries over to your other devices: exercises listed on a day from its old plan disappear there too, once they sync. Exercises you added by hand, and anything you ticked or edited, stay.',
@@ -7421,7 +7429,11 @@ function renderMain(){
   // it used to reappear up to a second later at the top of the card, shoving
   // every exercise below it down — a visible jump right after tapping a set.
   // Put it straight back in the same frame instead.
-  if(_restTimerEnd){ try{ _updateRestTimerUI(); }catch(e){} }
+  if(_restTimerEnd || _setStartAt || document.querySelector('.mw #restTimerDisplay')){ try{
+    _updateRestTimerUI();
+    // v4.78.0: keep counting after a re-render (the tick stops when the box was gone)
+    if((_restTimerEnd || _setStartAt) && !_restTimerHandle) _restTimerHandle = setInterval(_updateRestTimerUI, 1000);
+  }catch(e){} }
   if(_keepScroll && (_sy || _st)){
     if(_st) el.scrollTop = _st;
     if(_sy && Math.abs((window.scrollY||0) - _sy) > 2) window.scrollTo(0, _sy);
@@ -9973,6 +9985,25 @@ function bestE1RMForExercise(exId, excludeDate){
 
 let _restTimerHandle=null,_restTimerEnd=null,_restTimerExId=null,_restTimerDefaultSec=120,_restTimerLastTickSec=null;
 let _restEndedAt=null; // v4.77.0: when the last rest ended (timer ran out or was skipped)
+/* v4.78.0 set timer: Start set begins a set (_setStartAt) and it ends when the set is
+   ticked and its RIR picked; the rest then counts down and keeps counting after it runs
+   out until the next Start set, so the rest is measured exactly. _setStartAt survives a
+   page reload in the same tab (sessionStorage, tiny, not the shared localStorage pool). */
+let _setStartAt=null, _restStartAt=null;
+const SET_TIMER_KEY='cos_mwSetTimer', SET_TIMER_MAX_MS=30*60*1000;
+try{ const t = Number(sessionStorage.getItem(SET_TIMER_KEY)); if(t && Date.now()-t < SET_TIMER_MAX_MS && t <= Date.now()) _setStartAt = t; }catch(e){}
+function _saveSetTimer(){ try{ if(_setStartAt) sessionStorage.setItem(SET_TIMER_KEY, String(_setStartAt)); else sessionStorage.removeItem(SET_TIMER_KEY); }catch(e){} }
+function startSetTimer(){
+  if(_restTimerEnd!=null) _restEndedAt = Date.now();
+  if(_restTimerHandle) clearInterval(_restTimerHandle);
+  if(_tipRotationHandle){ clearInterval(_tipRotationHandle); _tipRotationHandle=null; }
+  _restTimerEnd=null; _restTimerExId=null; _restStartAt=null;
+  _setStartAt = Date.now(); _saveSetTimer();
+  _getRestAudioCtx(); // a real tap: unlocks the chime on phones
+  _restTimerHandle = setInterval(_updateRestTimerUI, 1000);
+  _updateRestTimerUI();
+}
+function clearSetTimer(){ _setStartAt = null; _saveSetTimer(); }
 /* v4.59.0: rest timer chimes (item 8) — a short tick each of the last 5
    seconds, then a distinct two-tone chime at zero. Generated with the
    WebAudio oscillator rather than an audio file, so the page stays fully
@@ -10013,6 +10044,7 @@ function startRestTimer(seconds,exId){
   if(_restTimerHandle) clearInterval(_restTimerHandle);
   if(_tipRotationHandle) clearInterval(_tipRotationHandle);
   _restTimerEnd=Date.now()+seconds*1000;_restTimerExId=exId;_restTimerDefaultSec=seconds;
+  _restStartAt=Date.now();
   _restTimerLastTickSec = null; // item 8: so the countdown chimes fire fresh for this timer
   // v4.60.0 fix (item 3 — chime not working): this is called synchronously
   // from the "mark set done" click, which IS a real user gesture. Creating
@@ -10268,44 +10300,62 @@ function _rotateGeneralTip(){
   _tipIndex=_tipBag.pop();
 }
 function _updateRestTimerUI(){
-  const remaining=Math.max(0,Math.round((_restTimerEnd-Date.now())/1000));
   const el=document.getElementById('restTimerDisplay');
   if(!el){if(_restTimerHandle){clearInterval(_restTimerHandle);_restTimerHandle=null;}return;}
+  const mmss = sec=>`${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`;
+  // Only rebuild the box when its mode changes; otherwise update the count, so the tip doesn't flicker.
+  const paint = (mode, count, html)=>{
+    const box = el.firstElementChild, c = document.getElementById('restTimerCount');
+    if(box && box.dataset.mode===mode){ if(c) c.textContent = count; } else el.innerHTML = html;
+  };
+  const startBtn = `<button class="btn sm set-start-btn" onclick="startSetTimer()">Start set</button>`;
+  if(_setStartAt){
+    if(Date.now()-_setStartAt > SET_TIMER_MAX_MS){ clearSetTimer(); return _updateRestTimerUI(); }
+    const t = mmss(Math.max(0, Math.round((Date.now()-_setStartAt)/1000)));
+    paint('set', t, `<div class="rest-timer-box set-timer-box" data-mode="set">
+      <span class="rest-timer-label">Set</span>
+      <span class="rest-timer-count" id="restTimerCount">${t}</span>
+      <span class="set-timer-hint">Tick it and pick RIR to finish</span>
+    </div>`);
+    return;
+  }
+  if(_restTimerEnd==null){
+    if(_restTimerHandle){clearInterval(_restTimerHandle);_restTimerHandle=null;}
+    // The phone workout offers Start set for the first set; the desktop page shows nothing.
+    if(el.closest('.mw')) paint('idle', '', `<div class="rest-timer-box" data-mode="idle">${startBtn}</div>`);
+    else el.innerHTML = '';
+    return;
+  }
+  const remaining=Math.max(0,Math.round((_restTimerEnd-Date.now())/1000));
   if(remaining<=0){
     if(_restTimerLastTickSec!==0){ playRestTimerDone(); _restTimerLastTickSec=0; }
-    clearInterval(_restTimerHandle);_restTimerHandle=null;el.innerHTML=_restTimerDoneHtml();return;
+    if(Date.now()-_restTimerEnd > SET_TIMER_MAX_MS){ stopRestTimer(); return; } // a long break, not rest
+    const t = mmss(Math.round((Date.now()-(_restStartAt||_restTimerEnd))/1000));
+    paint('over', t, `<div class="rest-timer-box rest-timer-done" data-mode="over">
+      <span class="rest-timer-label">Rested</span>
+      <span class="rest-timer-count" id="restTimerCount">${t}</span>
+      ${startBtn}
+    </div>`);
+    return;
   }
   if(remaining<=5 && remaining!==_restTimerLastTickSec){ playRestTimerTick(); _restTimerLastTickSec=remaining; }
-  const m=Math.floor(remaining/60),s=remaining%60;
-  // Only re-render the timer structure on the first call; after that only update the count.
-  // This prevents the tip re-rendering (and flickering) every second.
-  if(!document.getElementById('restTimerCount')){
-    el.innerHTML=`<div class="rest-timer-box">
+  const t = mmss(remaining);
+  paint('rest', t, `<div class="rest-timer-box" data-mode="rest">
       <span class="rest-timer-label">Rest</span>
-      <span class="rest-timer-count" id="restTimerCount">${m}:${String(s).padStart(2,'0')}</span>
-      <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(-15)">\u221215s</button>
+      <span class="rest-timer-count" id="restTimerCount">${t}</span>
+      <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(-15)">−15s</button>
       <button class="btn ghost sm rest-adj" onclick="adjustRestTimer(15)">+15s</button>
-      <button class="btn ghost sm" onclick="stopRestTimer()"><span class="rd-long">Done early</span><span class="rd-short">Skip</span></button>
+      ${startBtn}
       <div class="rest-timer-tip" id="restTimerTip">${escapeHtml(_currentTipText || REST_TIPS[_tipIndex])}</div>
-    </div>`;
-  } else {
-    const countEl=document.getElementById('restTimerCount');
-    if(countEl) countEl.textContent=`${m}:${String(s).padStart(2,'0')}`;
-  }
-}
-function _restTimerDoneHtml(){
-  return `<div class="rest-timer-box rest-timer-done">
-    <span class="rest-timer-label">Rest complete</span>
-    <span class="rest-timer-count">Go!</span>
-    <button class="btn ghost sm" onclick="stopRestTimer()">✓</button>
-  </div>`;
+    </div>`);
 }
 function stopRestTimer(){
   if(_restTimerEnd!=null) _restEndedAt = Math.min(Date.now(), _restTimerEnd);
   if(_restTimerHandle){clearInterval(_restTimerHandle);_restTimerHandle=null;}
   if(_tipRotationHandle){clearInterval(_tipRotationHandle);_tipRotationHandle=null;}
-  _restTimerEnd=null;_restTimerExId=null;
+  _restTimerEnd=null;_restTimerExId=null;_restStartAt=null;
   const el=document.getElementById('restTimerDisplay');if(el)el.innerHTML='';
+  if(el && el.closest('.mw')) _updateRestTimerUI(); // v4.78.0: back to Start set
 }
 function exMuscleGroups(ex, mode){
   if(!ex) return [];
@@ -11183,6 +11233,7 @@ function mwFinish(){
   state.mwShowSummary = date;
   if(state.trainingEditingDate === date) state.trainingEditingDate = null;
   stopRestTimer();
+  clearSetTimer();
   saveTraining();
   renderMain();
   try{ window.scrollTo(0, 0); }catch(e){}
@@ -12328,12 +12379,22 @@ function onSetDoneChanged(s){
   const now = Date.parse(s.loggedAt);
   const prev = (state.training.sets||[]).filter(x=>x!==s && x.date===s.date && x.done && x.loggedAt)
     .map(x=>Date.parse(x.loggedAt)).filter(t=>!isNaN(t) && t<=now);
-  const gap = prev.length ? Math.round((now - Math.max(...prev))/1000) : null;
-  s.restTakenSec = (gap && gap <= 1800) ? gap : null;
-  // v4.77.0: the set started when the rest before it ended (timer ran out or was skipped);
-  // the first set of a workout has no start.
-  const restEnd = _restTimerEnd!=null ? Math.min(now, _restTimerEnd) : _restEndedAt;
-  s.startedAt = (s.restTakenSec!=null && restEnd && restEnd >= Math.max(...prev) && restEnd <= now) ? new Date(restEnd).toISOString() : null;
+  const lastEnd = prev.length ? Math.max(...prev) : null;
+  if(_setStartAt && _setStartAt <= now && (lastEnd==null || _setStartAt >= lastEnd)){
+    // v4.78.0: Start set was tapped: the set started then, and the rest is exactly
+    // from the previous set's end to that tap.
+    s.startedAt = new Date(_setStartAt).toISOString();
+    const rest = lastEnd!=null ? Math.round((_setStartAt - lastEnd)/1000) : null;
+    s.restTakenSec = (rest!=null && rest <= 1800) ? rest : null;
+  } else {
+    const gap = lastEnd!=null ? Math.round((now - lastEnd)/1000) : null;
+    s.restTakenSec = (gap && gap <= 1800) ? gap : null;
+    // v4.77.0: without Start set, the set started when the rest before it ended
+    // (timer ran out or was skipped); the first set of a workout has no start.
+    const restEnd = _restTimerEnd!=null ? Math.min(now, _restTimerEnd) : _restEndedAt;
+    s.startedAt = (s.restTakenSec!=null && restEnd && restEnd >= lastEnd && restEnd <= now) ? new Date(restEnd).toISOString() : null;
+  }
+  clearSetTimer();
   if(s.isWarmup || s.note) return;
   const reps = Number(s.reps)||0;
   const beat = (state.training.sets||[]).some(x=>x.date===s.date && x.exerciseId===s.exerciseId && x.setNo<s.setNo
@@ -15887,6 +15948,60 @@ ${JSON.stringify(template, null, 2)}`;
    (double-progression logic, the volume-band/priority-muscle rules, the
    recovery rule, etc.) would then be redundant with that standing
    knowledge. Revisit as its own piece of work; not done here. */
+/* v4.78.0: sessions in the review window where an exercise did worse than its previous
+   session. Measure: the best working set's estimated 1RM (Epley, weight x (1 + reps/30)),
+   which counts weight and reps together and does not change with the number of sets;
+   bodyweight exercises (no weight) compare best reps. A drop of 2% or more is listed
+   (about one rep fewer on the best set at the same weight). */
+function lowerThanLastTime(sinceDate){
+  const byEx = {};
+  (state.training.sets||[]).forEach(s=>{
+    if(!s.done || s.isWarmup || !(Number(s.reps) > 0)) return;
+    const e = byEx[s.exerciseId] || (byEx[s.exerciseId] = {});
+    (e[s.date] || (e[s.date] = [])).push(s);
+  });
+  const best = sets=>{
+    const w = sets.filter(s=>Number(s.weightKg) > 0);
+    const pool = w.length ? w : sets;
+    const score = s=> w.length ? s.weightKg*(1+s.reps/30) : Number(s.reps);
+    const top = pool.reduce((a,b)=> score(b) > score(a) ? b : a);
+    return { kind: w.length ? 'e1rm' : 'reps', score: score(top), set: top };
+  };
+  const avgRest = sets=>{ const r = sets.map(s=>s.restTakenSec).filter(x=>x > 0); return r.length ? Math.round(r.reduce((a,b)=>a+b,0)/r.length) : null; };
+  const order = date=>{ // exercise order that day, by first set marked done
+    const first = {};
+    (state.training.sets||[]).filter(s=>s.date===date && s.done && s.loggedAt).forEach(s=>{ const t = Date.parse(s.loggedAt); if(!(first[s.exerciseId] <= t)) first[s.exerciseId] = t; });
+    return Object.keys(first).sort((a,b)=>first[a]-first[b]);
+  };
+  const vol = sets=> Math.round(sets.reduce((t,s)=>t + (Number(s.weightKg)||0)*(Number(s.reps)||0), 0));
+  const out = [];
+  Object.entries(byEx).forEach(([exId, days])=>{
+    const dates = Object.keys(days).sort();
+    for(let i=1;i<dates.length;i++){
+      const d = dates[i], p = dates[i-1];
+      if(d < sinceDate) continue;
+      const now = best(days[d]), prev = best(days[p]);
+      if(now.kind !== prev.kind || !(prev.score > 0)) continue;
+      const pct = Math.round((now.score/prev.score - 1)*1000)/10;
+      if(pct > -2) continue;
+      const ex = getTrainingExerciseById(exId);
+      const pos = order(d).indexOf(exId), posPrev = order(p).indexOf(exId);
+      const bs = x=>({ weightKg: x.set.weightKg ?? null, reps: x.set.reps, rir: x.set.toFailure ? 0 : (x.set.rir ?? null) });
+      out.push({
+        date: d, exercise: ex ? ex.name : exId, previousDate: p, daysSincePrevious: Math.round((Date.parse(d) - Date.parse(p))/86400000),
+        measure: now.kind === 'e1rm' ? 'best set estimated 1RM' : 'best set reps', changePct: pct,
+        bestSet: bs(now), previousBestSet: bs(prev),
+        workingSets: days[d].length, previousWorkingSets: days[p].length,
+        volumeKg: vol(days[d]), previousVolumeKg: vol(days[p]),
+        avgRestSec: avgRest(days[d]), previousAvgRestSec: avgRest(days[p]),
+        positionInSession: pos >= 0 ? pos+1 : null, previousPositionInSession: posPrev >= 0 ? posPrev+1 : null,
+        ...(workoutTimes(d) ? { workoutStart: fmtClockTime(workoutTimes(d).start) } : {}),
+      });
+    }
+  });
+  return out.sort((a,b)=> a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+const REVIEW_PLAN_DAYS = 7; // v4.78.0: the Review Pack plans the next 7 days (was 14)
 function buildTrainingReviewPack(){
   const today = todayStr();
   const sinceDate = addDays(today, -30); // v4.65.0: last 30 days (was 14)
@@ -16003,8 +16118,8 @@ function buildTrainingReviewPack(){
   const adherence = { planned:calendarDates.length, logged:loggedDates.size };
 
   // --- Current plan summary ---
-  // v4.75.0: only sessions on the calendar in the review window or the next 14 days
-  const planEnd = addDays(today, 13);
+  // v4.75.0: only sessions on the calendar in the review window or the plan window
+  const planEnd = addDays(today, REVIEW_PLAN_DAYS - 1);
   const usedSessionIds = new Set(state.training.calendar.filter(c=>c.sessionId && c.date>=sinceDate && c.date<=planEnd).map(c=>c.sessionId));
   const plan = state.training.sessions.filter(sess=>usedSessionIds.has(sess.id)).map(sess=>({
     name:sess.name, type:sess.type,
@@ -16018,7 +16133,7 @@ function buildTrainingReviewPack(){
   // Rest days are whatever's set in Settings → weekendDays (already a
   // real, user-editable setting elsewhere in the app, not training-
   // specific) — reused here rather than inventing a second "which days am
-  // I off" setting. A per-date breakdown for the actual forward 14-day window is
+  // I off" setting. A per-date breakdown for the actual forward plan window is
   // handed over explicitly (not left for the AI to infer from a rule) since
   // an adherence-based "pick whichever 2 days fit best" version of this
   // rule was tried before and produced a rest day on a day that should
@@ -16026,7 +16141,7 @@ function buildTrainingReviewPack(){
   const restDayAbbrs = state.settings.weekendDays || ['Fri','Sat'];
   const goalsSet = state.settings.trainingGoals || {};
   const trainingSchedule = [];
-  for(let i=0;i<14;i++){
+  for(let i=0;i<REVIEW_PLAN_DAYS;i++){
     const d = addDays(today, i);
     const [y,m,dd] = d.split('-').map(Number);
     const dow = new Date(y, m-1, dd).getDay();
@@ -16044,6 +16159,7 @@ function buildTrainingReviewPack(){
     plannedRemainingVolumeByMuscle,
     weeklySetTargets: allMuscleTargets(),
     sessionDetail: sessions,
+    lowerThanLastTime: lowerThanLastTime(sinceDate),
     failureTests,
     currentSuggestions: upcomingSuggestions,
     currentPlan: plan,
@@ -16200,7 +16316,7 @@ function copyTrainingReviewPack(){
   const packJson = JSON.stringify(pack, null, 2);
 
   // Current exercise library so the AI can reference existing exercise IDs.
-  // v4.76.0: only exercises at a location the next 14 days use (or Everywhere)
+  // v4.76.0: only exercises at a location the plan window uses (or Everywhere)
   const packLocIds = new Set(pack.trainingSchedule.map(x=>locationForDate(x.date)));
   const exerciseLibrary = state.training.exercises
     .filter(e=> !locationsOn() || (gymLocationName(e.locationId) && (e.locationId===LOC_EVERYWHERE || packLocIds.has(e.locationId))))
@@ -16223,14 +16339,14 @@ function copyTrainingReviewPack(){
 
 MY GOALS: ${[pack.goals.weightLossTargetKg != null ? `lose ~${pack.goals.weightLossTargetKg}kg` : '', pack.goals.targetWeightKg != null ? `reach ${pack.goals.targetWeightKg}kg bodyweight` : '', 'build muscle', `train ${pack.goals.weeklyTrainingDays} days/week`].filter(Boolean).join(', ')}.
 
-MY FIXED WEEKLY SCHEDULE (hard constraint, not a suggestion to optimize): ${pack.restDays.join(' and ')} are ALWAYS rest days, every single week, with zero exceptions — not based on how many days I've already trained that week, not based on adherence, not based on anything else. Every other day of the week is a training day. Here's the actual next 14 days with each one already labeled — use this exactly as given, don't recompute it:
+MY FIXED WEEKLY SCHEDULE (hard constraint, not a suggestion to optimize): ${pack.restDays.join(' and ')} are ALWAYS rest days, every single week, with zero exceptions — not based on how many days I've already trained that week, not based on adherence, not based on anything else. Every other day of the week is a training day. Here's the actual next ${REVIEW_PLAN_DAYS} days with each one already labeled — use this exactly as given, don't recompute it:
 \`\`\`json
 ${JSON.stringify(pack.trainingSchedule, null, 2)}
 \`\`\`
 ${weeklySetTargetsBlock}
 
 EVERY tracked muscle group must get AT LEAST its own MIN from the WEEKLY SET TARGETS table above, every week — this is a floor, not a suggestion, and applies even to muscles not on my priority list below. If a muscle is under-served, close the gap using the ordered steps in the working-sets rule below (extra training day, different primary exercise, secondary credit, and only then a 4th set), while staying reasonable and accounting for my actual progression (don't just pile sets onto a muscle that's clearly still struggling to progress at its current volume — spread the increase out, and lean on secondary-muscle credit from compound movements where that genuinely covers it before adding more direct isolation work).
-${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume than the rest (aim toward the upper end of their own range in the WEEKLY SET TARGETS table, even above it if adherence supports it), AND should be trained directly across MORE days in the two-week plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (the lower end of their own range, never below its MIN), not neglected, just not the focus.` : ''}
+${priorityMuscleLabels.length ? `\nMY PRIORITY MUSCLE GROUPS: ${priorityMuscleLabels.join(', ')}. These should get a higher weekly volume than the rest (aim toward the upper end of their own range in the WEEKLY SET TARGETS table, even above it if adherence supports it), AND should be trained directly across MORE days in the ${REVIEW_PLAN_DAYS}-day plan than muscles not on this list — frequency matters as much as total volume for growth. Muscles not listed should get a standard maintenance level of work (the lower end of their own range, never below its MIN), not neglected, just not the focus.` : ''}
 ${trainingGoals.notes ? `\nADDITIONAL GOAL NOTES FROM ME: ${trainingGoals.notes}` : ''}
 ${locationsBlock}
 MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smallest weight jump that exercise's equipment actually allows — round any suggested weight for it to that grid; seatSetting, where present, is my own note on how I have that machine dialed in — purely informational, nothing for you to act on; lastCompleted is the date and heaviest working weight of my most recent completed session of that exercise, null if I have never done it):
@@ -16238,7 +16354,7 @@ MY EXERCISE LIBRARY (use these IDs in the plan; weightIncrementKg is the smalles
 ${JSON.stringify(exerciseLibrary, null, 2)}
 \`\`\`
 
-MY DATA PACK (also: weeklyHistory = my last 4 full weeks of sets per muscle and average weight / waist / calories / protein / sleep minutes / sleep score / resting heart rate; skipReasons = why planned days were missed ("swapped days" = I moved that session to another day, not skipped it); workingSets[].restTakenSec = actual rest before that set; workingSets[].startedAt = local time the set started (when the rest before it ended); note = why a set beat an earlier failure set; dayNote = my note for that exercise that day; sessionLengthMin = each workout's length in minutes with its local start and end time; plannedVsDone = each block of the previous plan against what I did; bodyMetrics days marked partial = I did not confirm that day's log was complete; library notes = my permanent note on that exercise):
+MY DATA PACK (also: weeklyHistory = my last 4 full weeks of sets per muscle and average weight / waist / calories / protein / sleep minutes / sleep score / resting heart rate; skipReasons = why planned days were missed ("swapped days" = I moved that session to another day, not skipped it); workingSets[].restTakenSec = actual rest before that set; workingSets[].startedAt = local time the set started (when I tapped Start set, or else when the rest before it ended); lowerThanLastTime = sessions that did worse than the previous one (see item 2b); note = why a set beat an earlier failure set; dayNote = my note for that exercise that day; sessionLengthMin = each workout's length in minutes with its local start and end time; plannedVsDone = each block of the previous plan against what I did; bodyMetrics days marked partial = I did not confirm that day's log was complete; library notes = my permanent note on that exercise):
 \`\`\`json
 ${packJson}
 \`\`\`
@@ -16251,9 +16367,11 @@ WHAT I NEED FROM YOU:
 
 2. **Flags** (bullet points): any exercise that stalled (same weight ≥ 2 sessions with RIR > 2), any muscle that is consistently under its MIN or over its MAX in the WEEKLY SET TARGETS table, any anomalies.
 
+2b. **Lower than last time: find the reason.** \`lowerThanLastTime\` in the data pack lists every session in the review period where an exercise did at least 2% worse than its previous session (measured on the best working set's estimated 1RM, Epley; best reps for bodyweight moves). For each one: name it plainly (exercise, date, by how much, best set now vs before). Then look for the likely reason in everything I log: sleep minutes and sleep score the night before, resting heart rate, calories and protein that day and the days before, a partial health-log day, rest taken between sets (avgRestSec vs previousAvgRestSec), time of day, its position in the session, days since it was last trained, the location, missed-day reasons, set notes and day notes. Then look across ALL the drops (and the sessions that went well) for patterns, e.g. drops after short sleep, high resting heart rate, low calories, short rests or a late position in the session, and say how strong each link is (a one-off vs repeated) without inventing one: if the data shows no clear reason, say "no clear reason in the data". Finish each with one concrete thing to do about it, and reflect that in the plan where it applies (for example hold the weight instead of raising it, move the exercise earlier, or rest longer). If the list is empty, say so in one line.
+
 3. **Failure-test calibration.** My app automatically schedules one isolation exercise's last set as a true push-to-failure test roughly every 12 days — see \`failureTests\` in the data pack. This is the strongest signal available for whether an exercise's working weight is right: if a failure set logged well above its \`currentTargetRepRange\`, the working weight is too light and should increase; well below it, ease back. Call out any exercise where this happened, and reflect it directly in the weights/rep ranges you recommend for that exercise below. (The app keeps scheduling these failure tests on its own in future sessions regardless of what's in the imported plan — you don't need to add anything to make that happen, just use the results already collected.)
 
-4. **Two-week plan as a CalendarOS import file.** This is the most important output. Put the day-by-day rationale (item 6) and the rules check (item 7) BEFORE the JSON code block, so the JSON block is the last thing in your reply apart from item 5. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
+4. **${REVIEW_PLAN_DAYS}-day plan as a CalendarOS import file (exactly the ${REVIEW_PLAN_DAYS} dates in MY FIXED WEEKLY SCHEDULE, nothing after them).** This is the most important output. Put the day-by-day rationale (item 6) and the rules check (item 7) BEFORE the JSON code block, so the JSON block is the last thing in your reply apart from item 5. Produce a complete JSON file I can import directly — the plan should appear on my training calendar so that when I open Training on any gym day, the exercises are already there and pre-populated with the suggested weight and rep range.
 
 5. **Suggested new exercise types, if any — separately, in prose, never in the JSON.** If you think a specific movement not currently in my library would genuinely help (fills a real gap, not just variety for its own sake), name it and explain why in a short paragraph after the JSON block. I'll decide whether to add it to my library myself. Do not add it to the plan or the JSON either way.
 
@@ -16293,7 +16411,7 @@ RULES for the plan:
 - Within a single week, prefer varying WHICH exercise targets a given muscle across different training days rather than repeating the identical exercise every time that muscle comes up — e.g. two chest days in a week should generally use two different chest exercises/machines, not the same one twice, unless there's a genuine reason not to (limited equipment options for that muscle in my library, or a specific weakness being deliberately grooved with repetition). This is about variety of stimulus, not frequency — training the same MUSCLE multiple times a week is expected and good; this rule is only about not defaulting to the identical movement each time. It does not apply to a muscle with only one primary exercise in my library.
 - Rep defaults in the app: every working set is pre-filled with the TOP of that exercise's rep range (e.g. 12 for "8-12"); I then adjust to what I actually did. So the top of the range is my aim each set, and reps I log under it are real results, not planned ones.
 - Base load recommendations on my actual recent performance from the data pack, not generic defaults.
-- Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual 14 days in play.
+- Follow MY FIXED WEEKLY SCHEDULE above exactly for which dates get a session — that's not optional or something to weigh against adherence, it's given to you pre-computed for the actual ${REVIEW_PLAN_DAYS} days in play.
 - WORKING SETS PER EXERCISE. The default is 3 working sets per exercise: use 3 on every block unless the exception below applies. EXCEPTION: you may raise an exercise to 4 working sets (never more than 4) ONLY when a muscle cannot reach its weekly set floor otherwise. Before using the exception, try these in order:
   1. Move the muscle to an extra training day, if the recovery rule (no same primary muscle on consecutive training days) allows it.
   2. Use a different exercise that has the muscle as a primary target, if one exists in my library and fits the once-per-week and the 6-exercises-per-day limits.
@@ -16921,18 +17039,27 @@ function applyTrainingImportResolution(res, opts){
     // already happened is real history, not staging, and this never
     // touches anything already logged regardless of date.
     if(c.date < today) return;
-    const loggedIds = new Set(state.training.logs.filter(l=>l.date===c.date).map(l=>l.exerciseId));
-    const pending = state.trainingPendingAdds[c.date] || [];
-    const keptPending = pending.filter(id=>loggedIds.has(id));
-    clearedPendingCount += pending.length - keptPending.length;
-    state.trainingPendingAdds[c.date] = keptPending;
-    if(state.training.sets && state.training.sets.length){
-      const keptSets = state.training.sets.filter(s=> !(s.date===c.date && !s.done));
-      clearedSetsCount += state.training.sets.length - keptSets.length;
-      state.training.sets = keptSets;
-    }
+    // v4.78.0: every exercise on the date without a done set goes, on every device
+    // (the deletes are queued for the cloud); done sets stay.
+    clearedPendingCount += importClearDate(c.date);
   });
-  if(clearedPendingCount || clearedSetsCount) flushTrainingDrafts();
+  // v4.78.0: a date in the plan window that the new plan leaves empty loses its old
+  // session too, unless it already has done sets (real history).
+  const importDates = new Set(res.calendar.filter(c=>c && c.date).map(c=>c.date));
+  if(importDates.size){
+    for(let i=0;i<REVIEW_PLAN_DAYS;i++){
+      const d = addDays(today, i);
+      if(importDates.has(d) || (opts.skipDates && opts.skipDates.has(d))) continue;
+      if((state.training.sets||[]).some(s=>s.date===d && s.done)) continue;
+      const had = state.training.calendar.some(x=>x.date===d);
+      clearedPendingCount += importClearDate(d);
+      if(had){
+        state.training.calendar = state.training.calendar.filter(x=>x.date!==d);
+        pendingTrainingDeletes.push({ table:'training_calendar', match:{ cal_date:d } });
+        clearedSetsCount++;
+      }
+    }
+  }
 
   // Item 3 (v4.58.0): stash the AI's per-exercise fallback suggestions,
   // resolved through the same exIdMap as everything else above (an
@@ -17151,6 +17278,12 @@ async function clearTrainingExercises(){
 /* v4.76.0: after a move or swap, a date keeps only what was actually done.
    Its not-done exercises and empty sets go (same keep-done pattern as the
    phone swap), and it re-loads whatever session it now has when opened. */
+/* v4.78.0: import clean-up for one date; returns how many exercises were removed. */
+function importClearDate(date){
+  const before = getTrainingDayExerciseIds(date).filter(id=>!getSetsForExercise(date, id).some(x=>x.done)).length;
+  clearNotDoneTrainingForDate(date);
+  return before;
+}
 function clearNotDoneTrainingForDate(date){
   if(!state.training.sets) state.training.sets = [];
   getTrainingDayExerciseIds(date).forEach(exId=>{
@@ -17965,7 +18098,7 @@ function openGymLocationsModal(){
   const opt = (sel)=> g.list.map(l=>`<option value="${escapeHtml(l.id)}" ${l.id===sel?'selected':''}>${escapeHtml(l.name)}</option>`).join('');
   const count = (id)=> state.training.exercises.filter(e=>e.locationId===id).length;
   const today = todayStr();
-  const next14 = Array.from({length:14},(_,i)=>addDays(today,i)).map(d=>[d, gymLocationName(locationForDate(d))||'none']);
+  const next14 = Array.from({length:REVIEW_PLAN_DAYS},(_,i)=>addDays(today,i)).map(d=>[d, gymLocationName(locationForDate(d))||'none']);
   const runs = []; next14.forEach(([d,n])=>{ const r = runs[runs.length-1]; if(r && r.n===n) r.to=d; else runs.push({from:d,to:d,n}); });
   overlay.innerHTML = `
     <div class="modal" style="max-width:520px;">
@@ -17991,7 +18124,7 @@ function openGymLocationsModal(){
           <select id="gymPeriodLoc">${opt(null)}</select>
           <button class="btn secondary sm" onclick="addGymLocationPeriod()">Add period</button>
         </div>
-        <h4 style="margin:14px 0 4px;">Next 14 days (what the Review Pack uses)</h4>
+        <h4 style="margin:14px 0 4px;">Next ${REVIEW_PLAN_DAYS} days (what the Review Pack uses)</h4>
         ${runs.map(r=>`<div class="page-sub">${escapeHtml(humanDateNoRelative(r.from))}${r.to!==r.from?` \u2013 ${escapeHtml(humanDateNoRelative(r.to))}`:''}: <b>${escapeHtml(r.n)}</b></div>`).join('')}
       ` : ''}
       <div class="modal-actions"><button class="btn secondary" onclick="document.getElementById('gymLocOverlay').remove(); renderMain();">Done</button></div>

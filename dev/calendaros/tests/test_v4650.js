@@ -78,7 +78,7 @@ function setup(){
   const txt = JSON.stringify(pack);
   check('25-day-old session included', txt.includes(d(25)));
   check('31-day-old session excluded', !txt.includes(d(31)));
-  check('forward schedule still 14 days', pack.trainingSchedule.length === 14);
+  check('forward schedule is the plan window (7 days since v4.78.0)', pack.trainingSchedule.length === 7);
 }
 // 7. version/changelog
 { const { win, t } = setup(); check('changelog has 4.65.0', t.CHANGELOG.some(c=>c.v==='4.65.0')); }
