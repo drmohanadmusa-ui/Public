@@ -40,7 +40,7 @@ function renderTrainingToday(win) {
 /* ---------- 1. RIR / F / W mutual exclusivity ---------- */
 function mutualExclusivity() {
   section('1. RIR / F / W are mutually exclusive');
-  const win = loadApp({ fetchHandler: () => ({ status: 200, rows: [] }) });
+  const win = loadApp({ fetchHandler: () => ({ status: 200, rows: [] }) }); win.confirm = () => true; win.window.confirm = () => true; // v4.77.0: unticking a done set asks first
   makeExercise(win);
   const today = renderTrainingToday(win);
   win.addSet(today, 'E1');
@@ -79,7 +79,7 @@ function mutualExclusivity() {
 /* ---------- 2. RIR / F / W update their own DOM immediately ---------- */
 function immediateDomUpdate() {
   section('2. Clicking RIR/F/W updates the button colour right away, no full re-render needed');
-  const win = loadApp({ fetchHandler: () => ({ status: 200, rows: [] }) });
+  const win = loadApp({ fetchHandler: () => ({ status: 200, rows: [] }) }); win.confirm = () => true; win.window.confirm = () => true; // v4.77.0: unticking a done set asks first
   makeExercise(win);
   const today = renderTrainingToday(win);
   win.addSet(today, 'E1');
@@ -117,7 +117,7 @@ function tipRotationInterval() {
 /* ---------- 4. Quick-add-exercise picker closes after picking ---------- */
 function quickAddClosesAfterPick() {
   section('4. Picking an exercise from quick-add closes the picker (was: stayed open)');
-  const win = loadApp({ fetchHandler: () => ({ status: 200, rows: [] }) });
+  const win = loadApp({ fetchHandler: () => ({ status: 200, rows: [] }) }); win.confirm = () => true; win.window.confirm = () => true; // v4.77.0: unticking a done set asks first
   const t = win.__t;
   makeExercise(win);
   const today = win.todayStr();
@@ -164,7 +164,7 @@ function versionDiscipline() {
         new RegExp(`const CHANGELOG = \\[\\s*\\{ v:'${v.replace(/\./g, '\\.')}'`).test(js), v);
   check('the built file carries the same version',
         fs.readFileSync(__dirname + '/CalendarOS.html', 'utf8').includes(`const APP_VERSION = '${v}'`));
-  const win = loadApp();
+  const win = loadApp(); win.confirm = () => true; win.window.confirm = () => true; // v4.77.0: unticking a done set asks first
   check('backup coverage is still complete',
         win.__t.SYNCED_TABLES.every(x => win.__t.BACKED_UP_TABLES.includes(x)));
 }

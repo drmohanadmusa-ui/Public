@@ -65,6 +65,7 @@ function loadApp(opts = {}) {
   get syncScheduled(){ return syncScheduled; },
   get pendingDivergence(){ return pendingDivergence; },
   get pendingCompletionDeletes(){ return pendingCompletionDeletes; },
+  get pendingTrainingDeletes(){ return pendingTrainingDeletes; },
   get SYNCED_TABLES(){ return SYNCED_TABLES; },
   get BACKED_UP_TABLES(){ return BACKED_UP_TABLES; },
   get CHANGELOG(){ return CHANGELOG; },

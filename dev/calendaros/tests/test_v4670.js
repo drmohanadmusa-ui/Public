@@ -2,7 +2,7 @@
 const { loadApp } = require('./harness');
 let pass=0, fail=0; const check=(n,c,d)=>{ if(c) pass++; else { fail++; console.log('  FAIL',n,d||''); } };
 function setup(){
-  const win = loadApp(); const t = win.__t; const today = win.todayStr();
+  const win = loadApp(); const t = win.__t; const today = win.todayStr(); win.confirm = () => true; win.window.confirm = () => true; // v4.77.0: unticking a done set asks first
   win.matchMedia = (q)=>({ matches:true, media:q, addListener(){}, removeListener(){} });
   t.state.training.exercises = [
     { id:'E1', name:'Chest Press', tags:[], tagIds:[], category:'strength', muscleGroup:'chest', restSec:null, weightIncrementKg:5 },
