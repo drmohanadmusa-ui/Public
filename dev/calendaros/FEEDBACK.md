@@ -248,3 +248,16 @@ Facts (v4.77.0):
 - Gap 2: the 4.77.0 merge uploads every local set the cloud doesn't have. A device that still holds Sunday's empty sets and has something to send puts them back in the cloud, so Sunday's training comes back on every device.
 
 **Shipped 2026-11-28 as v4.77.1** (his "go", Q54 A): a pull clears exercises staged from a day's old plan when that day's plan changed elsewhere (hand-added exercises, and any with sets that day, stay); before a push, an empty untouched set the cloud had but no longer has is dropped instead of uploaded again (`synced` flag on sets, set after a pull or a successful upload; not sent to the cloud). No SQL.
+
+## Batch 2026-11-28 (4): after v4.77.1
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 57 | "I want to see the set timer." | change | question asked (Q55-Q56) |
+| 58 | Review Pack: if an exercise is lower than last time, check what might be the reason and give me guidance. | change | question asked (Q57-Q58) |
+| 59 | Review Pack should plan only the next 7 days, and on import remove everything under the session and the exercises not logged. | change | question asked (Q59-Q60) |
+
+Facts (v4.77.1):
+- **57:** each set already records its start (when the rest before it ended) and its end (when ticked), but nothing shows a running set time. After the rest the box only says "Rest complete / Go!". The first set of a workout has no start time.
+- **58:** the pack sends the last 30 days of sets, rest times, sleep, calories, missed-day reasons and set notes, but nothing flags a drop and the prompt never asks why one happened.
+- **59:** the pack plans the next 14 days (schedule, locations and the Settings preview all use 14). Import already clears not-done sets and staged exercises on today and future dates the plan covers, but: (a) those deletions are only made on the device, never sent to the cloud, so the next sync can bring the old empty sets back; (b) an exercise with a log row but no done set is kept; (c) a date in the window that the new plan leaves empty keeps its old session. Cloud check (read-only, 2026-11-28): no leftover sets on future dates right now, so any leftovers seen were on the device.
