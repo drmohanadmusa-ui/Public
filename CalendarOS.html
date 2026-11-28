@@ -2443,7 +2443,7 @@ if(!usingNativeAppStorage){
 }
 
 /* ---------- App Version (bump on every shipped change) ---------- */
-const APP_VERSION = '4.77.0';
+const APP_VERSION = '4.77.1';
 const APP_NAME = 'CalendarOS';
 
 /* ---------- Change Log ----------
@@ -2451,6 +2451,11 @@ const APP_NAME = 'CalendarOS';
    here describing what shipped. Newest first. Rendered under
    Settings → Change Log. */
 const CHANGELOG = [
+  { v:'4.77.1', changes: [
+    'No SQL migration needed \u2014 front-end only.',
+    'FIX \u2014 Swapping or moving a training day on one device now carries over to your other devices: exercises listed on a day from its old plan disappear there too, once they sync. Exercises you added by hand, and anything you ticked or edited, stay.',
+    'FIX \u2014 A device holding an older copy no longer puts a cleared day\u2019s empty sets back. Before sending, an empty set that the cloud no longer has, and that you never touched on that device, is dropped instead of uploaded again.',
+  ]},
   { v:'4.77.0', changes: [
     '\ud83d\udd34 SQL migration required \u2014 Settings \u2192 Cloud Sync \u2192 Copy SQL, run in the Supabase SQL editor. Adds weight_increment_kg (training_exercises), edited_at and started_at (training_sets). Additive and safe to run more than once. Until it is run, syncing shows a missing-column error.',
     'FIX \u2014 Logged sets could be lost. Two causes, both fixed: sets were not reloaded from the device when the app restarted (so sets ticked with a weak signal were lost if the page reloaded before they were sent), and a device holding an older copy could overwrite sets logged on another device. Each set now remembers when it was last changed, and before sending, the app fetches the cloud\u2019s sets and keeps the newer copy of each one.',
@@ -4916,7 +4921,7 @@ function syncStepsForDomain(domain){
       ()=> supaUpsert('training_sessions', state.training.sessions.map(trainingSessionToRow), 'pin,id'),
       ()=> { const rows = state.training.calendar.map(trainingCalendarToRow); return rows.length ? supaUpsert('training_calendar', rows, 'pin,cal_date') : null; },
       ()=> { const rows = state.training.logs.map(trainingLogToRow); return rows.length ? supaUpsert('training_logs', rows, 'pin,log_date,exercise_id') : null; },
-      ()=> { const rows = (state.training.sets||[]).map(trainingSetToRow); return rows.length ? supaUpsert('training_sets', rows, 'pin,log_date,exercise_id,set_no') : null; },
+      ()=> { const sets = (state.training.sets||[]).slice(); const rows = sets.map(trainingSetToRow); return rows.length ? supaUpsert('training_sets', rows, 'pin,log_date,exercise_id,set_no').then(r=>{ sets.forEach(x=>{ x.synced = true; }); return r; }) : null; },
       ()=> { const rows = (state.training.resources||[]).map(trainingResourceToRow); return rows.length ? supaUpsert('training_resources', rows, 'pin,id') : null; },
     ];
     case 'recipes': return [
@@ -5165,6 +5170,7 @@ async function pullFromSupabase(onProgress){
     }
 
     if(trainingPulled){
+      const prevCal = new Map((state.training && state.training.calendar || []).map(c=>[c.date, c.sessionId]));
       state.training = {
         // v4.77.0: a step the cloud doesn't have yet (column new) keeps this device's value
         exercises: trainingPulled.training_exercises.map(rowToTrainingExercise).map(e=>{
@@ -5174,7 +5180,7 @@ async function pullFromSupabase(onProgress){
         sessions: trainingPulled.training_sessions.map(rowToTrainingSession),
         calendar: trainingPulled.training_calendar.map(rowToTrainingCalendar),
         logs: trainingPulled.training_logs.map(rowToTrainingLog),
-        sets: trainingPulled.training_sets ? trainingPulled.training_sets.map(rowToTrainingSet) : (state.training&&state.training.sets||[]),
+        sets: trainingPulled.training_sets ? trainingPulled.training_sets.map(r=>Object.assign(rowToTrainingSet(r), { synced:true })) : (state.training&&state.training.sets||[]),
         // If the resources pull failed, PRESERVE what's already local rather
         // than assigning [] — otherwise a missing table would silently delete
         // the person's whole reference library on the next open.
@@ -5182,6 +5188,7 @@ async function pullFromSupabase(onProgress){
       };
       pendingTrainingDeletes.length = 0; // remote is now authoritative, drop any stale pending deletes
       resetSetSnapshot();
+      reconcileStagedAfterPull(prevCal);
     } else if(resourcesPulled){
       // Training pull failed but resources came back — apply just that slice,
       // leaving every other part of state.training untouched.
@@ -5889,7 +5896,7 @@ async function saveTraining(){
       ()=> supaUpsert('training_sessions', state.training.sessions.map(trainingSessionToRow), 'pin,id'),
       ()=> { const rows = state.training.calendar.map(trainingCalendarToRow); return rows.length ? supaUpsert('training_calendar', rows, 'pin,cal_date') : null; },
       ()=> { const rows = state.training.logs.map(trainingLogToRow); return rows.length ? supaUpsert('training_logs', rows, 'pin,log_date,exercise_id') : null; },
-      ()=> { const rows = (state.training.sets||[]).map(trainingSetToRow); return rows.length ? supaUpsert('training_sets', rows, 'pin,log_date,exercise_id,set_no') : null; },
+      ()=> { const sets = (state.training.sets||[]).slice(); const rows = sets.map(trainingSetToRow); return rows.length ? supaUpsert('training_sets', rows, 'pin,log_date,exercise_id,set_no').then(r=>{ sets.forEach(x=>{ x.synced = true; }); return r; }) : null; },
       ()=> { const rows = (state.training.resources||[]).map(trainingResourceToRow); return rows.length ? supaUpsert('training_resources', rows, 'pin,id') : null; },
     ]);
   }
@@ -10554,6 +10561,26 @@ function stampEditedSets(){
 function _deleteMatchesSet(match, x){
   return Object.entries(match).every(([k,v])=> k==='log_date' ? x.date===v : k==='exercise_id' ? x.exerciseId===v : k==='set_no' ? x.setNo===Number(v) : true);
 }
+/* v4.77.1: when a pull changes a day's plan (moved, swapped or replaced on
+   another device), exercises staged on this device from the OLD plan go,
+   unless they have sets on that day. Exercises added by hand stay. */
+function reconcileStagedAfterPull(prevCal){
+  const pend = state.trainingPendingAdds || {};
+  let changed = false;
+  Object.keys(pend).forEach(date=>{
+    const before = prevCal.get(date) || null, now = (getTrainingCalEntry(date)||{}).sessionId || null;
+    if(before === now) return;
+    const oldSess = before ? getTrainingSessionById(before) : null;
+    const newSess = now ? getTrainingSessionById(now) : null;
+    const oldIds = new Set(((oldSess && oldSess.blocks) || []).map(b=>b.exerciseId));
+    const newIds = new Set(((newSess && newSess.blocks) || []).map(b=>b.exerciseId));
+    const hasSets = id => (state.training.sets||[]).some(x=>x.date===date && x.exerciseId===id);
+    const keep = (pend[date]||[]).filter(id=> !oldIds.has(id) || newIds.has(id) || hasSets(id));
+    if(keep.length !== (pend[date]||[]).length){ changed = true; if(keep.length) pend[date] = keep; else delete pend[date]; }
+    autoPlannedDates.delete(date); // so the day loads its new plan when opened
+  });
+  if(changed){ diagLogEvent('supabase', 'Cleared exercises staged from a plan that moved on another device'); flushTrainingDrafts(); }
+}
 async function mergeServerTrainingSets(){
   stampEditedSets();
   const rows = await supaSelectAll('training_sets'); // throws on a failed or short read: never push blind
@@ -10572,6 +10599,19 @@ async function mergeServerTrainingSets(){
     if(d && setStampMs(r) <= (Date.parse(d.at||'') || Infinity)) return;
     state.training.sets.push(r); touched.add(k);
   });
+  // v4.77.1: a set the cloud had before but no longer has was deleted on another
+  // device (a move, swap or removal). Drop it here if it is empty and untouched;
+  // a set you ticked or edited is kept and sent again.
+  const serverKeys = new Set(rows.map(r=>`${r.log_date}|${r.exercise_id}|${r.set_no}`));
+  const gone = state.training.sets.filter(x=> x.synced && !x.done && !x.editedAt && !serverKeys.has(setKey(x)));
+  if(gone.length){
+    const goneSet = new Set(gone);
+    state.training.sets = state.training.sets.filter(x=>!goneSet.has(x));
+    gone.forEach(x=>{ _setSnap.delete(setKey(x)); touched.add(setKey(x)); });
+    const pairs0 = new Set(gone.map(x=>x.date+'::'+x.exerciseId));
+    pairs0.forEach(p=>{ const [date, exId] = p.split('::'); if(!state.training.sets.some(x=>x.date===date && x.exerciseId===exId)){
+      state.training.logs = state.training.logs.filter(l=> !(l.date===date && l.exerciseId===exId)); } });
+  }
   if(!touched.size) return;
   const pairs = new Set();
   state.training.sets.forEach(x=>{ if(touched.has(setKey(x))){ _setSnap.set(setKey(x), setBody(x)); pairs.add(x.date+'::'+x.exerciseId); } });

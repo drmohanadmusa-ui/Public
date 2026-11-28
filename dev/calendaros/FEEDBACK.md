@@ -235,3 +235,16 @@ Data check 2026-11-28 (read-only connector, figures kept out of the repo): Nov 2
 **Found while building:** the app never reloaded sets from the device on start (`loadAll` kept exercises, sessions, calendar, logs and resources but not sets). Sets ticked with no signal were lost if the page reloaded before they were sent. Probably the main cause of item 44, with the stale-copy overwrite as a second path.
 
 **Shipped 2026-11-28 as v4.77.0:** items 44-55. SQL: `training_exercises.weight_increment_kg`, `training_sets.edited_at`, `training_sets.started_at`. Interpretations: "heavier" = today's weight above that set's weight last time; a set's start = when the rest before it ended (timer ran out or skipped), the first set of a workout has none; "New best" = session volume above that exercise's best earlier session; search shows the occurrence date only on recurring rows while a search is typed (one-time rows already show their date); "Done, Move It" keeps the original date marked missed.
+
+## Batch 2026-11-28 (3): after v4.77.0 (SQL run, checked with the connector)
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 56 | Swap days should swap the whole thing: swap Sunday's training to Friday and Sunday is empty (even after "plan"), Friday has the training. Is that how it works now? | question / fix | shipped (v4.77.1), Q54 A |
+
+Facts (v4.77.0):
+- On the device where you swap (since 4.76.0): each date gets the other's session; not-done exercises and empty sets are cleared from both dates; a date with no session stays empty (nothing auto-loads); done sets stay where they were done. There is no Plan day button any more.
+- Gap 1: the list of exercises staged on a day (`trainingPendingAdds`) is kept only on each device (local drafts, up to 24 h). Another device that had Sunday open keeps showing Sunday's exercises until that expires.
+- Gap 2: the 4.77.0 merge uploads every local set the cloud doesn't have. A device that still holds Sunday's empty sets and has something to send puts them back in the cloud, so Sunday's training comes back on every device.
+
+**Shipped 2026-11-28 as v4.77.1** (his "go", Q54 A): a pull clears exercises staged from a day's old plan when that day's plan changed elsewhere (hand-added exercises, and any with sets that day, stay); before a push, an empty untouched set the cloud had but no longer has is dropped instead of uploaded again (`synced` flag on sets, set after a pull or a successful upload; not sent to the cloud). No SQL.
