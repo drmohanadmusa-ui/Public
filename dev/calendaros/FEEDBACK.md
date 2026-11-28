@@ -191,3 +191,11 @@ Decisions 2026-11-27 (2), then "go":
 | 42 | Weekly Volume panel (screenshot, "This week", Saturday): "it appears to not calculate the weekends". | question | question asked (Q43) |
 
 Facts (v4.76.0): Done counts every done working set from Sunday to Saturday, weekend days included. Planned counts sessions still on the calendar from today to Saturday. Nothing in the code skips weekend days or rest days. The panel shows only "This week", not its dates.
+| 43 | He wants to give the session read access to CalendarOS's Supabase project, to see completed details. | setup | instructions sent (new read-only connector, then a new session) |
+| 44 | A trained day (Mon 23 Nov) now shows "Training logged" with 0 sets done on all 6 exercises, although he marked every set done at the time. Linked in his mind to swapping days; has happened 2-3 times. Wants it found and fixed once. | bug | diagnosis proposed, waiting for data access and his "go" |
+
+Facts (v4.76.0) for 44, not yet proven with his data:
+- Every training push upserts **every** local set row (`training_sets`, key pin+date+exercise+set, including `done`, reps, weight, `logged_at`), with no "newer wins" check.
+- Sync pushes a dirty domain **before** pulling. So a device holding an older copy (e.g. a day's sets auto-filled but not done) that makes any training change (a swap, a move, an edit) pushes its old `done:false` copies over the done rows another device saved, and the next pull spreads that to every device.
+- That fits the screenshot (the exercises and log rows are there, 0 sets done) and the link to swapping, and it predates 4.76.0.
+- To confirm with data: Nov 23 rows in `training_sets` with `done=false` and empty `logged_at` would match. Ask which device he trained on and which he swapped on.
