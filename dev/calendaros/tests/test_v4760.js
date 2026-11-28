@@ -70,7 +70,7 @@ const LOCS = (periods, defaultId) => ({ list: [{ id: 'locA', name: 'Site A' }, {
     t.state.exerciseLocFilter = 'all';
     win.openGymLocationsModal();
     const m = win.document.getElementById('gymLocOverlay');
-    check('manager: lists locations and the next 14 days', !!m && m.innerHTML.includes('Site B') && m.innerHTML.includes('Next 14 days'));
+    check('manager: lists locations and the next 7 days', !!m && m.innerHTML.includes('Site B') && m.innerHTML.includes('Next 7 days'));
     win.document.getElementById('newGymLocName').value = 'Site C';
     await win.addGymLocation();
     check('manager: add location', win.gymLocs().list.some(l => l.name === 'Site C'));
@@ -119,9 +119,9 @@ const LOCS = (periods, defaultId) => ({ list: [{ id: 'locA', name: 'Site A' }, {
     check('pack: other location left out', !lib(p).includes('Chest Press B'));
     check('pack: no-location exercise left out and counted', !lib(p).includes('Cable Fly') && p.includes('1 of my exercises have no location'));
     check('pack: Everywhere exercise kept', lib(p).includes('Push Up') && lib(p).includes('"location": "Everywhere"'));
-    t.state.settings.gymLocations = LOCS([{ from: win.addDays(today, 7), to: win.addDays(today, 30), locationId: 'locB' }]);
+    t.state.settings.gymLocations = LOCS([{ from: win.addDays(today, 3), to: win.addDays(today, 30), locationId: 'locB' }]);
     p = prompt();
-    check('pack: away period in the next 14 days brings its machines', lib(p).includes('Chest Press B') && p.includes('"location": "Site B"'));
+    check('pack: away period in the next 7 days brings its machines', lib(p).includes('Chest Press B') && p.includes('"location": "Site B"'));
     t.state.settings.gymLocations = null;
     p = prompt();
     check('pack: no locations -> no rule, full library', !p.includes('LOCATIONS (hard constraint)') && lib(p).includes('Cable Fly') && !lib(p).includes('"location"'));

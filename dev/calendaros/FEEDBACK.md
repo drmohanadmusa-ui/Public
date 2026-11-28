@@ -248,3 +248,23 @@ Facts (v4.77.0):
 - Gap 2: the 4.77.0 merge uploads every local set the cloud doesn't have. A device that still holds Sunday's empty sets and has something to send puts them back in the cloud, so Sunday's training comes back on every device.
 
 **Shipped 2026-11-28 as v4.77.1** (his "go", Q54 A): a pull clears exercises staged from a day's old plan when that day's plan changed elsewhere (hand-added exercises, and any with sets that day, stay); before a push, an empty untouched set the cloud had but no longer has is dropped instead of uploaded again (`synced` flag on sets, set after a pull or a successful upload; not sent to the cloud). No SQL.
+
+## Batch 2026-11-28 (4): after v4.77.1
+
+| # | Comment (lightly tidied) | Type | Status |
+|---|---|---|---|
+| 57 | "I want to see the set timer." Then (Q55): a Start set button; the set ends when I tick it and pick the RIR; the rest timer then runs and keeps counting after it finishes until I tap Start set again, so I can measure exactly how long I rested. | change | shipped (v4.78.0), Q55-Q56 replaced by his design |
+| 58 | Review Pack: if an exercise is lower than last time, check what might be the reason and give me guidance. | change | shipped (v4.78.0), Q57 my pick (best-set e1RM), Q58 A |
+| 59 | Review Pack should plan only the next 7 days, and on import remove everything under the session and the exercises not logged. | change | shipped (v4.78.0), Q59 A, Q60 A |
+
+Facts (v4.77.1):
+- **57:** each set already records its start (when the rest before it ended) and its end (when ticked), but nothing shows a running set time. After the rest the box only says "Rest complete / Go!". The first set of a workout has no start time.
+- **58:** the pack sends the last 30 days of sets, rest times, sleep, calories, missed-day reasons and set notes, but nothing flags a drop and the prompt never asks why one happened.
+- **59:** the pack plans the next 14 days (schedule, locations and the Settings preview all use 14). Import already clears not-done sets and staged exercises on today and future dates the plan covers, but: (a) those deletions are only made on the device, never sent to the cloud, so the next sync can bring the old empty sets back; (b) an exercise with a log row but no done set is kept; (c) a date in the window that the new plan leaves empty keeps its old session. Cloud check (read-only, 2026-11-28): no leftover sets on future dates right now, so any leftovers seen were on the device.
+
+**His answers (2026-11-28):** Q55/Q56 replaced by his own design (item 57 above). Q57 "pick the best measure", and the pack should flag each exercise/day lower than the previous session and look for reasons and correlations in all the metrics. Q58 A, Q59 A, Q60 A, then "ship".
+
+**Shipped 2026-11-28 as v4.78.0.** No SQL.
+- **57:** Start set in the phone workout's timer box (idle box before the first set; on the rest box during and after the rest). Set start = the tap; rest = previous set's end to the tap (30 min cap = a break). The rest countdown keeps counting as "Rested M:SS" after it runs out, until Start set (stops after 30 min). Ticking without Start set works as before. The running set survives a reload in the same tab (sessionStorage `cos_mwSetTimer`). Desktop: the rest box's "Done early" is now Start set; no idle box there.
+- **58 (Q57 decision):** measure = the best working set's estimated 1RM (Epley), because volume changes with the number of sets and total reps ignore weight; bodyweight moves compare best reps. Every session in the 30-day review window at least 2% below that exercise's previous session is listed in `lowerThanLastTime` (best sets, change, sets, volume, average rest, position in the session, workout start). Prompt item 2b asks for the likely reason from sleep, resting heart rate, food, rest, time, order, location, missed days and notes, patterns across all drops, how strong each link is, and one action each. Interpretation: every drop in the window, not only the latest, so the AI has enough cases to find patterns.
+- **59:** plan window 7 days (`REVIEW_PLAN_DAYS`), history still 30 days. Import: covered dates (today and later) lose every exercise without a done set, with the deletes queued for the cloud (they used to be device-only, so a sync could bring them back); a day in the next 7 days that the plan leaves empty loses its old session unless it has a done set.
