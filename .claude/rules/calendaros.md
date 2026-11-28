@@ -49,7 +49,7 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
 - **PIN scoping:** every row has a `pin` column. RLS is permissive (anyone with the anon key), so the PIN is a convenience, not security.
 - `meta jsonb` on entity tables lets a field be added before a migration.
 - **Push before pull:** a dirty domain is pushed before any pull, so a stale device can't overwrite newer edits. Divergence is logged, then resolved in favour of online (the "which copy" modal was removed in 4.44). Training/recipes/coffee/hydration pulls are fault-isolated.
-- **Sets (4.77):** every set carries `editedAt` (stamped by `stampEditedSets` on change; app-created untouched sets have none). Before any training push, `mergeServerTrainingSets` reads the cloud's sets and keeps the newer copy of each (editedAt, else loggedAt); a failed read stops the push. Sets are also reloaded from the device on start (they used to be dropped).
+- **Sets (4.77):** every set carries `editedAt` (stamped by `stampEditedSets` on change; app-created untouched sets have none). Before any training push, `mergeServerTrainingSets` reads the cloud's sets and keeps the newer copy of each (editedAt, else loggedAt); a failed read stops the push. Sets are also reloaded from the device on start (they used to be dropped). **4.77.1:** sets carry a local `synced` flag (cloud has seen them); an empty untouched synced set missing from the cloud was deleted elsewhere and is dropped, not re-uploaded. A pull that changes a day's plan clears exercises staged from the old plan (`reconcileStagedAfterPull`).
 - Row mapping uses `xToRow` / `rowToX` pairs (e.g. `metricDefToRow` / `rowToMetricDef`). **A new synced field needs:** the mapping pair, the upsert, the pull, the SQL block, and a test.
 
 **Supabase tables (21) = `SYNCED_TABLES`:** `one_time_tasks, recurring_tasks, task_completions, lists, list_items, health_logs, daily_ratings, health_metric_defs, app_settings, training_exercises, training_sessions, training_calendar, training_logs, training_sets, training_resources, recipes, recipe_ingredients, hydration_logs, coffee_beans, coffee_bags, coffee_brews`.
@@ -88,7 +88,7 @@ Muhannad uses it every day on three devices (phone, work PC, home), so **treat i
 - **Run:** `bash dev/calendaros/run_tests.sh [path/to/CalendarOS.html]`. It works from any clone location and takes about 40 seconds.
   - It splits the app into `dev/calendaros/.build/` (gitignored), installs pinned `jsdom` on first run, and runs every `dev/calendaros/tests/test_*.js`.
   - It prints each FAIL line marked `[known]` or `[NEW]`, then `N passed, M failed`. Exit codes: 0 = no new failures, 1 = new failure, 2 = crash or build error.
-- **Latest run (v4.77.0, 2026-11-28): 1253 passed, 29 failed, 0 new.** The passed count only grows.
+- **Latest run (v4.77.1, 2026-11-28): 1271 passed, 29 failed, 0 new.** The passed count only grows.
 - **Baseline at the move to Claude Code (v4.71.1, 2026-11-07): 864 passed, 29 failed, 0 new.** That is 25 suites: 24 carried over (841 passed) plus `test_core_conventions.js` (23).
   - The 29 are **known stale assertions** in 8 older suites (`baseline_failures.txt`): behaviour that later versions deliberately changed. They predate the move.
   - **"Clean" means no `[NEW]` lines, not zero failures.** Never add a line to the baseline to hide a new failure. Retiring a stale assertion is agreed work, and its baseline line is deleted in the same commit.
@@ -128,6 +128,7 @@ Since 2026-11-28 a read-only connector exists: **"Supabase - CalendarOS"** (tool
 - **A scripted tracker edit overwrote the decisions table** (2026-11-21) because its section check stopped at `## ` and not at `### `. Check `git diff` on `FEEDBACK.md` before committing.
 - **Sets were never reloaded from the device on start (fixed 4.77.0).** Found only by testing a save-then-reload. When data "disappears", test the reload path, not only sync.
 - **The weight step was never synced (fixed 4.77.0)**, although an earlier note said the pack "already sends the 10 kg step". Check that a field has a column before saying it syncs.
+- **A harness pull with no tasks or lists in the cloud is a first upload, not a pull** (`hasAnyRemoteData`). Sync tests need at least one list or task in the fake cloud, and jsdom's console output is not shown (record debug values on `window` instead).
 - **Mobile workout layout bugs were found only by screenshots.** Use `smoke_browser.js` or a seeded screenshot for UI work.
 - **The old claude.ai sandbox lost its workspace more than once.** That's why everything now lives in this repo.
 - **Privacy:** an old hand-over file held a GitHub token in plain text. Never repeat that.
@@ -159,6 +160,7 @@ Since 2026-11-28 a read-only connector exists: **"Supabase - CalendarOS"** (tool
 | 4.75.1 | Sleep score / resting heart rate meanings, "Sleep Score" guess fix, "swapped days" reason |
 | 4.76.0 | Gym locations (one per exercise, "Everywhere", usual location + away periods; filters Add/Swap and the Review Pack), move/swap clears not-done training, Plan day removed, phone screen shows last time's weight/reps/RIR in each box (Target line, "Exercise N of M", new-weight banner removed). **SQL:** `gym_locations`, `location_id` |
 | 4.77.0 | Sync safety for sets (reload keeps sets, newer copy wins before push), weight step synced, set start times + workout times, untick asks, heavier weight red, volume-based new bests, week/month summary on Progress, search shows occurrence dates, "Done, Move It". **SQL:** `weight_increment_kg`, `edited_at`, `started_at` |
+| 4.77.1 | Swaps and moves carry to other devices: staged exercises of a day's old plan cleared on pull, deleted empty sets not re-uploaded |
 
 ## 8. Open items and backlog (ask before starting any of them)
 

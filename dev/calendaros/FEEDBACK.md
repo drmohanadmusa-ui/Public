@@ -240,9 +240,11 @@ Data check 2026-11-28 (read-only connector, figures kept out of the repo): Nov 2
 
 | # | Comment (lightly tidied) | Type | Status |
 |---|---|---|---|
-| 56 | Swap days should swap the whole thing: swap Sunday's training to Friday and Sunday is empty (even after "plan"), Friday has the training. Is that how it works now? | question / fix | answered; fix for other devices proposed (Q54) |
+| 56 | Swap days should swap the whole thing: swap Sunday's training to Friday and Sunday is empty (even after "plan"), Friday has the training. Is that how it works now? | question / fix | shipped (v4.77.1), Q54 A |
 
 Facts (v4.77.0):
 - On the device where you swap (since 4.76.0): each date gets the other's session; not-done exercises and empty sets are cleared from both dates; a date with no session stays empty (nothing auto-loads); done sets stay where they were done. There is no Plan day button any more.
 - Gap 1: the list of exercises staged on a day (`trainingPendingAdds`) is kept only on each device (local drafts, up to 24 h). Another device that had Sunday open keeps showing Sunday's exercises until that expires.
 - Gap 2: the 4.77.0 merge uploads every local set the cloud doesn't have. A device that still holds Sunday's empty sets and has something to send puts them back in the cloud, so Sunday's training comes back on every device.
+
+**Shipped 2026-11-28 as v4.77.1** (his "go", Q54 A): a pull clears exercises staged from a day's old plan when that day's plan changed elsewhere (hand-added exercises, and any with sets that day, stay); before a push, an empty untouched set the cloud had but no longer has is dropped instead of uploaded again (`synced` flag on sets, set after a pull or a successful upload; not sent to the cloud). No SQL.
